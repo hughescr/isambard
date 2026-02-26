@@ -1,10 +1,10 @@
+import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { find as _find } from 'lodash';
 import { mockLogger, resetMockSstResource } from '../setup';
-import { createGuildId } from '@/integrations/discord/types';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { StreamTracker } from '@/agent/stream-tracker';
+import { createGuildId } from '@/integrations/discord/types';
 
 describe('createApp', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -70,7 +70,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -84,8 +84,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -145,7 +145,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -159,8 +159,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -312,7 +312,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -326,8 +326,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -483,7 +483,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -497,8 +497,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -616,7 +616,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -630,8 +630,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -751,7 +751,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -765,8 +765,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -890,7 +890,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -904,8 +904,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -1003,7 +1003,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -1017,8 +1017,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -1080,7 +1080,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -1094,8 +1094,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -1160,7 +1160,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -1174,8 +1174,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -1235,7 +1235,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -1249,8 +1249,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {
@@ -1406,7 +1406,7 @@ describe('createApp', () => {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
-                    sseReconnectDelayMs:            5_000,
+                    sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
                     adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
@@ -1420,8 +1420,8 @@ describe('createApp', () => {
                     homeGuildId:   createGuildId('home-guild-123'),
                     presence:      {
                         updateThrottleMs:      2000,
-                        idleTimeoutMs:         60000,
-                        idleRefreshIntervalMs: 300000,
+                        idleTimeoutMs:         60_000,
+                        idleRefreshIntervalMs: 300_000,
                     },
                 },
                 box: {

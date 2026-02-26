@@ -17,8 +17,8 @@ describe('sanitizeFilename', () => {
         expect(result).not.toContain('/');
     });
 
-    test('should replace path separator \\ with _', () => {
-        const result = sanitizeFilename('some\\path\\file.txt');
+    test(String.raw`should replace path separator \ with _`, () => {
+        const result = sanitizeFilename(String.raw`some\path\file.txt`);
         expect(result).not.toContain('\\');
     });
 
@@ -56,13 +56,13 @@ describe('sanitizeFilename', () => {
     });
 
     test('should replace null bytes', () => {
-        const result = sanitizeFilename('file\x00name.txt');
-        expect(result).not.toContain('\x00');
+        const result = sanitizeFilename('file\u0000name.txt');
+        expect(result).not.toContain('\u0000');
     });
 
     test('should replace control characters', () => {
-        const result = sanitizeFilename('file\x01\x1fname.txt');
-        expect(result).not.toMatch(/[\x00-\x1F]/);
+        const result = sanitizeFilename('file\u0001\u001Fname.txt');
+        expect(result).not.toMatch(/[\u0000-\u001F]/);
     });
 
     test('should handle filename with spaces in the middle', () => {

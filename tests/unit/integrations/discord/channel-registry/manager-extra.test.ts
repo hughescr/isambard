@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import _ from 'lodash';
 import type { Client } from 'discord.js';
-import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
+import _ from 'lodash';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
+import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
@@ -76,9 +76,9 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
         } as unknown as Client;
 
         manager = new ChannelRegistryManager({
-            backend:     backend,
-            homeGuildId: homeGuildId,
-            client:      client,
+            backend,
+            homeGuildId,
+            client,
         });
     });
 

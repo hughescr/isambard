@@ -4,7 +4,7 @@ import { inboxConfigSchema, DEFAULT_INBOX_CONFIG } from '@/integrations/discord/
 describe.concurrent('inboxConfigSchema', () => {
     test('should accept valid config with all fields', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 50,
             maxCatchUpAgeDays:  3,
         };
@@ -26,7 +26,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should apply default for maxCatchUpMessages when missing', () => {
         const config = {
-            minGapDurationMs:  300000,
+            minGapDurationMs:  300_000,
             maxCatchUpAgeDays: 3,
         };
         const result = inboxConfigSchema.safeParse(config);
@@ -38,7 +38,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should apply default for maxCatchUpAgeDays when missing', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 50,
         };
         const result = inboxConfigSchema.safeParse(config);
@@ -80,7 +80,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should reject negative maxCatchUpMessages', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: -1,
             maxCatchUpAgeDays:  3,
         };
@@ -90,7 +90,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should reject zero maxCatchUpMessages', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 0,
             maxCatchUpAgeDays:  3,
         };
@@ -100,7 +100,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should reject negative maxCatchUpAgeDays', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 50,
             maxCatchUpAgeDays:  -1,
         };
@@ -110,7 +110,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should reject zero maxCatchUpAgeDays', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 50,
             maxCatchUpAgeDays:  0,
         };
@@ -130,7 +130,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should reject non-integer maxCatchUpMessages', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 50.5,
             maxCatchUpAgeDays:  3,
         };
@@ -140,7 +140,7 @@ describe.concurrent('inboxConfigSchema', () => {
 
     test('should reject non-integer maxCatchUpAgeDays', () => {
         const config = {
-            minGapDurationMs:   300000,
+            minGapDurationMs:   300_000,
             maxCatchUpMessages: 50,
             maxCatchUpAgeDays:  3.5,
         };

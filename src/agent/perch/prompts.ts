@@ -9,8 +9,8 @@
  * Key principle: Guidance is advisory - active exploration is the expectation, not passive observation.
  */
 
-import { type PerchSlot } from './types';
 import { getSlotConfig } from './schedule';
+import { type PerchSlot } from './types';
 import type { StreamProgress } from '@/agent/stream-tracker';
 import { formatTimeHeader } from '@/utils';
 
@@ -135,20 +135,27 @@ ${basePrompt}`;
  */
 function formatSlotName(slot: PerchSlot): string {
     switch(slot) {
-        case 'pre-dawn':
+        case 'pre-dawn': {
             return 'Pre-Dawn (5-7am Pacific)';
-        case 'mid-morning':
+        }
+        case 'mid-morning': {
             return 'Mid-Morning (9-11am Pacific)';
-        case 'wikipedia':
+        }
+        case 'wikipedia': {
             return 'Wikipedia Exploration (12pm-2pm Pacific)';
-        case 'afternoon':
+        }
+        case 'afternoon': {
             return 'Afternoon (2-4pm Pacific)';
-        case 'evening':
+        }
+        case 'evening': {
             return 'Evening (6-8pm Pacific)';
-        case 'late-night':
+        }
+        case 'late-night': {
             return 'Late Night (11pm-1am Pacific)';
-        case 'unscheduled':
+        }
+        case 'unscheduled': {
             return 'Unscheduled';
+        }
     }
     // TypeScript exhaustiveness - this line should be unreachable
 
@@ -170,14 +177,18 @@ export function getSuggestionLevelDescription(slot: PerchSlot): string {
     }
 
     switch(config.level) {
-        case 'strongly_suggestive':
+        case 'strongly_suggestive': {
             return 'strongly suggestive (high-value timing)';
-        case 'moderate':
+        }
+        case 'moderate': {
             return 'moderate (helpful suggestions)';
-        case 'open':
+        }
+        case 'open': {
             return 'open (flexible exploration)';
-        case 'light_touch':
+        }
+        case 'light_touch': {
             return 'light touch (casual exploration)';
+        }
     }
     // TypeScript exhaustiveness - this line should be unreachable
 
@@ -209,38 +220,22 @@ export function buildPerchResumedPrompt(options: PerchResumedOptions): string {
     // Stryker disable next-line ArrayDeclaration: Array initialization value is not behavior-affecting
     const sections: string[] = [];
 
-    sections.push(formatTimeHeader());
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    // Stryker disable next-line StringLiteral: Prompt header text is product design
-    sections.push('--- PERCH TIME RESUMED ---');
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
+    sections.push(formatTimeHeader(), '', '--- PERCH TIME RESUMED ---', '');
 
     // Format duration
     // Stryker disable next-line ArithmeticOperator: Duration calculation for display only
-    const durationMinutes = Math.round(options.suspendedDurationMs / 60000);
+    const durationMinutes = Math.round(options.suspendedDurationMs / 60_000);
     // Stryker disable next-line ConditionalExpression: Duration display logic is product design
     const durationText = durationMinutes < 1 ? 'less than a minute' : `approximately ${durationMinutes} minute${durationMinutes === 1 ? '' : 's'}`;
     // Stryker disable next-line StringLiteral: Prompt explanation text is product design
-    sections.push(`You were suspended for ${durationText} while a user message was handled in a separate conversation session.`);
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-
-    // Stryker disable next-line StringLiteral: Prompt section header is product design
-    sections.push('[While you were suspended:]');
-    sections.push(`- ${options.interruptingSummary} was handled separately`);
+    sections.push(`You were suspended for ${durationText} while a user message was handled in a separate conversation session.`, '', '[While you were suspended:]', `- ${options.interruptingSummary} was handled separately`);
 
     if(options.newEventsSummary) {
         sections.push(options.newEventsSummary);
     }
 
     // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('Continue your perch work from where you left off. Check TaskList for your active tasks.');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('Trust TaskList as your source of truth — sessions are transient, tasks are durable.');
+    sections.push('', 'Continue your perch work from where you left off. Check TaskList for your active tasks.', 'Trust TaskList as your source of truth — sessions are transient, tasks are durable.');
 
     return sections.join('\n');
 }
@@ -267,44 +262,18 @@ export interface PerchTimeoutOptions {
 export function buildPerchTimeoutPrompt(options: PerchTimeoutOptions): string {
     const sections: string[] = [];
 
-    sections.push(formatTimeHeader());
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    // Stryker disable next-line StringLiteral: Prompt header text is product design
-    sections.push('--- PERCH SESSION TIMEOUT ---');
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    sections.push(`Your perch time session has been running for ${options.sessionDuration} minutes (max: ${options.maxSessionMinutes} minutes).`);
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('This perch slot is ending soon. Please wrap up what you\'re doing:');
-    sections.push('- Save any important thoughts or findings to memory');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('- Complete any in-progress work if quick, otherwise note where you left off');
-    // Stryker disable next-line StringLiteral: Prompt instruction text is product design
-    sections.push('- Don\'t start new explorations');
-    // Stryker disable next-line StringLiteral: Empty string for formatting
-    sections.push('');
+    sections.push(formatTimeHeader(), '', '--- PERCH SESSION TIMEOUT ---', '', `Your perch time session has been running for ${options.sessionDuration} minutes (max: ${options.maxSessionMinutes} minutes).`, '', 'This perch slot is ending soon. Please wrap up what you\'re doing:', '- Save any important thoughts or findings to memory', '- Complete any in-progress work if quick, otherwise note where you left off', '- Don\'t start new explorations', '');
 
     if(options.partialWork.thinking) {
-        sections.push('[Your thinking at timeout:]');
-        sections.push(options.partialWork.thinking);
-        // Stryker disable next-line StringLiteral: Empty string for formatting
-        sections.push('');
+        sections.push('[Your thinking at timeout:]', options.partialWork.thinking, '');
     }
 
     if(options.partialWork.text) {
-        sections.push('[You were composing:]');
-        sections.push(options.partialWork.text);
-        // Stryker disable next-line StringLiteral: Empty string for formatting
-        sections.push('');
+        sections.push('[You were composing:]', options.partialWork.text, '');
     }
 
     if(options.partialWork.pendingToolUse) {
-        sections.push(`[You were about to use "${options.partialWork.pendingToolUse.name}"]`);
-        // Stryker disable next-line StringLiteral: Empty string for formatting
-        sections.push('');
+        sections.push(`[You were about to use "${options.partialWork.pendingToolUse.name}"]`, '');
     }
 
     sections.push('Please finalize and conclude this perch session.');

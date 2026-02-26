@@ -64,7 +64,7 @@ describe.concurrent('formatRelativeTime', () => {
     });
 
     test('should use current time when now is not provided', () => {
-        const recentDate = new Date(Date.now() - 30000);
+        const recentDate = new Date(Date.now() - 30_000);
         expect(formatRelativeTime(recentDate)).toBe('just now');
     });
 });
@@ -79,7 +79,7 @@ describe('formatMemoryTimestamp', () => {
     });
 
     test('should use current time when now is not provided', () => {
-        const recentDate = new Date(Date.now() - 30000).toISOString();
+        const recentDate = new Date(Date.now() - 30_000).toISOString();
         const result = formatMemoryTimestamp(recentDate);
         expect(result).toMatch(/^\(just now, /);
     });
@@ -162,7 +162,7 @@ describe('formatShortRelativeTime', () => {
     });
 
     test('should use current time when now is not provided', () => {
-        const recentDate = new Date(Date.now() - 30000);
+        const recentDate = new Date(Date.now() - 30_000);
         expect(formatShortRelativeTime(recentDate)).toBe('now');
     });
 });

@@ -66,9 +66,7 @@ describe('discovery', () => {
             } as unknown as GuildChannel;
 
             mockGuild.channels.fetch = mock(async () => {
-                const map = new Map();
-                map.set('channel-1', mockChannel);
-                return map;
+                return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
@@ -89,9 +87,7 @@ describe('discovery', () => {
             } as unknown as GuildChannel;
 
             mockGuild.channels.fetch = mock(async () => {
-                const map = new Map();
-                map.set('channel-1', mockChannel);
-                return map;
+                return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
@@ -133,9 +129,7 @@ describe('discovery', () => {
             } as unknown as GuildChannel;
 
             mockGuild.channels.fetch = mock(async () => {
-                const map = new Map();
-                map.set('channel-1', mockChannel);
-                return map;
+                return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
@@ -178,9 +172,7 @@ describe('discovery', () => {
             } as unknown as GuildChannel;
 
             mockGuild.channels.fetch = mock(async () => {
-                const map = new Map();
-                map.set('category-1', mockCategory);
-                return map;
+                return new Map([['category-1', mockCategory]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
@@ -195,9 +187,7 @@ describe('discovery', () => {
 
         it('should skip null channels', async () => {
             mockGuild.channels.fetch = mock(async () => {
-                const map = new Map();
-                map.set('channel-1', null);
-                return map;
+                return new Map([['channel-1', null]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
@@ -293,9 +283,7 @@ describe('discovery', () => {
             } as unknown as GuildChannel;
 
             mockGuild.channels.fetch = mock(async () => {
-                const map = new Map();
-                map.set('channel-1', mockChannel);
-                return map;
+                return new Map([['channel-1', mockChannel]]);
             }) as unknown as typeof mockGuild.channels.fetch;
 
             mockClient.guilds.cache.set('guild-123', mockGuild);

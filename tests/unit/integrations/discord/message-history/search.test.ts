@@ -1,13 +1,13 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import _ from 'lodash';
+import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import {
     createMessageSearchService,
     type MessageSearchService
 } from '@/integrations/discord/message-history/search';
+import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
-import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
-import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 
 /**
  * Creates a mock Discord search result for testing.
@@ -331,10 +331,10 @@ describe('createMessageSearchService', () => {
                 });
 
                 expect(result.messages).toHaveLength(messages.length);
-                // eslint-disable-next-line lodash/prefer-lodash-method -- _.forEach breaks TypeScript inference with test.each union types
-                messages.forEach((msg, idx) => {
+
+                for(const [idx, msg] of messages.entries()) {
                     expect(result.messages[idx].content).toBe(msg.content);
-                });
+                }
                 if(query === '') {
                     expect(result.metadata.query).toBe('');
                 }
@@ -865,9 +865,9 @@ describe('createMessageSearchService', () => {
                 })
             );
 
-            const result = limit !== undefined
-                ? await service.getRecentMessages(testChannelId, limit)
-                : await service.getRecentMessages(testChannelId);
+            const result = limit === undefined
+                ? await service.getRecentMessages(testChannelId)
+                : await service.getRecentMessages(testChannelId, limit);
 
             expect(result.messages).toHaveLength(expectedLength);
         });

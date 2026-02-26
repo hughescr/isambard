@@ -148,7 +148,7 @@ export function createIdleStatusGenerator(
                 }
 
                 const userPrompt = sections.length > 0
-                    ? sections.join('\n\n') + '\n\nStatus text (first person, under 50 chars):'
+                    ? `${sections.join('\n\n')}\n\nStatus text (first person, under 50 chars):`
                     : USER_PROMPT_WITHOUT_CONTEXT;
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });

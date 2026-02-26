@@ -5,13 +5,12 @@
  * Handles deferral when bot is busy and triggers perch when idle.
  */
 
+import type { Logger } from '@hughescr/logger';
 import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
-import type { Logger } from '@hughescr/logger';
-// eslint-disable-next-line boundaries/element-types -- Perch scheduler imports Discord state manager; decouple per roadmap
-import type { BotStateManager, StateChange } from '@/integrations/discord';
-import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
 import { getSlotForHour } from './schedule';
+import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
+import type { BotStateManager, StateChange } from '@/integrations/discord';
 
 /**
  * Dependencies for the perch scheduler.
@@ -247,7 +246,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             currentSlot,
             // Stryker disable all: Logging calculation for observability
             hoursSinceDeferred: state.pendingTriggerTime
-                ? Math.round((Date.now() - state.pendingTriggerTime.getTime()) / 3600000 * 10) / 10
+                ? Math.round((Date.now() - state.pendingTriggerTime.getTime()) / 3_600_000 * 10) / 10
                 : undefined,
             // Stryker restore all
         }, 'Bot now idle - running deferred perch with current slot');

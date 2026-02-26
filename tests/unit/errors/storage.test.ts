@@ -264,7 +264,7 @@ describe.concurrent('TextNotFoundError', () => {
 
 describe.concurrent('ContentTooLargeError', () => {
     test('should have correct properties with default max size', () => {
-        const error = new ContentTooLargeError('/memories/large/content', 400000);
+        const error = new ContentTooLargeError('/memories/large/content', 400_000);
         expect(error).toBeInstanceOf(ContentTooLargeError);
         expect(error).toBeInstanceOf(MemoryToolError);
         expect(error.name).toBe('ContentTooLargeError');
@@ -273,14 +273,14 @@ describe.concurrent('ContentTooLargeError', () => {
             'Memory content at /memories/large/content is too large: 400000 bytes (max: 350000 bytes)'
         );
         expect(error.context.path).toBe('/memories/large/content');
-        expect(error.context.size).toBe(400000);
-        expect(error.context.maxSize).toBe(350000);
+        expect(error.context.size).toBe(400_000);
+        expect(error.context.maxSize).toBe(350_000);
     });
 
     test('should handle custom max size', () => {
-        const error = new ContentTooLargeError('/memories/large/content', 400000, 300000);
+        const error = new ContentTooLargeError('/memories/large/content', 400_000, 300_000);
         expect(error.message).toContain('max: 300000 bytes');
-        expect(error.context.maxSize).toBe(300000);
+        expect(error.context.maxSize).toBe(300_000);
     });
 });
 

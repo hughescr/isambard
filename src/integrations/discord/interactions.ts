@@ -1,7 +1,7 @@
-import type { ButtonInteraction } from 'discord.js';
 import { logger } from '@hughescr/logger';
-import type { QuestionRegistry, QuestionAnswer } from '@/agent';
+import type { ButtonInteraction } from 'discord.js';
 import { createUserId, createChannelId } from './types';
+import type { QuestionRegistry, QuestionAnswer } from '@/agent';
 
 export interface InteractionHandlerConfig {
     questionRegistry: QuestionRegistry

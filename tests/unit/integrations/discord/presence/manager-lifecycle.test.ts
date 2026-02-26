@@ -1,12 +1,10 @@
-import _ from 'lodash';
 import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from 'bun:test';
-import type { Client } from 'discord.js';
-import { ActivityType } from 'discord.js';
-import { PresenceManager } from '@/integrations/discord/presence/manager';
-import type { PresencePhase, PresenceConfig } from '@/integrations/discord/presence/types';
-import type { PresenceManagerDeps } from '@/integrations/discord/presence/manager';
+import { type Client, ActivityType  } from 'discord.js';
+import _ from 'lodash';
+import { PresenceManager, type PresenceManagerDeps  } from '@/integrations/discord/presence/manager';
 import type { ActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import type { IdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
+import type { PresencePhase, PresenceConfig } from '@/integrations/discord/presence/types';
 
 // Typed mock shapes that expose both real interface and bun mock methods
 type MockWithCalls = ReturnType<typeof mock> & { mock: { calls: unknown[][] } };

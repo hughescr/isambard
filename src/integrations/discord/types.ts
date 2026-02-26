@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { AttachmentMetadataSchema } from './attachments/types';
-import { guildIdSchema } from '@/config';
-import type { GuildId } from '@/config';
+import { guildIdSchema, type GuildId  } from '@/config';
 
 export { guildIdSchema, type GuildId } from '@/config';
 

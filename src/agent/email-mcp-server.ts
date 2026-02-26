@@ -1,11 +1,11 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import _ from 'lodash';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import _ from 'lodash';
+import { z } from 'zod';
 /**
  * Format an email address for display to Claude in MCP tool responses.
  * WARNING: NOT RFC 2822 compliant — does NOT quote or escape special characters in names.
@@ -17,8 +17,7 @@ function formatAddressForDisplay(addr: { name?: string, address: string }): stri
     return addr.name ? `${addr.name} <${addr.address}>` : addr.address;
 }
 
-import { EmailFolder } from '@/integrations/email';
-import type { WildDuckClient, WildDuckAttachment, WildDuckAttachmentMeta, SendRateLimiter, EmailAllowlist } from '@/integrations/email';
+import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter, type EmailAllowlist  } from '@/integrations/email';
 import { sanitizeFilename, deduplicateFilename } from '@/utils';
 
 // Regex for Mailbox:UID format — e.g., "CleanInbox:42", "Sent Mail:7", "INBOX.Sub:15"
@@ -49,7 +48,7 @@ const READABLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox,
 function parseMailboxUid(message: string): { mailboxName: string, uid: number } {
     const colonIdx = message.lastIndexOf(':');
     const mailboxName = message.slice(0, colonIdx);
-    const uid = parseInt(message.slice(colonIdx + 1), 10);
+    const uid = Number.parseInt(message.slice(colonIdx + 1), 10);
     return { mailboxName, uid };
 }
 
@@ -166,8 +165,8 @@ async function saveEmailAttachments(
                 await writeFile(filePath, data);
             }
             attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${meta.contentType})`);
-        } catch (writeErr) {
-            const errMsg = _.isError(writeErr) ? writeErr.message : String(writeErr);
+        } catch (error) {
+            const errMsg = _.isError(error) ? error.message : String(error);
             logger.warn({ error: errMsg, filename: safeFilename, msg: 'Failed to save attachment (best-effort)' });
             attachmentLines.push(`- Note: could not save attachment ${safeFilename}: ${errMsg}`);
         }
@@ -295,18 +294,18 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         if(sendApprovalRequest) {
             try {
                 await sendApprovalRequest(toAddress, subject, draftUid, cc);
-            } catch (notifErr) {
+            } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send outbound approval request' });
+                logger.warn({ error: _.isError(error) ? error.message : String(error), msg: 'Failed to send outbound approval request' });
                 // Best-effort: flag the draft so periodic recheck can retry notification
                 // Stryker disable BlockStatement: catch block logs best-effort warning — logger.warn call on flagErr not verified by approval tests
                 try {
                     // Stryker disable next-line StringLiteral: flag name is configuration
                     await wildDuckClient.updateMessageFlags(EmailFolder.Drafts, draftUid, { addFlags: ['DiscordNotifyFailed'] });
                     await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, draftUid, { notifyAttempts: 1 });
-                } catch (flagErr) {
+                } catch (error) {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.warn({ error: _.isError(flagErr) ? flagErr.message : String(flagErr), msg: 'Failed to set DiscordNotifyFailed flag on draft' });
+                    logger.warn({ error: _.isError(error) ? error.message : String(error), msg: 'Failed to set DiscordNotifyFailed flag on draft' });
                 }
                 // Stryker restore BlockStatement
                 // Stryker disable next-line StringLiteral: Result message is configuration
@@ -388,9 +387,9 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 try {
                                     // Stryker disable next-line ObjectLiteral: Notification params are configuration
                                     await sendAdminNotification({ mailboxName, uid, reference: args.message });
-                                } catch (notifErr) {
+                                } catch (error) {
                                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                    logger.warn({ error: _.isError(notifErr) ? notifErr.message : String(notifErr), msg: 'Failed to send restricted mailbox notification' });
+                                    logger.warn({ error: _.isError(error) ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
                                 }
                                 // Stryker restore BlockStatement
                             }
@@ -410,7 +409,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             };
                         }
                         // Stryker disable next-line StringLiteral,ObjectLiteral: flag name and options are configuration constants
-                        await wildDuckClient.updateMessageFlags(mailboxName, uid, { addFlags: ['\\Seen'] });
+                        await wildDuckClient.updateMessageFlags(mailboxName, uid, { addFlags: [String.raw`\Seen`] });
 
                         // Lazy-fetch and save attachments to disk (keyed by sha1 of messageId).
                         // Message-ID is always present: RFC 5322 requires MDAs to add one if missing,
@@ -631,12 +630,9 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Check rate limit — warn but don't block
                         // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
                         let rateLimitWarning = '';
-                        if(rateLimiter) {
-                            // Stryker disable next-line ConditionalExpression,BlockStatement: rate limit warning is informational only
-                            if(rateLimiter.isAtLimit()) {
-                                // Stryker disable next-line StringLiteral: Warning message is configuration
-                                rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
-                            }
+                        if(rateLimiter?.isAtLimit()) {
+                            // Stryker disable next-line StringLiteral: Warning message is configuration
+                            rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
                         }
 
                         // Build attachments from file paths (Stryker disabled — disk I/O)
@@ -739,12 +735,9 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Check rate limit — warn but don't block
                         // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
                         let rateLimitWarning = '';
-                        if(rateLimiter) {
-                            // Stryker disable next-line ConditionalExpression,BlockStatement: rate limit warning is informational only
-                            if(rateLimiter.isAtLimit()) {
-                                // Stryker disable next-line StringLiteral: Warning message is configuration
-                                rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
-                            }
+                        if(rateLimiter?.isAtLimit()) {
+                            // Stryker disable next-line StringLiteral: Warning message is configuration
+                            rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
                         }
 
                         // Resolve WildDuck mailbox ID for the reference object

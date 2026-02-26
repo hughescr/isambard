@@ -1,10 +1,10 @@
 import { describe, test, expect, mock } from 'bun:test';
+import type { ContextBuilder } from '../../../../src/agent/context-builder';
 import {
     buildSystemPrompt,
     BASE_SYSTEM_PROMPT,
     DISCORD_CHANNEL_CONTEXT
 } from '../../../../src/agent/prompts/system-prompt';
-import type { ContextBuilder } from '../../../../src/agent/context-builder';
 
 describe.concurrent('system-prompt', () => {
     describe('constants', () => {

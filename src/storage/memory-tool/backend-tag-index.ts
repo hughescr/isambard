@@ -1,10 +1,9 @@
-import { DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, filter as _filter, every as _every, includes as _includes, chunk as _chunk, sortBy as _sortBy, keys as _keys, flatMap as _flatMap, values as _values, flatten as _flatten } from 'lodash';
+import { type DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import type { TagIndexItem } from './types';
-import type { MemoryPath } from './types';
-import { normalizeTags } from './key-generator';
+import { map as _map, filter as _filter, every as _every, includes as _includes, chunk as _chunk, sortBy as _sortBy, keys as _keys, flatMap as _flatMap, values as _values, flatten as _flatten } from 'lodash';
 import type { ListOptions, ListResult } from './backend-query';
+import { normalizeTags } from './key-generator';
+import { type TagIndexItem, type MemoryPath  } from './types';
 
 /**
  * Type for BatchWrite request items (matching lib-dynamodb's BatchWriteCommand input)
@@ -32,7 +31,7 @@ async function retryWithBackoff<T>(
             // Stryker disable next-line ConditionalExpression,EqualityOperator: Retry boundary - tested via public API retry count
             if(attempt < MAX_RETRIES) {
                 // Stryker disable next-line ArithmeticOperator: Backoff formula tested via timer verification; * vs / indistinguishable at attempt 1 (2^0=1)
-                const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+                const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
                 await new Promise(resolve => setTimeout(resolve, delay));
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Observational logging for debugging
                 logger.debug({ attempt, context, msg: `Tag index retry ${attempt}/${MAX_RETRIES}` });
@@ -88,7 +87,7 @@ export class MemoryToolBackendTagIndex {
                 // Stryker disable next-line ConditionalExpression,EqualityOperator: Retry boundary in batch write loop
                 if(attempt < MAX_RETRIES) {
                     // Stryker disable next-line ArithmeticOperator: Backoff formula tested via timer verification; * vs / indistinguishable at attempt 1 (2^0=1)
-                    const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+                    const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
                     await new Promise(resolve => setTimeout(resolve, delay));
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Observational logging for debugging
                     logger.debug({ attempt, msg: `Batch write retry ${attempt}/${MAX_RETRIES}` });
@@ -253,7 +252,7 @@ export class MemoryToolBackendTagIndex {
             for(const item of items) {
                 // Extract tag from GSI2SK: 'TAG#tagname' -> 'tagname'
                 const gsi2sk = item.GSI2SK as string;
-                const tag = gsi2sk.substring(4); // Remove 'TAG#' prefix
+                const tag = gsi2sk.slice(4); // Remove 'TAG#' prefix
                 const count = item.count as number;
                 results.push({ tag, count });
             }
@@ -318,7 +317,7 @@ export class MemoryToolBackendTagIndex {
         // Extract tags that failed from unprocessed PutRequests
         const failedTags = _map(allFailedRequests, (req) => {
             const pk = req.PutRequest?.Item?.PK as string;
-            return pk.substring(4); // Remove 'TAG#' prefix
+            return pk.slice(4); // Remove 'TAG#' prefix
         });
 
         // Only increment counts for tags that succeeded
@@ -360,7 +359,7 @@ export class MemoryToolBackendTagIndex {
         // Extract tags that failed from unprocessed DeleteRequests
         const failedTags = _map(allFailedRequests, (req) => {
             const pk = req.DeleteRequest?.Key?.PK as string;
-            return pk.substring(4); // Remove 'TAG#' prefix
+            return pk.slice(4); // Remove 'TAG#' prefix
         });
 
         // Only decrement counts for tags that succeeded

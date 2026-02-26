@@ -1,8 +1,7 @@
 import _ from 'lodash';
 import { defaultClassifier } from './classifier';
 import { calculateDelay } from './delay';
-import type { ErrorClassifier, RetryDeps, RetryPolicy } from './types';
-import { retryPolicySchema } from './types';
+import { type ErrorClassifier, type RetryDeps, type RetryPolicy, retryPolicySchema  } from './types';
 
 interface RetryAsyncOptions {
     policy?:     Partial<RetryPolicy>
@@ -60,8 +59,7 @@ export async function retryAsync<T>(
 
     for(let attempt = 1; attempt <= maxAttempts; /* Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop */ attempt++) {
         try {
-            const result = await operation();
-            return result;
+            return await operation();
         } catch (error) {
             lastError = error;
 

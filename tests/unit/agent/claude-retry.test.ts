@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { classifyClaudeError, createRetryableQuery } from '../../../src/agent/claude-retry';
 import type { RetryDeps, RetryLogger } from '../../../src/utils/retry/types';
 

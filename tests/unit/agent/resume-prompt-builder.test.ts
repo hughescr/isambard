@@ -1,7 +1,6 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
-import { buildResumePrompt } from '../../../src/agent/resume-prompt-builder';
-import type { ResumeContext } from '../../../src/agent/resume-prompt-builder';
+import _ from 'lodash';
+import { buildResumePrompt, type ResumeContext  } from '../../../src/agent/resume-prompt-builder';
 import type { MessageContext } from '../../../src/agent/types';
 
 describe('buildResumePrompt', () => {

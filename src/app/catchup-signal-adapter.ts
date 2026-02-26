@@ -1,8 +1,7 @@
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { MemoryToolBackend } from '@/storage';
-import { createMemoryPath } from '@/storage';
+import _ from 'lodash';
 import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord';
+import { type MemoryToolBackend, createMemoryPath  } from '@/storage';
 
 /**
  * Adapter interface for catch-up signal persistence.
@@ -38,11 +37,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 const path = createMemoryPath('/state/catchup-completion');
                 const existing = await memoryBackend.get(path);
                 const content = JSON.stringify(signal);
-                if(existing) {
-                    await memoryBackend.update(path, { content });
-                } else {
-                    await memoryBackend.create({ path, content, contentType: 'application/json' });
-                }
+                await (existing ? memoryBackend.update(path, { content }) : memoryBackend.create({ path, content, contentType: 'application/json' }));
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
                 const errorMsg = _.isError(error) ? error.message : String(error);
@@ -80,11 +75,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 const path = createMemoryPath('/state/catchup-inprogress');
                 const existing = await memoryBackend.get(path);
                 const content = JSON.stringify(signal);
-                if(existing) {
-                    await memoryBackend.update(path, { content });
-                } else {
-                    await memoryBackend.create({ path, content, contentType: 'application/json' });
-                }
+                await (existing ? memoryBackend.update(path, { content }) : memoryBackend.create({ path, content, contentType: 'application/json' }));
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
                 const errorMsg = _.isError(error) ? error.message : String(error);

@@ -1,6 +1,7 @@
-import _ from 'lodash';
 import { describe, test, expect, mock } from 'bun:test';
 import type { Client, TextChannel, Message, Collection, User } from 'discord.js';
+import _ from 'lodash';
+import { ErrorCode } from '@/errors';
 import {
     createMessageFetcher,
     ChannelNotAccessibleError,
@@ -8,7 +9,6 @@ import {
 } from '@/integrations/discord/message-history/fetcher';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
-import { ErrorCode } from '@/errors';
 
 /**
  * Creates an attachments map from an array of attachment objects.
@@ -450,7 +450,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 150; i++) {
                     messages.push(createMockMessage({
-                        id:      (100000000000000000n + BigInt(i)).toString(),
+                        id:      (100_000_000_000_000_000n + BigInt(i)).toString(),
                         content: `Message ${i}`,
                     }));
                 }
@@ -512,7 +512,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 150; i++) {
                     messages.push(createMockMessage({
-                        id:      (100000000000000000n + BigInt(i)).toString(),
+                        id:      (100_000_000_000_000_000n + BigInt(i)).toString(),
                         content: `Message ${i}`,
                     }));
                 }
@@ -550,7 +550,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 100; i++) {
                     messages.push(createMockMessage({
-                        id:      (100000000000000000n + BigInt(i)).toString(),
+                        id:      (100_000_000_000_000_000n + BigInt(i)).toString(),
                         content: `Message ${i}`,
                     }));
                 }
@@ -578,7 +578,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 50; i++) {
                     messages.push(createMockMessage({
-                        id:      (100000000000000000n + BigInt(i)).toString(),
+                        id:      (100_000_000_000_000_000n + BigInt(i)).toString(),
                         content: `Message ${i}`,
                     }));
                 }
@@ -600,7 +600,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 50; i++) {
                     messages.push(createMockMessage({
-                        id: (100000000000000000n + BigInt(i)).toString(),
+                        id: (100_000_000_000_000_000n + BigInt(i)).toString(),
                     }));
                 }
 
@@ -648,7 +648,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 150; i++) {
                     messages.push(createMockMessage({
-                        id:      (100000000000000000n + BigInt(i)).toString(),
+                        id:      (100_000_000_000_000_000n + BigInt(i)).toString(),
                         content: `Message ${i}`,
                     }));
                 }

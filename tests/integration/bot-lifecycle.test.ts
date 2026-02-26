@@ -1,22 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import '../setup'; // SST mock is applied via side effects
-import { createApp, type App } from '@/index';
-import * as configLoader from '@/config/loader';
-import * as discordBot from '@/integrations/discord/bot';
 import * as agentAgent from '@/agent/agent';
+import type { ClaudeAgent } from '@/agent/agent';
 import * as contextBuilder from '@/agent/context-builder';
+import type { ContextBuilder } from '@/agent/context-builder';
 import * as memoryMcpServer from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
-import * as dynamoClient from '@/storage/client';
-import * as channelRegistryModule from '@/integrations/discord/channel-registry';
-import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/config/schemas';
-import type { DiscordBot } from '@/integrations/discord/bot';
-import type { ClaudeAgent } from '@/agent/agent';
 import type { StreamTracker } from '@/agent/stream-tracker';
-import type { ContextBuilder } from '@/agent/context-builder';
+import * as configLoader from '@/config/loader';
+import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/config/schemas';
+import { createApp, type App } from '@/index';
+import * as discordBot from '@/integrations/discord/bot';
+import type { DiscordBot } from '@/integrations/discord/bot';
+import * as channelRegistryModule from '@/integrations/discord/channel-registry';
+import { createGuildId } from '@/integrations/discord/types';
+import * as dynamoClient from '@/storage/client';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { createGuildId } from '@/integrations/discord/types';
 
 /**
  * Integration tests for bot lifecycle and component wiring with Agent SDK.
@@ -116,10 +116,10 @@ describe('Bot Lifecycle Integration', () => {
         spies.length = 0;
 
         // Restore environment
-        if(originalEnv !== undefined) {
-            process.env.CLAUDE_CODE_OAUTH_TOKEN = originalEnv;
-        } else {
+        if(originalEnv === undefined) {
             delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        } else {
+            process.env.CLAUDE_CODE_OAUTH_TOKEN = originalEnv;
         }
     });
 

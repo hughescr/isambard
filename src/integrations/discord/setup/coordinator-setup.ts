@@ -1,16 +1,6 @@
+import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import type { ClaudeAgent } from '@/agent';
-import { setConversationContext, clearConversationContext } from '@/agent';
-import type { BotStateManager } from '../state';
-import { createDynamicStatusGenerator, type PresenceManager } from '../presence';
-import type { DiscordMessageContext } from '../types';
-import { MessageCoordinator } from '../message-coordinator';
-import type { CatchUpSessionRunner } from '../catchup';
-import type { PerchSessionRunner } from '@/agent';
-import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
-import type { DiscordRateLimiter } from '../rate-limiter';
 import {
     fetchImages,
     saveNonImageAttachment,
@@ -19,8 +9,16 @@ import {
     addAttachmentInfoToContexts
 } from '../attachments';
 import type { FetchedImage } from '../attachments/types';
+import type { CatchUpSessionRunner } from '../catchup';
+import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
+import { MessageCoordinator } from '../message-coordinator';
+import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
+import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponse } from '../response-sender';
+import type { BotStateManager } from '../state';
+import type { DiscordMessageContext } from '../types';
 import { createPresenceStreamHandler } from './presence-stream-handler';
+import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner  } from '@/agent';
 
 /**
  * Result of processing Discord message attachments

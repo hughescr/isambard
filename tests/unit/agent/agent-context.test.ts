@@ -1,13 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import { mockLogger } from '../../setup';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import _ from 'lodash';
 import { createClaudeAgent } from '../../../src/agent/agent';
-import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
-import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 import type { AgentStreamEvent } from '../../../src/agent/types';
+import { createGuildId, createChannelId, createUserId, type DiscordMessageContext  } from '../../../src/integrations/discord/types';
+import { mockLogger } from '../../setup';
 
 describe('createClaudeAgent context integration', () => {
     let mockMessageContext: DiscordMessageContext;
@@ -62,7 +61,7 @@ describe('createClaudeAgent context integration', () => {
                 if(sections.length === 0) {
                     return '';
                 }
-                return sections.join('\n\n') + '\n\n';
+                return `${sections.join('\n\n')}\n\n`;
             }),
         };
 

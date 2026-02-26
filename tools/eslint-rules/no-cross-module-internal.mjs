@@ -38,7 +38,7 @@ const MODULE_PATTERNS = [
  * Determine which module a file belongs to based on its relative path.
  */
 function getModuleForFile(filePath, cwd) {
-    const rel = relative(cwd, filePath).replace(/\\/g, '/');
+    const rel = relative(cwd, filePath).replaceAll('\\', '/');
     for(const { type, pattern } of MODULE_PATTERNS) {
         if(pattern.test(rel)) {
             return type;
@@ -64,15 +64,13 @@ function isExportInternal(sourceFile, exportedName) {
     // Walk through all statements in the file
     for(const statement of sourceFile.statements) {
         // Look for ExportDeclaration nodes (export { ... } from '...')
-        if(ts.isExportDeclaration(statement) && statement.exportClause) {
-            // Named exports
-            if(ts.isNamedExports(statement.exportClause)) {
-                for(const element of statement.exportClause.elements) {
-                    // element.name is the exported name (after 'as' if present)
-                    const exportName = element.name.text;
-                    if(exportName === exportedName) {
-                        return hasInternalJSDocTag(statement);
-                    }
+        if(ts.isExportDeclaration(statement) && statement.exportClause // Named exports
+          && ts.isNamedExports(statement.exportClause)) {
+            for(const element of statement.exportClause.elements) {
+                // element.name is the exported name (after 'as' if present)
+                const exportName = element.name.text;
+                if(exportName === exportedName) {
+                    return hasInternalJSDocTag(statement);
                 }
             }
         }

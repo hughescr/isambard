@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -36,7 +36,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 }
             });
 
-            test('should respect \\s+ regex not just \\s', () => {
+            test(String.raw`should respect \s+ regex not just \s`, () => {
                 // Tests regex mutation: /\s+/ vs /\s/
                 // Force splitting by using maxLength smaller than the message
                 const message = 'aa   bb   cc   dd   ee';
@@ -64,7 +64,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should flush non-empty currentChunk before character-splitting long word', () => {
                 // Tests: if(currentChunk.length > 0) push and reset before character split
-                const message = 'short ' + _.repeat('x', 100);
+                const message = `short ${_.repeat('x', 100)}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('short');
                 expect(result[1]).toBe(_.repeat('x', 50));
@@ -92,7 +92,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should reset currentChunk to empty after flushing for long word', () => {
                 // Tests: currentChunk = '' after pushing
-                const message = 'aa ' + _.repeat('x', 60) + ' bb';
+                const message = `aa ${_.repeat('x', 60)} bb`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('aa');
                 expect(result[1]).toBe(_.repeat('x', 50));

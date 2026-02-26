@@ -1,17 +1,16 @@
-import _ from 'lodash';
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
+import _ from 'lodash';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
-import { createMessageHandler } from '@/integrations/discord/handlers';
-import type { UserId, ChannelId } from '@/integrations/discord/types';
-import { createChannelId } from '@/integrations/discord/types';
-import type { QuestionRegistry } from '@/agent/question-registry';
-import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
-import type { BotStateManager } from '@/integrations/discord/state';
-import type { ChannelRegistryManager, DMTracker } from '@/integrations/discord/channel-registry';
 import type { PerchSessionRunner } from '@/agent/perch';
+import type { QuestionRegistry } from '@/agent/question-registry';
+import type { PendingQuestion } from '@/agent/question-registry/types';
+import type { ChannelRegistryManager, DMTracker } from '@/integrations/discord/channel-registry';
+import { createMessageHandler } from '@/integrations/discord/handlers';
+import type { BotStateManager } from '@/integrations/discord/state';
+import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
 // Note: We don't need to mock the rate limiter module because:
 // 1. The rate limiter internally calls message.reply() which we mock in tests
 // 2. The sendResponse function uses the rate limiter transparently
@@ -685,7 +684,7 @@ describe('Discord Event Handlers', () => {
                     triggerUserId:   '999999999999999999' as UserId,
                     originMessageId: '777777777777777777',
                     createdAt:       Date.now(),
-                    expiresAt:       Date.now() + 300000,
+                    expiresAt:       Date.now() + 300_000,
                     state:           'waiting',
                     options:         [{ label: 'Red', value: 'red' }, { label: 'Blue', value: 'blue' }],
                 };
@@ -871,7 +870,7 @@ describe('Discord Event Handlers', () => {
                             const code = (error as { code: string }).code;
                             if(_.includes(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'], code)) {
                                 // Retry immediately without delay
-                                return await operation();
+                                return operation();
                             }
                         }
                         throw error;

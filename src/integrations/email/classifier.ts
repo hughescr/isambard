@@ -1,10 +1,9 @@
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import { generateTextWithSystemPrompt } from '@/agent';
+import _ from 'lodash';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
-import { classifierVerdictSchema } from './types';
 import { ClassifierError } from './errors';
-import type { EmailMetadata, ClassifierVerdict } from './types';
+import { classifierVerdictSchema, type EmailMetadata, type ClassifierVerdict  } from './types';
+import { generateTextWithSystemPrompt } from '@/agent';
 
 /**
  * Email safety classifier using Claude Sonnet via the Claude Agent SDK.

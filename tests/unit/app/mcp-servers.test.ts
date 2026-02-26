@@ -1,15 +1,16 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { mockLogger } from '../../setup';
-import type { MCPServersOptions } from '@/app/mcp-servers';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
+import type { MCPServersOptions } from '@/app/mcp-servers';
+
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
-import type { MemoryToolBackend } from '@/storage/memory-tool';
-import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { Client } from 'discord.js';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { InboxManager } from '@/integrations/discord/inbox';
+import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { BotStateManager } from '@/integrations/discord/state';
+import type { MemoryToolBackend } from '@/storage/memory-tool';
 
 describe('createMCPServers', () => {
     let spies: ReturnType<typeof spyOn>[];

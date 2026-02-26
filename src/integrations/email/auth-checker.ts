@@ -18,7 +18,7 @@ function extractDomain(emailOrDomain: string): string {
     const cleaned = _.replace(_.trim(emailOrDomain), /^<|>$/g, '');
     const atIdx = cleaned.indexOf('@');
     // Stryker disable next-line ConditionalExpression,EqualityOperator,MethodExpression,ArithmeticOperator: atIdx boundary distinguishes address from bare domain; slice(atIdx+1) extracts domain after @
-    return atIdx >= 0 ? cleaned.slice(atIdx + 1) : cleaned;
+    return atIdx === -1 ? cleaned : cleaned.slice(atIdx + 1);
 }
 
 /**

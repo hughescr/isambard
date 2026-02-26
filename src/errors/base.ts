@@ -7,7 +7,7 @@
  * - Stack trace support via Error.captureStackTrace
  */
 
-import { ErrorCode } from './codes';
+import { type ErrorCode } from './codes';
 
 export class IsambardError extends Error {
     constructor(

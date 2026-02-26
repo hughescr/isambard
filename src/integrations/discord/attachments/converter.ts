@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import heicConvert from 'heic-convert';
+import _ from 'lodash';
 import { isConvertibleImageType } from './types';
 
 export interface ConversionResult {

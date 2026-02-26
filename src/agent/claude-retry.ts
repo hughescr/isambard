@@ -1,7 +1,6 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import _ from 'lodash';
-import { retryAsyncGenerator } from '@/utils';
-import type { ErrorClassification, ErrorClassifier, RetryDeps, RetryPolicy } from '@/utils';
+import { retryAsyncGenerator, type ErrorClassification, type ErrorClassifier, type RetryDeps, type RetryPolicy  } from '@/utils';
 
 export interface ClaudeRetryOptions {
     policy?: Partial<RetryPolicy>
@@ -16,7 +15,7 @@ function extractRetryAfter(error: object): number | undefined {
     // Check response body first (already in ms)
     if('retryAfter' in error) {
         const retryAfter = _.isString(error.retryAfter)
-            ? parseInt(error.retryAfter, 10)
+            ? Number.parseInt(error.retryAfter, 10)
             : (error.retryAfter as number);
 
         return retryAfter >= 0 ? retryAfter : undefined;
@@ -26,7 +25,7 @@ function extractRetryAfter(error: object): number | undefined {
     if('headers' in error && _.isObject(error.headers)) {
         const headers = error.headers as Record<string, unknown>;
         if('retry-after' in headers && _.isString(headers['retry-after'])) {
-            const retryAfterSeconds = parseInt(headers['retry-after'], 10);
+            const retryAfterSeconds = Number.parseInt(headers['retry-after'], 10);
             return retryAfterSeconds >= 0 ? retryAfterSeconds * 1000 : undefined;
         }
     }
@@ -79,7 +78,7 @@ function classifyHttpStatusError(error: object): ErrorClassification | undefined
     }
 
     const status = _.isString(error.status)
-        ? parseInt(error.status, 10)
+        ? Number.parseInt(error.status, 10)
         : (error.status as number);
 
     const message = 'message' in error && _.isString(error.message) && error.message

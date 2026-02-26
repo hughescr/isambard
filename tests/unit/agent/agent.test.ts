@@ -1,11 +1,10 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
-import _ from 'lodash';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
+import _ from 'lodash';
 import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs } from '../../../src/agent/agent';
+import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '../../../src/integrations/discord/types';
 import { mockLogger } from '../../setup';
-import type { DiscordMessageContext } from '../../../src/integrations/discord/types';
-import { createGuildId, createChannelId, createUserId } from '../../../src/integrations/discord/types';
 
 describe('parseToolName', () => {
     test.each([
@@ -2158,7 +2157,7 @@ describe('createClaudeAgent', () => {
                         type:             'system' as const,
                         subtype:          'compact_boundary' as const,
                         compact_metadata: {
-                            pre_tokens: 150000,
+                            pre_tokens: 150_000,
                             trigger:    'threshold',
                         },
                     };
@@ -2179,7 +2178,7 @@ describe('createClaudeAgent', () => {
             expect(compactionLog).toBeDefined();
             const compactionLogData = compactionLog![0] as { eventType: string, trigger: string, preTokens: number, msg: string };
             expect(compactionLogData.trigger).toBe('threshold');
-            expect(compactionLogData.preTokens).toBe(150000);
+            expect(compactionLogData.preTokens).toBe(150_000);
             expect(compactionLogData.msg).toContain('Context compaction completed');
             expect(compactionLogData.msg).toContain('150,000 tokens');
         });
@@ -2523,7 +2522,7 @@ describe('createClaudeAgent', () => {
                         type:             'system' as const,
                         subtype:          'compact_boundary' as const,
                         compact_metadata: {
-                            pre_tokens: 100000,
+                            pre_tokens: 100_000,
                             trigger:    'threshold',
                         },
                     };
@@ -2543,7 +2542,7 @@ describe('createClaudeAgent', () => {
 
             expect(compactionLog).toBeDefined();
             const compactionLogData = compactionLog![0] as { preTokens: number, msg: string };
-            expect(compactionLogData.preTokens).toBe(100000);
+            expect(compactionLogData.preTokens).toBe(100_000);
             // Message should include the token info, not empty string
             expect(compactionLogData.msg).toContain('100,000 tokens');
             expect(compactionLogData.msg).not.toBe('Context compaction completed');
@@ -2770,7 +2769,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'tool_output1',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg-task-1', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg-task-1', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -2963,7 +2962,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to1',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg1', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3012,7 +3011,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to1',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg1', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3058,7 +3057,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to1',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg1', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3105,7 +3104,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to1',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg1', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3152,7 +3151,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to1',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg1', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3289,7 +3288,7 @@ describe('createClaudeAgent', () => {
                                         type:  'tool_use' as const,
                                         id:    'to1',
                                         name:  'TaskOutput',
-                                        input: { task_id: 'bg1', block: true, timeout: 30000 },
+                                        input: { task_id: 'bg1', block: true, timeout: 30_000 },
                                     }],
                                 },
                             };
@@ -3306,7 +3305,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to2',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg2', block: true, timeout: 30000 },
+                                    input: { task_id: 'bg2', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3375,7 +3374,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    `to${callCount}`,
                                     name:  'TaskOutput',
-                                    input: { task_id: `bg${callCount - 1}`, block: true, timeout: 30000 },
+                                    input: { task_id: `bg${callCount - 1}`, block: true, timeout: 30_000 },
                                 }],
                             },
                         };

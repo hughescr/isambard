@@ -211,8 +211,7 @@ describe('DMTracker', () => {
             } as unknown as { user: typeof mockUser };
 
             // Mock guild.members.fetch to return a collection with the member
-            const mockMembers = new Map();
-            mockMembers.set(userId, mockMember);
+            const mockMembers = new Map([[userId, mockMember]]);
 
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined => {
                 for(const member of mockMembers.values()) {
@@ -270,8 +269,7 @@ describe('DMTracker', () => {
                 user: mockUser,
             } as unknown as { user: typeof mockUser };
 
-            const mockMembers = new Map();
-            mockMembers.set(userId, mockMember);
+            const mockMembers = new Map([[userId, mockMember]]);
 
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined => {
                 for(const member of mockMembers.values()) {
@@ -344,8 +342,7 @@ describe('DMTracker', () => {
                 user: mockUser,
             };
 
-            const mockMembers = new Map();
-            mockMembers.set(userId, mockMember);
+            const mockMembers = new Map([[userId, mockMember]]);
 
             // Implement find() to actually check the predicate
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined => {
@@ -408,8 +405,7 @@ describe('DMTracker', () => {
             };
 
             // Second guild - has the user
-            const matchingMembers = new Map();
-            matchingMembers.set(userId, mockMember);
+            const matchingMembers = new Map([[userId, mockMember]]);
             (matchingMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined => {
                 for(const member of matchingMembers.values()) {
                     if(predicate(member as unknown as typeof mockMember)) {

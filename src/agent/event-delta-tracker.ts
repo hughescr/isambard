@@ -6,8 +6,7 @@
  */
 
 import _ from 'lodash';
-import type { ContextBuilder } from './context-builder';
-import { formatMemoryPreview } from './context-builder';
+import { type ContextBuilder, formatMemoryPreview  } from './context-builder';
 
 /**
  * Event delta tracker for tracking new events during message processing.

@@ -1,9 +1,8 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
 import { padStart as _padStart, repeat as _repeat, every as _every } from 'lodash';
-import type { MemoryToolItemData } from '../../../src/storage/memory-tool/types';
-import { createMemoryPath } from '../../../src/storage/memory-tool/types';
-import { mockGenerateText } from '../../setup';
 import { summarizeEventBatches } from '../../../src/agent/event-summarizer';
+import { type MemoryToolItemData, createMemoryPath  } from '../../../src/storage/memory-tool/types';
+import { mockGenerateText } from '../../setup';
 
 describe('event-summarizer', () => {
     const now = new Date('2025-01-15T12:00:00Z');

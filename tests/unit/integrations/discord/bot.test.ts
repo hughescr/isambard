@@ -1,20 +1,19 @@
-import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
-import { filter as _filter, noop as _noop } from 'lodash';
-import type { Client } from 'discord.js';
-import { createDiscordBot } from '@/integrations/discord/bot';
-import type { DiscordConfig } from '@/config/schemas';
-import type { DiscordMessageContext } from '@/integrations/discord/types';
-import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import * as clientModule from '@/integrations/discord/client';
-import * as channelRegistryModule from '@/integrations/discord/channel-registry';
-import * as presenceModule from '@/integrations/discord/presence';
-import type { PresenceManager } from '@/integrations/discord/presence/manager';
-import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
-import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
-import { BotStateManagerImpl } from '@/integrations/discord/state';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
+import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
+import type { Client } from 'discord.js';
+import { filter as _filter, noop as _noop } from 'lodash';
+import type { DiscordConfig } from '@/config/schemas';
+import { createDiscordBot } from '@/integrations/discord/bot';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import * as channelRegistryModule from '@/integrations/discord/channel-registry';
+import * as clientModule from '@/integrations/discord/client';
+import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
+import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
+import * as presenceModule from '@/integrations/discord/presence';
+import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import { BotStateManagerImpl } from '@/integrations/discord/state';
+import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
 
 describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
@@ -207,8 +206,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000, // 2 seconds
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -307,8 +306,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -382,8 +381,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -485,7 +484,7 @@ describe('createDiscordBot', () => {
 
         test('should verify throttle works correctly with recordPresenceUpdate timing', async () => {
             // Use fake time to control Date.now() for throttle checks
-            const baseTime = 1000000;
+            const baseTime = 1_000_000;
             jest.setSystemTime(baseTime);
 
             const mockClient = {
@@ -502,8 +501,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      100, // Short throttle for testing
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -601,8 +600,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -882,8 +881,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -948,8 +947,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -988,8 +987,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 
@@ -1052,8 +1051,8 @@ describe('createDiscordBot', () => {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
-                    idleTimeoutMs:         60000,
-                    idleRefreshIntervalMs: 300000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
                 },
             };
 

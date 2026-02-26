@@ -13,12 +13,11 @@
  * - Duplicate transition prevention
  */
 
-import type { PresenceManager } from './manager.js';
-import type { PresencePhase } from './types.js';
-import { getToolDescription } from './types.js';
-import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
-import { extractToolUses, redactSensitiveArgs, type AgentStreamEvent } from '@/agent';
 import type { BotStateManager } from '../state/index.js';
+import type { PresenceManager } from './manager.js';
+import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
+import { type PresencePhase, getToolDescription  } from './types.js';
+import { extractToolUses, redactSensitiveArgs, type AgentStreamEvent } from '@/agent';
 
 /**
  * Determines whether synopsis generation should be attempted.
@@ -243,138 +242,149 @@ export function createStreamEventHandler(
     // eslint-disable-next-line complexity -- Event handler has inherent branching for different event types
     const onStreamEvent = (event: AgentStreamEvent): void => {
         // Map stream events to presence phases
-        if(event.type === 'assistant') {
+        switch(event.type) {
+            case 'assistant': {
             // Extract thinking content from message content blocks
-            interface ContentBlock {
-                type:      string
-                thinking?: string
-            }
-            const content = event.message?.content as ContentBlock[] | undefined;
-            if(content) {
-                for(const block of content) {
+                interface ContentBlock {
+                    type:      string
+                    thinking?: string
+                }
+                const content = event.message?.content as ContentBlock[] | undefined;
+                if(content) {
+                    for(const block of content) {
                     // Stryker disable next-line ConditionalExpression: Type guard - only thinking blocks have .thinking property
-                    if(block.type === 'thinking' && block.thinking) {
+                        if(block.type === 'thinking' && block.thinking) {
                         // Stryker disable next-line MethodExpression: Truncation optimization - bounds accumulated content
-                        accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
-                        // Stryker disable next-line OptionalChaining: Optional callback pattern
-                        onThinkingContentUpdate?.(accumulatedThinkingContent);
-                    }
-                }
-            }
-
-            // Extract tool_use blocks and store redacted inputs for later use
-            const toolUses = extractToolUses(event);
-            let hadToolUseUpdate = false;
-            for(const toolUse of toolUses) {
-                pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
-
-                // Trigger 'using_tool' presence update when tool_use blocks are detected
-                if(handleToolPhaseTransition(toolUse.name)) {
-                    hadToolUseUpdate = true;
-                }
-            }
-
-            // Accumulate response text for context (keep last 200 chars)
-            if(event.delta?.text) {
-                accumulatedText = (accumulatedText + event.delta.text).slice(-200);
-            }
-
-            // Skip thinking/responding phase detection if we just processed tool_use blocks
-            // The tool_use blocks indicate tool execution, not thinking/responding
-            if(hadToolUseUpdate) {
-                return;
-            }
-
-            // Stryker disable next-line StringLiteral: Equivalent - newPhase used only for state tracking; updatePhase uses hardcoded literals
-            const newPhase = event.delta?.text ? 'responding' : 'thinking';
-
-            if(newPhase !== currentPhase) {
-                currentPhase = newPhase;
-
-                if(newPhase === 'thinking') {
-                    // Check if we have accumulated context that warrants regeneration
-                    const hasThinkingContent = Boolean(accumulatedThinkingContent);
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: Synopsis optimization - tool history presence check
-                    const hasToolHistory = recentToolCalls.length > 0;
-
-                    // Stryker disable next-line ConditionalExpression,LogicalOperator: Synopsis optimization - regeneration threshold
-                    if((hasThinkingContent || hasToolHistory) && shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
-                        // Capture current state for async closure
-                        const capturedThinkingContent = accumulatedThinkingContent || undefined;
-                        const capturedRecentToolCalls = [...recentToolCalls];
-
-                        void (async () => {
-                            try {
-                                const synopsis = await dynamicStatusGenerator.generateSynopsis({
-                                    phase:           'thinking',
-                                    userMessage,
-                                    thinkingContent: capturedThinkingContent,
-                                    recentToolCalls: capturedRecentToolCalls,
-                                });
-                                // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
-                                if(completed) {
-                                    return; // Stale — handler already completed
-                                }
-                                // Stryker disable next-line ConditionalExpression: Null guard — skip update when Haiku returns null (in-flight/failed)
-                                if(synopsis === null) {
-                                    return; // Haiku in-flight or failed — skip presence update
-                                }
-                                // Stryker disable next-line ObjectLiteral: All properties required for presence update
-                                void safeUpdatePhase({
-                                    type:            'thinking',
-                                    startedAt:       new Date(),
-                                    userMessage,
-                                    generatedStatus: synopsis,
-                                });
-                            } catch{
-                                // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
-                                if(completed) {
-                                    return;
-                                }
-                                void safeUpdatePhase({
-                                    type:            'thinking',
-                                    startedAt:       new Date(),
-                                    userMessage,
-                                    generatedStatus: thinkingSynopsis,
-                                });
-                            }
-                        })();
-                    } else {
-                        // Use pre-generated thinking synopsis when no thinking content yet or dynamicStatusGenerator unavailable
-                        void safeUpdatePhase({
-                            type:            'thinking',
-                            startedAt:       new Date(),
-                            userMessage,
-                            generatedStatus: thinkingSynopsis,
-                        });
-                    }
-                } else {
-                    updatePhaseWithSynopsis(
-                        {
-                            phase:            'responding',
-                            userMessage,
-                            // Stryker disable next-line OptionalChaining: Equivalent - try/catch swallows TypeError when text is undefined
-                            // Stryker disable next-line MethodExpression: Truncation optimization for synopsis input
-                            responseFragment: event.delta?.text?.slice(0, 100),
-                            accumulatedText:  accumulatedText || undefined,
-                        },
-                        {
-                            type:      'responding',
-                            startedAt: new Date(),
+                            accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
+                            // Stryker disable next-line OptionalChaining: Optional callback pattern
+                            onThinkingContentUpdate?.(accumulatedThinkingContent);
                         }
-                    );
+                    }
                 }
+
+                // Extract tool_use blocks and store redacted inputs for later use
+                const toolUses = extractToolUses(event);
+                let hadToolUseUpdate = false;
+                for(const toolUse of toolUses) {
+                    pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
+
+                    // Trigger 'using_tool' presence update when tool_use blocks are detected
+                    if(handleToolPhaseTransition(toolUse.name)) {
+                        hadToolUseUpdate = true;
+                    }
+                }
+
+                // Accumulate response text for context (keep last 200 chars)
+                if(event.delta?.text) {
+                    accumulatedText = (accumulatedText + event.delta.text).slice(-200);
+                }
+
+                // Skip thinking/responding phase detection if we just processed tool_use blocks
+                // The tool_use blocks indicate tool execution, not thinking/responding
+                if(hadToolUseUpdate) {
+                    return;
+                }
+
+                // Stryker disable next-line StringLiteral: Equivalent - newPhase used only for state tracking; updatePhase uses hardcoded literals
+                const newPhase = event.delta?.text ? 'responding' : 'thinking';
+
+                if(newPhase !== currentPhase) {
+                    currentPhase = newPhase;
+
+                    if(newPhase === 'thinking') {
+                    // Check if we have accumulated context that warrants regeneration
+                        const hasThinkingContent = Boolean(accumulatedThinkingContent);
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator: Synopsis optimization - tool history presence check
+                        const hasToolHistory = recentToolCalls.length > 0;
+
+                        // Stryker disable next-line ConditionalExpression,LogicalOperator: Synopsis optimization - regeneration threshold
+                        if((hasThinkingContent || hasToolHistory) && shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
+                        // Capture current state for async closure
+                            const capturedThinkingContent = accumulatedThinkingContent || undefined;
+                            const capturedRecentToolCalls = [...recentToolCalls];
+
+                            void (async () => {
+                                try {
+                                    const synopsis = await dynamicStatusGenerator.generateSynopsis({
+                                        phase:           'thinking',
+                                        userMessage,
+                                        thinkingContent: capturedThinkingContent,
+                                        recentToolCalls: capturedRecentToolCalls,
+                                    });
+                                    // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
+                                    if(completed) {
+                                        return; // Stale — handler already completed
+                                    }
+                                    // Stryker disable next-line ConditionalExpression: Null guard — skip update when Haiku returns null (in-flight/failed)
+                                    if(synopsis === null) {
+                                        return; // Haiku in-flight or failed — skip presence update
+                                    }
+                                    // Stryker disable next-line ObjectLiteral: All properties required for presence update
+                                    void safeUpdatePhase({
+                                        type:            'thinking',
+                                        startedAt:       new Date(),
+                                        userMessage,
+                                        generatedStatus: synopsis,
+                                    });
+                                } catch{
+                                // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
+                                    if(completed) {
+                                        return;
+                                    }
+                                    void safeUpdatePhase({
+                                        type:            'thinking',
+                                        startedAt:       new Date(),
+                                        userMessage,
+                                        generatedStatus: thinkingSynopsis,
+                                    });
+                                }
+                            })();
+                        } else {
+                        // Use pre-generated thinking synopsis when no thinking content yet or dynamicStatusGenerator unavailable
+                            void safeUpdatePhase({
+                                type:            'thinking',
+                                startedAt:       new Date(),
+                                userMessage,
+                                generatedStatus: thinkingSynopsis,
+                            });
+                        }
+                    } else {
+                        updatePhaseWithSynopsis(
+                            {
+                                phase:            'responding',
+                                userMessage,
+                                // Stryker disable next-line OptionalChaining: Equivalent - try/catch swallows TypeError when text is undefined
+                                // Stryker disable next-line MethodExpression: Truncation optimization for synopsis input
+                                responseFragment: event.delta?.text?.slice(0, 100),
+                                accumulatedText:  accumulatedText || undefined,
+                            },
+                            {
+                                type:      'responding',
+                                startedAt: new Date(),
+                            }
+                        );
+                    }
+                }
+
+                break;
             }
-        } else if(event.type === 'tool_progress') {
+            case 'tool_progress': {
             // Track tool invocations to show which tool is currently executing.
             // Only update presence when transitioning to a new tool to minimize API calls.
-            handleToolPhaseTransition(event.tool_name ?? 'unknown');
-        } else if(event.type === 'result') {
+                handleToolPhaseTransition(event.tool_name ?? 'unknown');
+
+                break;
+            }
+            case 'result': {
             // Processing complete, go idle
-            void safeUpdatePhase({
-                type:  'idle',
-                since: new Date(),
-            });
+                void safeUpdatePhase({
+                    type:  'idle',
+                    since: new Date(),
+                });
+
+                break;
+            }
+        // No default
         }
     };
 

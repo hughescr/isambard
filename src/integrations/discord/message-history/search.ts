@@ -10,9 +10,8 @@ import _ from 'lodash';
 import type { z } from 'zod';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
+import { type DiscordSearchResult, type SearchResponse, type searchParamsSchema  } from '@/integrations/discord/message-history/types';
 import { createChannelId } from '@/integrations/discord/types';
-import type { DiscordSearchResult, SearchResponse } from '@/integrations/discord/message-history/types';
-import { searchParamsSchema } from '@/integrations/discord/message-history/types';
 
 /**
  * Input type for search parameters.

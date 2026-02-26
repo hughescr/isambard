@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { mockLogger, textContent } from '../../setup';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
+import { mockLogger, textContent } from '../../setup';
 
 interface SafeParseResult { success: boolean }
 interface UnwrappedSchema { safeParse: (v: unknown) => SafeParseResult }

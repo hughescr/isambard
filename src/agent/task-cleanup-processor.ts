@@ -13,10 +13,10 @@
 
 import { readdir, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import _ from 'lodash';
 import type { Logger } from '@hughescr/logger';
-import type { SessionId } from '@/storage';
+import _ from 'lodash';
 import { getTaskDirectoryPath as getTaskDirectoryPathImpl } from './task-directory-copier';
+import type { SessionId } from '@/storage';
 
 // Re-export for tests
 export { getTaskDirectoryPath } from './task-directory-copier';
@@ -298,7 +298,16 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                 const visited = new Set<string>();
                 const shouldDelete = canDelete(task, allTasks, memo, visited, tasksWithoutCompletedAt, retentionMs, nowMs);
 
-                if(!shouldDelete) {
+                if(shouldDelete) {
+                    // Delete task
+                    deleted++;
+                    // Stryker disable next-line ObjectLiteral: Logger debug object for observability
+                    logger.debug({
+                        taskId,
+                        // Stryker disable next-line StringLiteral: Log message for observability only
+                        msg: 'Deleting task (old and completed)',
+                    });
+                } else {
                     // Retain task - write to destination
                     const destFile = join(destPath, `${taskId}.json`);
                     try {
@@ -324,15 +333,6 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                         });
                         errors++;
                     }
-                } else {
-                    // Delete task
-                    deleted++;
-                    // Stryker disable next-line ObjectLiteral: Logger debug object for observability
-                    logger.debug({
-                        taskId,
-                        // Stryker disable next-line StringLiteral: Log message for observability only
-                        msg: 'Deleting task (old and completed)',
-                    });
                 }
             }
 

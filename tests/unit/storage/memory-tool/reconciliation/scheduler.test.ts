@@ -2,17 +2,17 @@
  * Tests for Tag Index Reconciliation Scheduler
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
-import type { MemoryToolItemData } from '@/storage/memory-tool/types';
-import type { ReconciliationConfig, ReconciliationResult } from '@/storage/memory-tool/reconciliation/types';
 import type { ReconcilerDeps, ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import {
     createReconciliationScheduler,
     type ReconciliationScheduler,
     type ReconciliationSchedulerDeps
 } from '@/storage/memory-tool/reconciliation/scheduler';
+import type { ReconciliationConfig, ReconciliationResult } from '@/storage/memory-tool/reconciliation/types';
+import type { MemoryToolItemData } from '@/storage/memory-tool/types';
 
 describe('ReconciliationScheduler', () => {
     let mockRunReconciliation: ReturnType<typeof mock>;

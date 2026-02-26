@@ -6,9 +6,9 @@
  */
 
 import { logger } from '@hughescr/logger';
-import type { ReconciliationConfig, ReconciliationState, ReconciliationResult } from './types';
-import type { ReconcilerDeps, ReconcilerOptions } from './reconciler';
 import { DateTime } from 'luxon';
+import type { ReconcilerDeps, ReconcilerOptions } from './reconciler';
+import type { ReconciliationConfig, ReconciliationState, ReconciliationResult } from './types';
 
 // ============================================================================
 // Dependencies & Interface
@@ -260,7 +260,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
         },
 
         async triggerNow(): Promise<ReconciliationResult | undefined> {
-            return await doTrigger();
+            return doTrigger();
         },
     };
 }

@@ -1,7 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { formatBytes, addAttachmentInfoToContexts } from '@/integrations/discord/attachments/formatting';
-import type { DiscordMessageContext } from '@/integrations/discord/types';
-import { createGuildId, createChannelId, createUserId } from '@/integrations/discord/types';
+import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '@/integrations/discord/types';
 
 describe('formatBytes', () => {
     test('returns "0B" for zero bytes', () => {
@@ -17,18 +16,18 @@ describe('formatBytes', () => {
     test('returns KB for values >= 1024 and < 1MB', () => {
         expect(formatBytes(1024)).toBe('1KB');
         expect(formatBytes(1536)).toBe('2KB'); // 1.5KB rounds to 2
-        expect(formatBytes(10240)).toBe('10KB');
+        expect(formatBytes(10_240)).toBe('10KB');
     });
 
     test('returns MB for values >= 1MB and < 1GB', () => {
-        expect(formatBytes(1048576)).toBe('1MB'); // 1024^2
-        expect(formatBytes(1572864)).toBe('2MB'); // 1.5MB rounds to 2
-        expect(formatBytes(10485760)).toBe('10MB');
+        expect(formatBytes(1_048_576)).toBe('1MB'); // 1024^2
+        expect(formatBytes(1_572_864)).toBe('2MB'); // 1.5MB rounds to 2
+        expect(formatBytes(10_485_760)).toBe('10MB');
     });
 
     test('returns GB for values >= 1GB', () => {
-        expect(formatBytes(1073741824)).toBe('1GB'); // 1024^3
-        expect(formatBytes(2147483648)).toBe('2GB');
+        expect(formatBytes(1_073_741_824)).toBe('1GB'); // 1024^3
+        expect(formatBytes(2_147_483_648)).toBe('2GB');
     });
 
     // Kill arithmetic operator mutants
@@ -36,7 +35,7 @@ describe('formatBytes', () => {
         // 2048 bytes = 2KB (if base is 1024)
         // Would be different if base changed
         expect(formatBytes(2048)).toBe('2KB');
-        expect(formatBytes(1048576)).toBe('1MB'); // Exactly 1024^2
+        expect(formatBytes(1_048_576)).toBe('1MB'); // Exactly 1024^2
     });
 
     // Kill string literal mutants
@@ -44,8 +43,8 @@ describe('formatBytes', () => {
         const result0 = formatBytes(0);
         const result1 = formatBytes(500);
         const result2 = formatBytes(2048);
-        const result3 = formatBytes(2097152);
-        const result4 = formatBytes(2147483648);
+        const result3 = formatBytes(2_097_152);
+        const result4 = formatBytes(2_147_483_648);
 
         expect(result0).toContain('B');
         expect(result1).toContain('B');

@@ -1,9 +1,8 @@
-import { z } from 'zod';
 import { DiscordSnowflake } from '@sapphire/snowflake';
+import { z } from 'zod';
 import { InvalidSnowflakeError } from '@/errors';
 
 // Re-export error class for backward compatibility
-export { InvalidSnowflakeError };
 
 /**
  * Discord epoch: January 1, 2015 00:00:00 UTC in milliseconds.
@@ -88,3 +87,5 @@ export function timestampToSnowflake(date: Date): string {
 
     return snowflake.toString();
 }
+
+export { InvalidSnowflakeError } from '@/errors';

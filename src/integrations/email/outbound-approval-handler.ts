@@ -1,14 +1,13 @@
-import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
-import { EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder  } from 'discord.js';
+import _ from 'lodash';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { EmailFolder } from '@/integrations/email/types';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
-const GREEN = 0x00AA00;
-const RED   = 0xFF0000;
+const GREEN = 0x00_AA_00;
+const RED   = 0xFF_00_00;
 
 export interface OutboundApprovalHandlerDeps {
     wildDuckClient: WildDuckClient
@@ -52,7 +51,7 @@ export class OutboundApprovalHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        const uid = parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr ?? '', 10);
         if(isNaN(uid)) {
             return;
         }
@@ -89,9 +88,9 @@ export class OutboundApprovalHandler {
                         embeds:     [],
                         components: [],
                     });
-                } catch (editReplyErr) {
+                } catch (error) {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.error({ err: editReplyErr, msg: 'Failed to send error editReply' });
+                    logger.error({ err: error, msg: 'Failed to send error editReply' });
                 }
             }
         }
@@ -108,7 +107,7 @@ export class OutboundApprovalHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        const uid = parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr ?? '', 10);
         if(isNaN(uid)) {
             return;
         }
@@ -158,7 +157,7 @@ export class OutboundApprovalHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        const uid = parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr ?? '', 10);
         if(isNaN(uid)) {
             return;
         }
@@ -183,9 +182,9 @@ export class OutboundApprovalHandler {
                         // Stryker disable next-line StringLiteral: addedBy value is configuration
                         addedBy: 'outbound-approval',
                     });
-                } catch (allowlistErr) {
+                } catch (error) {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.warn({ err: allowlistErr, uid, email, msg: 'Failed to add recipient to allowlist' });
+                    logger.warn({ err: error, uid, email, msg: 'Failed to add recipient to allowlist' });
                 }
             }
 
@@ -210,9 +209,9 @@ export class OutboundApprovalHandler {
                     embeds:     [],
                     components: [],
                 });
-            } catch (editReplyErr) {
+            } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.error({ err: editReplyErr, msg: 'Failed to send error editReply for select menu' });
+                logger.error({ err: error, msg: 'Failed to send error editReply for select menu' });
             }
         }
     }
@@ -246,9 +245,9 @@ export class OutboundApprovalHandler {
             toAddresses = _(msg?.to ?? []).map('address').compact().value();
             // Stryker disable next-line StringLiteral,ArrayDeclaration: 'address' is property shorthand; ?? [] is defensive fallback for null/undefined cc field
             ccAddresses = _(msg?.cc ?? []).map('address').compact().value();
-        } catch (fetchErr) {
+        } catch (error) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ err: fetchErr, uid, msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve' });
+            logger.warn({ err: error, uid, msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve' });
             // Fall back to simple approve on fetch error
             await this.handleApprove(interaction, uid);
             return;

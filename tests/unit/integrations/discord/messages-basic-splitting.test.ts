@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage,
     DISCORD_SAFE_LENGTH
@@ -90,8 +90,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
         describe('sentence splitting', () => {
             test('should split long paragraph at sentences when paragraph too long', () => {
-                const sentence1 = _.repeat('a', 80) + '.';
-                const sentence2 = _.repeat('b', 80) + '.';
+                const sentence1 = `${_.repeat('a', 80)}.`;
+                const sentence2 = `${_.repeat('b', 80)}.`;
                 const message = `${sentence1} ${sentence2}`;
 
                 const result = splitMessage(message, 100);
@@ -102,8 +102,8 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should handle sentences ending with exclamation mark', () => {
-                const sentence1 = _.repeat('a', 80) + '!';
-                const sentence2 = _.repeat('b', 80) + '!';
+                const sentence1 = `${_.repeat('a', 80)}!`;
+                const sentence2 = `${_.repeat('b', 80)}!`;
                 const message = `${sentence1} ${sentence2}`;
 
                 const result = splitMessage(message, 100);
@@ -114,8 +114,8 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should handle sentences ending with question mark', () => {
-                const sentence1 = _.repeat('a', 80) + '?';
-                const sentence2 = _.repeat('b', 80) + '?';
+                const sentence1 = `${_.repeat('a', 80)}?`;
+                const sentence2 = `${_.repeat('b', 80)}?`;
                 const message = `${sentence1} ${sentence2}`;
 
                 const result = splitMessage(message, 100);

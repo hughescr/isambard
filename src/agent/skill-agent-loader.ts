@@ -5,11 +5,11 @@
  * .claude directory structure for Claude Agent SDK.
  */
 
-import { readdir, rm, mkdir, copyFile, stat, readFile, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { readdir, rm, mkdir, copyFile, stat, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import _ from 'lodash';
 
 /**
  * Recursively copies all files from source to destination using COPYFILE_FICLONE.

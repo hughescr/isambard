@@ -5,7 +5,6 @@
  */
 
 import { logger } from '@hughescr/logger';
-import { ZodError } from 'zod';
 import {
     split as _split,
     map as _map,
@@ -16,6 +15,8 @@ import {
     includes as _includes,
     groupBy as _groupBy
 } from 'lodash';
+import { ZodError } from 'zod';
+import type { MemoryToolBackend } from './backend';
 import {
     memoryPathSchema,
     type MemoryPath,
@@ -23,7 +24,6 @@ import {
     type LayerName,
     extractLayerFromPath
 } from './types';
-import type { MemoryToolBackend } from './backend';
 import {
     PathNotFoundError,
     PathAlreadyExistsError,
@@ -89,9 +89,9 @@ export async function create(
     const contentType = detectContentType(params.path);
 
     await backend.create({
-        path:        memoryPath,
-        content:     params.file_text,
-        contentType: contentType,
+        path:    memoryPath,
+        content: params.file_text,
+        contentType,
     });
 
     return `Memory successfully created at ${params.path}`;
@@ -404,9 +404,9 @@ export async function consolidate(
     // Create summary at target
     const contentType = detectContentType(params.target_path);
     await backend.create({
-        path:        targetPath,
-        content:     params.summary,
-        contentType: contentType,
+        path:    targetPath,
+        content: params.summary,
+        contentType,
     });
 
     // Delete sources if requested

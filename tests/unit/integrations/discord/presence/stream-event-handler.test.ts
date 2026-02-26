@@ -14,13 +14,12 @@
 
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { constant, find, filter, some, repeat, endsWith } from 'lodash';
-import { createStreamEventHandler } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
-import type { StreamEventHandlerDeps } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
+import type { AgentStreamEvent } from '../../../../../src/agent/types.js';
 import type { PresenceManager } from '../../../../../src/integrations/discord/presence/manager.js';
 import type { DynamicStatusGenerator } from '../../../../../src/integrations/discord/presence/status-generator-dynamic.js';
-import type { AgentStreamEvent } from '../../../../../src/agent/types.js';
-import type { BotStateManager } from '../../../../../src/integrations/discord/state/index.js';
+import { createStreamEventHandler, type StreamEventHandlerDeps  } from '../../../../../src/integrations/discord/presence/stream-event-handler.js';
 import type { SynopsisContext } from '../../../../../src/integrations/discord/presence/types.js';
+import type { BotStateManager } from '../../../../../src/integrations/discord/state/index.js';
 
 // Helper to wait for async promises to settle
 const flushPromises = (): Promise<void> => new Promise((resolve) => {

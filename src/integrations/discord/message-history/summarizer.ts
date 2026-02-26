@@ -10,8 +10,8 @@
 
 import _ from 'lodash';
 import pLimit from 'p-limit';
-import { generateText } from '@/agent';
 import type { DiscordSearchResult, OverflowSummary, BatchOverflowSummary } from './types';
+import { generateText } from '@/agent';
 
 /**
  * Options for creating a message summarizer.
@@ -87,7 +87,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
     async function summarizeContent(content: string): Promise<string> {
         // Stryker disable next-line StringLiteral: Template placeholder for content substitution
         const prompt = _.replace(SUMMARIZATION_PROMPT, '{content}', content);
-        return await generateText(prompt);
+        return generateText(prompt);
     }
 
     /**

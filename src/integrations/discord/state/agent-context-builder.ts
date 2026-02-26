@@ -109,7 +109,7 @@ export function createAgentContextBuilder(deps: AgentContextBuilderDeps): AgentC
             const state = stateManager.getState();
 
             switch(state.mode) {
-                case 'idle':
+                case 'idle': {
                     return {
                         mcpServers: [
                             { name: 'memory', enabled: false },
@@ -122,8 +122,9 @@ export function createAgentContextBuilder(deps: AgentContextBuilderDeps): AgentC
                             includeFullContext: false,
                         },
                     };
+                }
 
-                case 'processing_message':
+                case 'processing_message': {
                     return {
                         mcpServers: [
                             { name: 'memory', enabled: true },
@@ -136,6 +137,7 @@ export function createAgentContextBuilder(deps: AgentContextBuilderDeps): AgentC
                             includeFullContext: true,
                         },
                     };
+                }
 
                 case 'catching_up': {
                     const catchingUpContext = state.modeContext as CatchingUpModeContext;
@@ -163,7 +165,7 @@ export function createAgentContextBuilder(deps: AgentContextBuilderDeps): AgentC
                     };
                 }
 
-                case 'perching':
+                case 'perching': {
                     return {
                         mcpServers: [
                             { name: 'memory', enabled: true },
@@ -176,6 +178,7 @@ export function createAgentContextBuilder(deps: AgentContextBuilderDeps): AgentC
                             includeFullContext: true,
                         },
                     };
+                }
 
                 default: {
                     // Type-safe exhaustiveness check

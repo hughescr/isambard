@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { resolveChannelId } from '../../../../../src/integrations/discord/channel-registry/resolve';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
-import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
+import { resolveChannelId } from '../../../../../src/integrations/discord/channel-registry/resolve';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
+import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
 
 describe('resolveChannelId', () => {
     let mockRegistry: ChannelRegistryManager;

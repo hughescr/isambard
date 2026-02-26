@@ -1,6 +1,3 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { mockClient } from 'aws-sdk-client-mock';
-import _ from 'lodash';
 import {
     DynamoDBDocumentClient,
     PutCommand,
@@ -9,11 +6,13 @@ import {
     UpdateCommand,
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
-import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
+import { mockClient } from 'aws-sdk-client-mock';
+import { describe, test, expect, beforeEach, afterEach, type mock, spyOn } from 'bun:test';
+import _ from 'lodash';
 import { ItemNotFoundError, ValidationError } from '@/errors';
+import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
+import { type ChannelMetadata, type ChannelStorageRecord, WELL_KNOWN_CHANNELS  } from '@/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
-import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
-import { WELL_KNOWN_CHANNELS } from '@/integrations/discord/channel-registry/types';
 import * as dynamoRetry from '@/storage/dynamo-retry';
 
 describe('ChannelRegistryBackend', () => {

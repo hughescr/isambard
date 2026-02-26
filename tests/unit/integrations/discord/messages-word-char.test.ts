@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';

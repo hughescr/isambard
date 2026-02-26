@@ -1,5 +1,7 @@
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { map as _map, sortBy as _sortBy, take as _take, chain as _chain, orderBy as _orderBy } from 'lodash';
+import { type MemoryToolBackendTagIndex } from './backend-tag-index';
+import { sigmoidScore } from './sigmoid';
 import {
     type MemoryToolItemData,
     type MemoryToolItem,
@@ -7,8 +9,6 @@ import {
     type TagIndexItem,
     createLayerName
 } from './types';
-import { MemoryToolBackendTagIndex } from './backend-tag-index';
-import { sigmoidScore } from './sigmoid';
 
 export interface ListOptions {
     limit?:     number

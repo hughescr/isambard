@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
-import { createDiscordClient } from '@/integrations/discord/client';
 import type { DiscordConfig } from '@/config/schemas';
+import { createDiscordClient } from '@/integrations/discord/client';
 import { createGuildId } from '@/integrations/discord/types';
 
 describe.concurrent('createDiscordClient', () => {

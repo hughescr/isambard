@@ -10,8 +10,8 @@ import {
     type PerchResumedOptions,
     type PerchTimeoutOptions
 } from '@/agent/perch/prompts';
-import type { PerchSlot } from '@/agent/perch/types';
 import { SLOT_CONFIGS } from '@/agent/perch/schedule';
+import type { PerchSlot } from '@/agent/perch/types';
 
 describe.concurrent('buildPerchPrompt', () => {
     describe.concurrent('unscheduled slot', () => {
@@ -350,7 +350,7 @@ describe.concurrent('getSuggestionLevelDescription edge cases', () => {
 describe.concurrent('buildPerchResumedPrompt', () => {
     test('should include time header', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -361,7 +361,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should include PERCH TIME RESUMED header', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 60000,
+            suspendedDurationMs: 60_000,
             interruptingSummary: 'A message from Alice in #dev',
         };
 
@@ -371,7 +371,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should format suspension duration in minutes', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 180000, // 3 minutes
+            suspendedDurationMs: 180_000, // 3 minutes
             interruptingSummary: 'A message from Bob in #test',
         };
 
@@ -381,7 +381,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should format less than 1 minute duration', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 20000, // 20 seconds (rounds to 0 minutes)
+            suspendedDurationMs: 20_000, // 20 seconds (rounds to 0 minutes)
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -391,7 +391,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should include interrupting message summary', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Alice in #dev',
         };
 
@@ -402,7 +402,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should include new events when provided', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
             newEventsSummary:    '- /events/2024-01-01.md: New event logged\n- /state/project.md: Updated status',
         };
@@ -414,7 +414,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should omit new events section when not provided', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -427,7 +427,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should include TaskList reminder', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -438,7 +438,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should format single minute duration correctly', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 90000, // 1.5 minutes, rounds to 2
+            suspendedDurationMs: 90_000, // 1.5 minutes, rounds to 2
             interruptingSummary: 'A message from Bob in #test',
         };
 
@@ -448,7 +448,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should format exactly 1 minute as singular "minute" not "minutes"', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 60000, // exactly 1 minute
+            suspendedDurationMs: 60_000, // exactly 1 minute
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -459,7 +459,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should join sections with newlines', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -471,7 +471,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should mention suspension for message handling', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
         };
 
@@ -482,7 +482,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
     test('should instruct to continue perch work', () => {
         const options: PerchResumedOptions = {
-            suspendedDurationMs: 120000,
+            suspendedDurationMs: 120_000,
             interruptingSummary: 'A message from Craig in #general',
         };
 

@@ -1,6 +1,6 @@
+import { unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
 import _ from 'lodash';
 import removeMarkdown from 'remove-markdown';
-import { unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
 import { cleanupSession } from './session-cleanup';
 
 /**

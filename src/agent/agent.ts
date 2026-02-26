@@ -1,20 +1,17 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpServerConfig, SDKUserMessage, SdkPluginConfig, SDKCompactBoundaryMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
+import { query, type McpServerConfig, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
-import type { MessageContext, PlatformImage } from './types';
-import { formatLocalDateTime, resolveTimezone } from '@/utils';
-import type { ContextBuilder } from './context-builder';
-import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
-import { cleanupSession, extractSessionId } from './session-cleanup';
-import type { AgentStreamEvent } from './types';
 import { createRetryableQuery } from './claude-retry';
-import { loadRetryConfig } from '@/config';
-import type { ResumeContext } from './resume-prompt-builder';
-import { StreamTracker } from './stream-tracker';
-import { buildResumePrompt } from './resume-prompt-builder';
+import type { ContextBuilder } from './context-builder';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
+import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
+import { type ResumeContext, buildResumePrompt  } from './resume-prompt-builder';
+import { cleanupSession, extractSessionId } from './session-cleanup';
+import { StreamTracker } from './stream-tracker';
 import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
+import { type AgentStreamEvent, type MessageContext, type PlatformImage  } from './types';
+import { loadRetryConfig } from '@/config';
+import { formatLocalDateTime, resolveTimezone } from '@/utils';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
@@ -95,8 +92,7 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
     const content = message.message?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
     const textBlocks = _.filter(content ?? [], { type: 'text' });
-    const text = _.chain(textBlocks).map('text').compact().join('\n').trim().value();
-    return text;
+    return _.chain(textBlocks).map('text').compact().join('\n').trim().value();
 }
 
 /**
@@ -117,8 +113,7 @@ export function extractThinkingContent(message: { type: string, message?: { cont
     const content = message.message?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
     const thinkingBlocks = _.filter(content ?? [], { type: 'thinking' });
-    const text = _.chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
-    return text;
+    return _.chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
 }
 
 /**
@@ -221,11 +216,7 @@ export function redactSensitiveArgs(input: unknown): unknown {
     if(_.isPlainObject(input)) {
         const result: Record<string, unknown> = {};
         for(const [key, value] of _.toPairs(input as Record<string, unknown>)) {
-            if(isSensitiveKey(key)) {
-                result[key] = '[REDACTED]';
-            } else {
-                result[key] = redactSensitiveArgs(value);
-            }
+            result[key] = isSensitiveKey(key) ? '[REDACTED]' : redactSensitiveArgs(value);
         }
         return result;
     }
@@ -577,21 +568,25 @@ function logSystemEvent(message: AgentStreamEvent): void {
  */
 export function logStreamEvent(message: AgentStreamEvent): void {
     switch(message.type) {
-        case 'user':
+        case 'user': {
             logUserEvent(message);
             break;
+        }
 
-        case 'assistant':
+        case 'assistant': {
             logAssistantEvent(message);
             break;
+        }
 
-        case 'tool_progress':
+        case 'tool_progress': {
             logToolProgressEvent(message as AgentStreamEvent & { tool_name?: string });
             break;
+        }
 
-        case 'tool_result':
+        case 'tool_result': {
             logToolResultEvent(message as AgentStreamEvent & { tool_name?: string });
             break;
+        }
 
         // Stryker disable ConditionalExpression,BlockStatement: Observability - switch case routing and logging don't affect return value
         case 'result': {
@@ -607,9 +602,10 @@ export function logStreamEvent(message: AgentStreamEvent): void {
         }
         // Stryker restore ConditionalExpression,BlockStatement
 
-        case 'system':
+        case 'system': {
             logSystemEvent(message);
             break;
+        }
     }
 }
 
@@ -882,11 +878,11 @@ function buildQueryOptions(
         plugins:           plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode:    'acceptEdits' as const,
         allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
-        maxThinkingTokens: 10000,
+        maxThinkingTokens: 10_000,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
         compactionControl: {
             enabled:               true,
-            contextTokenThreshold: 150000,
+            contextTokenThreshold: 150_000,
             model:                 'haiku',
             summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
         },

@@ -1,6 +1,7 @@
+import type { Logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import _ from 'lodash';
-import type { Logger } from '@hughescr/logger';
+import type { ContextBuilder } from '@/agent/context-builder';
 import {
     createPerchSessionRunner,
     type PerchSessionRunnerDeps,
@@ -8,10 +9,9 @@ import {
     type AgentSessionResult,
     type InterruptingMessage
 } from '@/agent/perch/session-runner';
-import type { BotStateManager, BotState, PerchingModeContext } from '@/integrations/discord/state';
 import type { PerchConfig } from '@/agent/perch/types';
+import type { BotStateManager, BotState, PerchingModeContext } from '@/integrations/discord/state';
 import { type ChannelId } from '@/integrations/discord/types';
-import type { ContextBuilder } from '@/agent/context-builder';
 import { createMemoryPath, createContentType } from '@/storage/memory-tool/types';
 
 // Mock logger
@@ -899,15 +899,13 @@ describe('PerchSessionRunner - Suspension', () => {
         let callCount = 0;
         const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
             callCount++;
-            if(callCount === 1) {
-                return new Promise((resolve) => {
+            return callCount === 1
+                ? new Promise((resolve) => {
                     options.abortSignal.addEventListener('abort', () => {
                         resolve({ completed: false, sessionId: 'session-123' });
                     });
-                });
-            } else {
-                return { completed: true, sessionId: 'session-123' };
-            }
+                })
+                : { completed: true, sessionId: 'session-123' };
         });
 
         const deps: PerchSessionRunnerDeps = {

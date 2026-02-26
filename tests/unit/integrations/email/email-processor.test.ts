@@ -1,12 +1,11 @@
-import _ from 'lodash';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import _ from 'lodash';
 import { mockLogger } from '../../../setup';
-import { EmailProcessor } from '@/integrations/email/email-processor';
-import { EmailProcessingError } from '@/integrations/email/errors';
-import { EmailFolder } from '@/integrations/email/types';
-import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
+import { EmailProcessor } from '@/integrations/email/email-processor';
+import { EmailProcessingError } from '@/integrations/email/errors';
+import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
 // ---------------------------------------------------------------------------

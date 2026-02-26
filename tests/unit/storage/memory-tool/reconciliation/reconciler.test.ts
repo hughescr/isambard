@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { mockClient } from 'aws-sdk-client-mock';
-import { filter as _filter, map as _map, replace as _replace } from 'lodash';
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+import { mockClient } from 'aws-sdk-client-mock';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { filter as _filter, map as _map, replace as _replace } from 'lodash';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
+import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
 
 describe('delay', () => {
@@ -181,7 +181,7 @@ describe('runReconciliation', () => {
         }
 
         // Mock GSI2 query returning tag names
-        const tagCountItems = _map(Array.from(byTag.keys()), tag => ({
+        const tagCountItems = _map([...byTag.keys()], tag => ({
             PK:     `TAG#${tag}`,
             SK:     'META_COUNT',
             GSI2PK: 'TAG_COUNTS',
@@ -283,7 +283,6 @@ describe('runReconciliation', () => {
             const createSpy = mock(async (path: string, tags: Set<string>, updatedAt: string, contentPreview: string) => {
                 // Verify contentPreview is empty string (not 'No content' or some other value)
                 expect(contentPreview).toBe('');
-                return Promise.resolve();
             });
             tagIndex.createTagIndexItems = createSpy;
 
@@ -2207,7 +2206,7 @@ describe('runReconciliation', () => {
             const result = await runReconciliation(deps, options);
 
             expect(result.totalDurationMs).toBeGreaterThanOrEqual(0);
-            expect(result.totalDurationMs).toBeLessThan(10000); // Should complete in less than 10s
+            expect(result.totalDurationMs).toBeLessThan(10_000); // Should complete in less than 10s
         });
     });
 });

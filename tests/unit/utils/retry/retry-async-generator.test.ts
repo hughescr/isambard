@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
+import _ from 'lodash';
 import { retryAsyncGenerator } from '../../../../src/utils/retry/retry-async-generator';
 import type { ErrorClassification, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
 
@@ -12,7 +12,7 @@ describe('retryAsyncGenerator', () => {
     const defaultPolicy: RetryPolicy = {
         maxAttempts:       3,
         baseDelayMs:       1000,
-        maxDelayMs:        30000,
+        maxDelayMs:        30_000,
         backoffMultiplier: 2,
         jitterFraction:    0.1,
     };

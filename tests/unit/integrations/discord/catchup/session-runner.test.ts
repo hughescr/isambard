@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { createCatchUpSessionRunner } from '@/integrations/discord/catchup/session-runner';
-import type {
-    CatchUpSessionRunnerDeps,
-    CatchUpCompletionSignal,
-    CatchUpInProgressSignal,
-    RunAgentSessionOptions,
-    AgentSessionResult,
-    InterruptingMessage
+import { createCatchUpSessionRunner,
+    type CatchUpSessionRunnerDeps,
+    type CatchUpCompletionSignal,
+    type CatchUpInProgressSignal,
+    type RunAgentSessionOptions,
+    type AgentSessionResult,
+    type InterruptingMessage
 } from '@/integrations/discord/catchup/session-runner';
-import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state';
 import type { InboxManager } from '@/integrations/discord/inbox';
+import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state';
 import { createChannelId, type ChannelId } from '@/integrations/discord/types';
 
 describe('CatchUpSessionRunner', () => {
@@ -325,7 +324,7 @@ describe('CatchUpSessionRunner', () => {
                         resolve({ completed: false, sessionId: 'session-123' });
                     });
                     // Simulate long-running session
-                    setTimeout(() => resolve({ completed: true }), 10000);
+                    setTimeout(() => resolve({ completed: true }), 10_000);
                 });
             });
 
@@ -442,7 +441,7 @@ describe('CatchUpSessionRunner', () => {
                             // Return incomplete with session ID
                             resolve({ completed: false, sessionId: 'session-1' });
                         });
-                        setTimeout(() => resolve({ completed: true, sessionId: 'session-1' }), 10000);
+                        setTimeout(() => resolve({ completed: true, sessionId: 'session-1' }), 10_000);
                     });
                 }
 
@@ -637,7 +636,7 @@ describe('CatchUpSessionRunner', () => {
             mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
                 capturedSignal = options.abortSignal;
                 return new Promise((resolve) => {
-                    setTimeout(() => resolve({ completed: true }), 10000);
+                    setTimeout(() => resolve({ completed: true }), 10_000);
                 });
             });
 
@@ -670,7 +669,7 @@ describe('CatchUpSessionRunner', () => {
             expect(mockStateManager.goIdle).toHaveBeenCalled();
 
             // Clean up by advancing timers to complete the promise
-            jest.advanceTimersByTime(10000);
+            jest.advanceTimersByTime(10_000);
             await startPromise;
         });
 
@@ -761,7 +760,7 @@ describe('CatchUpSessionRunner', () => {
             mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
                 capturedSignal = options.abortSignal;
                 return new Promise((resolve) => {
-                    setTimeout(() => resolve({ completed: true }), 10000);
+                    setTimeout(() => resolve({ completed: true }), 10_000);
                 });
             });
 
@@ -794,7 +793,7 @@ describe('CatchUpSessionRunner', () => {
             expect(capturedSignal!.aborted).toBe(true);
 
             // Clean up by advancing timers to complete the promise
-            jest.advanceTimersByTime(10000);
+            jest.advanceTimersByTime(10_000);
             await startPromise;
         });
     });
@@ -1019,7 +1018,7 @@ describe('CatchUpSessionRunner', () => {
             mockRunAgentSession.mockImplementation((options: RunAgentSessionOptions) => {
                 capturedSignal = options.abortSignal;
                 return new Promise((resolve) => {
-                    setTimeout(() => resolve({ completed: true }), 10000);
+                    setTimeout(() => resolve({ completed: true }), 10_000);
                 });
             });
 
@@ -1056,7 +1055,7 @@ describe('CatchUpSessionRunner', () => {
             expect(capturedSignal?.aborted).toBe(true);
 
             // Complete the promise
-            jest.advanceTimersByTime(10000);
+            jest.advanceTimersByTime(10_000);
             await resumePromise;
         });
 
@@ -1075,7 +1074,7 @@ describe('CatchUpSessionRunner', () => {
                         abortedDuringResume = true;
                         resolve({ completed: false, sessionId: 'aborted-session' });
                     });
-                    setTimeout(() => resolve({ completed: true }), 10000);
+                    setTimeout(() => resolve({ completed: true }), 10_000);
                 });
             });
 
@@ -1107,7 +1106,7 @@ describe('CatchUpSessionRunner', () => {
             });
 
             // Complete the promise
-            jest.advanceTimersByTime(10000);
+            jest.advanceTimersByTime(10_000);
             await resumePromise;
 
             // Verify session was aborted during resume
@@ -1276,7 +1275,7 @@ describe('CatchUpSessionRunner', () => {
                         options.abortSignal.addEventListener('abort', () => {
                             resolve({ completed: false, sessionId: 'preserved-session' });
                         });
-                        setTimeout(() => resolve({ completed: true, sessionId: 'preserved-session' }), 10000);
+                        setTimeout(() => resolve({ completed: true, sessionId: 'preserved-session' }), 10_000);
                     });
                 }
 

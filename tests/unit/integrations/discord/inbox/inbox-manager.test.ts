@@ -1,12 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
-import type { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
-import type { MessageSearchService } from '@/integrations/discord/message-history/search';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
-import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
-import { mockLogger } from '../../../../setup';
 import _ from 'lodash';
+import { mockLogger } from '../../../../setup';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
+import { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
+import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
+import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
 
 describe('InboxManager', () => {
     let mockCheckpointManager: CheckpointManager;

@@ -1,8 +1,7 @@
 import _ from 'lodash';
 import { defaultClassifier } from './classifier';
 import { calculateDelay } from './delay';
-import type { ErrorClassifier, RetryDeps, RetryPolicy } from './types';
-import { retryPolicySchema } from './types';
+import { type ErrorClassifier, type RetryDeps, type RetryPolicy, retryPolicySchema  } from './types';
 
 interface RetryAsyncGeneratorOptions {
     policy?:     Partial<RetryPolicy>

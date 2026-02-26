@@ -1,8 +1,8 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
 import { constant as _constant, keys as _keys, repeat as _repeat, replace as _replace, size as _size, isString as _isString } from 'lodash';
-import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
+import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 
 describe('IdleStatusGenerator', () => {
     const mockLogger: IdleStatusGeneratorDeps['logger'] = {
@@ -273,7 +273,7 @@ describe('IdleStatusGenerator', () => {
 
         test('should slice starting from index 0', async () => {
             // This test ensures slice(0, 128) starts at 0, not some other index
-            const text = 'ABCDEFGHIJ' + _repeat('X', 118);
+            const text = `ABCDEFGHIJ${_repeat('X', 118)}`;
             mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve(text)));
 
             const generator = createIdleStatusGenerator({

@@ -1,7 +1,6 @@
-import { Resource } from 'sst';
-import type { Resource as SstResource } from 'sst';
-import _ from 'lodash';
 import env from 'env-var';
+import _ from 'lodash';
+import { Resource, type Resource as SstResource  } from 'sst';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 import { resolveTimezone } from '@/utils';
 
@@ -64,8 +63,8 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
             // Stryker disable next-line ObjectLiteral: Default config values tested via integration
             presence:      {
                 updateDebounceMs:      2000,        // Debounce rapid phase changes to avoid flickering
-                idleTimeoutMs:         60000,       // Transition to idle after 1 minute of inactivity
-                idleRefreshIntervalMs: 300000,      // Refresh idle status every 5 minutes to maintain visibility
+                idleTimeoutMs:         60_000,       // Transition to idle after 1 minute of inactivity
+                idleRefreshIntervalMs: 300_000,      // Refresh idle status every 5 minutes to maintain visibility
             },
         },
         perch: env.get('PERCH_ENABLED').default('true').asBool()

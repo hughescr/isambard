@@ -37,17 +37,16 @@
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, keys as _keys, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
-import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
+import type { ClaudeAgent } from '@/agent/agent';
+import type { StreamTracker } from '@/agent/stream-tracker';
+import type { AgentStreamEvent, MessageContext } from '@/agent/types';
+import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import { createStatusMiddleware, type StatusMiddlewareDeps  } from '@/integrations/discord/presence/middleware';
+import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 import { shouldGenerateSynopsis } from '@/integrations/discord/presence/stream-event-handler';
 import type { PresencePhase, SynopsisContext } from '@/integrations/discord/presence/types';
-import type { AgentStreamEvent, MessageContext } from '@/agent/types';
-import type { StreamTracker } from '@/agent/stream-tracker';
-import { type DiscordMessageContext, createChannelId, createUserId, createGuildId } from '@/integrations/discord/types';
-import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 import type { BotStateManager, ActivityPhase } from '@/integrations/discord/state/types';
-import type { PresenceManager } from '@/integrations/discord/presence/manager';
-import type { ClaudeAgent } from '@/agent/agent';
-import type { StatusMiddlewareDeps } from '@/integrations/discord/presence/middleware';
+import { type DiscordMessageContext, createChannelId, createUserId, createGuildId } from '@/integrations/discord/types';
 
 // Helper to wait for async safeUpdatePhase promises to settle
 // Using queueMicrotask instead of setImmediate for faster promise resolution

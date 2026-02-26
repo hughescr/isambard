@@ -6,8 +6,7 @@
  */
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
-import type { PresencePhase, PresenceDisplayMode } from './types.js';
-import { ToolStatusMap } from './types.js';
+import { type PresencePhase, type PresenceDisplayMode, ToolStatusMap  } from './types.js';
 
 /**
  * Interface for generating status text based on current activity phase.
@@ -63,14 +62,18 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
 
     // Switch case emojis are tested in test file
     switch(presenceDisplayMode) { // Stryker disable ConditionalExpression,StringLiteral
-        case 'catching_up':
+        case 'catching_up': {
             return '📥 ';
-        case 'processing_message':
+        }
+        case 'processing_message': {
             return '💬 ';
-        case 'perching':
+        }
+        case 'perching': {
             return '🦉 ';
-        default:
+        }
+        default: {
             return '';
+        }
     }
 }
 
@@ -119,23 +122,27 @@ export function createActiveStatusGenerator(
             let baseStatus: string;
 
             switch(phase.type) {
-                case 'idle':
+                case 'idle': {
                     // Should not be called for idle - caller's responsibility
                     logger.warn('Active status generator called for idle phase');
                     baseStatus = 'Idle';
                     break;
+                }
 
-                case 'thinking':
+                case 'thinking': {
                     baseStatus = phase.generatedStatus ?? 'Thinking...';
                     break;
+                }
 
-                case 'using_tool':
+                case 'using_tool': {
                     baseStatus = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
                     break;
+                }
 
-                case 'responding':
+                case 'responding': {
                     baseStatus = phase.generatedStatus ?? 'Responding...';
                     break;
+                }
 
                 default: {
                     // Exhaustiveness check - TypeScript will error if we miss a case

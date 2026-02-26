@@ -1,9 +1,9 @@
-import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import _ from 'lodash';
-import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
 import type { DynamoDBConfig } from '@/config/schemas';
+import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
 
 // AWS SDK is mocked globally in tests/setup.ts
 

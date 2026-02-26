@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach } from 'bun:test';
-import { needsConversion, convert } from '@/integrations/discord/attachments/converter';
 import { mockHeicConvert, resetHeicConvertImpl } from '../../../../setup';
+import { needsConversion, convert } from '@/integrations/discord/attachments/converter';
 
 describe('Image Converter', () => {
     afterEach(() => {

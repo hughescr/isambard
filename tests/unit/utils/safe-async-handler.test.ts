@@ -55,8 +55,7 @@ describe('safeAsyncHandler', () => {
     });
 
     test('when the async handler rejects with a non-Error, still logs', async () => {
-        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- intentionally rejecting with non-Error to test non-Error handling
-        const handler = async (): Promise<void> => Promise.reject('string error');
+        const handler = async (): Promise<void> => { throw 'string error'; };
         const { logger, errorMock } = createTestLogger();
 
         const wrapped = safeAsyncHandler(handler, logger);

@@ -5,8 +5,8 @@
  * All errors extend StorageError which extends IsambardError.
  */
 
-import { ErrorCode } from './codes';
 import { IsambardError } from './base';
+import { ErrorCode } from './codes';
 
 // ============================================================================
 // Base Storage Errors

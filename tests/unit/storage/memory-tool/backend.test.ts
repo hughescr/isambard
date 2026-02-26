@@ -1,6 +1,3 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mockClient } from 'aws-sdk-client-mock';
-import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size, find as _find, repeat as _repeat, isObject as _isObject, map as _map, padStart as _padStart } from 'lodash';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -11,8 +8,11 @@ import {
     BatchWriteCommand,
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
-import { MemoryToolBackend } from '@/storage/memory-tool/backend';
+import { mockClient } from 'aws-sdk-client-mock';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size, find as _find, repeat as _repeat, isObject as _isObject, map as _map, padStart as _padStart } from 'lodash';
 import { ItemNotFoundError, ValidationError } from '@/errors';
+import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend', () => {
@@ -451,8 +451,8 @@ describe('MemoryToolBackend', () => {
             });
 
             test('should log warning but not fail if tag index creation fails', async () => {
-                const originalSetTimeout = global.setTimeout;
-                global.setTimeout = ((callback: () => void) => {
+                const originalSetTimeout = globalThis.setTimeout;
+                globalThis.setTimeout = ((callback: () => void) => {
                     callback();
                     return 0;
                 }) as unknown as typeof setTimeout;
@@ -472,7 +472,7 @@ describe('MemoryToolBackend', () => {
 
                     expect(result.path).toBe(testPath);
                 } finally {
-                    global.setTimeout = originalSetTimeout;
+                    globalThis.setTimeout = originalSetTimeout;
                 }
             });
         });
@@ -561,8 +561,8 @@ describe('MemoryToolBackend', () => {
             });
 
             test('should log warning but not fail if tag index update fails', async () => {
-                const originalSetTimeout = global.setTimeout;
-                global.setTimeout = ((callback: () => void) => {
+                const originalSetTimeout = globalThis.setTimeout;
+                globalThis.setTimeout = ((callback: () => void) => {
                     callback();
                     return 0;
                 }) as unknown as typeof setTimeout;
@@ -580,7 +580,7 @@ describe('MemoryToolBackend', () => {
 
                     expect(result.content).toBe('New content');
                 } finally {
-                    global.setTimeout = originalSetTimeout;
+                    globalThis.setTimeout = originalSetTimeout;
                 }
             });
         });
@@ -639,8 +639,8 @@ describe('MemoryToolBackend', () => {
             });
 
             test('should log warning but not fail if tag index delete fails', async () => {
-                const originalSetTimeout = global.setTimeout;
-                global.setTimeout = ((callback: () => void) => {
+                const originalSetTimeout = globalThis.setTimeout;
+                globalThis.setTimeout = ((callback: () => void) => {
                     callback();
                     return 0;
                 }) as unknown as typeof setTimeout;
@@ -661,7 +661,7 @@ describe('MemoryToolBackend', () => {
                         tags:        new Set(['tag1', 'tag2']),
                     });
                 } finally {
-                    global.setTimeout = originalSetTimeout;
+                    globalThis.setTimeout = originalSetTimeout;
                 }
             });
 

@@ -12,10 +12,8 @@
  * - Middleware logs timing for all operations
  */
 
-import type { RetryLogger } from '@/utils';
 import { DynamoTimeoutError } from '@/errors';
-
-export { DynamoTimeoutError };
+import type { RetryLogger } from '@/utils';
 
 export interface DynamoTimeoutOptions {
     timeoutMs: number
@@ -78,3 +76,5 @@ export async function withDynamoTimeout<T>(
         timeoutPromise,
     ]);
 }
+
+export { DynamoTimeoutError } from '@/errors';

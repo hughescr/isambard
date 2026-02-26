@@ -1,28 +1,21 @@
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import _ from 'lodash';
 import { randomUUID } from 'node:crypto';
-import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
+import _ from 'lodash';
+import { z } from 'zod';
 // eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
 // TODO: Decouple - Discord MCP server should expose platform-agnostic MCP tool interfaces wrapping messaging platform capabilities
 // eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord message history; decouple per roadmap
-import type { MessageSearchService } from '../integrations/discord/message-history/search';
-import type { QuestionRegistry } from './question-registry';
-import { questionOptionSchema } from './question-registry';
-// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord button builder; decouple per roadmap
 import { buildQuestionButtons } from '../integrations/discord/button-builder';
-// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord types; decouple per roadmap
-import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
-// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord retry logic; decouple per roadmap
-import { withDiscordRetry } from '../integrations/discord/retry';
-// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord message utilities; decouple per roadmap
+import { type ChannelRegistryManager, DMTracker, resolveChannelId  } from '../integrations/discord/channel-registry';
+import type { MessageSearchService } from '../integrations/discord/message-history/search';
 import { splitMessage } from '../integrations/discord/messages';
-// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord channel registry; decouple per roadmap
-import type { ChannelRegistryManager } from '../integrations/discord/channel-registry';
-// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord channel utilities; decouple per roadmap
-import { DMTracker, resolveChannelId } from '../integrations/discord/channel-registry';
+import { withDiscordRetry } from '../integrations/discord/retry';
+import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
+import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
+
 import { validateFilePaths, PathSecurityError, formatLocalDateTime } from '@/utils';
 
 /**

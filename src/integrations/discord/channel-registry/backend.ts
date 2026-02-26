@@ -1,5 +1,5 @@
 import {
-    DynamoDBDocumentClient,
+    type DynamoDBDocumentClient,
     PutCommand,
     GetCommand,
     QueryCommand,
@@ -7,17 +7,17 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import _ from 'lodash';
-import { withDynamoTimeout } from '@/storage';
-import { stripDynamoKeys } from '@/utils';
-import { ItemNotFoundError, ValidationError } from '@/errors';
 import { createChannelId, type ChannelId, type GuildId } from '../types';
+import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 import {
     type ChannelStorageRecord,
     type WellKnownChannel,
     channelStorageRecordSchema,
     WELL_KNOWN_CHANNELS
 } from './types';
-import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
+import { ItemNotFoundError, ValidationError } from '@/errors';
+import { withDynamoTimeout } from '@/storage';
+import { stripDynamoKeys } from '@/utils';
 
 /**
  * DynamoDB backend for Discord channel registry.
@@ -27,7 +27,7 @@ export class ChannelRegistryBackend {
     constructor(
         private readonly docClient: DynamoDBDocumentClient,
         private readonly tableName: string,
-        private readonly timeoutMs = 10000
+        private readonly timeoutMs = 10_000
     ) {}
 
     /**

@@ -18,10 +18,10 @@
  */
 import { describe, test, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
+import { mockGenerateText } from '../../../../setup';
 import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
-import { mockGenerateText } from '../../../../setup';
 
 /**
  * Creates a mock Discord search result for testing.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
-import { buildQuestionButtons } from '@/integrations/discord/button-builder';
-import type { QuestionOption } from '@/agent/question-registry';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
+import type { QuestionOption } from '@/agent/question-registry';
+import { buildQuestionButtons } from '@/integrations/discord/button-builder';
 
 describe('buildQuestionButtons', () => {
     it('should create buttons with correct customId format', () => {

@@ -1,4 +1,5 @@
 // Test setup and configuration
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { mock } from 'bun:test';
 import {
     assign,
@@ -19,7 +20,6 @@ import {
     filter,
     forEach
 } from 'lodash';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 type ContentItem = CallToolResult['content'][number];
 
@@ -372,11 +372,11 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
     const normalizedPath = replace(path, /\/+$/, '');
 
     // Find all direct children of this directory
-    const entries = Array.from(mockFs.entries());
-    const children = chain(entries)
+    const entries = [...mockFs.entries()];
+    return chain(entries)
         .filter(([childPath]: [string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }]) => {
             // Must start with parent path
-            if(!startsWith(childPath, normalizedPath + '/')) {
+            if(!startsWith(childPath, `${normalizedPath}/`)) {
                 return false;
             }
             // Get the relative path after the parent
@@ -398,8 +398,6 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
             return name;
         })
         .value();
-
-    return children;
 };
 
 const originalReadFileImpl = async (path: string, _encoding?: string) => {
@@ -425,7 +423,7 @@ const originalMkdirImpl = async (path: string, options?: { recursive?: boolean }
         for(let i = 0; i < parts.length; i++) {
             const pathParts = slice(parts, 0, i + 1);
             const currentPath = isAbsolute
-                ? '/' + join(pathParts, '/')
+                ? `/${join(pathParts, '/')}`
                 : join(pathParts, '/');
 
             if(!mockFs.has(currentPath)) {
@@ -439,8 +437,8 @@ const originalMkdirImpl = async (path: string, options?: { recursive?: boolean }
 
 const originalRmImpl = async (_path: string, _options?: { recursive?: boolean, force?: boolean }) => {
     // Clear all entries starting with this path
-    const keys = Array.from(mockFs.keys());
-    const toDelete = filter(keys, (key: string) => key === _path || startsWith(key, _path + '/'));
+    const keys = [...mockFs.keys()];
+    const toDelete = filter(keys, (key: string) => key === _path || startsWith(key, `${_path}/`));
     forEach(toDelete, (key: string) => mockFs.delete(key));
 };
 
@@ -456,7 +454,7 @@ const originalUnlinkImpl = async (path: string) => {
 
 const originalCpImpl = async (_source: string, _dest: string, _options?: unknown) => {
     // cp copies files/directories - for test purposes, just succeed
-    return Promise.resolve();
+
 };
 
 const originalSymlinkImpl = async (target: string, path: string) => {

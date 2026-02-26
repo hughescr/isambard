@@ -9,15 +9,14 @@
  * This module copies from a previous session's directory to a new session's directory.
  */
 
-// eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun supports fs.cp
-import { cp, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join } from 'node:path';
+import { cp, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import _ from 'lodash';
+import { join } from 'node:path';
 import type { Logger } from '@hughescr/logger';
-import type { SessionId } from '@/storage';
+import _ from 'lodash';
 import type { TaskCleanupProcessor } from './task-cleanup-processor';
+import type { SessionId } from '@/storage';
 
 export interface TaskDirectoryCopierOptions {
     logger:            Logger

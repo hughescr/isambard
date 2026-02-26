@@ -1,6 +1,6 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import _ from 'lodash';
 import { mockLogger, mockFsPromises, resetMockFsPrefix } from '../../setup';
 import { loadPlugins, resolveExternalPath, findLatestMarketplaceVersion } from '@/agent/plugin-loader';

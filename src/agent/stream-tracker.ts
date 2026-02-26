@@ -7,10 +7,9 @@
  */
 
 import _ from 'lodash';
-import type { AgentStreamEvent } from './types';
-import type { ToolUseBlock } from './agent';
-import { extractThinkingContent, extractToolUses } from './agent';
+import { type ToolUseBlock, extractThinkingContent, extractToolUses  } from './agent';
 import { extractSessionId } from './session-cleanup';
+import type { AgentStreamEvent } from './types';
 
 /**
  * Represents the accumulated progress from a stream of agent events.
@@ -47,8 +46,7 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
     const content = message.message?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
     const textBlocks = _.filter(content ?? [], { type: 'text' });
-    const text = _.chain(textBlocks).map('text').compact().join('\n').trim().value();
-    return text;
+    return _.chain(textBlocks).map('text').compact().join('\n').trim().value();
 }
 
 /**

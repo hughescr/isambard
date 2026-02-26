@@ -24,10 +24,10 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { Resource } from 'sst';
-import { ChannelRegistryBackend } from '../src/integrations/discord/channel-registry/backend';
-import { createChannelId, createGuildId, type ChannelId, type GuildId } from '../src/integrations/discord/types';
-import { type WellKnownChannel, WELL_KNOWN_CHANNELS } from '../src/integrations/discord/channel-registry/types';
 import { loadDynamoDBConfig, type DynamoDBResourceProvider } from '../src/config/loader';
+import { ChannelRegistryBackend } from '../src/integrations/discord/channel-registry/backend';
+import { type WellKnownChannel, WELL_KNOWN_CHANNELS } from '../src/integrations/discord/channel-registry/types';
+import { createChannelId, createGuildId, type ChannelId, type GuildId } from '../src/integrations/discord/types';
 
 class UsageError extends Error {
     constructor(message: string) {

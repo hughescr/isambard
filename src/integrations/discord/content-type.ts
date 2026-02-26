@@ -18,21 +18,28 @@ export function inferImageContentType(filename: string, discordContentType: stri
     // Try to infer from file extension
     const ext = _.last(_.split(_.toLower(filename), '.'));
     switch(ext) {
-        case 'heic':
+        case 'heic': {
             return 'image/heic';
-        case 'heif':
+        }
+        case 'heif': {
             return 'image/heif';
+        }
         case 'jpg':
-        case 'jpeg':
+        case 'jpeg': {
             return 'image/jpeg';
-        case 'png':
+        }
+        case 'png': {
             return 'image/png';
-        case 'gif':
+        }
+        case 'gif': {
             return 'image/gif';
-        case 'webp':
+        }
+        case 'webp': {
             return 'image/webp';
-        default:
+        }
+        default: {
             // Fall back to Discord's content type or octet-stream
             return discordContentType ?? 'application/octet-stream';
+        }
     }
 }

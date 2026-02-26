@@ -1,7 +1,7 @@
 // Stryker disable StringLiteral: All .describe() calls in this file are documentation only
 import { z } from 'zod';
-import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 import { snowflakeSchema } from '@/integrations/discord/message-history/snowflake';
+import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 
 /**
  * Discord channel checkpoint schema.

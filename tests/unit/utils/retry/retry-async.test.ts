@@ -11,7 +11,7 @@ describe('retryAsync', () => {
     const defaultPolicy: RetryPolicy = {
         maxAttempts:       3,
         baseDelayMs:       1000,
-        maxDelayMs:        30000,
+        maxDelayMs:        30_000,
         backoffMultiplier: 2,
         jitterFraction:    0.1,
     };

@@ -226,19 +226,19 @@ describe.concurrent('loadConfig', () => {
 
             // Verify presence object structure and exact values
             expect(config.discord.presence).toEqual({
-                updateThrottleMs:      12000,
-                idleTimeoutMs:         60000,
-                idleRefreshIntervalMs: 300000,
+                updateThrottleMs:      12_000,
+                idleTimeoutMs:         60_000,
+                idleRefreshIntervalMs: 300_000,
             });
 
             // Verify exact numeric values with range checks to catch mutations
             const presence = config.discord.presence!;
             expect(presence.updateThrottleMs).toBeGreaterThan(0);
-            expect(presence.updateThrottleMs).toBeLessThanOrEqual(12000);
+            expect(presence.updateThrottleMs).toBeLessThanOrEqual(12_000);
             expect(presence.idleTimeoutMs).toBeGreaterThan(0);
-            expect(presence.idleTimeoutMs).toBeLessThan(120000);
+            expect(presence.idleTimeoutMs).toBeLessThan(120_000);
             expect(presence.idleRefreshIntervalMs).toBeGreaterThan(0);
-            expect(presence.idleRefreshIntervalMs).toBeLessThan(600000);
+            expect(presence.idleRefreshIntervalMs).toBeLessThan(600_000);
         });
     });
 
@@ -289,7 +289,7 @@ describe.concurrent('loadConfig', () => {
             const config = loadConfig(emailResources());
 
             expect(config.email?.pollFallbackMs).toBe(300_000);
-            expect(config.email?.sseReconnectDelayMs).toBe(5_000);
+            expect(config.email?.sseReconnectDelayMs).toBe(5000);
             expect(config.email?.maxBodySizeBytes).toBe(50_000);
             expect(config.email?.sendReservoirCapacity).toBe(24);
             expect(config.email?.sendReservoirRefillRatePerHour).toBe(1);

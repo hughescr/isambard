@@ -4,11 +4,11 @@
  * The task list reader reads Claude Agent SDK task JSON files from a session
  * directory and builds a compact summary for idle status generation.
  */
+import type { Dirent } from 'node:fs';
 import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import { constant as _constant, replace as _replace } from 'lodash';
 import { mockLogger } from '../../setup';
 import { createTaskListReader } from '@/agent/task-list-reader';
-import type { Dirent } from 'node:fs';
 
 describe('createTaskListReader', () => {
     let mockReaddir: ReturnType<typeof mock>;

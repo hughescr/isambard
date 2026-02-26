@@ -1,13 +1,11 @@
-import { resolve, relative } from 'node:path';
-import { lstat, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { lstat, access } from 'node:fs/promises';
+import { resolve, relative } from 'node:path';
 import { startsWith, isArray, map } from 'lodash';
 // eslint-disable-next-line boundaries/element-types -- PathSecurityError defined in errors uses PathSecurityReason from this file; intentional bidirectional type dependency
 import { PathSecurityError } from '@/errors';
 
 export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file';
-
-export { PathSecurityError };
 
 export async function validateFilePath(filePath: string): Promise<string> {
     const cwd = process.cwd();
@@ -54,3 +52,5 @@ export async function validateFilePaths(filePaths: string | string[]): Promise<s
     const paths = isArray(filePaths) ? filePaths : [filePaths];
     return Promise.all(map(paths, validateFilePath));
 }
+
+export { PathSecurityError } from '@/errors';

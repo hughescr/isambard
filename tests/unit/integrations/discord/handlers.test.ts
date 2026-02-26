@@ -1,17 +1,16 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import _ from 'lodash';
 import type { Client, Message, Collection, Attachment } from 'discord.js';
+import _ from 'lodash';
 import { mockLogger, createMockBotStateManager } from '../../../setup';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import {
     createReadyHandler,
     createErrorHandler,
     createMessageHandler,
     extractAttachmentMetadata
 } from '@/integrations/discord/handlers';
-import { createChannelId, createUserId } from '@/integrations/discord/types';
-import type { DiscordMessageContext } from '@/integrations/discord/types';
 import type { BotStateManager } from '@/integrations/discord/state';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import { createChannelId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
 
 // Helper to create a mock coordinator for tests
 function createMockCoordinator() {
@@ -141,8 +140,7 @@ describe('Discord Event Handlers', () => {
         const createMockMessage = (attachments: { name: string | null, contentType: string | null }[]): Message => {
             const attachmentCollection = new Map() as Collection<string, Attachment>;
 
-            // eslint-disable-next-line lodash/prefer-lodash-method -- forEach needed for Map.set side effect
-            attachments.forEach((att, index) => {
+            for(const [index, att] of attachments.entries()) {
                 attachmentCollection.set(`att-${index}`, {
                     id:          `att-${index}`,
                     name:        att.name,
@@ -152,7 +150,7 @@ describe('Discord Event Handlers', () => {
                     width:       null,
                     height:      null,
                 } as Attachment);
-            });
+            }
 
             return {
                 id:     'msg-123',
@@ -166,7 +164,7 @@ describe('Discord Event Handlers', () => {
                 channel:      {
                     id:         monitoredChannelId,
                     // Stryker disable next-line all: Mock function for testing only
-                    sendTyping: mock(async () => { return; }),
+                    sendTyping: mock(async () => {}),
                 },
                 guild: {
                     id: 'guild-123',
@@ -680,7 +678,7 @@ describe('Discord Event Handlers', () => {
                 channel:      {
                     id:         monitoredChannelId,
                     // Stryker disable next-line all: Mock function for testing only
-                    sendTyping: mock(async () => { return; }),
+                    sendTyping: mock(async () => {}),
                 },
                 guild: {
                     id: 'guild-123',
@@ -848,7 +846,7 @@ describe('Discord Event Handlers', () => {
                 channel:      {
                     id:         monitoredChannelId,
                     // Stryker disable next-line all: Mock function for testing only
-                    sendTyping: mock(async () => { return; }),
+                    sendTyping: mock(async () => {}),
                 },
                 guild: {
                     id: 'guild-123',
@@ -956,7 +954,7 @@ describe('Discord Event Handlers', () => {
                     id:         monitoredChannelId,
                     name:       'general',
                     // Stryker disable next-line all: Mock function for testing only
-                    sendTyping: mock(async () => { return; }),
+                    sendTyping: mock(async () => {}),
                 },
                 guild: {
                     id: 'guild-123',
@@ -1056,7 +1054,7 @@ describe('Discord Event Handlers', () => {
                     id:         monitoredChannelId,
                     name:       null, // DM channel or missing name
                     // Stryker disable next-line all: Mock function for testing only
-                    sendTyping: mock(async () => { return; }),
+                    sendTyping: mock(async () => {}),
                 },
                 guild: {
                     id: 'guild-123',
@@ -1200,9 +1198,9 @@ describe('Discord Event Handlers', () => {
 
             if(attachments !== null && attachments !== undefined) {
                 attachmentCollection = new Map() as Collection<string, Attachment>;
-                // eslint-disable-next-line lodash/prefer-lodash-method -- forEach needed for Map.set side effect
-                attachments.forEach((att, index) => {
-                    attachmentCollection!.set(`att-${index}`, {
+
+                for(const [index, att] of attachments.entries()) {
+                    attachmentCollection.set(`att-${index}`, {
                         id:          `att-${index}`,
                         name:        att.name,
                         contentType: att.contentType,
@@ -1211,7 +1209,7 @@ describe('Discord Event Handlers', () => {
                         width:       null,
                         height:      null,
                     } as Attachment);
-                });
+                }
             }
 
             return {
@@ -1379,7 +1377,7 @@ describe('Discord Event Handlers', () => {
                 channel:      {
                     id:         monitoredChannelId,
                     // Stryker disable next-line all: Mock function for testing only
-                    sendTyping: mock(async () => { return; }),
+                    sendTyping: mock(async () => {}),
                 },
                 guild: {
                     id: 'guild-123',
@@ -1393,17 +1391,15 @@ describe('Discord Event Handlers', () => {
                     messageId: 'referenced-msg-id',
                 };
 
-                if(fetchFails) {
-                    message.fetchReference = mock(async () => {
+                message.fetchReference = fetchFails
+                    ? mock(async () => {
                         throw new Error('Failed to fetch reference');
-                    });
-                } else {
-                    message.fetchReference = mock(async () => ({
+                    })
+                    : mock(async () => ({
                         author: {
                             id: referencedAuthorId,
                         },
                     }));
-                }
             } else {
                 message.reference = undefined;
             }

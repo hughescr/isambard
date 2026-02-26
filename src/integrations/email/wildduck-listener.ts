@@ -1,9 +1,9 @@
 /* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports EventSource natively */
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import _ from 'lodash';
+import type { EmailProcessor } from '@/integrations/email/email-processor';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckSearchResult } from '@/integrations/email/wildduck-client';
-import type { EmailProcessor } from '@/integrations/email/email-processor';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -23,7 +23,7 @@ export interface WildDuckListenerConfig {
 export const MAX_NOTIFY_ATTEMPTS = 5;
 
 const DEFAULT_MAX_EMAILS_PER_POLL = 20;
-const DEFAULT_SSE_RECONNECT_DELAY_MS = 5_000;
+const DEFAULT_SSE_RECONNECT_DELAY_MS = 5000;
 
 // ---------------------------------------------------------------------------
 // WildDuckListener class
@@ -217,9 +217,9 @@ export class WildDuckListener {
                 // Increment attempt count, keep flag
                 await this.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: attempts });
             }
-        } catch (metaErr) {
+        } catch (error) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ err: metaErr, uid, msg: 'Failed to update notification attempt metadata' });
+            logger.warn({ err: error, uid, msg: 'Failed to update notification attempt metadata' });
         }
         // Stryker restore BlockStatement
     }
@@ -249,11 +249,11 @@ export class WildDuckListener {
                 // Parse UID from 'FolderName:uid' format
                 const colonIdx = result.message.lastIndexOf(':');
                 // Stryker disable next-line ConditionalExpression,EqualityOperator: guard against missing colon in result
-                if(colonIdx < 0) {
+                if(colonIdx === -1) {
                     continue;
                 }
                 const uidStr = result.message.slice(colonIdx + 1);
-                const uid    = parseInt(uidStr, 10);
+                const uid    = Number.parseInt(uidStr, 10);
                 // Stryker disable next-line ConditionalExpression: guard against non-numeric UIDs
                 if(!_.isFinite(uid)) {
                     continue;
@@ -288,9 +288,9 @@ export class WildDuckListener {
                 }
                 // Stryker restore BlockStatement
             }
-        } catch (searchErr) {
+        } catch (error) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ err: searchErr, msg: 'Failed to search for pending notification drafts' });
+            logger.warn({ err: error, msg: 'Failed to search for pending notification drafts' });
         }
         // Stryker restore BlockStatement
     }

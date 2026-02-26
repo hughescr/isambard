@@ -21,7 +21,7 @@ export interface ChannelRegistryKeys {
 /**
  * Generates DynamoDB keys for Channel Registry items
  */
-export class ChannelRegistryKeyGenerator {
+export const ChannelRegistryKeyGenerator = {
     /**
      * Creates DynamoDB keys for a channel
      *
@@ -40,14 +40,14 @@ export class ChannelRegistryKeyGenerator {
      * // }
      * ```
      */
-    static createKeys(channelId: string, guildId: string): ChannelRegistryKeys {
+    createKeys(channelId: string, guildId: string): ChannelRegistryKeys {
         return {
             PK:     `CHANNEL#${channelId}`,
             SK:     'METADATA',
             GSI1PK: `GUILD#${guildId}`,
             GSI1SK: `CHANNEL#${channelId}`,
         };
-    }
+    },
 
     /**
      * Creates GSI2 keys for well-known channel lookup
@@ -64,12 +64,12 @@ export class ChannelRegistryKeyGenerator {
      * // }
      * ```
      */
-    static createWellKnownKeys(type: string): Pick<ChannelRegistryKeys, 'GSI2PK' | 'GSI2SK'> {
+    createWellKnownKeys(type: string): Pick<ChannelRegistryKeys, 'GSI2PK' | 'GSI2SK'> {
         return {
             GSI2PK: `WELLKNOWN#${type}`,
             GSI2SK: 'CHANNEL',
         };
-    }
+    },
 
     /**
      * Parses a PK back to channelId
@@ -84,13 +84,13 @@ export class ChannelRegistryKeyGenerator {
      * // '123456'
      * ```
      */
-    static parseChannelId(pk: string): string {
+    parseChannelId(pk: string): string {
         if(!_startsWith(pk, 'CHANNEL#')) {
             throw new Error(`Invalid PK format: expected CHANNEL#..., got ${pk}`);
         }
 
         return pk.slice(8); // Remove 'CHANNEL#' prefix
-    }
+    },
 
     /**
      * Parses GSI1 keys back to guildId and channelId
@@ -109,7 +109,7 @@ export class ChannelRegistryKeyGenerator {
      * // { guildId: '789012', channelId: '123456' }
      * ```
      */
-    static parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelId: string } {
+    parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelId: string } {
         if(!_startsWith(gsi1pk, 'GUILD#')) {
             throw new Error(`Invalid GSI1PK format: expected GUILD#..., got ${gsi1pk}`);
         }
@@ -121,5 +121,5 @@ export class ChannelRegistryKeyGenerator {
             guildId:   gsi1pk.slice(6),  // Remove 'GUILD#' prefix
             channelId: gsi1sk.slice(8),  // Remove 'CHANNEL#' prefix
         };
-    }
-}
+    },
+};

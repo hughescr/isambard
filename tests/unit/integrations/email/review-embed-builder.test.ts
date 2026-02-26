@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
+import _ from 'lodash';
 import { buildReviewEmbed, buildUnsafeAlert, buildOutboundApprovalEmbed, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 
@@ -44,7 +44,7 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
         const data   = result.embed.toJSON();
 
-        expect(data.color).toBe(0xFF8C00);
+        expect(data.color).toBe(0xFF_8C_00);
     });
 
     test('sets title to "Email Review Required"', () => {
@@ -176,7 +176,7 @@ describe('buildUnsafeAlert', () => {
         const result  = buildUnsafeAlert(email, verdict, 'Quarantine');
         const data    = result.embed.toJSON();
 
-        expect(data.color).toBe(0xFF0000);
+        expect(data.color).toBe(0xFF_00_00);
     });
 
     test('sets title to "Unsafe Email Detected"', () => {
@@ -352,7 +352,7 @@ describe('buildRestrictedAccessEmbed', () => {
     test('should set color to yellow (0xFFCC00)', () => {
         const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
         const data = embed.toJSON();
-        expect(data.color).toBe(0xFFCC00);
+        expect(data.color).toBe(0xFF_CC_00);
     });
 
     test('should include mailbox name as field', () => {

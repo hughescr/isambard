@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { sigmoidScore, DEFAULT_SIGMOID_PARAMS } from '@/storage/memory-tool';
-import type { SigmoidParams } from '@/storage/memory-tool';
 import { map as _map } from 'lodash';
+import { sigmoidScore, DEFAULT_SIGMOID_PARAMS, type SigmoidParams  } from '@/storage/memory-tool';
 
 describe.concurrent('sigmoidScore', () => {
     describe('frequency scoring at t=0', () => {
@@ -66,7 +65,7 @@ describe.concurrent('sigmoidScore', () => {
 
     describe('custom parameters', () => {
         test('custom steepness affects frequency curve', () => {
-            const customParams: Partial<SigmoidParams> = { steepness: 1.0 };
+            const customParams: Partial<SigmoidParams> = { steepness: 1 };
             const scoreDefault = sigmoidScore(5, 0);
             const scoreCustom = sigmoidScore(5, 0, customParams);
 

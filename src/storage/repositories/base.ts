@@ -1,5 +1,5 @@
 import {
-    DynamoDBDocumentClient,
+    type DynamoDBDocumentClient,
     GetCommand,
     PutCommand,
     DeleteCommand,

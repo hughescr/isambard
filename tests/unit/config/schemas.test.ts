@@ -128,7 +128,7 @@ describe('emailConfigSchema', () => {
         const result = emailConfigSchema.safeParse(validEmailBase);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data.sseReconnectDelayMs).toBe(5_000);
+            expect(result.data.sseReconnectDelayMs).toBe(5000);
             expect(result.data.sseReconnectDelayMs).toBeGreaterThan(0);
         }
     });
@@ -300,8 +300,8 @@ describe('discordConfigSchema', () => {
             homeGuildId:   createGuildId('home-guild-123'),
             presence:      {
                 updateThrottleMs:      5000,
-                idleTimeoutMs:         120000,
-                idleRefreshIntervalMs: 600000,
+                idleTimeoutMs:         120_000,
+                idleRefreshIntervalMs: 600_000,
             },
         };
 
@@ -310,8 +310,8 @@ describe('discordConfigSchema', () => {
         if(result.success) {
             expect(result.data.presence).toEqual({
                 updateThrottleMs:      5000,
-                idleTimeoutMs:         120000,
-                idleRefreshIntervalMs: 600000,
+                idleTimeoutMs:         120_000,
+                idleRefreshIntervalMs: 600_000,
             });
         }
     });
@@ -328,9 +328,9 @@ describe('discordConfigSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.presence).toEqual({
-                updateThrottleMs:      12000,  // default (matches Discord rate limit)
-                idleTimeoutMs:         60000, // default
-                idleRefreshIntervalMs: 300000, // default
+                updateThrottleMs:      12_000,  // default (matches Discord rate limit)
+                idleTimeoutMs:         60_000, // default
+                idleRefreshIntervalMs: 300_000, // default
             });
         }
     });
@@ -406,7 +406,7 @@ describe('configSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.email?.wildDuckApiUrl).toBe('https://wildduck.example.com');
-            expect(result.data.email?.sseReconnectDelayMs).toBe(5_000);
+            expect(result.data.email?.sseReconnectDelayMs).toBe(5000);
             expect(result.data.email?.pollFallbackMs).toBe(300_000);
         }
     });
@@ -716,7 +716,7 @@ describe('reconciliationConfigSchema', () => {
     test('should accept valid configuration with all fields', () => {
         const config = {
             enabled:          true,
-            intervalMs:       3600000,
+            intervalMs:       3_600_000,
             operationDelayMs: 500,
             scanPageSize:     50,
             backoff:          {
@@ -739,14 +739,14 @@ describe('reconciliationConfigSchema', () => {
     test('should accept configuration with partial fields', () => {
         const config = {
             enabled:    true,
-            intervalMs: 7200000,
+            intervalMs: 7_200_000,
         };
 
         const result = reconciliationConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.enabled).toBe(true);
-            expect(result.data.intervalMs).toBe(7200000);
+            expect(result.data.intervalMs).toBe(7_200_000);
             expect(result.data.operationDelayMs).toBe(1000);
             expect(result.data.scanPageSize).toBe(25);
         }

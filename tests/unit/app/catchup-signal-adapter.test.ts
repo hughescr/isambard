@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { createCatchUpSignalAdapter, type CatchUpSignalAdapter } from '@/app/catchup-signal-adapter';
+import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord/catchup';
 import type { MemoryToolBackend } from '@/storage/memory-tool';
 import type { MemoryPath, MemoryToolItem } from '@/storage/memory-tool/types';
-import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord/catchup';
-import { createCatchUpSignalAdapter, type CatchUpSignalAdapter } from '@/app/catchup-signal-adapter';
 
 describe('createCatchUpSignalAdapter', () => {
     let mockBackend: Partial<MemoryToolBackend>;

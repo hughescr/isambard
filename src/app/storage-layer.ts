@@ -1,9 +1,7 @@
 import { logger } from '@hughescr/logger';
-import { createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation } from '@/storage';
-import type { ReconciliationScheduler } from '@/storage';
-import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier } from '@/agent';
-import type { TaskPersistenceCoordinator } from '@/agent';
+import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator  } from '@/agent';
 import type { DynamoDBConfig, ReconciliationConfig } from '@/config';
+import { type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation  } from '@/storage';
 
 /**
  * Storage layer components

@@ -45,7 +45,7 @@ describe.concurrent('discordAuthorSchema', () => {
 
     test('should reject non-string values', () => {
         const result = discordAuthorSchema.safeParse({
-            id:          12345,
+            id:          12_345,
             username:    'test',
             displayName: 'Test',
         });

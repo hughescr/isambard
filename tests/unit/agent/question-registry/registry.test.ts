@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
-import { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion, QuestionAnswer } from '@/agent/question-registry';
+import { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { ChannelId, UserId } from '@/integrations/discord/types';
 
 describe('QuestionRegistry', () => {
@@ -546,7 +546,7 @@ describe('QuestionRegistry', () => {
 
     describe('custom timeout configuration', () => {
         it('should use custom timeout when provided', async () => {
-            const customRegistry = new QuestionRegistry({ defaultTimeoutMs: 10000 });
+            const customRegistry = new QuestionRegistry({ defaultTimeoutMs: 10_000 });
 
             const now = Date.now();
             const question: Omit<PendingQuestion, 'state'> = {
@@ -556,7 +556,7 @@ describe('QuestionRegistry', () => {
                 triggerUserId:   'user1' as UserId,
                 questionText:    'What is your name?',
                 createdAt:       now,
-                expiresAt:       now + 10000,
+                expiresAt:       now + 10_000,
             };
 
             const resultPromise = customRegistry.register(question);

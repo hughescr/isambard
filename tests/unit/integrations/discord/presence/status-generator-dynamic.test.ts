@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import _ from 'lodash';
-import { constant as _constant, repeat as _repeat } from 'lodash';
-
+import _, { constant as _constant, repeat as _repeat } from 'lodash';
 import { mockGenerateText, mockLogger } from '../../../../setup';
 
 // Import after mocking
@@ -1091,7 +1089,7 @@ describe('DynamicStatusGenerator', () => {
                 // Use fake timers to test exact 2000ms boundary
                 // With post-completion cooldown, lastHaikuCall is set in `finally` after the await.
                 // Since mockGenerateText resolves immediately, lastHaikuCall = Date.now() at call time.
-                const baseTime = 1000000;
+                const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
                 const generator = createDynamicStatusGenerator({
@@ -1194,7 +1192,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should reset haikuInFlight on error so subsequent cooldown calls use cache not null', async () => {
-                const baseTime = 1000000;
+                const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
                 const generator = createDynamicStatusGenerator({
@@ -1553,7 +1551,7 @@ describe('DynamicStatusGenerator', () => {
                     phase:       'using_tool',
                     userMessage: 'Test',
                     toolName:    'Read',
-                    toolInput:   { value: BigInt(12345) },
+                    toolInput:   { value: 12_345n },
                 };
 
                 await generator.generateSynopsis(context);
@@ -1685,7 +1683,7 @@ describe('DynamicStatusGenerator', () => {
                 // populated from the first call, the second call returns the stale cache even after
                 // the cooldown window expires. Without the mutant, the condition is correctly false
                 // (now - lastHaikuCall >= 2000), so a fresh API call is made.
-                const baseTime = 1000000;
+                const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
                 const generator = createDynamicStatusGenerator({

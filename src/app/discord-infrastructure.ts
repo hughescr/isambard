@@ -14,10 +14,9 @@
  */
 
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { Client } from 'discord.js';
 import { logger } from '@hughescr/logger';
+import type { Client } from 'discord.js';
 import type { DiscordConfig } from '@/config';
-import type { MemoryToolBackend } from '@/storage';
 import {
     createDiscordClient,
     ChannelRegistryBackend,
@@ -27,16 +26,16 @@ import {
     createMessageSearchService,
     CheckpointManager,
     InboxManager,
-    BotStateManagerImpl
+    BotStateManagerImpl,
+    type ChannelRegistryManager as ChannelRegistryManagerType,
+    type MessageFetcher,
+    type MessageSummarizer,
+    type MessageSearchService,
+    type InboxManager as InboxManagerType,
+    type BotStateManager
+
 } from '@/integrations/discord';
-import type {
-    ChannelRegistryManager as ChannelRegistryManagerType,
-    MessageFetcher,
-    MessageSummarizer,
-    MessageSearchService,
-    InboxManager as InboxManagerType,
-    BotStateManager
-} from '@/integrations/discord';
+import type { MemoryToolBackend } from '@/storage';
 
 /**
  * Options for creating Discord infrastructure.

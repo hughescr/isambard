@@ -1,14 +1,14 @@
-import { Resource } from 'sst';
-import env from 'env-var';
 import { stat, mkdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
+import { logger, setTimezone } from '@hughescr/logger';
+import env from 'env-var';
 import _ from 'lodash';
-import { loadConfig, loadDynamoDBConfig } from '@/config';
+import { Resource } from 'sst';
 import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
+import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { createDiscordBot, setupEmail, type DiscordBot, type EmailSetupResult } from '@/integrations/discord';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
-import { logger, setTimezone } from '@hughescr/logger';
 
 export interface App {
     /**

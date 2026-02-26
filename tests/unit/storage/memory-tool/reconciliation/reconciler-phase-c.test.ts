@@ -1,8 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+import { mockClient } from 'aws-sdk-client-mock';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
+import { runReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryToolItemData } from '@/storage/memory-tool/types';
 
 describe('runReconciliation - Phase C (META_COUNT verification)', () => {

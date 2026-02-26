@@ -8,14 +8,14 @@
  * - Tracking completion and resumption
  */
 
-import type { BotStateManager, CatchingUpModeContext, InterruptingMessageDetails } from '../state';
-import type { InboxManager } from '../inbox';
-import type { ChannelId } from '../types';
-import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
-import { formatTimeSince } from '@/utils';
 import { DateTime } from 'luxon';
+import type { InboxManager } from '../inbox';
+import type { BotStateManager, CatchingUpModeContext, InterruptingMessageDetails } from '../state';
+import type { ChannelId } from '../types';
+import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
+import { formatTimeSince } from '@/utils';
 
 /**
  * Hot reload signal stored in memory - indicates catch-up completed.
@@ -258,7 +258,6 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Stryker disable all: Suspension detection guard — sessionId preserved above, only adds logging
             if(!result.completed && suspendedState !== null) {
                 logger.debug({ msg: 'Catch-up session suspended - state preserved for resume' });
-                return;
             }
             // Stryker restore all
         } catch (error) {
@@ -536,7 +535,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Stryker restore StringLiteral
 
             // Build resumed prompt
-            const viewedChannelIds = Array.from(savedState.viewedChannels);
+            const viewedChannelIds = [...savedState.viewedChannels];
             const viewedChannels = _.map(viewedChannelIds, channelId =>
                 deps.resolveChannelName?.(channelId) ?? channelId
             );

@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -93,7 +93,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test.each([
                 {
                     desc:                'long text ending with punctuation',
-                    message:             _.repeat('x', 80) + '.',
+                    message:             `${_.repeat('x', 80)}.`,
                     maxLength:           50,
                     expectedContains:    ['.'],
                     expectedTotalLength: 81
@@ -194,7 +194,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // With \n{2,}: para1='a\nb', para2='c' - 2 paragraphs
                 // With \n: para1='a', para2='b', para3='', para4='c' - 3 non-empty paragraphs
                 // Force paragraph-level split by exceeding maxLength
-                const para1 = _.repeat('x', 30) + '\n' + _.repeat('y', 30); // Single newline inside: 61 chars
+                const para1 = `${_.repeat('x', 30)}\n${_.repeat('y', 30)}`; // Single newline inside: 61 chars
                 const para2 = _.repeat('z', 30);
                 const message = `${para1}\n\n${para2}`; // Double newline between paragraphs
                 const result = splitMessage(message, 40);
@@ -287,7 +287,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 test.each([
                     {
                         desc:           'flush accumulated words before long word',
-                        message:        'aa bb ' + _.repeat('x', 100),
+                        message:        `aa bb ${_.repeat('x', 100)}`,
                         maxLength:      50,
                         expectedFirst:  'aa bb',
                         expectedLength: 3
@@ -302,7 +302,7 @@ describe.concurrent('Discord Message Splitting', () => {
                     },
                     {
                         desc:           'no empty between consecutive long words',
-                        message:        _.repeat('a', 60) + ' ' + _.repeat('b', 60),
+                        message:        `${_.repeat('a', 60)} ${_.repeat('b', 60)}`,
                         maxLength:      50,
                         expectedLength: 4,
                         noEmpty:        true,
@@ -310,7 +310,7 @@ describe.concurrent('Discord Message Splitting', () => {
                     },
                     {
                         desc:           'reset after flush (no Stryker mutation)',
-                        message:        'aa ' + _.repeat('x', 60) + ' bb',
+                        message:        `aa ${_.repeat('x', 60)} bb`,
                         maxLength:      50,
                         expectedLength: 4,
                         noStryker:      true
@@ -339,7 +339,7 @@ describe.concurrent('Discord Message Splitting', () => {
             describe('sentence-level flush', () => {
                 test('should flush accumulated sentences before long sentence', () => {
                     // Kill: if(currentChunk !== '') in splitBySentences
-                    const message = 'Hi. ' + _.repeat('x', 100) + '.';
+                    const message = `Hi. ${_.repeat('x', 100)}.`;
                     const result = splitMessage(message, 50);
                     expect(result[0]).toBe('Hi.');
                     expect(result.length).toBeGreaterThan(1);
@@ -347,8 +347,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 test('should NOT push empty string when consecutive long sentences occur', () => {
                     // Kill: if(currentChunk !== '') at line 166 in sentence splitting
-                    const sent1 = _.repeat('a', 60) + '.';
-                    const sent2 = _.repeat('b', 60) + '.';
+                    const sent1 = `${_.repeat('a', 60)}.`;
+                    const sent2 = `${_.repeat('b', 60)}.`;
                     const message = `${sent1} ${sent2}`;
                     const result = splitMessage(message, 50);
                     expect(result).not.toContain('');
@@ -361,7 +361,7 @@ describe.concurrent('Discord Message Splitting', () => {
             describe('paragraph-level flush', () => {
                 test('should flush accumulated paragraphs before long paragraph', () => {
                     // Kill: if(currentChunk !== '') in splitByParagraphs
-                    const message = 'Hi\n\n' + _.repeat('x', 100);
+                    const message = `Hi\n\n${_.repeat('x', 100)}`;
                     const result = splitMessage(message, 50);
                     expect(result[0]).toBe('Hi');
                     expect(result.length).toBe(3);
@@ -395,9 +395,9 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should extract sentences with various punctuation patterns', () => {
                 // Kill: sentence regex mutations - all punctuation types
-                const sent1 = _.repeat('a', 40) + '.';
-                const sent2 = _.repeat('b', 40) + '!';
-                const sent3 = _.repeat('c', 40) + '?';
+                const sent1 = `${_.repeat('a', 40)}.`;
+                const sent2 = `${_.repeat('b', 40)}!`;
+                const sent3 = `${_.repeat('c', 40)}?`;
                 const message = `${sent1} ${sent2} ${sent3}`;
                 const result = splitMessage(message, 50);
                 const allText = result.join(' ');

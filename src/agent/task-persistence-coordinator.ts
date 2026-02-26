@@ -14,9 +14,8 @@
 
 import type { Logger } from '@hughescr/logger';
 import _ from 'lodash';
-import type { TaskSessionBackend } from '@/storage';
-import { createSessionId } from '@/storage';
 import type { TaskDirectoryCopier } from './task-directory-copier';
+import { type TaskSessionBackend, createSessionId  } from '@/storage';
 
 export interface TaskPersistenceCoordinatorOptions {
     backend: TaskSessionBackend

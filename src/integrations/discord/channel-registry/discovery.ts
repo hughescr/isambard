@@ -1,8 +1,8 @@
 import type { Client, Guild, GuildChannel } from 'discord.js';
 import _ from 'lodash';
+import { createChannelId, createGuildId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import type { ChannelMetadata } from './types';
-import { createChannelId, createGuildId } from '../types';
 
 // Note: We only discover channels, not threads. Threads inherit mute state from their parent channel.
 
@@ -31,7 +31,7 @@ export async function discoverAllChannels(
 
     // Create promises for discovering channels in each guild (parallel execution)
     const guildPromises = _.map(
-        Array.from(client.guilds.cache.entries()),
+        [...client.guilds.cache.entries()],
         async ([guildId, guild]) => {
             try {
                 const guildResult = await discoverGuildChannels(guild, manager);

@@ -97,7 +97,7 @@ describe.concurrent('ChannelNotAccessibleError', () => {
 });
 
 describe.concurrent('RateLimitError', () => {
-    test.each([0, 1000, 5000, 3600000])('should have correct properties for retryAfter: %d', (retryAfter) => {
+    test.each([0, 1000, 5000, 3_600_000])('should have correct properties for retryAfter: %d', (retryAfter) => {
         const error = new RateLimitError(retryAfter);
         expect(error).toBeInstanceOf(RateLimitError);
         expect(error).toBeInstanceOf(DiscordError);

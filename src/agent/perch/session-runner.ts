@@ -10,13 +10,12 @@
  */
 
 import type { Logger } from '@hughescr/logger';
-// eslint-disable-next-line boundaries/element-types -- Perch session runner imports Discord state types; decouple per roadmap
-import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
-import { type PerchSlot, type PerchConfig } from './types';
-import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
-import type { StreamProgress } from '@/agent/stream-tracker';
-import type { ContextBuilder } from '@/agent/context-builder';
 import _ from 'lodash';
+import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
+import { type PerchSlot, type PerchConfig } from './types';
+import type { ContextBuilder } from '@/agent/context-builder';
+import type { StreamProgress } from '@/agent/stream-tracker';
+import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
 
 /**
  * Options for running an agent session.
@@ -186,7 +185,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         // Stryker disable next-line ArithmeticOperator: Duration calculation for timeout prompt display
         const durationMs = sessionStartTime ? Date.now() - sessionStartTime.getTime() : 0;
         // Stryker disable next-line ArithmeticOperator: Duration calculation for logging only
-        const durationMinutes = Math.round(durationMs / 60000);
+        const durationMinutes = Math.round(durationMs / 60_000);
 
         // Build timeout prompt
         const prompt = buildPerchTimeoutPrompt({
@@ -197,7 +196,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         });
 
         logger.info({
-            slot:        slot,
+            slot,
             durationMin: durationMinutes,
             maxDuration: config.maxSessionMinutes,
             msg:         'Resuming with timeout wrap-up prompt',
@@ -273,7 +272,6 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 // Timeout abort caught via return path (agent caught AbortError internally and returned completed:false)
                 // Run wrap-up using shared helper
                 await runTimeoutWrapUp(options.slot);
-                return;
             } else if(!result.completed && suspendedState !== null) {
                 // Suspended — preserve session state for resume
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Session ID storage in suspension path

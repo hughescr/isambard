@@ -14,10 +14,10 @@ export interface ReviewEmbedResult {
     actionRow: ActionRowBuilder<ButtonBuilder>
 }
 
-const ORANGE             = 0xFF8C00;
-const RED                = 0xFF0000;
-const BLUE               = 0x0055FF;
-const YELLOW             = 0xFFCC00;
+const ORANGE             = 0xFF_8C_00;
+const RED                = 0xFF_00_00;
+const BLUE               = 0x00_55_FF;
+const YELLOW             = 0xFF_CC_00;
 const BODY_TRUNCATE_LENGTH = 500;
 
 /**

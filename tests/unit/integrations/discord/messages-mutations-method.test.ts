@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -79,7 +79,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should push trimmed chunk when flushing before long word', () => {
                 // Kill: if(currentChunk.length > 0) to if(true) or if(false)
                 // Test the exact behavior when chunk is not empty
-                const message = 'abc ' + _.repeat('x', 60);
+                const message = `abc ${_.repeat('x', 60)}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('abc');
                 expect(result.length).toBe(3);
@@ -100,7 +100,7 @@ describe.concurrent('Discord Message Splitting', () => {
         describe('mutation coverage - reset currentChunk', () => {
             test('should reset currentChunk to empty string after flush', () => {
                 // Kill: currentChunk = '' -> currentChunk = "Stryker was here!"
-                const message = 'aa ' + _.repeat('x', 60) + ' bb';
+                const message = `aa ${_.repeat('x', 60)} bb`;
                 const result = splitMessage(message, 50);
                 // If not reset to '', next chunk would have stryker string
                 expect(result).not.toContain('Stryker was here!');
@@ -112,8 +112,8 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should handle sentences when forced to split', () => {
                 // Kill: if(trimmed !== '') -> if(true)
                 // When sentences are extracted and then combined, they get separated by single space
-                const s1 = _.repeat('a', 40) + '.';
-                const s2 = _.repeat('b', 40) + '.';
+                const s1 = `${_.repeat('a', 40)}.`;
+                const s2 = `${_.repeat('b', 40)}.`;
                 const message = `${s1}   ${s2}`; // Extra spaces
                 const result = splitMessage(message, 50);
                 // Both sentences should be found
@@ -124,8 +124,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should extract sentences correctly when forcing sentence-level split', () => {
                 // Create content that must be split at sentence level
-                const s1 = _.repeat('x', 45) + '.';
-                const s2 = _.repeat('y', 45) + '.';
+                const s1 = `${_.repeat('x', 45)}.`;
+                const s2 = `${_.repeat('y', 45)}.`;
                 const message = `${s1} ${s2}`;
                 const result = splitMessage(message, 50);
                 expect(result.length).toBe(2);

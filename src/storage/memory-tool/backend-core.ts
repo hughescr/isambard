@@ -1,6 +1,7 @@
+import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DateTime } from 'luxon';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { type DynamoDBKey } from '../repositories/base';
+import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
 import {
     memoryToolItemSchema,
     type MemoryPath,
@@ -8,7 +9,6 @@ import {
     type MemoryToolItemData,
     type MemoryToolItem
 } from './types';
-import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 
 export interface CreateMemoryToolItemInput {
@@ -105,9 +105,9 @@ export class MemoryToolBackendCore {
 
         // Build updated data with new content preview if content changed
         // Stryker disable next-line ConditionalExpression: Conditional prevents regenerating preview when content unchanged
-        const newContentPreview = input.content !== undefined
-            ? generateContentPreview(input.content)
-            : existing.contentPreview;
+        const newContentPreview = input.content === undefined
+            ? existing.contentPreview
+            : generateContentPreview(input.content);
 
         const updatedData = {
             ...existing,

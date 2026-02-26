@@ -1,11 +1,10 @@
-import { constant as _constant } from 'lodash';
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { createInteractionHandler } from '@/integrations/discord/interactions';
-import { QuestionRegistry } from '@/agent/question-registry/registry';
-import type { PendingQuestion } from '@/agent/question-registry';
 import type { ButtonInteraction, Message, User, InteractionResponse } from 'discord.js';
-import type { ChannelId, UserId } from '@/integrations/discord/types';
-import { createUserId } from '@/integrations/discord/types';
+import { constant as _constant } from 'lodash';
+import type { PendingQuestion } from '@/agent/question-registry';
+import { QuestionRegistry } from '@/agent/question-registry/registry';
+import { createInteractionHandler } from '@/integrations/discord/interactions';
+import { type ChannelId, type UserId, createUserId  } from '@/integrations/discord/types';
 
 describe('createInteractionHandler', () => {
     let registry: QuestionRegistry;
@@ -32,7 +31,7 @@ describe('createInteractionHandler', () => {
             edit: mock().mockResolvedValue({}),
         } as unknown as Message;
 
-        const mockInteraction = {
+        return {
             customId,
             user:      mockUser,
             message:   mockMessage,
@@ -43,8 +42,6 @@ describe('createInteractionHandler', () => {
             reply:  mock().mockResolvedValue({} as InteractionResponse),
             update: mock().mockResolvedValue({} as InteractionResponse),
         } as unknown as ButtonInteraction;
-
-        return mockInteraction;
     }
 
     it('should ignore non-question buttons', async () => {
@@ -131,7 +128,7 @@ describe('createInteractionHandler', () => {
             originMessageId: 'msg1',
             triggerUserId:   'user1' as UserId,
             questionText:    'Choose an option',
-            createdAt:       baseTime - 10000, // Created 10s ago
+            createdAt:       baseTime - 10_000, // Created 10s ago
             expiresAt:       baseTime - 1000,  // Expired 1s ago (expiresAt < now)
             options:         [
                 { label: 'Option 1', value: 'opt1' },

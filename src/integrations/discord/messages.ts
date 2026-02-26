@@ -90,7 +90,7 @@ function splitByWords(text: string, maxLength: number): string[] {
             }
             currentChunk = word;
         } else {
-            currentChunk = currentChunk === '' ? word : currentChunk + ' ' + word;
+            currentChunk = currentChunk === '' ? word : `${currentChunk} ${word}`;
         }
     }
 
@@ -199,7 +199,7 @@ function splitBySentences(text: string, maxLength: number): string[] {
             currentChunk = sentence;
         } else {
             // Stryker disable next-line ConditionalExpression,StringLiteral: Empty string check prevents leading space, space character is string constant
-            currentChunk = currentChunk === '' ? sentence : currentChunk + ' ' + sentence;
+            currentChunk = currentChunk === '' ? sentence : `${currentChunk} ${sentence}`;
         }
     }
 
@@ -264,7 +264,7 @@ function splitByParagraphs(text: string, maxLength: number): string[] {
             }
             currentChunk = paragraph;
         } else {
-            currentChunk = currentChunk === '' ? paragraph : currentChunk + '\n\n' + paragraph;
+            currentChunk = currentChunk === '' ? paragraph : `${currentChunk}\n\n${paragraph}`;
         }
     }
 

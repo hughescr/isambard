@@ -6,7 +6,7 @@ describe.concurrent('calculateDelay', () => {
     const defaultPolicy: RetryPolicy = {
         maxAttempts:       3,
         baseDelayMs:       1000,
-        maxDelayMs:        30000,
+        maxDelayMs:        30_000,
         backoffMultiplier: 2,
         jitterFraction:    0.1,
     };
@@ -70,7 +70,7 @@ describe.concurrent('calculateDelay', () => {
             const delay = calculateDelay(10, defaultPolicy, random);
 
             // 1000 * 2^9 = 512000, but capped at 30000
-            expect(delay).toBe(30000);
+            expect(delay).toBe(30_000);
         });
 
         it('should cap delay at maxDelayMs even with positive jitter', () => {
@@ -79,7 +79,7 @@ describe.concurrent('calculateDelay', () => {
 
             // Without cap: 1000 * 2^9 * 1.1 = 563200
             // Capped at 30000
-            expect(delay).toBe(30000);
+            expect(delay).toBe(30_000);
         });
     });
 

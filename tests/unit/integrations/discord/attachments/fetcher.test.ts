@@ -1,9 +1,8 @@
 /* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch and Response */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { fetchImage, fetchImages, saveNonImageAttachment } from '@/integrations/discord/attachments/fetcher';
-import type { AttachmentMetadata } from '@/integrations/discord/attachments/types';
-import { MAX_IMAGE_SIZE_BYTES } from '@/integrations/discord/attachments/types';
 import { mockHeicConvert, setHeicConvertImpl, resetHeicConvertImpl, mockFsPromises, resetMockFs } from '../../../../setup';
+import { fetchImage, fetchImages, saveNonImageAttachment } from '@/integrations/discord/attachments/fetcher';
+import { type AttachmentMetadata, MAX_IMAGE_SIZE_BYTES  } from '@/integrations/discord/attachments/types';
 
 // Mock global fetch
 const mockFetch = mock(async (_url: string, _options?: RequestInit): Promise<Response> => {

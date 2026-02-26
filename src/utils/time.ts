@@ -1,6 +1,6 @@
+import { logger } from '@hughescr/logger';
 import { DateTime, IANAZone } from 'luxon';
 import { z } from 'zod';
-import { logger } from '@hughescr/logger';
 
 /**
  * Time thresholds for relative time formatting.

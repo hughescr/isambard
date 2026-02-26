@@ -31,13 +31,13 @@ const AUTH_RESPONSE = {
 const MAILBOX_RESPONSE = {
     success: true,
     results: [
-        { id: 'mbx-inbox',      path: 'INBOX',      specialUse: '\\Inbox' },
+        { id: 'mbx-inbox',      path: 'INBOX',      specialUse: String.raw`\Inbox` },
         { id: 'mbx-clean',      path: 'CleanInbox' },
-        { id: 'mbx-archive',    path: 'Archive',     specialUse: '\\Archive' },
-        { id: 'mbx-sent',       path: 'Sent Mail',   specialUse: '\\Sent' },
-        { id: 'mbx-junk',       path: 'Junk',        specialUse: '\\Junk' },
-        { id: 'mbx-trash',      path: 'Trash',       specialUse: '\\Trash' },
-        { id: 'mbx-drafts',     path: 'Drafts',      specialUse: '\\Drafts' },
+        { id: 'mbx-archive',    path: 'Archive',     specialUse: String.raw`\Archive` },
+        { id: 'mbx-sent',       path: 'Sent Mail',   specialUse: String.raw`\Sent` },
+        { id: 'mbx-junk',       path: 'Junk',        specialUse: String.raw`\Junk` },
+        { id: 'mbx-trash',      path: 'Trash',       specialUse: String.raw`\Trash` },
+        { id: 'mbx-drafts',     path: 'Drafts',      specialUse: String.raw`\Drafts` },
         { id: 'mbx-quarantine', path: 'Quarantine' },
         { id: 'mbx-review',     path: 'Review' },
     ],
@@ -47,13 +47,13 @@ const MAILBOX_RESPONSE = {
 const NONSTANDARD_MAILBOX_RESPONSE = {
     success: true,
     results: [
-        { id: 'mbx-inbox',      path: 'INBOX',                  specialUse: '\\Inbox' },
+        { id: 'mbx-inbox',      path: 'INBOX',                  specialUse: String.raw`\Inbox` },
         { id: 'mbx-clean',      path: 'CleanInbox' },
-        { id: 'mbx-archive',    path: '[Gmail]/All Mail',        specialUse: '\\Archive' },
-        { id: 'mbx-sent',       path: '[Gmail]/Sent Mail',       specialUse: '\\Sent' },
-        { id: 'mbx-junk',       path: '[Gmail]/Spam',            specialUse: '\\Junk' },
-        { id: 'mbx-trash',      path: '[Gmail]/Trash',           specialUse: '\\Trash' },
-        { id: 'mbx-drafts',     path: '[Gmail]/Drafts',          specialUse: '\\Drafts' },
+        { id: 'mbx-archive',    path: '[Gmail]/All Mail',        specialUse: String.raw`\Archive` },
+        { id: 'mbx-sent',       path: '[Gmail]/Sent Mail',       specialUse: String.raw`\Sent` },
+        { id: 'mbx-junk',       path: '[Gmail]/Spam',            specialUse: String.raw`\Junk` },
+        { id: 'mbx-trash',      path: '[Gmail]/Trash',           specialUse: String.raw`\Trash` },
+        { id: 'mbx-drafts',     path: '[Gmail]/Drafts',          specialUse: String.raw`\Drafts` },
         { id: 'mbx-quarantine', path: 'Quarantine' },
         { id: 'mbx-review',     path: 'Review' },
     ],
@@ -1293,27 +1293,27 @@ describe('WildDuckClient', () => {
             expect(client.getMailboxId('Sent Mail')).toBe('mbx-sent');
         });
 
-        test('resolves Drafts via \\Drafts specialUse flag', async () => {
+        test(String.raw`resolves Drafts via \Drafts specialUse flag`, async () => {
             const client = await makeClientWithNonstandardPaths();
             expect(client.getMailboxId('Drafts')).toBe('mbx-drafts');
         });
 
-        test('resolves Junk via \\Junk specialUse flag', async () => {
+        test(String.raw`resolves Junk via \Junk specialUse flag`, async () => {
             const client = await makeClientWithNonstandardPaths();
             expect(client.getMailboxId('Junk')).toBe('mbx-junk');
         });
 
-        test('resolves Trash via \\Trash specialUse flag', async () => {
+        test(String.raw`resolves Trash via \Trash specialUse flag`, async () => {
             const client = await makeClientWithNonstandardPaths();
             expect(client.getMailboxId('Trash')).toBe('mbx-trash');
         });
 
-        test('resolves Archive via \\Archive specialUse flag', async () => {
+        test(String.raw`resolves Archive via \Archive specialUse flag`, async () => {
             const client = await makeClientWithNonstandardPaths();
             expect(client.getMailboxId('Archive')).toBe('mbx-archive');
         });
 
-        test('resolves INBOX via \\Inbox specialUse flag', async () => {
+        test(String.raw`resolves INBOX via \Inbox specialUse flag`, async () => {
             const client = await makeClientWithNonstandardPaths();
             expect(client.getMailboxId('INBOX')).toBe('mbx-inbox');
         });
@@ -1366,7 +1366,7 @@ describe('WildDuckClient', () => {
                     success: true,
                     results: [
                         ...MAILBOX_RESPONSE.results,
-                        { id: 'mbx-custom', path: 'CustomFolder', specialUse: '\\Custom' },
+                        { id: 'mbx-custom', path: 'CustomFolder', specialUse: String.raw`\Custom` },
                     ],
                 }));
             const client = new WildDuckClient(CLIENT_OPTIONS);

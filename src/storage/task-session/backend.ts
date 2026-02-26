@@ -1,8 +1,7 @@
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DateTime } from 'luxon';
 import { BaseRepository } from '../repositories/base';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { SessionId, TaskSessionItem } from './types';
-import { createSessionId } from './types';
+import { type SessionId, type TaskSessionItem, createSessionId  } from './types';
 
 const SINGLETON_KEY = {
     PK: 'TASK_SESSION#CURRENT',

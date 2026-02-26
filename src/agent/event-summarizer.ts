@@ -1,7 +1,7 @@
 import _ from 'lodash';
 import pLimit from 'p-limit';
-import type { MemoryToolItemData } from '@/storage';
 import { generateText } from './text-generator';
+import type { MemoryToolItemData } from '@/storage';
 import { formatShortRelativeTime } from '@/utils';
 
 export interface EventBatchSummary {

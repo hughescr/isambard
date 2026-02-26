@@ -1,8 +1,6 @@
 import type { OperationalMode } from './types';
 import { TransitionError } from '@/errors';
 
-export { TransitionError };
-
 /**
  * Valid state transitions for operational modes.
  *
@@ -74,3 +72,5 @@ export function getModeEmoji(mode: OperationalMode): string {
 
     return baseEmojis[mode];
 }
+
+export { TransitionError } from '@/errors';

@@ -343,8 +343,8 @@ describe('getCurrentTimeContext', () => {
             expect(utcHourMatch).toBeTruthy();
             expect(pacificHourMatch).toBeTruthy();
 
-            const utcHour = parseInt(utcHourMatch![1], 10);
-            const pacificHour = parseInt(pacificHourMatch![1], 10);
+            const utcHour = Number.parseInt(utcHourMatch![1], 10);
+            const pacificHour = Number.parseInt(pacificHourMatch![1], 10);
 
             // With hour12=false (correct): Pacific hour = (UTC hour + 12) mod 24
             // With hour12=true (mutant): Both would be in 1-12 range, so the difference

@@ -7,13 +7,12 @@
  * - Phase C: Verify META_COUNT atomic counters match actual tag index item counts
  */
 
-import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { map as _map, some as _some, isArray as _isArray, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
+import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { map as _map, some as _some, isArray as _isArray, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
-import type { MemoryPath, MemoryToolItemData, MemoryToolItem, TagIndexItem } from '../types';
-import { createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema } from '../types';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
+import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
 import type { ReconciliationProgress, ReconciliationResult } from './types';
 
 // ============================================================================
@@ -126,7 +125,7 @@ export async function retryWithBackoff<T>(
             // Stryker disable next-line ConditionalExpression,EqualityOperator: Retry condition
             if(isThrottled && attempt < backoff.maxAttempts) {
                 // Stryker disable next-line ArithmeticOperator: Exponential backoff calculation
-                const delayMs = backoff.baseDelayMs * Math.pow(2, attempt - 1);
+                const delayMs = backoff.baseDelayMs * 2 ** (attempt - 1);
                 await delay(delayMs, signal);
                 /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ attempt, context, msg: `Reconciler retry ${attempt}/${backoff.maxAttempts}` });
@@ -264,7 +263,7 @@ async function getAllTagNames(
     // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         const result = await retryWithBackoff(
-            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 IndexName:                 'GSI2',
@@ -471,7 +470,7 @@ async function scanLayer(
         }
 
         const result = await retryWithBackoff(
-            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 IndexName:                 'GSI1',
@@ -577,15 +576,7 @@ async function processTagIndexItem(
 
         const memory = await ctx.deps.getMemory(createMemoryPath(memoryPath));
 
-        if(!memory) {
-            // Memory doesn't exist - delete orphaned index
-            // Stryker disable next-line ArrayDeclaration: Tag derived from parseTagFromPK, tested separately
-            await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), new Set([tag]));
-            ctx.progress.indexItemsDeleted++;
-            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
-            logger.debug({ path: memoryPath, tag, msg: 'Deleted orphaned tag index' });
-            /* Stryker restore StringLiteral,ObjectLiteral */
-        } else {
+        if(memory) {
             // Memory exists - check if tag is still present
             const normalizedTags = normalizeTags(memory.tags);
 
@@ -599,6 +590,14 @@ async function processTagIndexItem(
                 logger.debug({ path: memory.path, tag, msg: 'Deleted stale tag index' });
                 /* Stryker restore StringLiteral,ObjectLiteral */
             }
+        } else {
+            // Memory doesn't exist - delete orphaned index
+            // Stryker disable next-line ArrayDeclaration: Tag derived from parseTagFromPK, tested separately
+            await ctx.deps.tagIndex.deleteTagIndexItems(createMemoryPath(memoryPath), new Set([tag]));
+            ctx.progress.indexItemsDeleted++;
+            /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
+            logger.debug({ path: memoryPath, tag, msg: 'Deleted orphaned tag index' });
+            /* Stryker restore StringLiteral,ObjectLiteral */
         }
 
         await delay(ctx.options.operationDelayMs, ctx.options.signal);
@@ -626,7 +625,7 @@ async function scanTagItems(
         }
 
         const result = await retryWithBackoff(
-            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
@@ -742,7 +741,7 @@ async function getActualTagCount(
         }
 
         const result = await retryWithBackoff(
-            // eslint-disable-next-line no-loop-func -- async function executed immediately via await
+
             async () => ctx.deps.docClient.send(new QueryCommand({
                 TableName:                 ctx.deps.tableName,
                 KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',

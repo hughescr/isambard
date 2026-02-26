@@ -1,15 +1,14 @@
-import _ from 'lodash';
-import { constant as _constant, isArray as _isArray, forEach as _forEach, repeat as _repeat, isString as _isString, startsWith as _startsWith } from 'lodash';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import type { Client, MessageCreateOptions } from 'discord.js';
+import _, { constant as _constant, isArray as _isArray, forEach as _forEach, repeat as _repeat, isString as _isString, startsWith as _startsWith } from 'lodash';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
+import type { QuestionRegistry } from '../../../src/agent/question-registry';
+import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
 import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId, UserId } from '../../../src/integrations/discord/types';
-import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
 import { mockFsPromises, resetMockFsPrefix, textContent } from '../../setup';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { QuestionRegistry } from '../../../src/agent/question-registry';
 
 interface ZodShapeEntry {
     safeParse: (v: unknown) => { success: boolean }
@@ -1331,8 +1330,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
 
             // Mock guild with member search
-            const mockMembers = new Map();
-            mockMembers.set('user-id-456', mockMember);
+            const mockMembers = new Map([['user-id-456', mockMember]]);
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined => {
                 for(const member of mockMembers.values()) {
                     if(predicate(member)) {
@@ -2058,7 +2056,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 isThread:    _constant(false),
                 isDMBased:   _constant(false),
                 send:        mock(async (_content: unknown) => {
-                    throw { code: 50013, message: 'Missing Permissions' };
+                    throw { code: 50_013, message: 'Missing Permissions' };
                 }),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);

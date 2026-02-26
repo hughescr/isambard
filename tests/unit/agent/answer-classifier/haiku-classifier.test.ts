@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
-import { classifyWithHaiku } from '@/agent/answer-classifier/haiku-classifier';
-import type { PendingQuestion } from '@/agent/question-registry';
-import type { MessageToClassify } from '@/agent/answer-classifier/types';
-import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 import { mockGenerateText } from '../../../setup';
+import { classifyWithHaiku } from '@/agent/answer-classifier/haiku-classifier';
+import type { MessageToClassify } from '@/agent/answer-classifier/types';
+import type { PendingQuestion } from '@/agent/question-registry';
+import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 
 describe('classifyWithHaiku', () => {
     const baseQuestion: PendingQuestion = {

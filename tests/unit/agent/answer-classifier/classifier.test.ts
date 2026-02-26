@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { AnswerClassifier } from '@/agent/answer-classifier/classifier';
-import type { PendingQuestion } from '@/agent/question-registry';
 import type { MessageToClassify, ClassificationResult } from '@/agent/answer-classifier/types';
+import type { PendingQuestion } from '@/agent/question-registry';
 import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 
 describe('AnswerClassifier', () => {
@@ -12,7 +12,7 @@ describe('AnswerClassifier', () => {
         originMessageId: 'msg-question',
         questionText:    'What is your favorite color?',
         createdAt:       Date.now(),
-        expiresAt:       Date.now() + 60000,
+        expiresAt:       Date.now() + 60_000,
         state:           'waiting',
     };
 

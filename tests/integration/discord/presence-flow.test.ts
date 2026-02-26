@@ -6,19 +6,18 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { ActivityType, type Client, type TextChannel  } from 'discord.js';
 import { constant as _constant } from 'lodash';
-import { ActivityType } from 'discord.js';
-import type { Client, TextChannel } from 'discord.js';
-import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
-import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
-import { PresenceManager } from '@/integrations/discord/presence/manager';
-import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
+import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageContext, AgentStreamEvent } from '@/agent/types';
+import { PresenceManager } from '@/integrations/discord/presence/manager';
+import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
+import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
+import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
 import type { BotStateManager } from '@/integrations/discord/state';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 // Import shared mocks from setup.ts (already registered via mock.module in preload)
-import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 
 describe('Discord Presence Flow (Integration)', () => {
     let mockDiscordClient: Client;

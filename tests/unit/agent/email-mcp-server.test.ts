@@ -1,11 +1,11 @@
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import _ from 'lodash';
-import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
-import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
-import type { SendRateLimiter } from '../../../src/integrations/email/send-rate-limiter';
 import type { EmailAllowlist } from '../../../src/integrations/email/allowlist';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { SendRateLimiter } from '../../../src/integrations/email/send-rate-limiter';
+import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
+import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
@@ -311,7 +311,7 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42' });
 
             expect(mockWildDuck.getFullMessage).toHaveBeenCalledWith('CleanInbox', 42);
-            expect(mockWildDuck.updateMessageFlags).toHaveBeenCalledWith('CleanInbox', 42, { addFlags: ['\\Seen'] });
+            expect(mockWildDuck.updateMessageFlags).toHaveBeenCalledWith('CleanInbox', 42, { addFlags: [String.raw`\Seen`] });
         });
 
         test('should return email content from Archive mailbox', async () => {

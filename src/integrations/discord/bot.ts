@@ -1,37 +1,34 @@
-import type { Client } from 'discord.js';
 import { logger } from '@hughescr/logger';
+import type { Client } from 'discord.js';
 import _ from 'lodash';
-import type { DiscordConfig } from '@/config';
-import type { ClaudeAgent, ContextBuilder } from '@/agent';
-import { createTaskListReader } from '@/agent';
-import { createDiscordClient } from './client';
-import { createReadyHandler, createErrorHandler } from './handlers';
-import {
-    createDynamicStatusGenerator,
-    type PresenceManager
-} from './presence';
-import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
-import type { MessageCoordinator } from './message-coordinator';
-import { DiscordRateLimiter } from './rate-limiter';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku } from '@/agent';
-import { createInteractionHandler } from './interactions';
-import type { InboxManager } from './inbox';
 import {
     type CatchUpSessionRunner,
     type CatchUpCompletionSignal,
     type CatchUpInProgressSignal
 } from './catchup';
+import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
+import { createDiscordClient } from './client';
+import { createReadyHandler, createErrorHandler } from './handlers';
+import type { InboxManager } from './inbox';
+import { createInteractionHandler } from './interactions';
+import type { MessageCoordinator } from './message-coordinator';
+import {
+    createDynamicStatusGenerator,
+    type PresenceManager
+} from './presence';
+import { DiscordRateLimiter } from './rate-limiter';
+import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
+import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import type { PerchScheduler, PerchSessionRunner, PerchConfig } from '@/agent';
-import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
-import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader , type PerchScheduler, type PerchSessionRunner, type PerchConfig , type ClaudeAgent, type ContextBuilder  } from '@/agent';
 import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
 import { setupCoordinatorIntegration } from './setup/coordinator-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import type { EmailSetupResult } from './setup/email-setup';
+import type { DiscordConfig } from '@/config';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -347,12 +344,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             } else if(interaction.isModalSubmit()) {
                 if(emailSetup && _.startsWith(interaction.customId, 'email-send-reject-reason:')) {
                     await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
-                    return;
                 }
             } else if(interaction.isStringSelectMenu() && _.startsWith(interaction.customId, 'email-allowlist-select:')) {
                 if(emailSetup) {
                     await emailSetup.outboundApprovalHandler.handleSelectMenu(interaction);
-                    return;
                 } else {
                     // Stryker disable next-line StringLiteral: error message is not behavior-affecting
                     await interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true });
@@ -475,7 +470,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 catchUpSessionRunner,
                 perchSessionRunner,
                 responseRouter,
-                rateLimiter:             rateLimiter,
+                rateLimiter,
                 readyClient,
                 channelRegistry,
                 eventDeltaTracker,

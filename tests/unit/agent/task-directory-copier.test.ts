@@ -5,19 +5,19 @@
  * from a previous session to a new session to maintain task continuity across
  * bot restarts.
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 // Use the mocks from setup.ts
 const mockAccess = mockFsPromises.access;
 const mockCp = mockFsPromises.cp;
 
 // Import after setup.ts has mocked the modules
+import type { TaskCleanupProcessor, TaskCleanupResult } from '@/agent/task-cleanup-processor';
 import { createTaskDirectoryCopier, getTaskDirectoryPath } from '@/agent/task-directory-copier';
 import type { SessionId } from '@/storage/task-session/types';
-import type { TaskCleanupProcessor, TaskCleanupResult } from '@/agent/task-cleanup-processor';
 
 // Helper to create SessionId (bypassing Zod validation in tests)
 const sessionId = (id: string): SessionId => id as SessionId;

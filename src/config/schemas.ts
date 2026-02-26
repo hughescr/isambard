@@ -32,7 +32,7 @@ export const emailConfigSchema = z.object({
     password:                       z.string().min(1),
     // Stryker disable BooleanLiteral,StringLiteral,ArithmeticOperator: Default values are configuration
     pollFallbackMs:                 z.number().int().positive().default(300_000),    // 5 min
-    sseReconnectDelayMs:            z.number().int().positive().default(5_000),
+    sseReconnectDelayMs:            z.number().int().positive().default(5000),
     maxBodySizeBytes:               z.number().int().positive().default(50_000),
     adminDiscordUserId:             z.string().min(1),
     adminDiscordChannelId:          z.string().min(1),
@@ -59,13 +59,13 @@ export const PresenceConfigSchema = z.object({
      * rapid phase transitions while ensuring the first status is always visible.
      * Set to 12 seconds to match Discord's actual presence update rate limit.
      */
-    updateThrottleMs: z.number().int().positive().default(12000), // 12 seconds (Discord rate limit)
+    updateThrottleMs: z.number().int().positive().default(12_000), // 12 seconds (Discord rate limit)
 
     /** Milliseconds to wait before showing idle status after last activity */
-    idleTimeoutMs: z.number().int().positive().default(60000), // 1 minute
+    idleTimeoutMs: z.number().int().positive().default(60_000), // 1 minute
 
     /** How often to refresh idle status text (milliseconds) */
-    idleRefreshIntervalMs: z.number().int().positive().default(300000), // 5 minutes
+    idleRefreshIntervalMs: z.number().int().positive().default(300_000), // 5 minutes
 });
 
 export type PresenceConfig = z.infer<typeof PresenceConfigSchema>;

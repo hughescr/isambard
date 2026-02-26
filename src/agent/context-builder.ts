@@ -6,12 +6,10 @@
  */
 
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
-import { map as _map, isNumber as _isNumber, isString as _isString, sortBy as _sortBy } from 'lodash';
-import type { MemoryToolBackend, MemoryPath, MemoryToolItemData } from '@/storage';
-import { createMemoryPath, createLayerName } from '@/storage';
-import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
+import _, { map as _map, isNumber as _isNumber, isString as _isString, sortBy as _sortBy } from 'lodash';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
+import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
+import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
 
 /** Minimal interface for retrieving message metadata from WildDuck */
 export interface WildDuckService {
@@ -143,7 +141,7 @@ export function formatMemoryPreview(
         // Stryker disable EqualityOperator,ConditionalExpression,MethodExpression,StringLiteral: Cosmetic content truncation for preview display
         const shouldTruncate = content.length > CONTENT_PREVIEW_MAX_LENGTH;
         const preview = shouldTruncate
-            ? content.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + '...'
+            ? `${content.slice(0, CONTENT_PREVIEW_MAX_LENGTH)}...`
             : content;
         // Stryker restore EqualityOperator,ConditionalExpression,MethodExpression,StringLiteral
         return `- ${path} (${age}): ${preview}`;
@@ -262,7 +260,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             let content = item.content;
             // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
             if(content.length > maxEventItemMaxChars) {
-                content = content.slice(0, maxEventItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                content = `${content.slice(0, maxEventItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
             }
             const age = formatShortRelativeTime(new Date(item.updatedAt), now);
             eventSections.push(`${item.path} (${age}):\n${content}`);
@@ -423,7 +421,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             // Format and truncate if needed
             const content = _map(result.items, 'content').join('\n\n');
             if(content.length > maxIdentityChars) {
-                const truncated = content.slice(0, maxIdentityChars - 3) + '...';
+                const truncated = `${content.slice(0, maxIdentityChars - 3)}...`;
                 const overflowNote = `\n\n...and ${result.items.length} total identity memories (use 'list /identity' to see all)`;
                 const identity = truncated + overflowNote;
                 logger.debug({ identityLength: identity.length }, 'Core identity loaded');
@@ -462,7 +460,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                     let content = item.content;
                     // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
                     if(content.length > maxStateItemMaxChars) {
-                        content = content.slice(0, maxStateItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                        content = `${content.slice(0, maxStateItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
                     }
                     sections.push(`${item.path}:\n${content}`);
                     fullTierCount++;
@@ -626,7 +624,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
             // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting
-            return sections.join('\n\n') + '\n\n';
+            return `${sections.join('\n\n')}\n\n`;
         },
 
         buildPerchContext: async (now: Date = new Date()): Promise<string> => {
@@ -649,7 +647,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                     // Stryker disable next-line ConditionalExpression,EqualityOperator: Config-driven content truncation threshold
                     if(content.length > maxStateItemMaxChars) {
                         // Stryker disable next-line StringLiteral: Cosmetic truncation message for context display
-                        content = content.slice(0, maxStateItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                        content = `${content.slice(0, maxStateItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
                     }
                     stateSections.push(`${item.path}:\n${content}`);
                 }
@@ -669,7 +667,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                     // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
                     if(content.length > maxEventItemMaxChars) {
                         // Stryker disable next-line StringLiteral: Cosmetic truncation message text
-                        content = content.slice(0, maxEventItemMaxChars) + '\n[truncated — use \'memory view ' + item.path + '\' for full content]';
+                        content = `${content.slice(0, maxEventItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
                     }
                     const age = formatShortRelativeTime(new Date(item.updatedAt), now);
                     eventSections.push(`${item.path} (${age}):\n${content}`);
@@ -691,7 +689,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
 
             // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting
-            return sections.join('\n\n') + '\n\n';
+            return `${sections.join('\n\n')}\n\n`;
         },
     };
 

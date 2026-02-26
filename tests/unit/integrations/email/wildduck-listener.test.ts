@@ -1,11 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import _ from 'lodash';
 import { mockLogger } from '../../../setup';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
-import type { WildDuckClient, WildDuckMessageSummary } from '@/integrations/email/wildduck-client';
 import type { EmailMetadata } from '@/integrations/email/types';
-import type { WildDuckListenerConfig } from '@/integrations/email/wildduck-listener';
-import { WildDuckListener, MAX_NOTIFY_ATTEMPTS } from '@/integrations/email/wildduck-listener';
-import _ from 'lodash';
+import type { WildDuckClient, WildDuckMessageSummary } from '@/integrations/email/wildduck-client';
+import { type WildDuckListenerConfig, WildDuckListener, MAX_NOTIFY_ATTEMPTS  } from '@/integrations/email/wildduck-listener';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -111,7 +110,7 @@ async function flushAsync(): Promise<void> {
 
 const DEFAULT_CONFIG: WildDuckListenerConfig = {
     pollFallbackMs:      300_000,
-    sseReconnectDelayMs: 5_000,
+    sseReconnectDelayMs: 5000,
     maxEmailsPerPoll:    20,
 };
 

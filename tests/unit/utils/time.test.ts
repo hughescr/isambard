@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { isString as _isString, split as _split, some as _some, startsWith as _startsWith } from 'lodash';
+import { mockLogger } from '../../setup';
 import {
     timeContextSchema,
     timeOfDaySchema,
@@ -12,7 +13,6 @@ import {
     resolveTimezone,
     type TimeContext
 } from '@/utils/time';
-import { mockLogger } from '../../setup';
 
 describe.concurrent('timeOfDaySchema', () => {
     test.each(['morning', 'afternoon', 'evening', 'night'])('should accept valid time of day "%s"', (timeOfDay) => {
@@ -117,11 +117,11 @@ describe('getCurrentTimeContext', () => {
     let RealDate: DateConstructor;
 
     beforeEach(() => {
-        RealDate = global.Date;
+        RealDate = globalThis.Date;
     });
 
     afterEach(() => {
-        global.Date = RealDate;
+        globalThis.Date = RealDate;
     });
 
     test('should format userLocalTime in 24-hour format', () => {
@@ -149,7 +149,7 @@ describe('getCurrentTimeContext', () => {
         DateMock.UTC = RealDate.UTC;
 
         // Type assertion needed for mocking global Date constructor
-        global.Date = DateMock as DateConstructor;
+        globalThis.Date = DateMock as DateConstructor;
 
         const context = getCurrentTimeContext('America/Los_Angeles');
 
@@ -163,36 +163,36 @@ describe('formatTimeSince', () => {
     let RealDate: DateConstructor;
 
     beforeEach(() => {
-        RealDate = global.Date;
+        RealDate = globalThis.Date;
     });
 
     afterEach(() => {
-        global.Date = RealDate;
+        globalThis.Date = RealDate;
     });
 
     test.each([
         // Test all boundary conditions (< not <=)
         { hours: 0.5, expected: 'a few minutes' },
         { hours: 0.9999, expected: 'a few minutes' }, // Just before 1 hour boundary
-        { hours: 1.0, expected: 'an hour' },          // Exact boundary
+        { hours: 1, expected: 'an hour' },          // Exact boundary
         { hours: 1.5, expected: 'an hour' },
         { hours: 1.9999, expected: 'an hour' },       // Just before 2 hour boundary
-        { hours: 2.0, expected: '2 hours' },          // Exact boundary
+        { hours: 2, expected: '2 hours' },          // Exact boundary
         { hours: 3, expected: '3 hours' },
         { hours: 5.9999, expected: '6 hours' },       // Just before 6 hour boundary
-        { hours: 6.0, expected: 'half a day' },       // Exact boundary
+        { hours: 6, expected: 'half a day' },       // Exact boundary
         { hours: 9, expected: 'half a day' },
         { hours: 11.9999, expected: 'half a day' },   // Just before 12 hour boundary
-        { hours: 12.0, expected: 'overnight' },       // Exact boundary
+        { hours: 12, expected: 'overnight' },       // Exact boundary
         { hours: 15, expected: 'overnight' },
         { hours: 17.9999, expected: 'overnight' },    // Just before 18 hour boundary
-        { hours: 18.0, expected: 'a day' },           // Exact boundary
+        { hours: 18, expected: 'a day' },           // Exact boundary
         { hours: 24, expected: 'a day' },
         { hours: 35.9999, expected: 'a day' },        // Just before 36 hour boundary
-        { hours: 36.0, expected: '2 days' },          // Exact boundary
+        { hours: 36, expected: '2 days' },          // Exact boundary
         { hours: 48, expected: '2 days' },
         { hours: 71.9999, expected: '3 days' },       // Just before 72 hour boundary
-        { hours: 72.0, expected: 'a few days' },      // Exact boundary
+        { hours: 72, expected: 'a few days' },      // Exact boundary
         { hours: 96, expected: 'a few days' },
     ])('should format $hours hours as "$expected"', ({ hours, expected }) => {
         const now = new RealDate('2025-01-15T12:00:00Z');
@@ -215,7 +215,7 @@ describe('formatTimeSince', () => {
         DateMock.parse = RealDate.parse;
         DateMock.UTC = RealDate.UTC;
 
-        global.Date = DateMock as DateConstructor;
+        globalThis.Date = DateMock as DateConstructor;
 
         const result = formatTimeSince(since);
         expect(result).toBe(expected);
@@ -273,7 +273,7 @@ describe('formatTimeHeader', () => {
     const FIXED_TIME = new Date('2026-02-09T22:30:00.000Z');
 
     beforeEach(() => {
-        RealDate = global.Date;
+        RealDate = globalThis.Date;
 
         // Mock Date constructor to return fixed time
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
@@ -292,11 +292,11 @@ describe('formatTimeHeader', () => {
         DateMock.parse = RealDate.parse;
         DateMock.UTC = RealDate.UTC;
 
-        global.Date = DateMock as DateConstructor;
+        globalThis.Date = DateMock as DateConstructor;
     });
 
     afterEach(() => {
-        global.Date = RealDate;
+        globalThis.Date = RealDate;
     });
 
     test('should include header and UTC+Izzy lines when no user timezone', () => {

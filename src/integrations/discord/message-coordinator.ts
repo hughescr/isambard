@@ -19,11 +19,11 @@
  * batches all rapid messages before interrupting.
  */
 
+import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
+import _ from 'lodash';
 import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
-import _ from 'lodash';
-import { logger } from '@hughescr/logger';
 
 /** Result from processing messages */
 export interface ProcessResult {

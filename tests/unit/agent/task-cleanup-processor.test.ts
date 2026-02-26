@@ -7,11 +7,11 @@
  * - Age (retention period, default 14 days)
  * - Dependencies (tasks that block active tasks must be retained)
  */
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { mockLogger } from '../../setup';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { filter, constant } from 'lodash';
+import { mockLogger } from '../../setup';
 
 // Create local mocks for fs operations
 const mockReaddir = mock((_path: string) => Promise.resolve([] as string[]));

@@ -1,6 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
-import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { mockClient } from 'aws-sdk-client-mock';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { find as _find, map as _map } from 'lodash';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
@@ -326,13 +326,13 @@ describe('MemoryToolBackendTagIndex', () => {
             const requestItems = calls[0].args[0].input.RequestItems?.TestTable;
             expect(requestItems).toHaveLength(1);
             expect(requestItems?.[0].PutRequest?.Item).toEqual({
-                PK:             'TAG#important',
-                SK:             'PATH#/identity/values.md',
-                memoryPath:     path,
-                layer:          layer,
-                updatedAt:      updatedAt,
-                tags:           tags,
-                contentPreview: contentPreview,
+                PK:         'TAG#important',
+                SK:         'PATH#/identity/values.md',
+                memoryPath: path,
+                layer,
+                updatedAt,
+                tags,
+                contentPreview,
             });
         });
 
@@ -365,13 +365,13 @@ describe('MemoryToolBackendTagIndex', () => {
             const unprocessedItem = {
                 PutRequest: {
                     Item: {
-                        PK:             'TAG#core',
-                        SK:             'PATH#/identity/values.md',
-                        memoryPath:     path,
-                        layer:          layer,
-                        updatedAt:      updatedAt,
-                        tags:           tags,
-                        contentPreview: contentPreview,
+                        PK:         'TAG#core',
+                        SK:         'PATH#/identity/values.md',
+                        memoryPath: path,
+                        layer,
+                        updatedAt,
+                        tags,
+                        contentPreview,
                     },
                 },
             };
@@ -420,13 +420,13 @@ describe('MemoryToolBackendTagIndex', () => {
             const unprocessedItem = {
                 PutRequest: {
                     Item: {
-                        PK:             'TAG#failed',
-                        SK:             'PATH#/identity/values.md',
-                        memoryPath:     path,
-                        layer:          layer,
-                        updatedAt:      updatedAt,
-                        tags:           tags,
-                        contentPreview: contentPreview,
+                        PK:         'TAG#failed',
+                        SK:         'PATH#/identity/values.md',
+                        memoryPath: path,
+                        layer,
+                        updatedAt,
+                        tags,
+                        contentPreview,
                     },
                 },
             };

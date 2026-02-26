@@ -1,13 +1,12 @@
-import type { ButtonInteraction } from 'discord.js';
-import { EmbedBuilder } from 'discord.js';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import { type ButtonInteraction, EmbedBuilder  } from 'discord.js';
+import _ from 'lodash';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { EmailFolder } from '@/integrations/email/types';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
-const GREEN = 0x00AA00;
-const RED   = 0xFF0000;
+const GREEN = 0x00_AA_00;
+const RED   = 0xFF_00_00;
 
 export interface ReviewHandlerDeps {
     wildDuckClient:     WildDuckClient
@@ -50,7 +49,7 @@ export class ReviewHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        const uid = parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr ?? '', 10);
         if(isNaN(uid)) {
             return;
         }
@@ -72,14 +71,25 @@ export class ReviewHandler {
 
         // Stryker disable BlockStatement: try-catch wraps button handler - error handling
         try {
-            if(prefix === 'email-trash') {
-                await this.handleTrash(interaction, uid, sourceFolder);
-            } else if(prefix === 'email-junk') {
-                await this.handleJunk(interaction, uid, sourceFolder);
-            } else if(prefix === 'email-allow') {
-                await this.handleAllow(interaction, uid, sourceFolder);
-            } else {
-                await this.handleAllowlist(interaction, uid, sourceFolder);
+            switch(prefix) {
+                case 'email-trash': {
+                    await this.handleTrash(interaction, uid, sourceFolder);
+
+                    break;
+                }
+                case 'email-junk': {
+                    await this.handleJunk(interaction, uid, sourceFolder);
+
+                    break;
+                }
+                case 'email-allow': {
+                    await this.handleAllow(interaction, uid, sourceFolder);
+
+                    break;
+                }
+                default: {
+                    await this.handleAllowlist(interaction, uid, sourceFolder);
+                }
             }
         } catch (err) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -92,9 +102,9 @@ export class ReviewHandler {
                     embeds:     [],
                     components: [],
                 });
-            } catch (editReplyErr) {
+            } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.error({ err: editReplyErr, msg: 'Failed to send error editReply' });
+                logger.error({ err: error, msg: 'Failed to send error editReply' });
             }
         }
     }
@@ -170,8 +180,8 @@ export class ReviewHandler {
                 embeds:     [updatedEmbed],
                 components: [],
             });
-        } catch (allowlistErr) {
-            const errMsg = _.isError(allowlistErr) ? allowlistErr.message : String(allowlistErr);
+        } catch (error) {
+            const errMsg = _.isError(error) ? error.message : String(error);
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message is not behavior-affecting
             logger.warn({ error: errMsg, email: email.from.address, msg: 'Failed to add sender to allowlist after allow' });
             await interaction.editReply({

@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -16,7 +16,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should trim paragraphs when splitting', () => {
                 // Tests: map(p => _.trim(p))
                 // Force paragraph splitting by making the combined text too long
-                const message = '  ' + _.repeat('x', 60) + '  \n\n  ' + _.repeat('y', 60) + '  ';
+                const message = `  ${_.repeat('x', 60)}  \n\n  ${_.repeat('y', 60)}  `;
                 const result = splitMessage(message, 80);
                 // Each paragraph should be trimmed - no leading/trailing spaces
                 for(const chunk of result) {
@@ -39,7 +39,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result[1]).toBe(para2);
             });
 
-            test('should respect \\n{2,} regex not just \\n', () => {
+            test(String.raw`should respect \n{2,} regex not just \n`, () => {
                 // Tests regex mutation: /\n{2,}/ vs /\n/
                 const message = 'line1\nline2\n\nparagraph2';
                 const result = splitMessage(message, 100);
@@ -87,7 +87,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should reset currentChunk after flushing for long paragraph', () => {
                 // Tests: currentChunk = ''
-                const message = 'AA\n\n' + _.repeat('x', 100) + '\n\nBB';
+                const message = `AA\n\n${_.repeat('x', 100)}\n\nBB`;
                 const result = splitMessage(message, 50);
                 expect(result).toContain('AA');
                 expect(result).toContain('BB');

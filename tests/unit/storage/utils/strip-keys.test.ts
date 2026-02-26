@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-
 import { stripDynamoKeys } from '@/storage/utils/strip-keys';
 
 /**

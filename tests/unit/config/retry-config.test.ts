@@ -14,20 +14,20 @@ describe.concurrent('retryConfigSchema', () => {
                 claude: {
                     maxAttempts:       2,
                     baseDelayMs:       1000,
-                    maxDelayMs:        30000,
+                    maxDelayMs:        30_000,
                     backoffMultiplier: 2,
                     jitterFraction:    0.1,
                 },
                 discord: {
                     maxAttempts:       2,
                     baseDelayMs:       500,
-                    maxDelayMs:        30000,
+                    maxDelayMs:        30_000,
                     backoffMultiplier: 2,
                     jitterFraction:    0.1,
                 },
                 dynamodb: {
-                    defaultTimeoutMs: 10000,
-                    queryTimeoutMs:   15000,
+                    defaultTimeoutMs: 10_000,
+                    queryTimeoutMs:   15_000,
                 },
             });
         });
@@ -38,8 +38,8 @@ describe.concurrent('retryConfigSchema', () => {
             ['claude',   'maxAttempts',      1,    5,     3,     true],
             ['discord',  'maxAttempts',      1,    3,     2,     true],
             ['discord',  'baseDelayMs',      100,  5000,  1000,  false],
-            ['dynamodb', 'defaultTimeoutMs', 1000, 60000, 20000, false],
-            ['dynamodb', 'queryTimeoutMs',   1000, 60000, 30000, false],
+            ['dynamodb', 'defaultTimeoutMs', 1000, 60_000, 20_000, false],
+            ['dynamodb', 'queryTimeoutMs',   1000, 60_000, 30_000, false],
         ] as const;
 
         test.each(boundedFields)(
@@ -108,11 +108,11 @@ describe('loadRetryConfig', () => {
     afterEach(() => {
         // Delete keys added during test
         // eslint-disable-next-line lodash/prefer-lodash-method -- Native methods used to avoid TypeScript UMD global errors
-        Object.keys(process.env).forEach((key) => {
+        for(const key of Object.keys(process.env)) {
             if(!(key in originalEnv)) {
                 delete process.env[key];
             }
-        });
+        }
         // Restore original values
         // eslint-disable-next-line lodash/prefer-lodash-method -- Native methods used to avoid TypeScript UMD global errors
         Object.assign(process.env, originalEnv);
@@ -153,7 +153,7 @@ describe('loadRetryConfig', () => {
 
         const config = loadRetryConfig();
 
-        expect(config.dynamodb.defaultTimeoutMs).toBe(25000);
+        expect(config.dynamodb.defaultTimeoutMs).toBe(25_000);
         expect(config.claude.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.claude.maxAttempts);
         expect(config.discord.maxAttempts).toBe(DEFAULT_RETRY_CONFIG.discord.maxAttempts);
     });
@@ -167,7 +167,7 @@ describe('loadRetryConfig', () => {
 
         expect(config.claude.maxAttempts).toBe(5);
         expect(config.discord.maxAttempts).toBe(2);
-        expect(config.dynamodb.defaultTimeoutMs).toBe(30000);
+        expect(config.dynamodb.defaultTimeoutMs).toBe(30_000);
     });
 
     test('should handle invalid env var (out of range) gracefully', () => {

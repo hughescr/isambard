@@ -14,15 +14,14 @@
  * - Runtime: trackChannel() registers new channels, recordActivity() updates checkpoints
  */
 
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import type { ChannelId, GuildId } from '@/integrations/discord/types';
-import type { MessageSearchService } from '@/integrations/discord/message-history/search';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import _ from 'lodash';
 import type { CheckpointManager } from './checkpoint-manager';
+import { type InboxConfig, DEFAULT_INBOX_CONFIG  } from './config';
 import type { UnreadMessage, UnreadOverview } from './types';
-import type { InboxConfig } from './config';
-import { DEFAULT_INBOX_CONFIG } from './config';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { ChannelId, GuildId } from '@/integrations/discord/types';
 
 /**
  * Channel metadata cache entry.

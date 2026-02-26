@@ -1,9 +1,9 @@
+import type { Logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import _ from 'lodash';
-import type { Logger } from '@hughescr/logger';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
-import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state';
 import type { PerchConfig } from '@/agent/perch/types';
+import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state';
 
 // Mock logger
 function createMockLogger(): Logger {
@@ -38,7 +38,7 @@ function createStateChange(
 function createMockStateManager(): BotStateManager {
     const subscribers = new Set<(change: StateChange) => void>();
 
-    const stateManager = {
+    return {
 
         getMode:   () => 'idle' as OperationalMode,
         subscribe: mock((callback: (change: StateChange) => void) => {
@@ -55,8 +55,6 @@ function createMockStateManager(): BotStateManager {
             }
         },
     } as unknown as BotStateManager;
-
-    return stateManager;
 }
 
 describe('PerchScheduler', () => {
@@ -976,7 +974,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Advance time to trigger scheduled check
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             // Should have logged but not triggered
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
@@ -1000,7 +998,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Simulate scheduled trigger
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             // The scheduler should have called getSlotForHour with the current hour
             // We can't directly test this, but we can verify the correct slot was triggered
@@ -1024,7 +1022,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Simulate scheduled trigger
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             // Should not trigger yet
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
@@ -1184,7 +1182,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Simulate scheduled trigger by fast-forwarding to next hour
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             // Should have triggered because enabled=true
             expect(mockOnPerchTrigger).toHaveBeenCalled();
@@ -1206,7 +1204,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Simulate scheduled trigger
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             // Should not have triggered because config.enabled is false
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
@@ -1230,7 +1228,7 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 { hour: 10, slot: 'mid-morning' },
@@ -1254,7 +1252,7 @@ describe('PerchScheduler', () => {
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 { slot: 'mid-morning', mode: 'processing_message' },
@@ -1291,7 +1289,7 @@ describe('PerchScheduler', () => {
             expect(state.pendingTriggerTime).toBeInstanceOf(Date);
 
             // Advance time by 2 hours
-            const twoHoursMs = 7200000;
+            const twoHoursMs = 7_200_000;
             jest.setSystemTime(startTime + twoHoursMs);
 
             // Transition to idle
@@ -1380,7 +1378,7 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Advance time to trigger scheduled check
-            jest.advanceTimersByTime(3600000); // 1 hour
+            jest.advanceTimersByTime(3_600_000); // 1 hour
 
             // Should not trigger when config.enabled is false
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();

@@ -1,14 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import _ from 'lodash';
-import type { Message } from 'discord.js';
-import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
-import type { ProcessResult, MessageProcessor } from '@/integrations/discord/message-coordinator';
-import type { DiscordMessageContext } from '@/integrations/discord/types';
-import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
-import { StreamTracker } from '@/agent/stream-tracker';
-import type { ResumeContext } from '@/agent/resume-prompt-builder';
-import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
 import { logger } from '@hughescr/logger';
+import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import type { Message } from 'discord.js';
+import _ from 'lodash';
+import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
+import type { ResumeContext } from '@/agent/resume-prompt-builder';
+import { StreamTracker } from '@/agent/stream-tracker';
+import { MessageCoordinator, type ProcessResult, type MessageProcessor  } from '@/integrations/discord/message-coordinator';
+import { type DiscordMessageContext, createChannelId, createGuildId, createUserId  } from '@/integrations/discord/types';
 
 describe('MessageCoordinator', () => {
     let coordinator: MessageCoordinator;
@@ -2546,7 +2544,7 @@ describe('MessageCoordinator', () => {
                 timerWasCreated = true;
                 return originalSetTimeout(callback, delay);
             };
-            global.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
+            globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
             const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
@@ -2575,7 +2573,7 @@ describe('MessageCoordinator', () => {
             // Verify timer was created
             expect(timerWasCreated).toBe(true);
 
-            global.setTimeout = originalSetTimeout;
+            globalThis.setTimeout = originalSetTimeout;
         });
 
         it('should NOT create timer when timer already exists (verify if(state.debounceTimer) check)', async () => {
@@ -2585,7 +2583,7 @@ describe('MessageCoordinator', () => {
                 timerCreateCount++;
                 return originalSetTimeout(callback, delay);
             };
-            global.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
+            globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
             const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
@@ -2622,7 +2620,7 @@ describe('MessageCoordinator', () => {
             // Timer should have been created again (after clearing old one)
             expect(timerCreateCount).toBeGreaterThan(firstTimerCount);
 
-            global.setTimeout = originalSetTimeout;
+            globalThis.setTimeout = originalSetTimeout;
         });
     });
 
@@ -2638,7 +2636,7 @@ describe('MessageCoordinator', () => {
                 timerCleared = true;
                 originalClearTimeout(timerId);
             };
-            global.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
+            globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
             const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
@@ -2669,7 +2667,7 @@ describe('MessageCoordinator', () => {
 
             expect(timerCleared).toBe(true);
 
-            global.clearTimeout = originalClearTimeout;
+            globalThis.clearTimeout = originalClearTimeout;
         });
 
         it('should clear debounce timer when new message arrives during debounce period (case 2)', async () => {
@@ -2679,7 +2677,7 @@ describe('MessageCoordinator', () => {
                 clearCount++;
                 originalClearTimeout(timerId);
             };
-            global.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
+            globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
             const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
                 // Fast processor that completes before debounce expires
@@ -2721,7 +2719,7 @@ describe('MessageCoordinator', () => {
             // Timer should be cleared at least once
             expect(clearCount).toBeGreaterThanOrEqual(1);
 
-            global.clearTimeout = originalClearTimeout;
+            globalThis.clearTimeout = originalClearTimeout;
         });
 
         it('should clear debounce timer on stop', async () => {
@@ -2731,7 +2729,7 @@ describe('MessageCoordinator', () => {
                 timerCleared = true;
                 originalClearTimeout(timerId);
             };
-            global.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
+            globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
             const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
                 await new Promise(resolve => setTimeout(resolve, 200));
@@ -2760,7 +2758,7 @@ describe('MessageCoordinator', () => {
 
             expect(timerCleared).toBe(true);
 
-            global.clearTimeout = originalClearTimeout;
+            globalThis.clearTimeout = originalClearTimeout;
         });
     });
 
@@ -2772,7 +2770,7 @@ describe('MessageCoordinator', () => {
             mockChannel = {
                 sendTyping: mock(async () => {
                     // Intentionally empty - just needs to be async
-                    return;
+
                 }),
             };
         });
@@ -2792,7 +2790,7 @@ describe('MessageCoordinator', () => {
         it('should refresh typing indicator every 8 seconds during processing', async () => {
             // Slow processor that takes 20 seconds
             const slowProcessor: MessageProcessor = async () => {
-                await new Promise(resolve => setTimeout(resolve, 20000));
+                await new Promise(resolve => setTimeout(resolve, 20_000));
                 return {
                     response:       'Response',
                     wasInterrupted: false,
@@ -2836,7 +2834,7 @@ describe('MessageCoordinator', () => {
                 intervalCleared = true;
                 originalClearInterval(intervalId);
             };
-            global.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
+            globalThis.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
 
             coordinator.setProcessor(processorMock);
             coordinator.handleMessage(mockContext, mockMessage, mockChannel);
@@ -2851,7 +2849,7 @@ describe('MessageCoordinator', () => {
 
             expect(intervalCleared).toBe(true);
 
-            global.clearInterval = originalClearInterval;
+            globalThis.clearInterval = originalClearInterval;
         });
 
         it('should stop typing indicator when processing is interrupted', async () => {
@@ -2861,7 +2859,7 @@ describe('MessageCoordinator', () => {
                 intervalCleared = true;
                 originalClearInterval(intervalId);
             };
-            global.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
+            globalThis.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
 
             // Slow processor
             const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
@@ -2897,7 +2895,7 @@ describe('MessageCoordinator', () => {
 
             expect(intervalCleared).toBe(true);
 
-            global.clearInterval = originalClearInterval;
+            globalThis.clearInterval = originalClearInterval;
         });
 
         it('should handle sendTyping errors gracefully', async () => {
@@ -2920,7 +2918,7 @@ describe('MessageCoordinator', () => {
         it('should continue typing across batched messages', async () => {
             // Slow processor
             const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
-                await new Promise(resolve => setTimeout(resolve, 10000));
+                await new Promise(resolve => setTimeout(resolve, 10_000));
                 return {
                     response:       'Response',
                     wasInterrupted: abortSignal.aborted,
@@ -3007,7 +3005,7 @@ describe('MessageCoordinator', () => {
 
                 // Set up slow processor that takes time
                 const slowProcessor: MessageProcessor = async () => {
-                    await new Promise(resolve => setTimeout(resolve, 20000));
+                    await new Promise(resolve => setTimeout(resolve, 20_000));
                     return {
                         response:       'Done',
                         wasInterrupted: false,
@@ -3034,7 +3032,7 @@ describe('MessageCoordinator', () => {
                 expect(noopSpy).toHaveBeenCalled();
 
                 // Complete processing
-                jest.advanceTimersByTime(12000);
+                jest.advanceTimersByTime(12_000);
                 await Promise.resolve();
 
                 // Verify processor completed successfully despite typing error
@@ -3089,7 +3087,7 @@ describe('MessageCoordinator', () => {
                 }
                 originalClearInterval(id);
             });
-            global.clearInterval = clearIntervalSpy as typeof clearInterval;
+            globalThis.clearInterval = clearIntervalSpy as typeof clearInterval;
 
             try {
                 // Don't provide a channel - no typing indicator will be created
@@ -3111,7 +3109,7 @@ describe('MessageCoordinator', () => {
                 // clearInterval should NOT have been called at all (no interval to clear)
                 expect(clearIntervalSpy).not.toHaveBeenCalled();
             } finally {
-                global.clearInterval = originalClearInterval;
+                globalThis.clearInterval = originalClearInterval;
             }
         });
 
@@ -3186,7 +3184,7 @@ describe('MessageCoordinator', () => {
 
             // Make first processor run for 10 seconds
             processorMock.mockImplementationOnce(async () => {
-                await new Promise(resolve => setTimeout(resolve, 10000));
+                await new Promise(resolve => setTimeout(resolve, 10_000));
                 return {
                     response:       'Response 1',
                     wasInterrupted: false,
@@ -3216,7 +3214,7 @@ describe('MessageCoordinator', () => {
 
             // Make second processor run for 20 seconds
             processorMock.mockImplementationOnce(async () => {
-                await new Promise(resolve => setTimeout(resolve, 20000));
+                await new Promise(resolve => setTimeout(resolve, 20_000));
                 return {
                     response:       'Response 2',
                     wasInterrupted: false,
@@ -3249,7 +3247,7 @@ describe('MessageCoordinator', () => {
 
             // Make processor run for a long time
             processorMock.mockImplementation(async () => {
-                await new Promise(resolve => setTimeout(resolve, 25000));
+                await new Promise(resolve => setTimeout(resolve, 25_000));
                 return {
                     response:       'Response',
                     wasInterrupted: false,
@@ -3299,7 +3297,7 @@ describe('MessageCoordinator', () => {
 
             // Long-running processor to allow multiple interval fires
             processorMock.mockImplementation(async (_contexts, _resumeContext, _sessionId, abortSignal: AbortSignal) => {
-                await new Promise(resolve => setTimeout(resolve, 25000));
+                await new Promise(resolve => setTimeout(resolve, 25_000));
                 return {
                     response:       'Response',
                     sessionId:      'session-123',
@@ -3325,7 +3323,7 @@ describe('MessageCoordinator', () => {
 
             // Complete interrupted query (finally block should clear interval)
             // and wait for resume to start
-            jest.advanceTimersByTime(25100);
+            jest.advanceTimersByTime(25_100);
             await Promise.resolve();
 
             // Give resume processing a moment to start
@@ -3358,7 +3356,7 @@ describe('MessageCoordinator', () => {
 
             // Make processor run for 20 seconds
             processorMock.mockImplementation(async () => {
-                await new Promise(resolve => setTimeout(resolve, 20000));
+                await new Promise(resolve => setTimeout(resolve, 20_000));
                 return {
                     response:       'Response',
                     wasInterrupted: false,
@@ -3412,7 +3410,7 @@ describe('MessageCoordinator', () => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: run for 18 seconds (will be interrupted)
-                    await new Promise(resolve => setTimeout(resolve, 18000));
+                    await new Promise(resolve => setTimeout(resolve, 18_000));
                     return {
                         response:       null,
                         sessionId:      'session-123',
@@ -3421,7 +3419,7 @@ describe('MessageCoordinator', () => {
                     };
                 } else {
                     // Second call (resume): run for 18 seconds
-                    await new Promise(resolve => setTimeout(resolve, 18000));
+                    await new Promise(resolve => setTimeout(resolve, 18_000));
                     return {
                         response:       'Complete',
                         sessionId:      'session-123',
@@ -3584,14 +3582,14 @@ describe('MessageCoordinator', () => {
 
             let _clearIntervalCalls = 0;
             const originalClearInterval = clearInterval;
-            global.clearInterval = ((intervalId: ReturnType<typeof setInterval>) => {
+            globalThis.clearInterval = ((intervalId: ReturnType<typeof setInterval>) => {
                 _clearIntervalCalls++;
                 originalClearInterval(intervalId);
             }) as unknown as typeof clearInterval;
 
             let setIntervalCalls = 0;
             const originalSetInterval = setInterval;
-            global.setInterval = ((callback: () => void, ms: number) => {
+            globalThis.setInterval = ((callback: () => void, ms: number) => {
                 setIntervalCalls++;
                 return originalSetInterval(callback, ms);
             }) as unknown as typeof setInterval;
@@ -3637,8 +3635,8 @@ describe('MessageCoordinator', () => {
                 // Final check: typing should only be set up once for the entire flow
                 expect(setIntervalCalls).toBe(1);
             } finally {
-                global.clearInterval = originalClearInterval;
-                global.setInterval = originalSetInterval;
+                globalThis.clearInterval = originalClearInterval;
+                globalThis.setInterval = originalSetInterval;
             }
         });
     });
@@ -3652,7 +3650,7 @@ describe('MessageCoordinator', () => {
             mockChannel = {
                 sendTyping: mock(async () => {
                     // Intentionally empty - just needs to be async
-                    return;
+
                 }),
             };
         });
@@ -3670,7 +3668,7 @@ describe('MessageCoordinator', () => {
         it('should clear typing interval when removing a channel', async () => {
             let intervalCleared = false;
             const originalClearInterval = clearInterval;
-            global.clearInterval = ((intervalId: ReturnType<typeof setInterval>) => {
+            globalThis.clearInterval = ((intervalId: ReturnType<typeof setInterval>) => {
                 intervalCleared = true;
                 originalClearInterval(intervalId);
             }) as unknown as typeof clearInterval;
@@ -3693,14 +3691,14 @@ describe('MessageCoordinator', () => {
                 await Promise.resolve(); // Flush microtasks
                 await Promise.resolve();
             } finally {
-                global.clearInterval = originalClearInterval;
+                globalThis.clearInterval = originalClearInterval;
             }
         });
 
         it('should clear debounce timer when removing a channel', async () => {
             let timerCleared = false;
             const originalClearTimeout = clearTimeout;
-            global.clearTimeout = ((timerId: ReturnType<typeof setTimeout>) => {
+            globalThis.clearTimeout = ((timerId: ReturnType<typeof setTimeout>) => {
                 timerCleared = true;
                 originalClearTimeout(timerId);
             }) as unknown as typeof clearTimeout;
@@ -3739,11 +3737,11 @@ describe('MessageCoordinator', () => {
                 expect(timerCleared).toBe(true);
 
                 // Clean up
-                jest.advanceTimersByTime(10000);
+                jest.advanceTimersByTime(10_000);
                 await Promise.resolve(); // Flush microtasks
                 await Promise.resolve();
             } finally {
-                global.clearTimeout = originalClearTimeout;
+                globalThis.clearTimeout = originalClearTimeout;
             }
         });
 

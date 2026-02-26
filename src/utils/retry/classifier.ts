@@ -44,7 +44,7 @@ function getRetryAfter(error: object & { retryAfter?: unknown }): number | undef
     }
 
     const retryAfter = _.isString(error.retryAfter)
-        ? parseInt(error.retryAfter, 10)
+        ? Number.parseInt(error.retryAfter, 10)
         : (error.retryAfter as number);
 
     return retryAfter >= 0 ? retryAfter : undefined;
@@ -58,7 +58,7 @@ function classifyHttpStatus(
     permanentStatuses: number[]
 ): ErrorClassification | undefined {
     const status = _.isString(error.status)
-        ? parseInt(error.status, 10)
+        ? Number.parseInt(error.status, 10)
         : (error.status as number);
 
     const message = getHttpErrorMessage(error, status);

@@ -1,9 +1,9 @@
-import type { Client } from 'discord.js';
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes } from 'discord.js';
-import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
+import { type Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes  } from 'discord.js';
+import _ from 'lodash';
+import { createEmailMCPServer } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import {
@@ -22,7 +22,6 @@ import {
     SendRateLimiter,
     OutboundApprovalHandler
 } from '@/integrations/email';
-import { createEmailMCPServer } from '@/agent';
 import { retryAsync } from '@/utils';
 
 // ---------------------------------------------------------------------------
@@ -159,7 +158,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression: sendApprovalRequest callback is integration wiring
     const sendApprovalRequest = async (to: string, subject: string, draftUid: number, cc?: string[]): Promise<void> => {
-        const BLUE = 0x0099FF;
+        const BLUE = 0x00_99_FF;
         const embed = new EmbedBuilder()
             .setTitle('Outbound Email Approval Required')
             .setColor(BLUE)

@@ -1,18 +1,17 @@
-import { describe, it, test, expect, beforeEach } from 'bun:test';
-import { mock } from 'bun:test';
+import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
 import { mockLogger } from '../../../setup';
-import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 import {
     PathAlreadyExistsError,
     InvalidPathError
 } from '@/errors';
+import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import {
     create,
     insert,
     str_replace as strReplace,
     formatLineNumbers
 } from '@/storage/memory-tool/handlers';
+import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 
 describe('Memory Tool Handlers - Consolidate and Logging', () => {
     let mockBackend: MemoryToolBackend;

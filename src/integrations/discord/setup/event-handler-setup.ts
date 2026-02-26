@@ -1,22 +1,21 @@
+import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import { createUserId, createChannelId, createGuildId } from '../types';
-import { createMessageHandler } from '../handlers';
-import { AnswerClassifier } from '@/agent';
-import type { QuestionRegistry, PerchSessionRunner } from '@/agent';
-import type { MessageCoordinator } from '../message-coordinator';
-import type { InboxManager } from '../inbox';
 import type { CatchUpSessionRunner } from '../catchup';
-import type { BotStateManager } from '../state';
 import {
     type ChannelRegistryManager,
     discoverAllChannels,
     setupChannelEventHandlers,
-    DMTracker,
-    ResponseRouter
+    type DMTracker,
+    type ResponseRouter
 } from '../channel-registry';
+import { createMessageHandler } from '../handlers';
+import type { InboxManager } from '../inbox';
+import type { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
+import type { BotStateManager } from '../state';
+import { createUserId, createChannelId, createGuildId } from '../types';
+import { type AnswerClassifier, type QuestionRegistry, type PerchSessionRunner  } from '@/agent';
 import { safeAsyncHandler } from '@/utils';
 
 /**

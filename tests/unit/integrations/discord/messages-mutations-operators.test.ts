@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -156,7 +156,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should use word splitting for long sentence', () => {
                 // Kill: if(exceedsLimtest(sentence.length, maxLength)) block in splitBySentences
-                const longSentence = _.trim(_.repeat('word ', 30)) + '.';
+                const longSentence = `${_.trim(_.repeat('word ', 30))}.`;
                 const result = splitMessage(longSentence, 50);
                 expect(result.length).toBeGreaterThan(1);
             });

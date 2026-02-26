@@ -27,7 +27,7 @@ describe.concurrent('reconciliationConfigSchema', () => {
     test('should accept valid configuration with all fields', () => {
         const config = {
             enabled:          true,
-            intervalMs:       3600000, // 1 hour
+            intervalMs:       3_600_000, // 1 hour
             operationDelayMs: 500,
             scanPageSize:     50,
             backoff:          {
@@ -49,13 +49,13 @@ describe.concurrent('reconciliationConfigSchema', () => {
     test('should accept configuration with partial fields', () => {
         const config = {
             enabled:    true,
-            intervalMs: 7200000, // 2 hours
+            intervalMs: 7_200_000, // 2 hours
         };
         const result = reconciliationConfigSchema.safeParse(config);
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.enabled).toBe(true);
-            expect(result.data.intervalMs).toBe(7200000);
+            expect(result.data.intervalMs).toBe(7_200_000);
             expect(result.data.operationDelayMs).toBe(1000); // default
             expect(result.data.scanPageSize).toBe(25); // default
         }
@@ -372,7 +372,7 @@ describe.concurrent('reconciliationResultSchema', () => {
                 startTime:           new Date('2024-01-01T01:00:00Z'),
                 endTime:             new Date('2024-01-01T01:15:00Z'),
             },
-            totalDurationMs: 4500000,
+            totalDurationMs: 4_500_000,
         };
         const parseResult = reconciliationResultSchema.safeParse(result);
         expect(parseResult.success).toBe(true);

@@ -1,7 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { DynamoDBConfig } from '@/config';
 import { logger } from '@hughescr/logger';
+import type { DynamoDBConfig } from '@/config';
 
 export interface DynamoDBClients {
     client:    DynamoDBClient

@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -7,7 +7,7 @@ import {
 describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('Codex-targeted mutation killing tests', () => {
-            test('should collapse multiple spaces when splitting words (kills /\\s+/ -> /\\s/)', () => {
+            test(String.raw`should collapse multiple spaces when splitting words (kills /\s+/ -> /\s/)`, () => {
                 // Kill: line 51 regex mutation
                 const word1 = _.repeat('a', 25);
                 const word2 = _.repeat('b', 25);
@@ -20,8 +20,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should extract sentence at exact end of string with no trailing whitespace (kills regex $ removal)', () => {
                 // Kill: line 109 regex (?:\s|$) -> (?:\s)
-                const s1 = _.repeat('x', 45) + '.'; // 46 chars
-                const s2 = _.repeat('y', 45) + '.'; // 46 chars - no trailing space after this
+                const s1 = `${_.repeat('x', 45)}.`; // 46 chars
+                const s2 = `${_.repeat('y', 45)}.`; // 46 chars - no trailing space after this
                 const message = `${s1} ${s2}`;
                 const result = splitMessage(message, 50);
                 // Both sentences should be found
@@ -31,8 +31,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should extract sentences via while loop execution (kills while(false))', () => {
                 // Kill: line 114 while(false)
-                const s1 = _.repeat('a', 45) + '.';
-                const s2 = _.repeat('b', 45) + '.';
+                const s1 = `${_.repeat('a', 45)}.`;
+                const s2 = `${_.repeat('b', 45)}.`;
                 const message = `${s1} ${s2}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe(s1);
@@ -41,8 +41,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should filter empty trimmed sentences (kills if(trimmed) -> if(true))', () => {
                 // Kill: line 116 if(trimmed) -> if(true)
-                const s1 = _.repeat('a', 45) + '.';
-                const s2 = _.repeat('b', 45) + '.';
+                const s1 = `${_.repeat('a', 45)}.`;
+                const s2 = `${_.repeat('b', 45)}.`;
                 const message = `${s1}    ${s2}`; // 4 spaces - potential empty trimmed
                 const result = splitMessage(message, 50);
                 expect(result).not.toContain('');
@@ -109,7 +109,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should handle long sentence that exceeds maxLength (kills if(false))', () => {
                 // Kill: line 164 if(exceedsLimtest(sentence.length, maxLength)) -> if(false)
                 const shortSent = 'Hi.';
-                const longSent = _.repeat('x', 60) + '.'; // 61 chars > 50
+                const longSent = `${_.repeat('x', 60)}.`; // 61 chars > 50
                 const message = `${shortSent} ${longSent}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('Hi.');
@@ -118,8 +118,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should compare currentChunk to empty string exactly (kills string literal mutation)', () => {
                 // Kill: line 180 currentChunk !== '' -> currentChunk !== "Stryker was here!"
-                const s1 = _.repeat('a', 45) + '.';
-                const s2 = _.repeat('b', 45) + '.';
+                const s1 = `${_.repeat('a', 45)}.`;
+                const s2 = `${_.repeat('b', 45)}.`;
                 const message = `${s1} ${s2}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe(s1);
@@ -212,8 +212,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should correctly check empty string comparison (kills Stryker string literal mutation)', () => {
                 // Kill: lines 180, 245, 290 string literal mutations
-                const s1 = _.repeat('a', 45) + '.';
-                const s2 = _.repeat('b', 45) + '.';
+                const s1 = `${_.repeat('a', 45)}.`;
+                const s2 = `${_.repeat('b', 45)}.`;
                 const message = `${s1} ${s2}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe(s1);

@@ -5,15 +5,13 @@
  * Provides evocative, phase-aware status messages based on current agent activity.
  */
 
-import _ from 'lodash';
-import { generateText } from '@/agent';
 import { logger } from '@hughescr/logger';
-import { getToolDescription } from './types.js';
-import type { SynopsisContext, CatchUpSynopsisContext } from './types.js';
+import _ from 'lodash';
+import { getToolDescription, type SynopsisContext, type CatchUpSynopsisContext  } from './types.js';
+import { generateText } from '@/agent';
 import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
 
 // Re-export for backwards compatibility with existing imports
-export { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH };
 
 /**
  * Interface for generating dynamic status synopses.
@@ -281,13 +279,11 @@ export function createDynamicStatusGenerator(
             // Rate limiting - check if we're within cooldown window (measured from last call completion)
             const now = Date.now();
             // Stryker disable next-line EqualityOperator: < vs <= boundary at exact cooldown time is equivalent
-            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS) {
-                if(cachedStatus) {
-                    logger.debug({ phase, msg: 'Haiku call within cooldown, using cached status' });
-                    return cachedStatus;
-                }
-                // No cache — fall through to make real call
+            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS && cachedStatus) {
+                logger.debug({ phase, msg: 'Haiku call within cooldown, using cached status' });
+                return cachedStatus;
             }
+            // No cache — fall through to make real call
 
             haikuInFlight = true;
             try {
@@ -336,13 +332,11 @@ export function createDynamicStatusGenerator(
             // Rate limiting - check if we're within cooldown window (measured from last call completion)
             const now = Date.now();
             // Stryker disable next-line ArithmeticOperator,EqualityOperator: Time arithmetic boundary
-            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS) {
-                if(cachedStatus) {
-                    logger.debug({ msg: 'Haiku call within cooldown for catch-up, using cached status' });
-                    return cachedStatus;
-                }
-                // No cache — fall through to make real call
+            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS && cachedStatus) {
+                logger.debug({ msg: 'Haiku call within cooldown for catch-up, using cached status' });
+                return cachedStatus;
             }
+            // No cache — fall through to make real call
 
             haikuInFlight = true;
             try {
@@ -393,3 +387,5 @@ export function createDynamicStatusGenerator(
         // Stryker restore StringLiteral,ObjectLiteral
     };
 }
+
+export { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';

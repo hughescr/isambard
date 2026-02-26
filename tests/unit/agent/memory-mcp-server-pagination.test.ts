@@ -1,8 +1,8 @@
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { textContent } from '../../setup';
 
 // Helper to create mock memory item data

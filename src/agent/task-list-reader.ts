@@ -227,5 +227,5 @@ function truncateSubject(subject: string): string {
         return subject;
     }
     // Stryker disable next-line StringLiteral: Truncation ellipsis is cosmetic
-    return subject.slice(0, 47) + '...';
+    return `${subject.slice(0, 47)}...`;
 }

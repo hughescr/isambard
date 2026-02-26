@@ -19,10 +19,10 @@ import {
 } from '@/integrations/discord/types';
 
 const idSchemas = [
-    ['GuildId', guildIdSchema, '123456789012345678', 12345, createGuildId, isGuildId],
-    ['ChannelId', channelIdSchema, '987654321098765432', 98765, createChannelId, isChannelId],
-    ['UserId', userIdSchema, '111222333444555666', 11122, createUserId, isUserId],
-    ['MessageId', messageIdSchema, '1234567890123456789', 99999, createMessageId, isMessageId],
+    ['GuildId', guildIdSchema, '123456789012345678', 12_345, createGuildId, isGuildId],
+    ['ChannelId', channelIdSchema, '987654321098765432', 98_765, createChannelId, isChannelId],
+    ['UserId', userIdSchema, '111222333444555666', 11_122, createUserId, isUserId],
+    ['MessageId', messageIdSchema, '1234567890123456789', 99_999, createMessageId, isMessageId],
 ] as const;
 
 describe.concurrent('branded ID schemas', () => {

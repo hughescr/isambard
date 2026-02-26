@@ -1,8 +1,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import _ from 'lodash';
+import { z } from 'zod';
 import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '@/storage';
 
 /**
@@ -82,16 +82,14 @@ export function createMemoryMCPServer(
                     try {
                         const path = createMemoryPath(`/${args.layer}/${args.name}`);
                         const existing = await backend.get(path);
-                        if(existing) {
-                            await backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined });
-                        } else {
-                            await backend.create({
+                        await (existing
+                            ? backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined })
+                            : backend.create({
                                 path,
                                 content:     args.content,
                                 contentType: createContentType('text/plain'),
                                 tags:        args.tags ? new Set(args.tags) : undefined,
-                            });
-                        }
+                            }));
                         return {
                             content: [{ type: 'text' as const, text: `Memory stored at ${path}` }],
                         };
@@ -124,16 +122,14 @@ export function createMemoryMCPServer(
                     try {
                         const path = createMemoryPath(`/users/${args.userId}/${args.name}`);
                         const existing = await backend.get(path);
-                        if(existing) {
-                            await backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined });
-                        } else {
-                            await backend.create({
+                        await (existing
+                            ? backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined })
+                            : backend.create({
                                 path,
                                 content:     args.content,
                                 contentType: createContentType('text/plain'),
                                 tags:        args.tags ? new Set(args.tags) : undefined,
-                            });
-                        }
+                            }));
                         return {
                             content: [{ type: 'text' as const, text: `User memory stored at ${path}` }],
                         };
@@ -225,7 +221,7 @@ export function createMemoryMCPServer(
                         }
                         let formatted = _.map(results.items, (r) => {
                             const preview = r.contentPreview ?? 'No content';
-                            return `${r.memoryPath}: ${preview.substring(0, 200)}${preview.length > 200 ? '...' : ''}`;
+                            return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
                         if(results.nextCursor) {
                             formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
@@ -411,7 +407,7 @@ export function createMemoryMCPServer(
                             };
                         }
 
-                        const beforeTags = new Set(existing.tags ?? []);
+                        const beforeTags = new Set(existing.tags);
                         const newTags = new Set(beforeTags);
                         for(const tag of addTags) {
                             newTags.add(tag);

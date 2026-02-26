@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import _ from 'lodash';
+import { needsConversion, convert } from './converter';
 import {
     type AttachmentMetadata,
     type FetchedImage,
@@ -11,7 +12,6 @@ import {
     isNativeImageType,
     isSupportedImageType
 } from './types';
-import { needsConversion, convert } from './converter';
 import { sanitizeFilename } from '@/utils';
 
 const FETCH_TIMEOUT_MS = 30_000;

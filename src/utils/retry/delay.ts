@@ -18,7 +18,7 @@ export const calculateDelay = (
     const { baseDelayMs, backoffMultiplier, jitterFraction, maxDelayMs } = policy;
 
     // Calculate exponential backoff: baseDelayMs * backoffMultiplier^(attempt - 1)
-    const exponentialDelay = baseDelayMs * Math.pow(backoffMultiplier, attemptNumber - 1);
+    const exponentialDelay = baseDelayMs * backoffMultiplier ** (attemptNumber - 1);
 
     // Apply jitter: delay * (1 + jitterFraction * (random() * 2 - 1))
     // This gives us ±jitterFraction variance

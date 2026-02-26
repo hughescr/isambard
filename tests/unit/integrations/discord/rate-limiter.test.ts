@@ -10,8 +10,8 @@
  */
 
 import { describe, expect, test, mock } from 'bun:test';
-import _ from 'lodash';
 import type { TextChannel, Message } from 'discord.js';
+import _ from 'lodash';
 import { DiscordRateLimiter, type LimitFunction } from '@/integrations/discord/rate-limiter';
 
 // Synchronous mock limit function that just executes immediately (no p-limit overhead)
@@ -367,7 +367,7 @@ describe('new DiscordRateLimiter', () => {
     });
 
     test('handles very long message content', async () => {
-        const longMessage = _.repeat('x', 10000);
+        const longMessage = _.repeat('x', 10_000);
 
         const mockChannel = {
             id:   'channel-1',

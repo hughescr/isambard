@@ -6,8 +6,8 @@
  * All errors extend DiscordError which extends IsambardError.
  */
 
-import { ErrorCode } from './codes';
 import { IsambardError } from './base';
+import { ErrorCode } from './codes';
 
 /** @see OperationalMode in src/integrations/discord/state/types.ts */
 type OperationalMode = 'idle' | 'catching_up' | 'processing_message' | 'perching';

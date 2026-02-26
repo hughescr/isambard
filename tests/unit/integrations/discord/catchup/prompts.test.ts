@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from '@/integrations/discord/catchup/prompts';
-import type { CatchUpResumedOptions } from '@/integrations/discord/catchup/prompts';
+import { buildCatchUpPrompt, buildCatchUpResumedPrompt, type CatchUpResumedOptions  } from '@/integrations/discord/catchup/prompts';
 
 describe('buildCatchUpPrompt', () => {
     it('should include time context', () => {

@@ -27,27 +27,26 @@ export interface ResumeContext {
  * @returns Formatted resume prompt string
  */
 export function buildResumePrompt(context: ResumeContext): string {
-    const sections: string[] = [];
-
-    // 1. Context Update Header (always included)
-    sections.push(
+    const sections: string[] = [
         '[CONTEXT UPDATE]\n'
         + 'A new message arrived while you were processing. Consider it in relation to your original task - it might add information, provide clarification, be a new request, or something else entirely. Incorporate it appropriately and continue.'
-    );
+    ];
+
+    // 1. Context Update Header (always included)
 
     // 2. Partial Thinking (only if non-empty)
     if(context.partialWork.thinking) {
         sections.push(
-            '[Your thinking at the point of interruption:]\n'
-            + context.partialWork.thinking
+            `[Your thinking at the point of interruption:]\n${
+                context.partialWork.thinking}`
         );
     }
 
     // 3. Partial Response (only if non-empty)
     if(context.partialWork.text) {
         sections.push(
-            '[You were composing this response:]\n'
-            + context.partialWork.text
+            `[You were composing this response:]\n${
+                context.partialWork.text}`
         );
     }
 
@@ -62,8 +61,8 @@ export function buildResumePrompt(context: ResumeContext): string {
     // 5. New Events (only if non-empty)
     if(context.newEvents.length > 0) {
         sections.push(
-            '[Events that occurred during your processing:]\n'
-            + context.newEvents.join('\n')
+            `[Events that occurred during your processing:]\n${
+                context.newEvents.join('\n')}`
         );
     }
 
@@ -76,8 +75,8 @@ export function buildResumePrompt(context: ResumeContext): string {
     );
 
     sections.push(
-        '[New message(s) received:]\n'
-        + messageBlocks.join('\n\n')
+        `[New message(s) received:]\n${
+            messageBlocks.join('\n\n')}`
     );
 
     // Join all sections with double newlines

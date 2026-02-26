@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import _ from 'lodash';
+import { z } from 'zod';
 
 /**
  * MemoryPath is a branded type representing a valid filesystem-like path.
@@ -53,7 +53,7 @@ export function isContentType(value: unknown): value is ContentType {
  */
 export const memoryToolItemSchema = z.object({
     path:           memoryPathSchema,
-    content:        z.string().min(1).max(300000), // 300KB limit for DynamoDB
+    content:        z.string().min(1).max(300_000), // 300KB limit for DynamoDB
     contentType:    contentTypeSchema,
     metadata:       z.record(z.string(), z.unknown()).default({}),
     createdAt:      z.string().datetime(),

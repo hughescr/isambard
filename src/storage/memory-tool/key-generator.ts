@@ -1,7 +1,6 @@
-import { DateTime } from 'luxon';
 import { startsWith as _startsWith, split as _split, map as _map, toLower as _toLower } from 'lodash';
-import type { MemoryPath } from './types';
-import { extractLayerFromPath } from './types';
+import { DateTime } from 'luxon';
+import { type MemoryPath, extractLayerFromPath  } from './types';
 
 /**
  * DynamoDB key structure for MemoryTool items using filesystem-like organization
@@ -45,7 +44,7 @@ export function normalizeTags(tags: Set<string> | undefined): Set<string> {
 /**
  * Generates DynamoDB keys for MemoryTool items with filesystem-like structure
  */
-export class MemoryToolKeyGenerator {
+export const MemoryToolKeyGenerator = {
     /**
    * Creates DynamoDB keys for a given path
    *
@@ -64,7 +63,7 @@ export class MemoryToolKeyGenerator {
    * // }
    * ```
    */
-    static createKeys(path: MemoryPath, timestamp?: string): MemoryToolKeys {
+    createKeys(path: MemoryPath, timestamp?: string): MemoryToolKeys {
         const lastSlashIndex = path.lastIndexOf('/');
         const parentPath = lastSlashIndex === 0 ? '/' : path.slice(0, lastSlashIndex);
         const filename = path.slice(lastSlashIndex + 1);
@@ -82,7 +81,7 @@ export class MemoryToolKeyGenerator {
             GSI1PK: `LAYER#${layerStr}`,
             GSI1SK: `UPDATED#${ts}`,
         };
-    }
+    },
 
     /**
    * Parses DynamoDB keys back into the original path
@@ -98,7 +97,7 @@ export class MemoryToolKeyGenerator {
    * // '/memories/events/party.xml'
    * ```
    */
-    static parsePath(pk: string, sk: string): string {
+    parsePath(pk: string, sk: string): string {
         if(!_startsWith(pk, 'DIR#')) {
             throw new Error(`Invalid PK format: expected DIR#..., got ${pk}`);
         }
@@ -115,7 +114,7 @@ export class MemoryToolKeyGenerator {
         }
 
         return `${parentPath}/${filename}`;
-    }
+    },
 
     /**
    * Creates DynamoDB keys for tag index items.
@@ -137,7 +136,7 @@ export class MemoryToolKeyGenerator {
    * // ]
    * ```
    */
-    static createTagIndexKeys(
+    createTagIndexKeys(
         path: MemoryPath,
         tags: Set<string>
     ): { PK: string, SK: string }[] {
@@ -149,7 +148,7 @@ export class MemoryToolKeyGenerator {
             PK: `TAG#${tag}`,
             SK: `PATH#${path}`,
         }));
-    }
+    },
 
     /**
    * Parses the tag name from a TAG# partition key.
@@ -164,12 +163,12 @@ export class MemoryToolKeyGenerator {
    * // 'important'
    * ```
    */
-    static parseTagFromPK(pk: string): string {
+    parseTagFromPK(pk: string): string {
         if(!_startsWith(pk, 'TAG#')) {
             throw new Error(`Invalid tag PK format: expected TAG#..., got ${pk}`);
         }
         return pk.slice(4);
-    }
+    },
 
     /**
    * Parses the memory path from a PATH# sort key.
@@ -184,10 +183,10 @@ export class MemoryToolKeyGenerator {
    * // '/identity/core.md'
    * ```
    */
-    static parsePathFromTagSK(sk: string): string {
+    parsePathFromTagSK(sk: string): string {
         if(!_startsWith(sk, 'PATH#')) {
             throw new Error(`Invalid tag SK format: expected PATH#..., got ${sk}`);
         }
         return sk.slice(5);
-    }
-}
+    },
+};

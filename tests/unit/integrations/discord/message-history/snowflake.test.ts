@@ -1,15 +1,15 @@
 import { describe, test, expect } from 'bun:test';
+import { ErrorCode } from '@/errors';
 import {
     DISCORD_EPOCH,
     timestampToSnowflake,
     snowflakeToTimestamp,
     InvalidSnowflakeError
 } from '@/integrations/discord/message-history/snowflake';
-import { ErrorCode } from '@/errors';
 
 describe.concurrent('DISCORD_EPOCH', () => {
     test('should be January 1, 2015 UTC in milliseconds as bigint', () => {
-        expect(DISCORD_EPOCH).toBe(1420070400000n);
+        expect(DISCORD_EPOCH).toBe(1_420_070_400_000n);
         const epochDate = new Date(Number(DISCORD_EPOCH));
         expect(epochDate.getUTCFullYear()).toBe(2015);
         expect(epochDate.getUTCMonth()).toBe(0);
@@ -27,14 +27,14 @@ describe('snowflakeToTimestamp', () => {
         // Expected timestamp: Discord epoch + (snowflake >> 22)
         // 175928847299117063 >> 22 = 41944705796
         // 1420070400000 + 41944705796 = 1462015105796
-        expect(timestamp.getTime()).toBe(1462015105796);
+        expect(timestamp.getTime()).toBe(1_462_015_105_796);
     });
 
     test('should convert Discord epoch snowflake (0) to Discord epoch date', () => {
         // A snowflake of "0" means timestamp bits are 0, so date = Discord epoch
         const snowflake = '0';
         const timestamp = snowflakeToTimestamp(snowflake);
-        expect(timestamp.getTime()).toBe(1420070400000);
+        expect(timestamp.getTime()).toBe(1_420_070_400_000);
     });
 
     test('should handle a recent snowflake correctly', () => {
@@ -43,7 +43,7 @@ describe('snowflakeToTimestamp', () => {
         // Expected: 1420070400000 + 283111760380 = 1703182160380
         const snowflake = '1187456789012345678';
         const timestamp = snowflakeToTimestamp(snowflake);
-        expect(timestamp.getTime()).toBe(1703182160380);
+        expect(timestamp.getTime()).toBe(1_703_182_160_380);
     });
 
     test.each([
@@ -69,7 +69,7 @@ describe('snowflakeToTimestamp', () => {
 
 describe('timestampToSnowflake', () => {
     test('should convert Discord epoch to snowflake "0"', () => {
-        const epochDate = new Date(1420070400000);
+        const epochDate = new Date(1_420_070_400_000);
         const snowflake = timestampToSnowflake(epochDate);
         expect(snowflake).toBe('0');
     });
@@ -78,7 +78,7 @@ describe('timestampToSnowflake', () => {
         // Using the same known conversion from snowflakeToTimestamp test
         // Timestamp: 1462015105796 -> offset from epoch: 41944705796
         // Snowflake = 41944705796 << 22 = 175928847298985984
-        const date = new Date(1462015105796);
+        const date = new Date(1_462_015_105_796);
         const snowflake = timestampToSnowflake(date);
 
         // The generated snowflake will have 0s for worker/process/sequence
@@ -137,7 +137,7 @@ describe('InvalidSnowflakeError', () => {
 describe('round-trip conversions', () => {
     test('should preserve timestamp precision for millisecond boundaries', () => {
         // Test timestamps at exact millisecond boundaries
-        const baseTime = 1700000000000;
+        const baseTime = 1_700_000_000_000;
         for(let ms = 0; ms < 10; ms++) {
             const date = new Date(baseTime + ms);
             const snowflake = timestampToSnowflake(date);

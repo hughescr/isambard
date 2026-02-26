@@ -8,7 +8,7 @@ import _ from 'lodash';
 export function sanitizeFilename(name: string): string {
     // Remove null bytes, path-separator chars, and other unsafe chars; then remove dotdot sequences; then trim leading/trailing dots/spaces
     // Stryker disable next-line StringLiteral: '_' replacement is equivalent to '' — tests only verify dangerous chars are absent, not what replaced them
-    const noSeparators = _.replace(name, /[/\\?%*:|"<>\x00-\x1F]/g, '_');
+    const noSeparators = _.replace(name, /[/\\?%*:|"<>\u0000-\u001F]/g, '_');
     // Stryker disable next-line StringLiteral: '_' replacement is equivalent to '' for dotdot sequences given upstream char substitution already ran
     const noDotDot     = _.replace(noSeparators, /\.{2,}/g, '_');
     return _.trim(noDotDot, '. ') || 'attachment';
@@ -23,8 +23,8 @@ export function deduplicateFilename(filename: string, used: Set<string>): string
         return filename;
     }
     const dotIdx  = filename.lastIndexOf('.');
-    const base    = dotIdx !== -1 ? filename.slice(0, dotIdx)  : filename;
-    const ext     = dotIdx !== -1 ? filename.slice(dotIdx)     : '';
+    const base    = dotIdx === -1 ? filename  : filename.slice(0, dotIdx);
+    const ext     = dotIdx === -1 ? ''     : filename.slice(dotIdx);
     let counter = 1;
     let candidate: string;
     do {

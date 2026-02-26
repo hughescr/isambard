@@ -1,17 +1,16 @@
+import { logger } from '@hughescr/logger';
 import type { Client, Message, TextChannel } from 'discord.js';
 import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import type { DiscordMessageContext, UserId, ChannelId } from './types';
-import type { MessageCoordinator } from './message-coordinator';
-import { createGuildId, createChannelId, createUserId } from './types';
-import type { QuestionRegistry, AnswerClassifier } from '@/agent';
 import type { AttachmentMetadata } from './attachments/types';
+import type { CatchUpSessionRunner } from './catchup';
+import type { ChannelRegistryManager, DMTracker } from './channel-registry';
 import { inferImageContentType } from './content-type';
 import type { InboxManager } from './inbox';
-import type { CatchUpSessionRunner } from './catchup';
-import type { BotStateManager } from './state';
-import type { ChannelRegistryManager, DMTracker } from './channel-registry';
+import type { MessageCoordinator } from './message-coordinator';
 import { withDiscordRetry } from './retry';
+import type { BotStateManager } from './state';
+import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
+import type { QuestionRegistry, AnswerClassifier } from '@/agent';
 
 /**
  * Helper function to extract attachment metadata from a Discord message.
@@ -26,7 +25,7 @@ export function extractAttachmentMetadata(message: Message): AttachmentMetadata[
         return [];
     }
 
-    return _.map(Array.from(message.attachments.values()), attachment => ({
+    return _.map([...message.attachments.values()], attachment => ({
         url:         attachment.url,
         filename:    attachment.name ?? 'unknown',
         // Stryker disable next-line StringLiteral: Equivalent — when attachment.name is null and contentType is null, inferImageContentType('unknown', null) and inferImageContentType('', null) both return 'application/octet-stream'; when contentType is valid (e.g., 'image/png'), the filename is ignored entirely

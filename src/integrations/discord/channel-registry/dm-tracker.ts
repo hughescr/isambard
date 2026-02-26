@@ -1,8 +1,7 @@
 import type { Client } from 'discord.js';
 import _ from 'lodash';
+import { type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
 import type { ChannelRegistryManager } from './manager';
-import type { ChannelId, UserId } from '../types';
-import { createChannelId, createUserId } from '../types';
 
 /**
  * Formats a DM channel name from a username.

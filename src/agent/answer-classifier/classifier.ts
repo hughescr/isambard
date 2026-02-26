@@ -1,6 +1,6 @@
 import _ from 'lodash';
-import type { PendingQuestion } from '@/agent/question-registry';
 import type { ClassificationResult, MessageToClassify, ClassifierConfig } from './types';
+import type { PendingQuestion } from '@/agent/question-registry';
 
 /**
  * Answer classifier for message classification.
@@ -53,7 +53,7 @@ export class AnswerClassifier {
 
         // Layer 3: LLM classification (if configured)
         if(this.classifyWithLLM) {
-            return await this.classifyWithLLM(question, message);
+            return this.classifyWithLLM(question, message);
         }
 
         // Layer 4: Default based on mention status

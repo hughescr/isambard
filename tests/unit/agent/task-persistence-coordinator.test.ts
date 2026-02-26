@@ -1,10 +1,10 @@
+import type { Logger } from '@hughescr/logger';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import _ from 'lodash';
+import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';
 import { createTaskPersistenceCoordinator } from '@/agent/task-persistence-coordinator';
 import type { TaskSessionBackend } from '@/storage/task-session/backend';
 import { createSessionId } from '@/storage/task-session/types';
-import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';
-import type { Logger } from '@hughescr/logger';
 
 describe('TaskPersistenceCoordinator', () => {
     let mockBackend: TaskSessionBackend;

@@ -11,14 +11,14 @@
  * - Idle refresh loop runs independently on its own schedule
  */
 
-import _ from 'lodash';
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
-import type { PresenceConfig, PresencePhase, PresenceDisplayMode, CatchUpSynopsisContext } from './types.js';
-import type { ActiveStatusGenerator } from './status-generator-active.js';
-import type { IdleStatusGenerator } from './status-generator-idle.js';
-import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
-import { withDiscordRetry } from '@/integrations/discord/retry';
+import _ from 'lodash';
 import { DateTime } from 'luxon';
+import type { ActiveStatusGenerator } from './status-generator-active.js';
+import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
+import type { IdleStatusGenerator } from './status-generator-idle.js';
+import type { PresenceConfig, PresencePhase, PresenceDisplayMode, CatchUpSynopsisContext } from './types.js';
+import { withDiscordRetry } from '@/integrations/discord/retry';
 
 /**
  * Dependencies for creating a presence manager.

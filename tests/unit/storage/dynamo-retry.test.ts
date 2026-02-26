@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { noop, constant } from 'lodash';
 import { withDynamoTimeout, DynamoTimeoutError } from '@/storage/dynamo-retry';
 import type { RetryLogger } from '@/utils/retry/types';
-import { noop, constant } from 'lodash';
 
 describe('DynamoTimeoutError', () => {
     it('should create error with operation name and timeout', () => {

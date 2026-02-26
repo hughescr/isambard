@@ -1,15 +1,15 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import _ from 'lodash';
+import { z } from 'zod';
 // eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
 // TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
-// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap
+
+import { generateTextWithSystemPrompt } from './text-generator';
 import { createChannelId, resolveChannelId } from '@/integrations/discord';
 // eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap
 import type { InboxManager, ChannelSummaryResponse, MessageMetadata, BotStateManager, ChannelRegistryManager } from '@/integrations/discord';
-import { generateTextWithSystemPrompt } from './text-generator';
 
 /**
  * System prompt for generating channel summaries.

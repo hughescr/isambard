@@ -6,6 +6,8 @@
  */
 
 import type { Logger } from '@hughescr/logger';
+import { type ChannelId } from '../types';
+import { isValidTransition, TransitionError } from './transitions';
 import {
     type OperationalMode,
     type ActivityPhase,
@@ -19,11 +21,8 @@ import {
     type SessionType,
     createDefaultBotState
 } from './types';
-import { type ChannelId } from '../types';
-import { isValidTransition, TransitionError } from './transitions';
 
 // Re-export for convenience
-export type { BotStateManager };
 
 /**
  * Dependencies required by BotStateManager.
@@ -39,7 +38,7 @@ export interface BotStateManagerDeps {
  * Default throttle time for Discord presence updates (12 seconds).
  * Discord rate limits presence updates, so we throttle to avoid hitting limits.
  */
-const DEFAULT_UPDATE_THROTTLE_MS = 12000;
+const DEFAULT_UPDATE_THROTTLE_MS = 12_000;
 
 /**
  * BotStateManager implementation class.
@@ -414,3 +413,5 @@ export class BotStateManagerImpl implements BotStateManager {
         this.deps.logger.info('BotStateManager stopped');
     }
 }
+
+export { type BotStateManager } from './types';

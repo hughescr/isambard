@@ -1,12 +1,11 @@
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
-import { checkAuthentication } from '@/integrations/email/auth-checker';
-import { EmailFolder } from '@/integrations/email/types';
-import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
+import _ from 'lodash';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
+import { checkAuthentication } from '@/integrations/email/auth-checker';
 import type { EmailClassifier } from '@/integrations/email/classifier';
-import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { EmailProcessingError } from '@/integrations/email/errors';
+import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
 export interface EmailProcessorDeps {
     allowlist:      EmailAllowlist
@@ -143,10 +142,14 @@ export class EmailProcessor {
 
     private verdictToFolder(verdict: ClassifierVerdict['verdict']): string {
         switch(verdict) {
-            case 'safe':      return EmailFolder.CleanInbox;
-            case 'spam':      return EmailFolder.Junk;
-            case 'uncertain': return EmailFolder.Review;
-            case 'unsafe':    return EmailFolder.Quarantine;
+            case 'safe': {      return EmailFolder.CleanInbox;
+            }
+            case 'spam': {      return EmailFolder.Junk;
+            }
+            case 'uncertain': { return EmailFolder.Review;
+            }
+            case 'unsafe': {    return EmailFolder.Quarantine;
+            }
         }
     }
 

@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage,
     DISCORD_SAFE_LENGTH
@@ -24,8 +24,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should handle paragraph with long sentence that needs word splitting', () => {
                 // Tests the cascade: paragraph → sentence → word splitting
-                const longSentence = _.join(_.times(20, _.constant('word')), ' ') + '.';
-                const message = longSentence + '\n\nShort para.';
+                const longSentence = `${_.join(_.times(20, _.constant('word')), ' ')}.`;
+                const message = `${longSentence}\n\nShort para.`;
                 const result = splitMessage(message, 50);
 
                 expect(result.length).toBeGreaterThan(1);
@@ -36,7 +36,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should handle sentence that needs word splitting within paragraph', () => {
                 // Tests sentence → word cascade within paragraph context
                 const longWords = _.times(10, () => _.repeat('x', 8)).join(' ');
-                const message = longWords + '.';
+                const message = `${longWords}.`;
                 const result = splitMessage(message, 30);
 
                 expect(result.length).toBeGreaterThan(1);
@@ -49,7 +49,7 @@ describe.concurrent('Discord Message Splitting', () => {
         describe('mutation coverage - multiple consecutive long items', () => {
             test('should handle empty chunk after character split of long word', () => {
                 // Tests the currentChunk = '' reset after pushing a character-split word
-                const message = _.repeat('a', 60) + ' ' + _.repeat('b', 60);
+                const message = `${_.repeat('a', 60)} ${_.repeat('b', 60)}`;
                 const result = splitMessage(message, 50);
 
                 // Should properly handle both long words
@@ -62,7 +62,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should handle transition from accumulated chunk to long word', () => {
                 // Verifies the flush-then-split flow
-                const message = 'aa bb ' + _.repeat('x', 100);
+                const message = `aa bb ${_.repeat('x', 100)}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('aa bb');
                 expect(result[1]).toBe(_.repeat('x', 50));
@@ -71,7 +71,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should handle transition from accumulated chunk to long sentence', () => {
                 const shortSent = 'Hi.';
-                const longSent = _.repeat('x', 100) + '.';
+                const longSent = `${_.repeat('x', 100)}.`;
                 const message = `${shortSent} ${longSent}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('Hi.');

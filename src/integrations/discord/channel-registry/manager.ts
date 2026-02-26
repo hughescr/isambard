@@ -1,10 +1,9 @@
-import _ from 'lodash';
-import type { Client, Channel } from 'discord.js';
 import { logger } from '@hughescr/logger';
+import type { Client, Channel } from 'discord.js';
+import _ from 'lodash';
+import { createGuildId, type ChannelId, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
-import { createGuildId } from '../types';
-import type { ChannelId, GuildId } from '../types';
 
 /**
  * Configuration for ChannelRegistryManager.
@@ -248,7 +247,7 @@ export class ChannelRegistryManager {
      * @returns Array of all channel metadata in the cache
      */
     getAllChannels(): ChannelMetadata[] {
-        return Array.from(this.channelCache.values());
+        return [...this.channelCache.values()];
     }
 
     /**

@@ -29,8 +29,8 @@
  */
 
 import { unlink, access, rm, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
 import type { SystemEvent } from './types';

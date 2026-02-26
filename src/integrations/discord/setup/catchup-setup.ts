@@ -1,26 +1,25 @@
+import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import type { ClaudeAgent } from '@/agent';
-import type { BotStateManager } from '../state';
-import {
-    createDynamicStatusGenerator,
-    type PresenceManager,
-    type CatchUpSynopsisContext
-} from '../presence';
-import type { InboxManager } from '../inbox';
 import {
     createCatchUpSessionRunner,
     type CatchUpSessionRunner,
     type CatchUpCompletionSignal,
     type CatchUpInProgressSignal
 } from '../catchup';
-import type { PerchConfig } from '@/agent';
 import type { ResponseRouter } from '../channel-registry';
+import type { InboxManager } from '../inbox';
+import {
+    type createDynamicStatusGenerator,
+    type PresenceManager,
+    type CatchUpSynopsisContext
+} from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { formatTimeSince, getTimeOfDay } from '@/utils';
 import { sendResponseToWellKnownChannel } from '../response-sender';
+import type { BotStateManager } from '../state';
 import { createPresenceStreamHandler } from './presence-stream-handler';
+import { type ClaudeAgent, type PerchConfig  } from '@/agent';
+import { formatTimeSince, getTimeOfDay } from '@/utils';
 
 /**
  * Builds catch-up synopsis context from inbox state.

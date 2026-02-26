@@ -2,19 +2,19 @@
  * Tests for Discord infrastructure factory.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mockLogger } from '../../setup';
-import { createGuildId } from '@/integrations/discord/types';
-import type { DiscordConfig } from '@/config/schemas';
-import type { Client } from 'discord.js';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import type { Client } from 'discord.js';
+import { mockLogger } from '../../setup';
+import type { DiscordConfig } from '@/config/schemas';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
-import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
-import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { InboxManager } from '@/integrations/discord/inbox';
+import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
+import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { BotStateManager } from '@/integrations/discord/state';
+import { createGuildId } from '@/integrations/discord/types';
+import type { MemoryToolBackend } from '@/storage/memory-tool';
 
 describe('createDiscordInfrastructure', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -25,11 +25,11 @@ describe('createDiscordInfrastructure', () => {
         homeGuildId:   createGuildId('123456789012345678'),
         presence:      {
             updateThrottleMs:      5000,
-            idleTimeoutMs:         60000,
-            idleRefreshIntervalMs: 300000,
+            idleTimeoutMs:         60_000,
+            idleRefreshIntervalMs: 300_000,
         },
         inbox: {
-            minGapDurationMs:   10000,
+            minGapDurationMs:   10_000,
             maxCatchUpMessages: 100,
             maxCatchUpAgeDays:  7,
         },

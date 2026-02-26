@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { logger } from '@hughescr/logger';
+import _ from 'lodash';
 import type { ContextBuilder } from '@/agent';
 
 /**

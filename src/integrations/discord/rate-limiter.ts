@@ -15,8 +15,8 @@
  * - Graceful cleanup: stop() allows in-flight requests to complete
  */
 
-import pLimit from 'p-limit';
 import type { TextChannel, Message } from 'discord.js';
+import pLimit from 'p-limit';
 
 /** Function type for concurrency limiting (p-limit signature) */
 export type LimitFunction = <T>(fn: () => PromiseLike<T>) => Promise<T>;

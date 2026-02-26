@@ -1,11 +1,11 @@
 import { access, readdir, readFile, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import _ from 'lodash';
-import { z } from 'zod';
 import semver from 'semver';
+import { z } from 'zod';
 
 /**
  * Schema for plugins.json configuration file.

@@ -1,5 +1,4 @@
-import { describe, it, test, expect, beforeEach } from 'bun:test';
-import { mock } from 'bun:test';
+import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
 import { split as _split, repeat as _repeat } from 'lodash';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -288,7 +287,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             SK:             '/state/note.md',
                             memoryPath:     '/state/note.md' as MemoryPath,
                             layer:          'state' as const,
-                            updatedAt:      updatedAt,
+                            updatedAt,
                             tags:           new Set(['tag1']),
                             contentPreview: 'Note content',
                         },
@@ -317,7 +316,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             SK:             '/state/recent.md',
                             memoryPath:     '/state/recent.md' as MemoryPath,
                             layer:          'state' as const,
-                            updatedAt:      updatedAt,
+                            updatedAt,
                             tags:           new Set(['tag1']),
                             contentPreview: 'Recent content',
                         },
@@ -797,7 +796,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             metadata:    {},
 
                             createdAt: updatedAt,
-                            updatedAt: updatedAt,
+                            updatedAt,
                         },
                     ],
                     nextCursor: undefined,
@@ -825,7 +824,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                             metadata:    {},
 
                             createdAt: updatedAt,
-                            updatedAt: updatedAt,
+                            updatedAt,
                         },
                     ],
                     nextCursor: undefined,

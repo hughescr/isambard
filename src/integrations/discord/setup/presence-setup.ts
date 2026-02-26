@@ -1,16 +1,15 @@
-import { ActivityType } from 'discord.js';
-import type { Client } from 'discord.js';
-import type { DiscordConfig } from '@/config';
-import type { BotStateManager, StateChange } from '../state';
+import { logger } from '@hughescr/logger';
+import { ActivityType, type Client  } from 'discord.js';
 import type { InboxManager } from '../inbox';
-import type { ContextBuilder } from '@/agent';
 import {
     createActiveStatusGenerator,
-    createDynamicStatusGenerator,
+    type createDynamicStatusGenerator,
     createIdleStatusGenerator,
     PresenceManager
 } from '../presence';
-import { logger } from '@hughescr/logger';
+import type { BotStateManager, StateChange } from '../state';
+import type { ContextBuilder } from '@/agent';
+import type { DiscordConfig } from '@/config';
 
 /**
  * Result of setting up presence management.
@@ -117,16 +116,30 @@ export function setupPresence(params: {
             const mode = change.newState.mode;
 
             // Map BotState mode to PresenceDisplayMode for presence
-            if(mode === 'idle') {
-                presenceManager.transitionPresenceDisplayMode('none');
-                // Explicitly transition presence to idle phase
-                void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-            } else if(mode === 'catching_up') {
-                presenceManager.transitionPresenceDisplayMode('catching_up');
-            } else if(mode === 'processing_message') {
-                presenceManager.transitionPresenceDisplayMode('processing_message');
-            } else if(mode === 'perching') {
-                presenceManager.transitionPresenceDisplayMode('perching');
+            switch(mode) {
+                case 'idle': {
+                    presenceManager.transitionPresenceDisplayMode('none');
+                    // Explicitly transition presence to idle phase
+                    void presenceManager.updatePhase({ type: 'idle', since: new Date() });
+
+                    break;
+                }
+                case 'catching_up': {
+                    presenceManager.transitionPresenceDisplayMode('catching_up');
+
+                    break;
+                }
+                case 'processing_message': {
+                    presenceManager.transitionPresenceDisplayMode('processing_message');
+
+                    break;
+                }
+                case 'perching': {
+                    presenceManager.transitionPresenceDisplayMode('perching');
+
+                    break;
+                }
+            // No default
             }
         }
     });

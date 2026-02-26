@@ -1,7 +1,11 @@
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { BaseRepository } from '../repositories/base';
 import { stripDynamoKeys } from '../utils/index.js';
-import { logger } from '@hughescr/logger';
+import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
+import { MemoryToolBackendQuery, type ListOptions, type ListResult } from './backend-query';
+import { MemoryToolBackendTagIndex } from './backend-tag-index';
+import { normalizeTags, generateContentPreview } from './key-generator';
 import {
     type MemoryPath,
     type MemoryToolItemData,
@@ -9,10 +13,6 @@ import {
     type TagIndexItem,
     extractLayerFromPath
 } from './types';
-import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
-import { MemoryToolBackendQuery, type ListOptions, type ListResult } from './backend-query';
-import { MemoryToolBackendTagIndex } from './backend-tag-index';
-import { normalizeTags, generateContentPreview } from './key-generator';
 
 // Re-export types for public API
 export type { CreateMemoryToolItemInput, UpdateMemoryToolItemInput } from './backend-core';

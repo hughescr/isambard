@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
-import { ResponseRouter } from '../../../../../src/integrations/discord/channel-registry/response-router';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
+import { ResponseRouter } from '../../../../../src/integrations/discord/channel-registry/response-router';
+import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
-import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
 import { WellKnownChannelNotFoundError } from '@/errors';
 
 describe('ResponseRouter', () => {

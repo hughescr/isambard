@@ -1,8 +1,7 @@
 import _ from 'lodash';
+import { type ClassificationResult, type MessageToClassify, classificationResultSchema  } from './types';
 import type { PendingQuestion } from '@/agent/question-registry';
-import type { ClassificationResult, MessageToClassify } from './types';
 import { generateText } from '@/agent/text-generator';
-import { classificationResultSchema } from './types';
 
 /**
  * Uses Haiku to classify ambiguous messages.

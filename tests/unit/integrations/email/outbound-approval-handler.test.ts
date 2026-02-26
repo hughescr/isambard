@@ -1,11 +1,10 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import _ from 'lodash';
-import { mockLogger } from '../../../setup';
-import { OutboundApprovalHandler } from '../../../../src/integrations/email/outbound-approval-handler';
-import type { OutboundApprovalHandlerDeps } from '../../../../src/integrations/email/outbound-approval-handler';
-import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
-import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
+import _ from 'lodash';
+import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
+import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
+import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
+import { mockLogger } from '../../../setup';
 
 const ADMIN_USER_ID = '222222222222222222';
 

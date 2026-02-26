@@ -8,13 +8,13 @@
  * generation when the update would be throttled anyway.
  */
 
+import { toMessageContext } from '../setup/coordinator-setup.js';
+import type { BotStateManager } from '../state/types.js';
+import type { DiscordMessageContext } from '../types.js';
 import type { PresenceManager } from './manager.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import { createStreamEventHandler, shouldGenerateSynopsis } from './stream-event-handler.js';
 import type { ClaudeAgent } from '@/agent';
-import type { DiscordMessageContext } from '../types.js';
-import type { BotStateManager } from '../state/types.js';
-import { toMessageContext } from '../setup/coordinator-setup.js';
 
 /**
  * Discord channel interface for typing indicator.

@@ -1,13 +1,12 @@
+import { logger } from '@hughescr/logger';
 import type { Message, TextChannel, Client } from 'discord.js';
 import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import { createChannelId } from './types';
-import type { ResponseRouter, RoutingResult } from './channel-registry';
-import type { BotStateManager } from './state';
-import { WellKnownChannelNotFoundError } from './channel-registry';
+import { type ResponseRouter, type RoutingResult, WellKnownChannelNotFoundError  } from './channel-registry';
 import { splitMessage } from './messages';
 import type { DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
+import type { BotStateManager } from './state';
+import { createChannelId } from './types';
 
 /**
  * Configuration for sending a response.

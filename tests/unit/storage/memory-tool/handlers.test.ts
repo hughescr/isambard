@@ -1,10 +1,6 @@
-import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
-import { mock } from 'bun:test';
+import { describe, it, expect, beforeEach, spyOn, mock  } from 'bun:test';
 import { split as _split, some as _some, includes as _includes, repeat as _repeat } from 'lodash';
 import { mockLogger } from '../../../setup';
-import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
-import { memoryPathSchema } from '@/storage/memory-tool/types';
 import {
     PathNotFoundError,
     PathAlreadyExistsError,
@@ -13,12 +9,14 @@ import {
     TextNotUniqueError,
     InvalidLineNumberError
 } from '@/errors';
+import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import {
     create,
     insert,
     str_replace as strReplace,
     rename
 } from '@/storage/memory-tool/handlers';
+import { type MemoryPath, type ContentType, memoryPathSchema  } from '@/storage/memory-tool/types';
 
 describe('Memory Tool Handlers', () => {
     let mockBackend: MemoryToolBackend;
@@ -73,7 +71,7 @@ describe('Memory Tool Handlers', () => {
         ])('should detect %s content type from path extension', async (expectedType, path, content) => {
             mockBackend.create = mock(async () => ({
                 path:        path as MemoryPath,
-                content:     content,
+                content,
                 contentType: expectedType as ContentType,
                 metadata:    {},
 
@@ -82,13 +80,13 @@ describe('Memory Tool Handlers', () => {
             }));
 
             await create(mockBackend, {
-                path:      path,
+                path,
                 file_text: content,
             });
 
             expect(mockBackend.create).toHaveBeenCalledWith({
-                path:        path,
-                content:     content,
+                path,
+                content,
                 contentType: expectedType,
             });
         });
@@ -234,7 +232,7 @@ describe('Memory Tool Handlers', () => {
         ])('should throw InvalidLineNumberError for invalid line %i (%s)', async (lineNum, content) => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
-                content:     content,
+                content,
                 contentType: 'text/markdown' as ContentType,
                 metadata:    {},
 

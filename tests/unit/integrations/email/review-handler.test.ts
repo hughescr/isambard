@@ -1,11 +1,11 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import type { ButtonInteraction, InteractionUpdateOptions } from 'discord.js';
 import _ from 'lodash';
 import { mockLogger } from '../../../setup';
-import { ReviewHandler } from '@/integrations/email/review-handler';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { WildDuckClient } from '@/integrations/email/wildduck-client';
+import { ReviewHandler } from '@/integrations/email/review-handler';
 import type { EmailMetadata } from '@/integrations/email/types';
-import type { ButtonInteraction, InteractionUpdateOptions } from 'discord.js';
+import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
 // Craig's Discord user ID used in tests
 const CRAIG_ID = '111111111111111111';
@@ -189,7 +189,7 @@ describe('ReviewHandler.handleButton()', () => {
             expect(callArg.components).toEqual([]);
             const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Trashed');
-            expect(embedData.color).toBe(0xFF0000);
+            expect(embedData.color).toBe(0xFF_00_00);
         });
 
         test('does not call addEntry', async () => {
@@ -234,7 +234,7 @@ describe('ReviewHandler.handleButton()', () => {
             expect(callArg.components).toEqual([]);
             const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Junked');
-            expect(embedData.color).toBe(0xFF0000);
+            expect(embedData.color).toBe(0xFF_00_00);
         });
 
         test('does not call addEntry', async () => {
@@ -290,7 +290,7 @@ describe('ReviewHandler.handleButton()', () => {
             expect(callArg.components).toEqual([]);
             const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Allowed');
-            expect(embedData.color).toBe(0x00AA00);
+            expect(embedData.color).toBe(0x00_AA_00);
         });
 
         test('does not call addEntry', async () => {
@@ -376,7 +376,7 @@ describe('ReviewHandler.handleButton()', () => {
             expect(callArg.components).toEqual([]);
             const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Allowed + Added to allowlist');
-            expect(embedData.color).toBe(0x00AA00);
+            expect(embedData.color).toBe(0x00_AA_00);
         });
 
         test('editReply shows error when getFullMessage returns null (message not found)', async () => {

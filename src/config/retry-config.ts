@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import env from 'env-var';
+import { z } from 'zod';
 import { retryPolicySchema } from '@/utils';
 
 // Define the Claude retry policy schema with custom defaults
@@ -15,8 +15,8 @@ const discordRetryPolicySchema = retryPolicySchema.extend({
 
 // Define the DynamoDB config schema
 const dynamodbConfigSchema = z.object({
-    defaultTimeoutMs: z.number().int().min(1000).max(60000).default(10000),
-    queryTimeoutMs:   z.number().int().min(1000).max(60000).default(15000),
+    defaultTimeoutMs: z.number().int().min(1000).max(60_000).default(10_000),
+    queryTimeoutMs:   z.number().int().min(1000).max(60_000).default(15_000),
 });
 
 // Pre-compute the default values
@@ -68,9 +68,9 @@ export function loadRetryConfig(): RetryConfig {
     // Merge with deep merge for nested objects
     // Stryker disable ObjectLiteral,LogicalOperator: Config merging with env overrides - defaults needed for undefined overrides
     const merged = {
-        claude:   { ...defaults.claude, ...(envOverrides.claude as Record<string, unknown> || {}) },
-        discord:  { ...defaults.discord, ...(envOverrides.discord as Record<string, unknown> || {}) },
-        dynamodb: { ...defaults.dynamodb, ...(envOverrides.dynamodb as Record<string, unknown> || {}) },
+        claude:   { ...defaults.claude, ...envOverrides.claude as Record<string, unknown> },
+        discord:  { ...defaults.discord, ...envOverrides.discord as Record<string, unknown> },
+        dynamodb: { ...defaults.dynamodb, ...envOverrides.dynamodb as Record<string, unknown> },
     };
     // Stryker restore ObjectLiteral,LogicalOperator
 

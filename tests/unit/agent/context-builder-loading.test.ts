@@ -1,11 +1,11 @@
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { mockLogger } from '../../setup';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
 import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
+import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import { mockLogger } from '../../setup';
 
 describe('createContextBuilder loading methods', () => {
     let mockDocClient: DynamoDBDocumentClient;
@@ -311,7 +311,7 @@ describe('createContextBuilder loading methods', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             // Should contain truncated content (397 x's + '...')
-            expect(identity).toContain(_.repeat('x', 397) + '...');
+            expect(identity).toContain(`${_.repeat('x', 397)}...`);
             // Should contain overflow note
             expect(identity).toContain("...and 1 total identity memories (use 'list /identity' to see all)");
             // Verify the truncated portion starts correctly
@@ -349,7 +349,7 @@ describe('createContextBuilder loading methods', () => {
 
             if(shouldTruncate) {
                 // Truncated content: 397 x's + '...' + overflow note
-                expect(identity).toContain(_.repeat('x', 397) + '...');
+                expect(identity).toContain(`${_.repeat('x', 397)}...`);
                 expect(identity).toContain("...and 1 total identity memories (use 'list /identity' to see all)");
                 expect(identity.slice(0, 397)).toBe(_.repeat('x', 397));
             } else {
@@ -361,7 +361,7 @@ describe('createContextBuilder loading methods', () => {
         test('should truncate content at exactly maxIdentityChars - 3 characters before ellipsis', async () => {
             // Use content of exactly 403 chars with a budget of 400 chars
             // This ensures the slice at (maxIdentityChars - 3) = 397 is precise
-            const content = _.repeat('a', 397) + 'BCDEFG'; // 404 chars
+            const content = `${_.repeat('a', 397)}BCDEFG`; // 404 chars
 
             backend.listByLayer = mock(async () => ({
                 items: [
@@ -385,7 +385,7 @@ describe('createContextBuilder loading methods', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             // Should have exactly 397 a's followed by '...' (not 'BCDEFG')
-            expect(identity).toContain(_.repeat('a', 397) + '...');
+            expect(identity).toContain(`${_.repeat('a', 397)}...`);
             expect(identity).not.toContain('B');
         });
 
@@ -469,8 +469,8 @@ describe('createContextBuilder loading methods', () => {
             const items = _.times(9, i => ({
                 item: {
                     path:           createMemoryPath(`/state/task${i}.md`),
-                    content:        'Content ' + i,
-                    contentPreview: 'Preview ' + i,
+                    content:        `Content ${i}`,
+                    contentPreview: `Preview ${i}`,
                     contentType:    'text/markdown' as const,
                     metadata:       {},
                     version:        1,
@@ -646,7 +646,7 @@ describe('createContextBuilder loading methods', () => {
             const items = _.times(20, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
-                    content:     'Content ' + i,
+                    content:     `Content ${i}`,
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
@@ -679,7 +679,7 @@ describe('createContextBuilder loading methods', () => {
             const items = _.times(8, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
-                    content:     'Content ' + i,
+                    content:     `Content ${i}`,
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
@@ -784,7 +784,7 @@ describe('createContextBuilder loading methods', () => {
         test('should track preview tier count correctly', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             // Item with very long content that will be truncated in full tier
-            const longContent = _.repeat('x', 15000);
+            const longContent = _.repeat('x', 15_000);
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -853,7 +853,7 @@ describe('createContextBuilder loading methods', () => {
                         createdAt:   '2025-01-15T10:00:00.000Z',
                         updatedAt:   '2025-01-15T10:00:00.000Z',
                     },
-                    score: 0.90,
+                    score: 0.9,
                 },
             ]);
 
@@ -2392,7 +2392,7 @@ describe('createContextBuilder loading methods', () => {
                         createdAt:   '2025-01-15T10:00:00.000Z',
                         updatedAt:   '2025-01-15T10:00:00.000Z',
                     },
-                    score: 0.90,
+                    score: 0.9,
                 },
                 {
                     item: {

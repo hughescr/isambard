@@ -24,7 +24,7 @@ import type { DiscordConfig } from '@/config';
  * @returns Configured Discord Client (not logged in)
  */
 export function createDiscordClient(_config: DiscordConfig): Client {
-    const client = new Client({
+    return new Client({
         intents: [
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMessages,
@@ -36,6 +36,4 @@ export function createDiscordClient(_config: DiscordConfig): Client {
         ],
         partials: [Partials.Channel],
     });
-
-    return client;
 }

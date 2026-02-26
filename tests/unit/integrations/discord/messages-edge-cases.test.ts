@@ -1,5 +1,5 @@
-import _ from 'lodash';
 import { describe, test, expect } from 'bun:test';
+import _ from 'lodash';
 import {
     splitMessage,
     DISCORD_SAFE_LENGTH as _DISCORD_SAFE_LENGTH
@@ -149,7 +149,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const messages = [
                     'Hello world',
                     'Test\n\nParagraph',
-                    'Long ' + _.repeat('word ', 100),
+                    `Long ${_.repeat('word ', 100)}`,
                     _.repeat('a', 500),
                 ];
 
@@ -180,7 +180,7 @@ describe.concurrent('Discord Message Splitting', () => {
                     _.repeat('a', 500),
                     _.times(50, () => _.repeat('b', 20)).join(' '),
                     _.times(20, () => _.repeat('c', 30)).join('\n\n'),
-                    _.times(10, () => _.repeat('d', 25) + '.').join(' '),
+                    _.times(10, () => `${_.repeat('d', 25)}.`).join(' '),
                 ];
 
                 for(const msg of messages) {

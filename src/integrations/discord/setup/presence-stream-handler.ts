@@ -1,10 +1,10 @@
 import { logger } from '@hughescr/logger';
-import type { BotStateManager } from '../state';
 import {
     createStreamEventHandler,
     type PresenceManager,
-    createDynamicStatusGenerator
+    type createDynamicStatusGenerator
 } from '../presence';
+import type { BotStateManager } from '../state';
 
 /**
  * Creates a stream event handler for presence updates during agent processing.

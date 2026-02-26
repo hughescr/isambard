@@ -1,10 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import _ from 'lodash';
+import { type ContextBuilder, type RecentEventsResult  } from '../../../src/agent/context-builder';
 import { EventDeltaTracker } from '../../../src/agent/event-delta-tracker';
-import type { ContextBuilder } from '../../../src/agent/context-builder';
-import type { RecentEventsResult } from '../../../src/agent/context-builder';
-import { createMemoryPath } from '../../../src/storage/memory-tool/types';
-import type { MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import { createMemoryPath, type MemoryToolItemData  } from '../../../src/storage/memory-tool/types';
 
 // Helper to create mock event items
 function createMockEventItem(path: string, updatedAt: string, content: string): MemoryToolItemData {

@@ -1,13 +1,13 @@
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import _ from 'lodash';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
+import * as textGenerator from '@/agent/text-generator';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { UnreadMessage, UnreadOverview, ChannelSummaryResponse } from '@/integrations/discord/inbox/types';
-import { createChannelId } from '@/integrations/discord/types';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import * as textGenerator from '@/agent/text-generator';
 import type { BotStateManager } from '@/integrations/discord/state';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import { createChannelId } from '@/integrations/discord/types';
 
 describe('createInboxMCPServer', () => {
     let mockInboxManager: InboxManager;

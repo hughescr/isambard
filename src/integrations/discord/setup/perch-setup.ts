@@ -1,14 +1,13 @@
+import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import _ from 'lodash';
-import { logger } from '@hughescr/logger';
-import type { ClaudeAgent, ContextBuilder, PerchConfig, PerchScheduler, PerchSessionRunner } from '@/agent';
-import { createPerchScheduler, createPerchSessionRunner } from '@/agent';
-import type { BotStateManager } from '../state';
-import { createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { ResponseRouter } from '../channel-registry';
+import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponseToWellKnownChannel } from '../response-sender';
+import type { BotStateManager } from '../state';
 import { createPresenceStreamHandler } from './presence-stream-handler';
+import { type ClaudeAgent, type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchSessionRunner, createPerchScheduler, createPerchSessionRunner  } from '@/agent';
 
 /**
  * Parameters for setting up perch scheduler and runner.

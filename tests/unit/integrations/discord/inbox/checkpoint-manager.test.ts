@@ -1,9 +1,9 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
+import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
+import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItemData, MemoryPath, ContentType } from '@/storage/memory-tool/types';
-import { createChannelId, createGuildId } from '@/integrations/discord/types';
-import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 
 describe.concurrent('CheckpointManager', () => {
     let mockBackend: MemoryToolBackend;

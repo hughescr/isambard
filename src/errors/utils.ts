@@ -4,8 +4,8 @@
  * Error classes for utility operations.
  */
 
-import { ErrorCode } from './codes';
 import { IsambardError } from './base';
+import { ErrorCode } from './codes';
 // eslint-disable-next-line boundaries/entry-point -- PathSecurityReason type defined here to avoid circular dep; errors/utils and utils/path-validator have intentional bidirectional type dependency
 import type { PathSecurityReason } from '@/utils/path-validator';
 

@@ -1,13 +1,12 @@
-import _ from 'lodash';
 import type { Client, Message, TextBasedChannel } from 'discord.js';
+import _ from 'lodash';
 import { ChannelNotAccessibleError, MessageFetchError } from '@/errors';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
-import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 import { withDiscordRetry } from '@/integrations/discord/retry';
+import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 
 // Re-export error classes for backward compatibility
-export { ChannelNotAccessibleError, MessageFetchError };
 
 /**
  * Maximum number of messages Discord API returns per request.
@@ -336,3 +335,5 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         fetchByIds,
     };
 }
+
+export { ChannelNotAccessibleError, MessageFetchError } from '@/errors';

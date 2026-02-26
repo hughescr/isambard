@@ -1,7 +1,6 @@
-import _ from 'lodash';
-import type { Mock } from 'bun:test';
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { type Mock, describe, test, expect, beforeEach, mock  } from 'bun:test';
 import type { ChatInputCommandInteraction } from 'discord.js';
+import _ from 'lodash';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
 
 // Admin Discord user ID used in tests

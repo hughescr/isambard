@@ -1,11 +1,11 @@
 /* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch natively */
-import _ from 'lodash';
-import { convert } from 'html-to-text';
 import { logger } from '@hughescr/logger';
+import { convert } from 'html-to-text';
+import _ from 'lodash';
 import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
+
 export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
-import type { EmailMetadata, EmailAddress, EmailHeaders } from '@/integrations/email/types';
-import { EmailFolder } from '@/integrations/email/types';
+import { type EmailMetadata, type EmailAddress, type EmailHeaders, EmailFolder  } from '@/integrations/email/types';
 
 /**
  * Maps IMAP/WildDuck specialUse flag to the logical EmailFolder value.
@@ -329,7 +329,7 @@ export class WildDuckClient {
         const uids = _.map(results, (result) => {
             const colonIdx = result.message.lastIndexOf(':');
             // Stryker disable next-line ConditionalExpression,EqualityOperator: guard against missing colon in search result
-            return colonIdx >= 0 ? parseInt(result.message.slice(colonIdx + 1), 10) : 0;
+            return colonIdx === -1 ? 0 : Number.parseInt(result.message.slice(colonIdx + 1), 10);
         });
         // Stryker disable next-line EqualityOperator: filter uids > 0 removes sentinel zeros for bad results
         return _.filter(uids, uid => uid > 0);
@@ -947,7 +947,7 @@ export class WildDuckClient {
         // Stryker disable next-line ObjectLiteral: headers object initialization is HTTP wiring
         const headers: Record<string, string> = {
             // Stryker disable ObjectLiteral,LogicalOperator: spread of options.headers is defensive
-            ...(options.headers as Record<string, string> ?? {}),
+            ...options.headers as Record<string, string>,
             // Stryker restore ObjectLiteral,LogicalOperator
         };
 
@@ -978,7 +978,7 @@ export class WildDuckClient {
     private async makeRequestNullable<T>(path: string, options: RequestInit): Promise<T | null> {
         // Stryker disable ObjectLiteral,LogicalOperator: spread of options.headers is defensive — options always has no headers in practice
         const headers: Record<string, string> = {
-            ...(options.headers as Record<string, string> ?? {}),
+            ...options.headers as Record<string, string>,
         };
         // Stryker restore ObjectLiteral,LogicalOperator
 
@@ -1011,7 +1011,7 @@ export class WildDuckClient {
 
     private async makeRequest<T>(path: string, options: RequestInit, skipAuth = false): Promise<T> {
         const headers: Record<string, string> = {
-            ...(options.headers as Record<string, string> ?? {}),
+            ...options.headers as Record<string, string>,
         };
 
         if(!skipAuth && this.token) {
