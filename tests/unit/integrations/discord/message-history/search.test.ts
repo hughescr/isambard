@@ -1,5 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
-import _ from 'lodash';
+import map from 'lodash/map';
+import some from 'lodash/some';
+import times from 'lodash/times';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import {
     createMessageSearchService,
@@ -260,8 +262,8 @@ describe('createMessageSearchService', () => {
                 });
 
                 expect(result.messages).toHaveLength(2);
-                expect(_.some(result.messages, ['content', 'Hello World'])).toBe(true);
-                expect(_.some(result.messages, ['content', 'HELLO again'])).toBe(true);
+                expect(some(result.messages, ['content', 'Hello World'])).toBe(true);
+                expect(some(result.messages, ['content', 'HELLO again'])).toBe(true);
             });
 
             test('should include query in response metadata', async () => {
@@ -315,7 +317,7 @@ describe('createMessageSearchService', () => {
                     ],
                 },
             ])('should NOT filter messages $description - all messages returned unfiltered', async ({ query, messages }) => {
-                const fetchedMessages = _.map(messages, m => createMockSearchResult(m));
+                const fetchedMessages = map(messages, m => createMockSearchResult(m));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -343,7 +345,7 @@ describe('createMessageSearchService', () => {
 
         describe('limit and overflow handling', () => {
             test('should respect limit parameter', async () => {
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -366,7 +368,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should use default limit of 10 when not specified', async () => {
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -394,7 +396,7 @@ describe('createMessageSearchService', () => {
                     defaultLimit: 5,
                 });
 
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -416,7 +418,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should generate overflow batch summaries for messages beyond limit', async () => {
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -452,7 +454,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should include totalFound in metadata', async () => {
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -475,7 +477,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should not have overflow when messages are within limit', async () => {
-                const messages = _.times(5, i =>
+                const messages = times(5, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -512,7 +514,7 @@ describe('createMessageSearchService', () => {
                     expectedOverflowCount: 1,
                 },
             ])('should handle overflow boundary $description', async ({ messageCount, limit, expectOverflow, expectedOverflowCount }) => {
-                const messages = _.times(messageCount, i =>
+                const messages = times(messageCount, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -557,7 +559,7 @@ describe('createMessageSearchService', () => {
 
         describe('batch overflow summarization', () => {
             test('should call summarizeMessageBatch instead of summarizeMessages for overflow', async () => {
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -593,7 +595,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should cap overflow at 100 messages for batch summarization', async () => {
-                const messages = _.times(150, i =>
+                const messages = times(150, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -633,7 +635,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should not set hasMore when overflow is within cap', async () => {
-                const messages = _.times(50, i =>
+                const messages = times(50, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -669,7 +671,7 @@ describe('createMessageSearchService', () => {
 
             test('should not set hasMore when overflow is exactly MAX_OVERFLOW_FOR_SUMMARY (100)', async () => {
                 // 110 messages with limit 10 = exactly 100 overflow
-                const messages = _.times(110, i =>
+                const messages = times(110, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -707,7 +709,7 @@ describe('createMessageSearchService', () => {
 
             test('should set hasMore when overflow is exactly one more than cap (101)', async () => {
                 // 111 messages with limit 10 = 101 overflow (just over cap)
-                const messages = _.times(111, i =>
+                const messages = times(111, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -818,7 +820,7 @@ describe('createMessageSearchService', () => {
             });
 
             test('should propagate summarizer errors', async () => {
-                const messages = _.times(15, i =>
+                const messages = times(15, i =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
@@ -851,7 +853,7 @@ describe('createMessageSearchService', () => {
             { description: 'with limit parameter', limit: 5, expectedLength: 5 },
             { description: 'with default limit', limit: undefined, expectedLength: 10 },
         ])('should respect limit $description', async ({ limit, expectedLength }) => {
-            const messages = _.times(20, i =>
+            const messages = times(20, i =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
@@ -873,7 +875,7 @@ describe('createMessageSearchService', () => {
         });
 
         test('should not call summarizer for overflow (count-only)', async () => {
-            const messages = _.times(20, i =>
+            const messages = times(20, i =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,

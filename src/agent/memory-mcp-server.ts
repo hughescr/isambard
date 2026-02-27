@@ -1,7 +1,12 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
+import orderBy from 'lodash/orderBy';
+import replace from 'lodash/replace';
+import startsWith from 'lodash/startsWith';
+import trimEnd from 'lodash/trimEnd';
 import { z } from 'zod';
 import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '@/storage';
 
@@ -44,7 +49,7 @@ export function createMemoryMCPServer(
                         }
                         // Fire-and-forget: record access for state-layer memories (scoring)
                         // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
-                        if(_.startsWith(args.path, '/state/') && options?.recordAccess) {
+                        if(startsWith(args.path, '/state/') && options?.recordAccess) {
                             // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
                             options.recordAccess([memoryPath]).catch((error: unknown) => {
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
@@ -54,7 +59,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: result.content }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error viewing memory: ${message}` }],
                             isError: true,
@@ -94,7 +99,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Memory stored at ${path}` }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error storing self memory: ${message}` }],
                             isError: true,
@@ -134,7 +139,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `User memory stored at ${path}` }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error storing user memory: ${message}` }],
                             isError: true,
@@ -160,7 +165,7 @@ export function createMemoryMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const timestamp = _.replace(new Date().toISOString(), /[:.]/g, '-');
+                        const timestamp = replace(new Date().toISOString(), /[:.]/g, '-');
                         const path = createMemoryPath(`/events/${args.eventType}/${timestamp}`);
                         const content = args.details
                             ? `${args.summary}\n\n${args.details}`
@@ -175,7 +180,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Event logged at ${path}` }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error logging event: ${message}` }],
                             isError: true,
@@ -199,27 +204,28 @@ export function createMemoryMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:    z.string().optional().describe('Pagination cursor from previous response'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    startDate: z.string().datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
+                    startDate: z.iso.datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    endDate:   z.string().datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
+                    endDate:   z.iso.datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        // Build options object only if filter params provided
-                        const options = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
+                        // Build queryOptions object only if filter params provided
+                        const queryOptions = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
                             ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
                             : undefined;
                         const results = await backend.searchByTags(
                             new Set(args.tags),
                             args.layer ? createLayerName(args.layer) : undefined,
-                            options
+                            queryOptions
                         );
                         if(results.items.length === 0) {
                             return {
                                 content: [{ type: 'text' as const, text: 'No memories found matching tags' }],
                             };
                         }
-                        let formatted = _.map(results.items, (r) => {
+                        let formatted = map(results.items, (r) => {
+                            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: contentPreview may be absent at runtime despite types
                             const preview = r.contentPreview ?? 'No content';
                             return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
@@ -230,7 +236,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error searching memories: ${message}` }],
                             isError: true,
@@ -254,9 +260,9 @@ export function createMemoryMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     cursor:    z.string().optional().describe('Pagination cursor from previous response'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    startDate: z.string().datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
+                    startDate: z.iso.datetime().optional().describe('Filter: items updated on or after this ISO8601 datetime'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    endDate:   z.string().datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
+                    endDate:   z.iso.datetime().optional().describe('Filter: items updated on or before this ISO8601 datetime'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
@@ -264,10 +270,10 @@ export function createMemoryMCPServer(
                         const rawPath = args.path ?? '/';
                         // Normalize: strip trailing slash (except for root)
                         // Stryker disable next-line StringLiteral: trimEnd('') is equivalent - paths work via prefix-based list query
-                        const dirPath = rawPath === '/' ? '/' : _.trimEnd(rawPath, '/');
+                        const dirPath = rawPath === '/' ? '/' : trimEnd(rawPath, '/');
 
-                        // Build options object only if filter params provided
-                        const options = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
+                        // Build queryOptions object only if filter params provided
+                        const queryOptions = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
                             ? { limit: args.limit, cursor: args.cursor, startDate: args.startDate, endDate: args.endDate }
                             : undefined;
 
@@ -280,9 +286,10 @@ export function createMemoryMCPServer(
                         const layer = layerPaths[dirPath];
 
                         // Stryker disable ObjectLiteral,StringLiteral: Logger debug objects - content not behavior-affecting
+                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Record<string,V> typed as always having value but runtime may return undefined for unlisted keys
                         const results = layer
-                            ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, options))
-                            : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, options));
+                            ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, queryOptions))
+                            : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, queryOptions));
                         // Stryker restore ObjectLiteral,StringLiteral
 
                         if(results.items.length === 0) {
@@ -290,7 +297,7 @@ export function createMemoryMCPServer(
                                 content: [{ type: 'text' as const, text: 'Directory is empty' }],
                             };
                         }
-                        let formatted = _.map(results.items, 'path').join('\n');
+                        let formatted = map(results.items, 'path').join('\n');
                         if(results.nextCursor) {
                             formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
                         }
@@ -298,7 +305,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error listing directory: ${message}` }],
                             isError: true,
@@ -324,13 +331,13 @@ export function createMemoryMCPServer(
                             };
                         }
                         // Sort by count descending
-                        const sortedCounts = _.orderBy(tagCounts, ['count'], ['desc']);
-                        const formatted = _.map(sortedCounts, ({ tag, count }) => `${tag}: ${count}`).join('\n');
+                        const sortedCounts = orderBy(tagCounts, ['count'], ['desc']);
+                        const formatted = map(sortedCounts, ({ tag, count }) => `${tag}: ${count}`).join('\n');
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error listing tags: ${message}` }],
                             isError: true,
@@ -364,7 +371,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}` }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error deleting memory: ${message}` }],
                             isError: true,
@@ -418,13 +425,13 @@ export function createMemoryMCPServer(
 
                         await backend.update(memoryPath, { tags: newTags, preserveUpdatedAt: true });
 
-                        const beforeStr = beforeTags.size > 0 ? [...beforeTags].sort().join(', ') : '(none)';
-                        const afterStr = newTags.size > 0 ? [...newTags].sort().join(', ') : '(none)';
+                        const beforeStr = beforeTags.size > 0 ? [...beforeTags].toSorted((a, b) => a.localeCompare(b)).join(', ') : '(none)';
+                        const afterStr = newTags.size > 0 ? [...newTags].toSorted((a, b) => a.localeCompare(b)).join(', ') : '(none)';
                         return {
                             content: [{ type: 'text' as const, text: `Updated tags on ${args.path}\nBefore: ${beforeStr}\nAfter: ${afterStr}` }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error updating tags: ${message}` }],
                             isError: true,

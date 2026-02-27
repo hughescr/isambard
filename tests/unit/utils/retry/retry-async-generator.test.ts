@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
-import _ from 'lodash';
+import startsWith from 'lodash/startsWith';
 import { retryAsyncGenerator } from '../../../../src/utils/retry/retry-async-generator';
 import type { ErrorClassification, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
 
@@ -346,6 +346,7 @@ describe('retryAsyncGenerator', () => {
                 results.push(value);
             }
 
+            expect(results).toEqual([1]);
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
             const logCall = (mockLogger.warn as ReturnType<typeof mock>).mock.calls[0][0];
 
@@ -708,6 +709,7 @@ describe('retryAsyncGenerator', () => {
             const transientError = new Error('Transient error');
             const permanentError = new Error('Permanent error');
 
+            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (mixed-error sequence), identical structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount === 1) {
@@ -801,7 +803,7 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock((error: unknown) => {
                 const err = error as Error;
-                if(_.startsWith(err.message, 'Rate limit')) {
+                if(startsWith(err.message, 'Rate limit')) {
                     return {
                         category:     'rate_limited',
                         message:      err.message,
@@ -829,6 +831,7 @@ describe('retryAsyncGenerator', () => {
         it('should track elapsed time correctly across retries', async () => {
             let callCount = 0;
 
+            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (elapsed time tracking), identical structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount < 3) {
@@ -875,6 +878,7 @@ describe('retryAsyncGenerator', () => {
         it('should track attempt number correctly', async () => {
             let callCount = 0;
 
+            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (attempt number tracking), identical structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount < 3) {
@@ -910,6 +914,7 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
 
+            // eslint-disable-next-line sonarjs/no-unused-collection -- results collected within error-throwing async; test verifies error behavior not collection contents
             const results: number[] = [];
 
             expect(async () => {

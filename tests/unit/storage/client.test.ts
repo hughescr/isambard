@@ -1,7 +1,7 @@
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
-import _ from 'lodash';
+import keys from 'lodash/keys';
 import type { DynamoDBConfig } from '@/config/schemas';
 import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
 
@@ -18,7 +18,7 @@ describe.concurrent('buildClientConfig', () => {
         const clientConfig = buildClientConfig();
 
         // Verify only maxAttempts is set
-        expect(_.keys(clientConfig)).toEqual(['maxAttempts']);
+        expect(keys(clientConfig)).toEqual(['maxAttempts']);
         expect('region' in clientConfig).toBe(false);
         expect('endpoint' in clientConfig).toBe(false);
     });

@@ -5,8 +5,10 @@
  * directory and builds a compact summary for idle status generation.
  */
 import type { Dirent } from 'node:fs';
+import { type logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
-import { constant as _constant, replace as _replace } from 'lodash';
+import _constant from 'lodash/constant';
+import _replace from 'lodash/replace';
 import { mockLogger } from '../../setup';
 import { createTaskListReader } from '@/agent/task-list-reader';
 
@@ -31,7 +33,7 @@ describe('createTaskListReader', () => {
         mockGetCurrentSessionId = mock(_constant(undefined));
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -49,7 +51,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -65,7 +67,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -84,7 +86,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -110,7 +112,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -132,7 +134,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -160,7 +162,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -201,7 +203,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -224,7 +226,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -257,7 +259,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -284,7 +286,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -329,7 +331,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -356,7 +358,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -380,7 +382,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -410,7 +412,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -449,7 +451,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -474,7 +476,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -500,7 +502,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -527,7 +529,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -554,7 +556,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });
@@ -573,7 +575,7 @@ describe('createTaskListReader', () => {
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
-            logger:              mockLogger as unknown as typeof import('@hughescr/logger').logger,
+            logger:              mockLogger as unknown as typeof logger,
             readdir:             mockReaddir,
             readFile:            mockReadFile,
         });

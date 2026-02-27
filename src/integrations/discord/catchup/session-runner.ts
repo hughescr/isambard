@@ -9,7 +9,11 @@
  */
 
 import { logger } from '@hughescr/logger';
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
+import flatMap from 'lodash/flatMap';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import { DateTime } from 'luxon';
 import type { InboxManager } from '../inbox';
 import type { BotStateManager, CatchingUpModeContext, InterruptingMessageDetails } from '../state';
@@ -244,9 +248,11 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             });
 
             // Store session ID for resumption
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential assignment after await, no concurrent writers
             currentSessionId = result.sessionId;
 
             // Clear abort controller
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential state cleanup after await, no concurrent writers
             currentAbortController = null;
 
             if(result.completed) {
@@ -256,21 +262,22 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Check for suspension — sessionId already saved at line 247, this is defensive logging
             // Stryker disable all: Suspension detection guard — sessionId preserved above, only adds logging
-            if(!result.completed && suspendedState !== null) {
+            if(suspendedState !== null) {
                 logger.debug({ msg: 'Catch-up session suspended - state preserved for resume' });
             }
             // Stryker restore all
         } catch (error) {
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: catch block cleanup, no concurrent writers
             currentAbortController = null;
 
             // Check if this is a suspension abort (mode is idle because suspend() called goIdle())
-            if(_.isError(error) && error.name === 'AbortError' && suspendedState !== null) {
+            if(isError(error) && error.name === 'AbortError' && suspendedState !== null) {
                 logger.debug({ msg: 'Catch-up session aborted by suspension' });
                 return;
             }
 
             // AbortError without suspend flag - external abort, just return
-            if(_.isError(error) && error.name === 'AbortError') {
+            if(isError(error) && error.name === 'AbortError') {
                 return;
             }
 
@@ -379,20 +386,13 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Build status context for dynamic status generation
             // Stryker disable ArrowFunction,ArrayDeclaration,StringLiteral: Status context building - values affect status generation but not core behavior
-            const allMessages = _.flatMap(
+            const allMessages = flatMap(
                 overview.channels,
                 ch => deps.inboxManager.getChannelMessages(ch.channelId)
             );
-            const topAuthors = _(allMessages)
-                .map('author')
-                .countBy()
-                .toPairs()
-                .orderBy([1], ['desc'])
-                .take(3)
-                .map(([author]) => author)
-                .value();
+            const topAuthors = _(allMessages).map('author').countBy().toPairs().orderBy([1], ['desc']).take(3).map(([author]) => author).value();
             const statusContext: StatusContext = {
-                channelNames: _.map(overview.channels, 'channelName'),
+                channelNames: map(overview.channels, 'channelName'),
                 topAuthors,
                 totalUnread:  overview.totalUnread,
             };
@@ -409,7 +409,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 sessionId:      null,
                 startedAt:      new Date(),
                 unreadCount:    overview.totalUnread,
-                channelNames:   _.map(overview.channels, 'channelName'),
+                channelNames:   map(overview.channels, 'channelName'),
                 topAuthors,
                 timeSinceLastActive,
             };
@@ -486,18 +486,11 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Build new CatchingUpModeContext with restored viewedChannels and fresh inbox data
             // Stryker disable ArrowFunction,StringLiteral,ArrayDeclaration: Status context values affect status generation but not core behavior
-            const allMessages = _.flatMap(
+            const allMessages = flatMap(
                 overview.channels,
                 ch => deps.inboxManager.getChannelMessages(ch.channelId)
             );
-            const topAuthors = _(allMessages)
-                .map('author')
-                .countBy()
-                .toPairs()
-                .orderBy([1], ['desc'])
-                .take(3)
-                .map(([author]) => author)
-                .value();
+            const topAuthors = _(allMessages).map('author').countBy().toPairs().orderBy([1], ['desc']).take(3).map(([author]) => author).value();
 
             // Load completion signal to calculate time since last active
             const completionSignal = await deps.loadCompletionSignal();
@@ -510,7 +503,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 sessionId:      savedState.sessionId ?? null,
                 startedAt:      new Date(),
                 unreadCount:    overview.totalUnread,
-                channelNames:   _.map(overview.channels, 'channelName'),
+                channelNames:   map(overview.channels, 'channelName'),
                 topAuthors,
                 timeSinceLastActive,
             };
@@ -528,7 +521,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Build status context for dynamic status generation
             // Stryker disable StringLiteral: Property accessor string for lodash map — cosmetic status context
             const statusContext: StatusContext = {
-                channelNames: _.map(overview.channels, 'channelName'),
+                channelNames: map(overview.channels, 'channelName'),
                 topAuthors,
                 totalUnread:  overview.totalUnread,
             };
@@ -536,7 +529,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Build resumed prompt
             const viewedChannelIds = [...savedState.viewedChannels];
-            const viewedChannels = _.map(viewedChannelIds, channelId =>
+            const viewedChannels = map(viewedChannelIds, channelId =>
                 deps.resolveChannelName?.(channelId) ?? channelId
             );
 

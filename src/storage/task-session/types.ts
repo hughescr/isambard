@@ -5,7 +5,7 @@ import { z } from 'zod';
  */
 export const sessionIdSchema = z
     .string()
-    .uuid({ error: 'Session ID must be a valid UUID' })
+    .check(z.uuid({ error: 'Session ID must be a valid UUID' }))
     .brand<'SessionId'>();
 
 export type SessionId = z.infer<typeof sessionIdSchema>;

@@ -119,6 +119,17 @@ describe('ActiveStatusGenerator', () => {
             expect(result.name).toBe('💬 Thinking...');
             expect(result.name).toStartWith('💬 ');
         });
+
+        test('perching mode -> 🦉 prefix', () => {
+            const generator = createActiveStatusGenerator({
+                logger:       createMockLogger(),
+                activityType: ActivityType.Custom,
+            });
+            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
+            const result = generator.generate(phase, 'perching');
+            expect(result.name).toBe('🦉 Thinking...');
+            expect(result.name).toStartWith('🦉 ');
+        });
     });
 
     describe('logging behavior', () => {

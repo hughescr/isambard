@@ -1,5 +1,8 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
+import endsWith from 'lodash/endsWith';
+import repeat from 'lodash/repeat';
+import startsWith from 'lodash/startsWith';
+import trim from 'lodash/trim';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -64,39 +67,39 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should flush non-empty currentChunk before character-splitting long word', () => {
                 // Tests: if(currentChunk.length > 0) push and reset before character split
-                const message = `short ${_.repeat('x', 100)}`;
+                const message = `short ${repeat('x', 100)}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('short');
-                expect(result[1]).toBe(_.repeat('x', 50));
-                expect(result[2]).toBe(_.repeat('x', 50));
+                expect(result[1]).toBe(repeat('x', 50));
+                expect(result[2]).toBe(repeat('x', 50));
             });
 
             test('should not push empty string when currentChunk is empty before long word', () => {
                 // Tests currentChunk.length > 0 check - should not push empty chunk
-                const longWord = _.repeat('x', 100);
+                const longWord = repeat('x', 100);
                 const result = splitMessage(longWord, 50);
-                expect(result).toEqual([_.repeat('x', 50), _.repeat('x', 50)]);
+                expect(result).toEqual([repeat('x', 50), repeat('x', 50)]);
                 expect(result).not.toContain('');
             });
 
             test('should trim currentChunk when pushing', () => {
-                // Tests: _.trim(currentChunk) - verify trimming happens
+                // Tests: trim(currentChunk) - verify trimming happens
                 const message = 'word1 word2 word3';
                 const result = splitMessage(message, 12);
                 for(const chunk of result) {
-                    expect(chunk).toBe(_.trim(chunk));
-                    expect(_.startsWith(chunk, ' ')).toBe(false);
-                    expect(_.endsWith(chunk, ' ')).toBe(false);
+                    expect(chunk).toBe(trim(chunk));
+                    expect(startsWith(chunk, ' ')).toBe(false);
+                    expect(endsWith(chunk, ' ')).toBe(false);
                 }
             });
 
             test('should reset currentChunk to empty after flushing for long word', () => {
                 // Tests: currentChunk = '' after pushing
-                const message = `aa ${_.repeat('x', 60)} bb`;
+                const message = `aa ${repeat('x', 60)} bb`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('aa');
-                expect(result[1]).toBe(_.repeat('x', 50));
-                expect(result[2]).toBe(_.repeat('x', 10));
+                expect(result[1]).toBe(repeat('x', 50));
+                expect(result[2]).toBe(repeat('x', 10));
                 expect(result[3]).toBe('bb');
             });
 

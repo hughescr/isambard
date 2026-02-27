@@ -6,8 +6,11 @@
  */
 
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import _ from 'lodash';
+import path from 'node:path';
+import endsWith from 'lodash/endsWith';
+import filter from 'lodash/filter';
+import isString from 'lodash/isString';
+import map from 'lodash/map';
 import { getTaskDirectoryPath } from './task-directory-copier';
 
 /**
@@ -63,9 +66,9 @@ function parseTaskFile(content: string): Task | undefined {
         // Validate task shape - check parsed is non-null and has required fields
         // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
-        if(!parsed || !_.isString(parsed.id)
+        if(!parsed || !isString(parsed.id)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
-          || !_.isString(parsed.subject)
+          || !isString(parsed.subject)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-argument,@typescript-eslint/no-unsafe-member-access -- Validated with includes check
           || !['pending', 'in_progress', 'completed'].includes(parsed.status)) {
             return undefined;
@@ -83,14 +86,14 @@ function parseTaskFile(content: string): Task | undefined {
  */
 function buildSummarySections(cappedTasks: Task[]): string[] {
     // Stryker disable StringLiteral,ObjectLiteral: Summary text building is cosmetic formatting
-    const inProgressTasks = _.filter(cappedTasks, { status: 'in_progress' });
-    const pendingTasks = _.filter(cappedTasks, { status: 'pending' });
-    const completedTasks = _.filter(cappedTasks, { status: 'completed' });
+    const inProgressTasks = filter(cappedTasks, { status: 'in_progress' });
+    const pendingTasks = filter(cappedTasks, { status: 'pending' });
+    const completedTasks = filter(cappedTasks, { status: 'completed' });
 
     const sections: string[] = [];
 
     if(inProgressTasks.length > 0) {
-        const subjects = _.map(inProgressTasks, task => truncateSubject(task.subject));
+        const subjects = map(inProgressTasks, task => truncateSubject(task.subject));
         sections.push(`Working on: ${subjects.join(', ')}`);
     }
 
@@ -99,7 +102,7 @@ function buildSummarySections(cappedTasks: Task[]): string[] {
     }
 
     if(completedTasks.length > 0) {
-        const subjects = _.map(completedTasks, task => truncateSubject(task.subject));
+        const subjects = map(completedTasks, task => truncateSubject(task.subject));
         sections.push(`Recently done: ${subjects.join(', ')}`);
     }
     // Stryker restore StringLiteral,ObjectLiteral
@@ -140,7 +143,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 }
 
                 // Filter for JSON files only
-                const jsonFiles = _.filter(files, file => file.isFile() && _.endsWith(file.name, '.json'));
+                const jsonFiles = filter(files, file => file.isFile() && endsWith(file.name, '.json'));
                 // Stryker disable next-line ConditionalExpression: Defensive early return — covered by tasks.length check
                 if(jsonFiles.length === 0) {
                     return undefined;
@@ -151,7 +154,8 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 for(const file of jsonFiles) {
                     // Stryker disable BlockStatement: Per-file error handling — skip unreadable files
                     try {
-                        const content = await readFileFn(join(taskDir, file.name), 'utf-8');
+                        // eslint-disable-next-line no-await-in-loop -- sequential: per-file read, skip on error
+                        const content = await readFileFn(path.join(taskDir, file.name), 'utf8');
                         const task = parseTaskFile(content);
                         if(task !== undefined) {
                             tasks.push(task);
@@ -173,7 +177,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 // Stryker disable next-line ArithmeticOperator: TTL constant for recently completed tasks
                 const twoHoursMs = 2 * 60 * 60 * 1000;
 
-                const relevantTasks = _.filter(tasks, (task) => {
+                const relevantTasks = filter(tasks, (task) => {
                     if(task.status !== 'completed') {
                         return true;
                     }

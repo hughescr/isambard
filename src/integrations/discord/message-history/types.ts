@@ -26,7 +26,7 @@ export type DiscordAuthor = z.infer<typeof discordAuthorSchema>;
 export const discordAttachmentSchema = z
     .object({
         /** URL to the attachment file */
-        url:         z.string().url('URL must be a valid URL'),
+        url:         z.url('URL must be a valid URL'),
         /** Original filename of the attachment */
         filename:    z.string().min(1, 'Filename cannot be empty'),
         /** MIME type of the attachment (optional) */
@@ -47,7 +47,7 @@ export const discordEmbedSchema = z
         /** Embed description/body text (optional) */
         description: z.string().optional(),
         /** URL linked in the embed (optional) */
-        url:         z.string().url('URL must be a valid URL').optional(),
+        url:         z.url('URL must be a valid URL').optional(),
     })
     .describe('Rich embed content from a Discord message');
 
@@ -85,7 +85,7 @@ export const discordSearchResultSchema = z
         /** Message text content */
         content:        z.string(),
         /** ISO 8601 timestamp when the message was created */
-        timestamp:      z.string().datetime(),
+        timestamp:      z.iso.datetime(),
         /** File attachments on the message */
         attachments:    z.array(discordAttachmentSchema),
         /** Rich embeds in the message */
@@ -111,7 +111,7 @@ export const overflowSummarySchema = z
         /** Message ID (snowflake) */
         id:        z.string().min(1, 'Message ID cannot be empty'),
         /** ISO 8601 timestamp when the message was created */
-        timestamp: z.string().datetime(),
+        timestamp: z.iso.datetime(),
         /** Author's username or display name */
         author:    z.string().min(1, 'Author cannot be empty'),
         /** Brief summary of the message content (~50 words) */
@@ -129,9 +129,9 @@ export type OverflowSummary = z.infer<typeof overflowSummarySchema>;
 export const batchOverflowSummarySchema = z
     .object({
         /** ISO 8601 timestamp of the earliest message in the batch */
-        startTimestamp: z.string().datetime(),
+        startTimestamp: z.iso.datetime(),
         /** ISO 8601 timestamp of the latest message in the batch */
-        endTimestamp:   z.string().datetime(),
+        endTimestamp:   z.iso.datetime(),
         /** Number of messages in this batch */
         messageCount:   z.number().int().positive(),
         /** Unique authors in this batch */
@@ -173,9 +173,9 @@ export const searchResponseSchema = z
             /** Time range of the search results */
             timeRange:  z.object({
                 /** Start of the time range (ISO 8601) */
-                start: z.string().datetime(),
+                start: z.iso.datetime(),
                 /** End of the time range (ISO 8601) */
-                end:   z.string().datetime(),
+                end:   z.iso.datetime(),
             }),
             /** Original search query string (optional) */
             query: z.string().optional(),

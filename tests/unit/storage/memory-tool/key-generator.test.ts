@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { repeat as _repeat } from 'lodash';
+import _repeat from 'lodash/repeat';
 import { MemoryToolKeyGenerator, generateContentPreview, normalizeTags } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 

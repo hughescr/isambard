@@ -21,7 +21,9 @@
 
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import map from 'lodash/map';
+import noop from 'lodash/noop';
 import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
 
@@ -155,11 +157,13 @@ export class MessageCoordinator {
         });
 
         // Send initial typing indicator
-        void state.typingChannel.sendTyping().catch(() => _.noop());
+        // Stryker disable next-line ArrowFunction: Equivalent mutant - () => noop() and () => undefined both return undefined, suppressing the caught error
+        void state.typingChannel.sendTyping().catch(() => noop());
 
         // Set up refresh interval (Discord typing lasts ~10 seconds, refresh every 8s)
         state.typingInterval = setInterval(() => {
-            void state.typingChannel?.sendTyping().catch(() => _.noop());
+            // Stryker disable next-line ArrowFunction: Equivalent mutant - () => noop() and () => undefined both return undefined, suppressing the caught error
+            void state.typingChannel?.sendTyping().catch(() => noop());
         }, 8000);
     }
 
@@ -213,14 +217,17 @@ export class MessageCoordinator {
                 // If interrupted, capture partial work AND sessionId for resume
                 if(result.wasInterrupted) {
                     if(result.streamTracker.hasMeaningfulProgress()) {
+                        // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
                         state.partialWork = result.streamTracker.getProgress();
                         if(result.sessionId) {
+                            // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
                             state.sessionId = result.sessionId;
                         }
                     }
                     // No meaningful progress → next batch starts fresh
                 } else {
                     // Completed - clear sessionId (session was cleaned up), invoke callback
+                    // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
                     state.sessionId = undefined;
                     if(this.onResponse) {
                         await this.onResponse(result, firstDiscordMessage);
@@ -260,13 +267,13 @@ export class MessageCoordinator {
         state.pendingMessages = [];
 
         // Separate original messages (discordMessage === null) from new ones
-        const originalMessages = _.filter(pendingMessages, ['discordMessage', null]);
-        const newMessages = _.filter(pendingMessages, msg => msg.discordMessage !== null);
+        const originalMessages = filter(pendingMessages, ['discordMessage', null]);
+        const newMessages = filter(pendingMessages, msg => msg.discordMessage !== null);
 
         // Build contexts array: original + new
         const allContexts = [
-            ..._.map(originalMessages, 'context'),
-            ..._.map(newMessages, 'context'),
+            ...map(originalMessages, 'context'),
+            ...map(newMessages, 'context'),
         ];
 
         // Get the first Discord message for this batch
@@ -279,7 +286,7 @@ export class MessageCoordinator {
         const partialResumeContext = state.partialWork
             ? {
                 partialWork: state.partialWork,
-                newMessages: _.map(newMessages, 'context'),
+                newMessages: map(newMessages, 'context'),
             }
             : null;
 
@@ -317,14 +324,17 @@ export class MessageCoordinator {
                 // If interrupted, capture partial work AND sessionId for resume
                 if(result.wasInterrupted) {
                     if(result.streamTracker.hasMeaningfulProgress()) {
+                        // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
                         state.partialWork = result.streamTracker.getProgress();
                         if(result.sessionId) {
+                            // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
                             state.sessionId = result.sessionId;
                         }
                     }
                     // No meaningful progress → next batch starts fresh
                 } else {
                     // Completed - clear sessionId (session was cleaned up), invoke callback
+                    // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
                     state.sessionId = undefined;
                     if(this.onResponse) {
                         await this.onResponse(result, firstDiscordMessage);
@@ -393,7 +403,7 @@ export class MessageCoordinator {
                     state.interruptedFirstMessage ??= state.activeQuery.firstDiscordMessage;
 
                     // Re-queue original messages (with null discordMessage)
-                    const reQueuedOriginals = _.map(state.activeQuery.originalContexts, ctx => ({
+                    const reQueuedOriginals = map(state.activeQuery.originalContexts, ctx => ({
                         context:        ctx,
                         discordMessage: null,
                     }));

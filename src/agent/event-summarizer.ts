@@ -1,4 +1,9 @@
-import _ from 'lodash';
+import chunk from 'lodash/chunk';
+import head from 'lodash/head';
+import isEmpty from 'lodash/isEmpty';
+import last from 'lodash/last';
+import map from 'lodash/map';
+import sortBy from 'lodash/sortBy';
 import pLimit from 'p-limit';
 import { generateText } from './text-generator';
 import type { MemoryToolItemData } from '@/storage';
@@ -25,25 +30,25 @@ export async function summarizeEventBatches(
     now: Date
 ): Promise<EventBatchSummary[]> {
     // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive empty array guard
-    if(_.isEmpty(events)) {
+    if(isEmpty(events)) {
         return [];
     }
 
     // Sort all events by updatedAt ascending, then split into batches
-    const sortedEvents = _.sortBy(events, 'updatedAt');
-    const batches = _.chunk(sortedEvents, batchSize);
+    const sortedEvents = sortBy(events, 'updatedAt');
+    const batches = chunk(sortedEvents, batchSize);
 
     // Process batches in parallel with concurrency limit
     const limit = pLimit(CONCURRENCY_LIMIT);
 
-    const summaryPromises = _.map(batches, batch =>
+    const summaryPromises = map(batches, batch =>
         limit(async (): Promise<EventBatchSummary> => {
-            const startTime = _.head(batch)!.updatedAt;
-            const endTime = _.last(batch)!.updatedAt;
+            const startTime = head(batch)!.updatedAt;
+            const endTime = last(batch)!.updatedAt;
 
             // Format events for the prompt
             // Stryker disable StringLiteral: Cosmetic join separator for prompt formatting
-            const formattedEvents = _.map(batch, (event) => {
+            const formattedEvents = map(batch, (event) => {
                 const eventDate = new Date(event.updatedAt);
                 const relativeAge = formatShortRelativeTime(eventDate, now);
                 const preview = event.content.slice(0, CONTENT_PREVIEW_LENGTH);

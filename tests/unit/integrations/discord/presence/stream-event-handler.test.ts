@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access; casts are non-nullable but ?. provides safety */
 /**
  * Stream Event Handler Test Suite
  *
@@ -13,7 +14,12 @@
  */
 
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
-import { constant, find, filter, some, repeat, endsWith } from 'lodash';
+import constant from 'lodash/constant';
+import endsWith from 'lodash/endsWith';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import repeat from 'lodash/repeat';
+import some from 'lodash/some';
 import type { AgentStreamEvent } from '../../../../../src/agent/types.js';
 import type { PresenceManager } from '../../../../../src/integrations/discord/presence/manager.js';
 import type { DynamicStatusGenerator } from '../../../../../src/integrations/discord/presence/status-generator-dynamic.js';

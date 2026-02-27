@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { ActivityType, type Client, type TextChannel  } from 'discord.js';
-import { constant as _constant } from 'lodash';
+import _constant from 'lodash/constant';
 import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageContext, AgentStreamEvent } from '@/agent/types';

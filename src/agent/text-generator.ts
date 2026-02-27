@@ -1,5 +1,5 @@
 import { unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
-import _ from 'lodash';
+import trim from 'lodash/trim';
 import removeMarkdown from 'remove-markdown';
 import { cleanupSession } from './session-cleanup';
 
@@ -56,9 +56,9 @@ export async function generateText(
     }
 
     if(result.subtype === 'success') {
-        let text = _.trim(result.result);
+        let text = trim(result.result);
         if(options?.stripMarkdown) {
-            text = _.trim(removeMarkdown(text));
+            text = trim(removeMarkdown(text));
         }
         return text;
     }
@@ -101,9 +101,9 @@ export async function generateTextWithSystemPrompt(
     }
 
     if(result.subtype === 'success') {
-        let text = _.trim(result.result);
+        let text = trim(result.result);
         if(options?.stripMarkdown) {
-            text = _.trim(removeMarkdown(text));
+            text = trim(removeMarkdown(text));
         }
         return text;
     }

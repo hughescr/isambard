@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on cast values for defensive access */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
-import _ from 'lodash';
+import constant from 'lodash/constant';
+import map from 'lodash/map';
 import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
 import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
@@ -79,7 +81,7 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
 
     const mockAllowlist: EmailAllowlist = {
         addEntry:  mock(async () => { /* intentionally empty */ }),
-        isAllowed: mock(_.constant(false)),
+        isAllowed: mock(constant(false)),
     } as unknown as EmailAllowlist;
 
     return {
@@ -209,7 +211,7 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+                expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve — submit is called
                 expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
                 expect(editReply).toHaveBeenCalledTimes(1);
@@ -221,7 +223,7 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+                expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve
                 expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
                 expect(mockLogger.warn).toHaveBeenCalled();
@@ -237,7 +239,7 @@ describe('OutboundApprovalHandler', () => {
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
-                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+                expect(handler.handleButton(interaction)).resolves.toBeUndefined();
                 // Falls back to simple approve
                 expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
             });
@@ -266,7 +268,7 @@ describe('OutboundApprovalHandler', () => {
                 expect(menuOptions).toBeDefined();
                 // 'duplicate@example.com' should appear only once; 'other@example.com' once → total 2
                 expect(menuOptions).toHaveLength(2);
-                const values = _.map(menuOptions, 'data.value');
+                const values = map(menuOptions, 'data.value');
                 expect(values).toContain('duplicate@example.com');
                 expect(values).toContain('other@example.com');
                 // No duplicates
@@ -466,7 +468,7 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', '');
 
-            await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
+            expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
 
             const updateArgs = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0];
             expect((updateArgs?.[2] as Record<string, unknown>)?.reason).toBe('No reason given');
@@ -569,7 +571,7 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
 
-            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+            expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.warn).toHaveBeenCalled();
             // Edit reply still called to show success
             expect(editReply).toHaveBeenCalledTimes(1);
@@ -581,7 +583,7 @@ describe('OutboundApprovalHandler', () => {
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
-            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+            expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.error).toHaveBeenCalled();
             expect(editReply).toHaveBeenCalledTimes(1);
             const replyArg = editReply.mock.calls[0]?.[0];
@@ -595,7 +597,7 @@ describe('OutboundApprovalHandler', () => {
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockRejectedValue(new Error('Discord error'));
 
-            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+            expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
         });
 

@@ -9,7 +9,12 @@
 
 import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { map as _map, some as _some, isArray as _isArray, isObject as _isObject, isString as _isString, startsWith as _startsWith } from 'lodash';
+import _isArray from 'lodash/isArray';
+import _isObject from 'lodash/isObject';
+import _isString from 'lodash/isString';
+import _map from 'lodash/map';
+import _some from 'lodash/some';
+import _startsWith from 'lodash/startsWith';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
@@ -111,11 +116,12 @@ export async function retryWithBackoff<T>(
     for(let attempt = 1; attempt <= backoff.maxAttempts; attempt++) {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Try-catch structure for error handling
         try {
+            // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
         } catch (error) {
             // Stryker disable next-line ConditionalExpression,BlockStatement: Abort signal check
             if(signal?.aborted) {
-                throw new Error('Aborted');
+                throw new Error('Aborted', { cause: error });
             }
 
             // Stryker disable next-line LogicalOperator,ConditionalExpression: Error type guards for throttling detection
@@ -126,6 +132,7 @@ export async function retryWithBackoff<T>(
             if(isThrottled && attempt < backoff.maxAttempts) {
                 // Stryker disable next-line ArithmeticOperator: Exponential backoff calculation
                 const delayMs = backoff.baseDelayMs * 2 ** (attempt - 1);
+                // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
                 await delay(delayMs, signal);
                 /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
                 logger.debug({ attempt, context, msg: `Reconciler retry ${attempt}/${backoff.maxAttempts}` });
@@ -216,10 +223,12 @@ async function processMemoryItemTags(
 
     for(const tag of normalizedTags) {
         try {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per tag
             const existingIndex = await checkTagIndexExists(ctx, memoryItem.path, tag);
 
             if(!existingIndex) {
                 // Create missing index item
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per tag
                 await ctx.deps.tagIndex.createTagIndexItems(
                     memoryItem.path,
                     new Set([tag]),
@@ -231,6 +240,7 @@ async function processMemoryItemTags(
                 ctx.progress.indexItemsCreated++;
             } else if(isTagIndexStale(memoryItem, existingIndex)) {
                 // Refresh stale index item (count-neutral)
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per tag
                 await ctx.deps.tagIndex.refreshTagIndexItems(
                     memoryItem.path,
                     new Set([tag]),
@@ -242,6 +252,7 @@ async function processMemoryItemTags(
                 ctx.progress.indexItemsRefreshed++;
             }
 
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limiting delay between DynamoDB operations
             await delay(ctx.options.operationDelayMs, ctx.options.signal);
         } catch (error) {
             /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
@@ -262,6 +273,8 @@ async function getAllTagNames(
 
     // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
+        const currentKey = lastEvaluatedKey;
+        // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
         const result = await retryWithBackoff(
 
             async () => ctx.deps.docClient.send(new QueryCommand({
@@ -273,7 +286,7 @@ async function getAllTagNames(
                 ExpressionAttributeValues: {
                     ':gsi2pk': 'TAG_COUNTS',
                 },
-                ExclusiveStartKey: lastEvaluatedKey,
+                ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
             /* Stryker disable next-line StringLiteral: Retry context string is observational */
@@ -366,6 +379,7 @@ async function checkOldPathIndicesClean(
     }
 
     for(const tag of allTags) {
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB check per tag
         const result = await retryWithBackoff(
             async () => ctx.deps.docClient.send(new GetCommand({
                 TableName: ctx.deps.tableName,
@@ -398,6 +412,7 @@ async function cleanPreviouslyKnownAs(
     memoryItem: MemoryToolItem
 ): Promise<void> {
     /* Stryker disable next-line OptionalChaining: Defensive null check */
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
     const previousPath = memoryItem.metadata?.previouslyKnownAs;
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause
@@ -407,6 +422,7 @@ async function cleanPreviouslyKnownAs(
 
     // Extract previouslyKnownAsTags if present (new format) for efficient per-tag check
     /* Stryker disable next-line OptionalChaining: Defensive null check */
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
     const previousTags = memoryItem.metadata?.previouslyKnownAsTags;
     // Stryker disable next-line ConditionalExpression: Pass array if present (new format), undefined for backward compat fallback
     const oldTags = _isArray(previousTags) ? previousTags as string[] : undefined;
@@ -416,6 +432,7 @@ async function cleanPreviouslyKnownAs(
 
         if(isClean) {
             // Remove previouslyKnownAs and previouslyKnownAsTags from metadata
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
             const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = memoryItem.metadata ?? {};
 
             await ctx.deps.updateMemoryMetadata(
@@ -469,6 +486,8 @@ async function scanLayer(
             throw new Error('Aborted');
         }
 
+        const currentKey = lastEvaluatedKey;
+        // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
         const result = await retryWithBackoff(
 
             async () => ctx.deps.docClient.send(new QueryCommand({
@@ -481,7 +500,7 @@ async function scanLayer(
                     ':gsi1pk': `LAYER#${layer}`,
                 },
                 Limit:             ctx.options.scanPageSize,
-                ExclusiveStartKey: lastEvaluatedKey,
+                ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
             /* Stryker disable next-line StringLiteral: Retry context string is observational */
@@ -501,6 +520,7 @@ async function scanLayer(
 
         // Process each memory item
         for(const item of items) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per memory item
             await processMemoryItem(ctx, item);
         }
 
@@ -544,6 +564,7 @@ async function runPhaseA(
             throw new Error('Aborted');
         }
 
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB scan per layer
         await scanLayer(ctx, layer);
     }
 
@@ -624,6 +645,8 @@ async function scanTagItems(
             throw new Error('Aborted');
         }
 
+        const currentKey = lastEvaluatedKey;
+        // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
         const result = await retryWithBackoff(
 
             async () => ctx.deps.docClient.send(new QueryCommand({
@@ -635,7 +658,7 @@ async function scanTagItems(
                     ':skPrefix': 'PATH#',
                 },
                 Limit:             ctx.options.scanPageSize,
-                ExclusiveStartKey: lastEvaluatedKey,
+                ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
             /* Stryker disable next-line StringLiteral: Retry context string is observational */
@@ -656,6 +679,7 @@ async function scanTagItems(
         const items = (result.Items ?? []) as TagIndexItem[];
 
         for(const item of items) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per tag index item
             await processTagIndexItem(ctx, item);
         }
 
@@ -706,6 +730,7 @@ async function runPhaseB(
             throw new Error('Aborted');
         }
 
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB scan per tag
         await scanTagItems(ctx, tag);
     }
 
@@ -740,6 +765,8 @@ async function getActualTagCount(
             return undefined;
         }
 
+        const currentKey = lastEvaluatedKey;
+        // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
         const result = await retryWithBackoff(
 
             async () => ctx.deps.docClient.send(new QueryCommand({
@@ -752,7 +779,7 @@ async function getActualTagCount(
                 },
                 // Stryker disable next-line StringLiteral: Select COUNT instead of fetching all items
                 Select:            'COUNT',
-                ExclusiveStartKey: lastEvaluatedKey,
+                ExclusiveStartKey: currentKey,
             })),
             ctx.options.backoff,
             /* Stryker disable next-line StringLiteral: Retry context string is observational */
@@ -920,6 +947,7 @@ async function runPhaseC(
                 throw new Error('Aborted');
             }
 
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per tag count
             await processMetaCount(ctx, tag, count);
         }
     } catch (error) {

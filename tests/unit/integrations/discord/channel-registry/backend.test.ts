@@ -8,7 +8,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, beforeEach, afterEach, type mock, spyOn } from 'bun:test';
-import _ from 'lodash';
+import map from 'lodash/map';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { type ChannelMetadata, type ChannelStorageRecord, WELL_KNOWN_CHANNELS  } from '@/integrations/discord/channel-registry/types';
@@ -371,7 +371,7 @@ describe('ChannelRegistryBackend', () => {
             expect(queryCalls).toHaveLength(WELL_KNOWN_CHANNELS.length);
 
             // Each call should query GSI2 for a specific well-known type
-            const queriedTypes = _.map(queryCalls, call =>
+            const queriedTypes = map(queryCalls, call =>
                 call.args[0].input.ExpressionAttributeValues?.[':wellKnownPk'] as string
             );
             for(const type of WELL_KNOWN_CHANNELS) {

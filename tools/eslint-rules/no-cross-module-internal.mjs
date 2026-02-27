@@ -18,7 +18,8 @@
  * Note: Uses native methods and sync file operations (necessary for ESLint rules)
  */
 
-import { relative } from 'node:path';
+import path from 'node:path';
+// eslint-disable-next-line import-x/no-extraneous-dependencies -- ESLint rule in tools/ uses devDependencies
 import ts from 'typescript';
 
 // Module patterns from boundaries config (hardcoded to avoid circular import issues)
@@ -38,7 +39,7 @@ const MODULE_PATTERNS = [
  * Determine which module a file belongs to based on its relative path.
  */
 function getModuleForFile(filePath, cwd) {
-    const rel = relative(cwd, filePath).replaceAll('\\', '/');
+    const rel = path.relative(cwd, filePath).replaceAll('\\', '/');
     for(const { type, pattern } of MODULE_PATTERNS) {
         if(pattern.test(rel)) {
             return type;
@@ -60,6 +61,7 @@ function hasInternalJSDocTag(node) {
  * Find if an export in a source file has @internal tag.
  * Uses TypeScript's AST to locate the export and check JSDoc.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- ESLint rule implementation walks TypeScript AST; branching is inherent to handling multiple node types
 function isExportInternal(sourceFile, exportedName) {
     // Walk through all statements in the file
     for(const statement of sourceFile.statements) {

@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import toLower from 'lodash/toLower';
+import trim from 'lodash/trim';
 import type { ClassificationResult, MessageToClassify, ClassifierConfig } from './types';
 import type { PendingQuestion } from '@/agent/question-registry';
 
@@ -33,11 +34,12 @@ export class AnswerClassifier {
         }
 
         // Layer 2: Heuristics
-        const text = _.toLower(_.trim(message.content));
+        const text = toLower(trim(message.content));
 
         // Answer patterns - short affirmative/negative responses, direct answers
         // Longer alternatives first to avoid substring matches
         // Stryker disable next-line Regex: $ anchor required for pattern matching
+        // eslint-disable-next-line sonarjs/regex-complexity -- pattern list necessarily has many alternatives for classification accuracy; splitting would obscure intent
         const answerPatterns = /^(?:yes|nope|yep|okay|sure|i think|because|it's|they're|that's|maybe|probably|definitely|of course|no|ok|\d+(?:\.\d+)?$)/i;
 
         // Interruption patterns - topic changes, new questions

@@ -1,8 +1,10 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test helpers check handler existence defensively; TypeScript types handler extractions as unknown which is "always truthy" */
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Client } from 'discord.js';
-import { filter as _filter, noop as _noop } from 'lodash';
+import _filter from 'lodash/filter';
+import type { ClaudeAgent } from '@/agent';
 import type { DiscordConfig } from '@/config/schemas';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
@@ -12,6 +14,7 @@ import * as messageCoordinatorModule from '@/integrations/discord/message-coordi
 import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
 
@@ -119,9 +122,11 @@ describe('createDiscordBot', () => {
     test('should propagate login errors to caller', async () => {
         const loginError = new Error('Invalid bot token');
         const mockClient = {
-            on:                 mock(() => mockClient),
-            once:               mock(() => mockClient),
-            login:              mock(async () => { throw loginError; }),
+            on:    mock(() => mockClient),
+            once:  mock(() => mockClient),
+            login: mock(async () => {
+                throw loginError;
+            }),
             destroy:            mock(async () => undefined),
             removeAllListeners: mock(() => undefined),
             user:               { id: '999999999999999999', tag: 'TestBot#1234' },
@@ -142,10 +147,12 @@ describe('createDiscordBot', () => {
     test('should propagate destroy errors to caller', async () => {
         const destroyError = new Error('Destroy failed');
         const mockClient = {
-            on:                 mock(() => mockClient),
-            once:               mock(() => mockClient),
-            login:              mock(async () => 'mock-token'),
-            destroy:            mock(async () => { throw destroyError; }),
+            on:      mock(() => mockClient),
+            once:    mock(() => mockClient),
+            login:   mock(async () => 'mock-token'),
+            destroy: mock(async () => {
+                throw destroyError;
+            }),
             removeAllListeners: mock(() => undefined),
             user:               { id: '999999999999999999', tag: 'TestBot#1234' },
             rest:               null,
@@ -220,17 +227,17 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             // Create a bot state manager with a mock shouldUpdatePresence that always returns false
             const mockBotStateManager = new BotStateManagerImpl({
@@ -265,7 +272,9 @@ describe('createDiscordBot', () => {
 
             // Trigger activity phase update - shouldUpdatePresence will return false
             mockBotStateManager.updateActivityPhase({ type: 'thinking', startedAt: new Date() });
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // presenceManager.updatePhase should NOT have been called (throttle blocked)
             expect(mockUpdatePhase).not.toHaveBeenCalled();
@@ -275,7 +284,9 @@ describe('createDiscordBot', () => {
 
             // Trigger another activity phase update
             mockBotStateManager.updateActivityPhase({ type: 'responding', startedAt: new Date() });
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // Now it should have been called
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -320,17 +331,17 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             // Track subscription calls
             let subscribeCallCount = 0;
@@ -395,17 +406,17 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             // Create a real bot state manager to test the subscription mechanism
             const mockBotStateManager = new BotStateManagerImpl({
@@ -445,7 +456,9 @@ describe('createDiscordBot', () => {
             mockBotStateManager.updateActivityPhase(phase1);
 
             // Step 4: Allow event loop to process subscription callbacks
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // Step 5: Verify presenceManager.updatePhase was called (throttle allowed)
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -460,7 +473,9 @@ describe('createDiscordBot', () => {
             // Step 7: Update again immediately - throttle should block this
             const phase2 = { type: 'responding' as const, startedAt: new Date() };
             mockBotStateManager.updateActivityPhase(phase2);
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // Step 8: Verify presenceManager.updatePhase was NOT called (throttle blocked)
             expect(mockUpdatePhase).not.toHaveBeenCalled();
@@ -471,7 +486,9 @@ describe('createDiscordBot', () => {
             // Step 10: Update again - throttle should allow this
             const phase3 = { type: 'using_tool' as const, startedAt: new Date(), toolName: 'test-tool' };
             mockBotStateManager.updateActivityPhase(phase3);
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // Step 11: Verify presenceManager.updatePhase was called (throttle allows after delay)
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -515,17 +532,17 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             const mockBotStateManager = new BotStateManagerImpl({
                 logger:           mockLogger,
@@ -557,7 +574,9 @@ describe('createDiscordBot', () => {
             // First update should go through (no previous timestamp)
             const phase1 = { type: 'thinking' as const, startedAt: new Date() };
             mockBotStateManager.updateActivityPhase(phase1);
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
             expect(mockUpdatePhase).toHaveBeenCalledWith(phase1);
@@ -566,7 +585,9 @@ describe('createDiscordBot', () => {
             // Immediate second update should be throttled (still at same time)
             const phase2 = { type: 'using_tool' as const, startedAt: new Date(), toolName: 'tool1' };
             mockBotStateManager.updateActivityPhase(phase2);
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             expect(mockUpdatePhase).toHaveBeenCalledTimes(0); // Throttled
 
@@ -576,7 +597,9 @@ describe('createDiscordBot', () => {
             // Third update should now go through
             const phase3 = { type: 'responding' as const, startedAt: new Date() };
             mockBotStateManager.updateActivityPhase(phase3);
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
             expect(mockUpdatePhase).toHaveBeenCalledWith(phase3);
@@ -614,17 +637,17 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mockUpdatePhase,
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             // Create a real bot state manager
             const mockBotStateManager = new BotStateManagerImpl({
@@ -669,7 +692,10 @@ describe('createDiscordBot', () => {
             for(const phase of phases) {
                 mockUpdatePhase.mockClear();
                 mockBotStateManager.updateActivityPhase(phase);
-                await new Promise(resolve => setImmediate(resolve));
+                // eslint-disable-next-line no-await-in-loop -- sequential: must observe each phase transition separately
+                await new Promise((resolve) => {
+                    setImmediate(resolve);
+                });
 
                 // Verify subscription fired and presence was updated
                 expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -751,20 +777,21 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create a fake agent to enable coordinator creation (required for messageCreate handler)
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -785,6 +812,7 @@ describe('createDiscordBot', () => {
 
             // Fire the clientReady handler once (now async, must await)
             for(const handler of clientReadyHandlers) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: each handler must complete before next
                 await Promise.resolve(handler(mockClient));
             }
 
@@ -821,20 +849,21 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create a fake agent to enable coordinator creation (required for messageCreate handler)
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -896,16 +925,16 @@ describe('createDiscordBot', () => {
             };
             // @ts-expect-error - Mocking constructor
             const presenceManagerSpy = spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager);
-            spies.push(presenceManagerSpy);
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                presenceManagerSpy,
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             createDiscordBot({
                 config: configWithPresence,
@@ -1000,17 +1029,17 @@ describe('createDiscordBot', () => {
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             const bot = createDiscordBot({
                 config: configWithPresence,
@@ -1038,13 +1067,17 @@ describe('createDiscordBot', () => {
             const callOrder: string[] = [];
 
             const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => { callOrder.push('destroy'); }),
-                removeAllListeners: mock(() => { callOrder.push('removeAllListeners'); }),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
+                on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => {
+                    callOrder.push('destroy');
+                }),
+                removeAllListeners: mock(() => {
+                    callOrder.push('removeAllListeners');
+                }),
+                user: { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest: null,
             } as unknown as Client;
 
             const configWithPresence: DiscordConfig = {
@@ -1059,22 +1092,24 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => { callOrder.push('stop'); }),
+                start: mock(() => undefined),
+                stop:  mock(() => {
+                    callOrder.push('stop');
+                }),
                 updatePhase:                   mock(async () => undefined),
                 transitionPresenceDisplayMode: mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager));
-
-            spies.push(spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-            }));
-
-            spies.push(spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                generate: mock(async () => ({ name: 'Idle', type: 4 })),
-            }));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
+                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
+                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
+                }),
+                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
+                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
+                })
+            );
 
             const bot = createDiscordBot({
                 config: configWithPresence,
@@ -1395,12 +1430,14 @@ describe('createDiscordBot', () => {
             } as unknown as ChannelRegistryManager;
 
             // Mock discoverAllChannels to avoid execution
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             createDiscordBot({
                 config: mockConfig,
@@ -1458,12 +1495,14 @@ describe('createDiscordBot', () => {
                 shouldRouteToFallback: mock(() => true),
             } as unknown as ChannelRegistryManager;
 
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             createDiscordBot({
                 config: mockConfig,
@@ -1514,12 +1553,14 @@ describe('createDiscordBot', () => {
             } as unknown as ChannelRegistryManager;
 
             // Mock discoverAllChannels to avoid execution
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             const bot = createDiscordBot({
                 config: mockConfig,
@@ -1572,12 +1613,14 @@ describe('createDiscordBot', () => {
             } as unknown as ChannelRegistryManager;
 
             // Mock discoverAllChannels to avoid execution
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Spy on logger.error to verify notification failure is logged
             const loggerErrorSpy = spyOn(loggerModule.logger, 'error');
@@ -1623,13 +1666,17 @@ describe('createDiscordBot', () => {
             const callOrder: string[] = [];
 
             const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => { callOrder.push('destroy'); }),
-                removeAllListeners: mock(() => { callOrder.push('removeAllListeners'); }),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
+                on:      mock(() => mockClient),
+                once:    mock(() => mockClient),
+                login:   mock(async () => 'mock-token'),
+                destroy: mock(async () => {
+                    callOrder.push('destroy');
+                }),
+                removeAllListeners: mock(() => {
+                    callOrder.push('removeAllListeners');
+                }),
+                user: { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest: null,
             } as unknown as Client;
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
@@ -1735,21 +1782,22 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create a fake agent to enable coordinator creation
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -1796,15 +1844,16 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             createDiscordBot({
                 config: mockConfig,
@@ -1879,17 +1928,19 @@ describe('createDiscordBot', () => {
             } as unknown as ChannelRegistryManager;
 
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create a fake agent to enable coordinator creation
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -1913,7 +1964,9 @@ describe('createDiscordBot', () => {
             guildDeleteHandler!({ id: guildId });
 
             // Wait for async handler to complete
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // Verify coordinator.removeGuildChannels was called with the correct channel IDs
             expect(mockRemoveGuildChannels).toHaveBeenCalledTimes(1);
@@ -1960,17 +2013,19 @@ describe('createDiscordBot', () => {
             } as unknown as ChannelRegistryManager;
 
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create a fake agent to enable coordinator creation
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -1994,7 +2049,9 @@ describe('createDiscordBot', () => {
             guildDeleteHandler!({ id: guildId });
 
             // Wait for async handler to complete
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
 
             // Verify coordinator.removeGuildChannels was called with empty array
             expect(mockRemoveGuildChannels).toHaveBeenCalledTimes(1);
@@ -2019,15 +2076,16 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             createDiscordBot({
                 config: mockConfig,
@@ -2052,7 +2110,9 @@ describe('createDiscordBot', () => {
             const guildId = createGuildId('guild-123');
             // Call the handler - it should not throw even without a coordinator
             guildDeleteHandler!({ id: guildId });
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise((resolve) => {
+                setImmediate(resolve);
+            });
             // If we get here without throwing, the test passes
             expect(true).toBe(true);
         });
@@ -2084,16 +2144,17 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create bot state manager in idle mode
             const realBotStateManager = new BotStateManagerImpl({
@@ -2107,7 +2168,7 @@ describe('createDiscordBot', () => {
             // Create a fake agent to enable coordinator creation
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2185,16 +2246,17 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create bot state manager already in processing_message mode
             const realBotStateManager = new BotStateManagerImpl({
@@ -2211,7 +2273,7 @@ describe('createDiscordBot', () => {
             // Create a fake agent to enable coordinator creation
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2286,16 +2348,17 @@ describe('createDiscordBot', () => {
                 removeGuildChannels: mock(() => undefined),
                 stop:                mock(() => undefined),
             };
-            // @ts-expect-error - Mocking constructor
-            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                // @ts-expect-error - Mocking constructor
+                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create bot state manager in idle mode
             const realBotStateManager = new BotStateManagerImpl({
@@ -2309,7 +2372,7 @@ describe('createDiscordBot', () => {
             // Create a fake agent to enable coordinator creation
             const mockAgent = {
                 handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as import('@/agent/agent').ClaudeAgent;
+            } as unknown as ClaudeAgent;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2363,13 +2426,15 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockEmailSetup = {
-                listener:         { start: mock(async () => undefined), stop: mock(async () => { throw new Error('IMAP disconnect failed'); }) },
+                listener: { start: mock(async () => undefined), stop:  mock(async () => {
+                    throw new Error('IMAP disconnect failed');
+                }) },
                 reviewHandler:    { handleButton: mock(async () => undefined) },
                 allowlistHandler: { handle: mock(async () => undefined) },
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             const bot = createDiscordBot({
                 config: mockConfig,
@@ -2406,15 +2471,16 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create bot WITHOUT emailSetup
             createDiscordBot({
@@ -2472,7 +2538,7 @@ describe('createDiscordBot', () => {
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2510,13 +2576,15 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockEmailSetup = {
-                listener:         { start: mock(async () => { throw new Error('IMAP connect failed'); }), stop: mock(async () => undefined) },
+                listener: { start: mock(async () => {
+                    throw new Error('IMAP connect failed');
+                }), stop: mock(async () => undefined) },
                 reviewHandler:    { handleButton: mock(async () => undefined) },
                 allowlistHandler: { handle: mock(async () => undefined) },
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             const bot = createDiscordBot({
                 config: mockConfig,
@@ -2567,7 +2635,7 @@ describe('createDiscordBot', () => {
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2631,7 +2699,7 @@ describe('createDiscordBot', () => {
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2693,7 +2761,7 @@ describe('createDiscordBot', () => {
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2755,7 +2823,7 @@ describe('createDiscordBot', () => {
                 emailMcpServer:   {},
                 imap:             {},
                 counters:         {},
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2821,7 +2889,7 @@ describe('createDiscordBot', () => {
                 counters:                {},
                 outboundApprovalHandler: { handleButton: handleButtonMockApproval, handleModalSubmit: mock(async () => undefined) },
                 wildDuckClient:          { shutdown: mock(async () => undefined) },
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2885,7 +2953,7 @@ describe('createDiscordBot', () => {
                 counters:                {},
                 outboundApprovalHandler: { handleButton: mock(async () => undefined), handleModalSubmit: handleModalMock },
                 wildDuckClient:          { shutdown: mock(async () => undefined) },
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
@@ -2937,15 +3005,16 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
             // Mock channel registry functions
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
-                errors:     [],
-            }));
-            spies.push(spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
             // Create bot WITHOUT emailSetup
             createDiscordBot({
@@ -3007,7 +3076,7 @@ describe('createDiscordBot', () => {
                 imap:             {},
                 counters:         {},
                 adminChannelId,
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             const muteChannelMock = mock(async () => undefined);
             const channelRegistryWithMute = {
@@ -3059,7 +3128,7 @@ describe('createDiscordBot', () => {
                 imap:             {},
                 counters:         {},
                 adminChannelId,
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             const muteChannelMock = mock(async () => {
                 throw new Error('DynamoDB unreachable');
@@ -3110,7 +3179,7 @@ describe('createDiscordBot', () => {
                 imap:             {},
                 counters:         {},
                 // no adminChannelId
-            } as unknown as import('@/integrations/discord/setup/email-setup').EmailSetupResult;
+            } as unknown as EmailSetupResult;
 
             const muteChannelMock = mock(async () => undefined);
             const channelRegistryWithMute = {

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import path from 'node:path';
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import isError from 'lodash/isError';
 import { needsConversion, convert } from './converter';
 import {
     type AttachmentMetadata,
@@ -44,9 +44,9 @@ export async function fetchImage(
 
     try {
         // Stryker disable next-line ObjectLiteral: Fetch timeout options are not unit-testable without flaky timing dependencies
-        // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports fetch and AbortSignal.timeout
+
         const response = await fetch(metadata.url, {
-            // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports AbortSignal.timeout
+
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
@@ -101,7 +101,7 @@ export async function fetchImage(
             },
         };
     } catch (error) {
-        const errorMessage = _.isError(error) ? error.message : String(error);
+        const errorMessage = isError(error) ? error.message : String(error);
         // Stryker disable all: logging statement
         logger.error({
             filename:    metadata.filename,
@@ -128,7 +128,7 @@ export async function fetchImages(
 ): Promise<FetchImagesResult> {
     const results = await Promise.all(
         // eslint-disable-next-line lodash/prefer-lodash-method -- Native array methods preferred for simplicity
-        attachments.map(fetchImage)
+        attachments.map(attachment => fetchImage(attachment))
     );
 
     const images: FetchedImage[] = [];
@@ -154,13 +154,13 @@ export async function saveNonImageAttachment(
     messageId: string
 ): Promise<StoredAttachment | null> {
     try {
-        const dir = join(scratchDir, 'attachments', `discord-${messageId}`);
+        const dir = path.join(scratchDir, 'attachments', `discord-${messageId}`);
         await mkdir(dir, { recursive: true });
 
         // Stryker disable next-line ObjectLiteral: Fetch timeout options are not unit-testable without flaky timing dependencies
-        // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports fetch and AbortSignal.timeout
+
         const response = await fetch(metadata.url, {
-            // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports AbortSignal.timeout
+
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
@@ -170,7 +170,7 @@ export async function saveNonImageAttachment(
 
         const buffer    = Buffer.from(await response.arrayBuffer());
         const safeFilename = sanitizeFilename(metadata.filename);
-        const localPath = join(dir, safeFilename);
+        const localPath = path.join(dir, safeFilename);
         await writeFile(localPath, buffer);
 
         return {

@@ -1,25 +1,24 @@
 // Test setup and configuration
+/* eslint-disable import-x/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { mock } from 'bun:test';
-import {
-    assign,
-    constant,
-    replace,
-    padStart,
-    isDate,
-    isArray,
-    noop,
-    chain,
-    startsWith,
-    slice,
-    includes,
-    split,
-    last,
-    compact,
-    join,
-    filter,
-    forEach
-} from 'lodash';
+import { mock, type Mock } from 'bun:test';
+import assign from 'lodash/assign';
+import compact from 'lodash/compact';
+import constant from 'lodash/constant';
+import filter from 'lodash/filter';
+import forEach from 'lodash/forEach';
+import includes from 'lodash/includes';
+import isArray from 'lodash/isArray';
+import isDate from 'lodash/isDate';
+import join from 'lodash/join';
+import last from 'lodash/last';
+import map from 'lodash/map';
+import noop from 'lodash/noop';
+import padStart from 'lodash/padStart';
+import replace from 'lodash/replace';
+import slice from 'lodash/slice';
+import split from 'lodash/split';
+import startsWith from 'lodash/startsWith';
 
 type ContentItem = CallToolResult['content'][number];
 
@@ -116,6 +115,7 @@ class MockDynamoDBDocumentClient {
     }
 }
 // Add sinon-compatible properties for aws-sdk-client-mock
+// eslint-disable-next-line @typescript-eslint/unbound-method -- intentionally accessing prototype method for augmentation, not invocation
 assign(MockDynamoDBDocumentClient.prototype.send, {
     isSinonProxy: false,
     restore:      undefined,
@@ -176,7 +176,6 @@ export const mockUnstableV2Prompt = mock<(prompt: string, options: { model: stri
 // Import real SDK functions to re-export them alongside our mock
 // This must be done BEFORE mock.module() to get the real implementations
 import * as realAgentSdk from '@anthropic-ai/claude-agent-sdk';
-
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
     // Pass through real SDK functions
@@ -208,8 +207,6 @@ export const mockGenerateTextWithSystemPrompt = mock(originalGenerateTextWithSys
 
 // Mock logger to silence output and allow test assertions
 // Create a mock that satisfies both the logger interface and provides mock methods
-import type { Mock } from 'bun:test';
-
 type MockLoggerMethod = Mock<(...args: unknown[]) => typeof mockLogger>;
 
 // Need to declare mockLogger variable first, then assign to it
@@ -321,7 +318,8 @@ export function resetPathValidatorMocks(): void {
 
 // Mock node:fs/promises to avoid filesystem I/O cold-start cost
 // Returns in-memory fake filesystem without calling real FS APIs
-const mockFs = new Map<string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }>();
+interface MockFsEntry { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }
+const mockFs = new Map<string, MockFsEntry>();
 
 // Define original implementations
 const originalAccessImpl = async (path: string) => {
@@ -369,35 +367,36 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
     }
 
     // Normalize path by removing trailing slashes
+    // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- test-only regex; path strings are short and well-controlled, no DoS risk
     const normalizedPath = replace(path, /\/+$/, '');
 
     // Find all direct children of this directory
     const entries = [...mockFs.entries()];
-    return chain(entries)
-        .filter(([childPath]: [string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }]) => {
-            // Must start with parent path
-            if(!startsWith(childPath, `${normalizedPath}/`)) {
-                return false;
-            }
-            // Get the relative path after the parent
-            const relative = slice(childPath, normalizedPath.length + 1);
-            // Only include direct children (no nested slashes)
-            return relative && !includes(relative, '/');
-        })
-        .map(([childPath, childEntry]: [string, { type: 'file' | 'dir' | 'symlink', content?: string, target?: string }]) => {
-            const parts = split(childPath, '/');
-            const name = last(parts) ?? '';
-            if(options?.withFileTypes) {
-                return {
-                    name,
-                    isDirectory:    () => childEntry.type === 'dir',
-                    isFile:         () => childEntry.type === 'file',
-                    isSymbolicLink: () => childEntry.type === 'symlink',
-                };
-            }
-            return name;
-        })
-        .value();
+    const directChildren = filter(entries, ([childPath]: [string, MockFsEntry]) => {
+        // Must start with parent path
+        if(!startsWith(childPath, `${normalizedPath}/`)) {
+            return false;
+        }
+        // Get the relative path after the parent
+        const relative = slice(childPath, normalizedPath.length + 1);
+        // Only include direct children (no nested slashes)
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: slice() may return '' for edge cases even though startsWith guard above makes it unlikely
+        return relative && !includes(relative, '/');
+    });
+    // eslint-disable-next-line sonarjs/function-return-type -- callback returns string or Dirent-like object depending on withFileTypes option; matches node:fs readdir signature
+    return map(directChildren, ([childPath, childEntry]: [string, MockFsEntry]): string | { name: string, isDirectory: () => boolean, isFile: () => boolean, isSymbolicLink: () => boolean } => {
+        const parts = split(childPath, '/');
+        const name = last(parts) ?? '';
+        if(options?.withFileTypes) {
+            return {
+                name,
+                isDirectory:    () => childEntry.type === 'dir',
+                isFile:         () => childEntry.type === 'file',
+                isSymbolicLink: () => childEntry.type === 'symlink',
+            };
+        }
+        return name;
+    });
 };
 
 const originalReadFileImpl = async (path: string, _encoding?: string) => {

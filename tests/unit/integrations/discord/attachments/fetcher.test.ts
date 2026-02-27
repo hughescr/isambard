@@ -1,4 +1,3 @@
-/* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch and Response */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { mockHeicConvert, setHeicConvertImpl, resetHeicConvertImpl, mockFsPromises, resetMockFs } from '../../../../setup';
 import { fetchImage, fetchImages, saveNonImageAttachment } from '@/integrations/discord/attachments/fetcher';

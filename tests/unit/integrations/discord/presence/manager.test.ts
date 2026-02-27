@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from 'bun:test';
-import { type Client, ActivityType  } from 'discord.js';
-import _ from 'lodash';
+import { type Client, type ActivitiesOptions, ActivityType  } from 'discord.js';
+import assign from 'lodash/assign';
+import filter from 'lodash/filter';
 import { mockWithDiscordRetry, originalWithDiscordRetry } from '../../../../setup';
 import { PresenceManager, type PresenceManagerDeps  } from '@/integrations/discord/presence/manager';
 import type { ActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
@@ -302,7 +304,7 @@ describe('PresenceManager', () => {
             });
 
             let callCount = 0;
-            const networkError = _.assign(new Error('Connection reset'), { code: 'ECONNRESET' });
+            const networkError = assign(new Error('Connection reset'), { code: 'ECONNRESET' });
 
             const retryClient = {
                 user: {
@@ -716,7 +718,7 @@ describe('PresenceManager', () => {
 
             // Should NOT have called activeStatusGenerator.generate with mode 'none'
             const generatorCalls = mockActiveGenerator.generate.mock.calls;
-            const noneModeCalls = _.filter(generatorCalls, ['1', 'none']);
+            const noneModeCalls = filter(generatorCalls, ['1', 'none']);
             expect(noneModeCalls).toHaveLength(0);
 
             // Should NOT have called setActivity with emoji-less status from active generator
@@ -731,7 +733,7 @@ describe('PresenceManager', () => {
             // then checks if it changed during the async generation, and discards stale results.
 
             // Track which promises we can control
-            const idleGeneratePromises: { resolve: (value: import('discord.js').ActivitiesOptions) => void, mode: string }[] = [];
+            const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void, mode: string }[] = [];
 
             // Override idle generator to return controllable promises
             mockIdleGenerator.generate = mock(() => {

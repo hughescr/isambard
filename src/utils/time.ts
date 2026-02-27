@@ -37,7 +37,7 @@ export type DayOfWeek = z.infer<typeof dayOfWeekSchema>;
  * Complete time context for prompt injection.
  */
 export const timeContextSchema = z.object({
-    utc:           z.string().datetime(),
+    utc:           z.iso.datetime(),
     dayOfWeek:     dayOfWeekSchema,
     timeOfDay:     timeOfDaySchema,
     utcDayOfWeek:  dayOfWeekSchema,
@@ -53,6 +53,7 @@ export type TimeContext = z.infer<typeof timeContextSchema>;
  * @param now - Optional reference time (defaults to current time)
  * @returns Human-readable string like "just now", "2 hours ago", "3 days ago"
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- sequential time-unit cascade is inherently branchy but maximally clear
 export function formatRelativeTime(date: Date, now: Date = new Date()): string {
     const dtDate = DateTime.fromJSDate(date);
     const dtNow = DateTime.fromJSDate(now);

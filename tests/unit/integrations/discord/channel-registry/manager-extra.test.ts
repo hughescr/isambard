@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import type { Client } from 'discord.js';
-import _ from 'lodash';
+import type { Client, Channel } from 'discord.js';
+import find from 'lodash/find';
+import map from 'lodash/map';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
@@ -39,9 +40,9 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
     const mockDiscordChannels = (channels: ChannelMetadata[]) => {
         client.channels.fetch = mock((channelId: string) => {
             // eslint-disable-next-line lodash/matches-prop-shorthand -- Branded types require explicit comparison
-            const channel = _.find(channels, (ch: ChannelMetadata) => ch.channelId === channelId);
+            const channel = find(channels, (ch: ChannelMetadata) => ch.channelId === channelId);
             if(channel) {
-                return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as import('discord.js').Channel);
+                return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);
             }
             return Promise.resolve(null);
         }) as unknown as Client['channels']['fetch'];
@@ -70,7 +71,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                     return Promise.resolve({
                         id:   channelId,
                         name: `channel-${channelId}`,
-                    } as unknown as import('discord.js').Channel);
+                    } as unknown as Channel);
                 }) as unknown as Client['channels']['fetch'],
             },
         } as unknown as Client;
@@ -297,7 +298,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 const results = await manager.getUnmutedChannels();
 
                 expect(results).toHaveLength(1);
-                expect(_.map(results, 'channelId')).toContain(unmuted1.channelId);
+                expect(map(results, 'channelId')).toContain(unmuted1.channelId);
                 // Backend should NOT be called (proves cache block executed)
                 expect(backend.getChannelsByGuild).not.toHaveBeenCalled();
             });

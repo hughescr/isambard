@@ -5,7 +5,7 @@
  * and provides context for continuing processing after new messages arrive.
  */
 
-import _ from 'lodash';
+import map from 'lodash/map';
 import type { StreamProgress } from './stream-tracker';
 import type { MessageContext } from './types';
 
@@ -67,7 +67,7 @@ export function buildResumePrompt(context: ResumeContext): string {
     }
 
     // 6. New Messages (always included)
-    const messageBlocks = _.map(context.newMessages, msg =>
+    const messageBlocks = map(context.newMessages, msg =>
         `Time: ${msg.timestamp}\n`
         + `Channel: #${msg.channelId}\n`
         + `User: @${msg.userId}\n`

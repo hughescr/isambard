@@ -1,7 +1,14 @@
+import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import type { Client, MessageCreateOptions } from 'discord.js';
-import _, { constant as _constant, isArray as _isArray, forEach as _forEach, repeat as _repeat, isString as _isString, startsWith as _startsWith } from 'lodash';
+import assign from 'lodash/assign';
+import _constant from 'lodash/constant';
+import _forEach from 'lodash/forEach';
+import _isArray from 'lodash/isArray';
+import _isString from 'lodash/isString';
+import _repeat from 'lodash/repeat';
+import _startsWith from 'lodash/startsWith';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
 import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
@@ -1305,7 +1312,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
         test('should resolve @username to DM channel and send message', async () => {
             // Mock channel registry for DM tracker
-            const mockChannelRegistry = {
+            const mockDMChannelRegistry = {
                 upsertChannel: mock(async () => undefined),
             };
 
@@ -1358,7 +1365,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 fetch: mock(async () => mockUser),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockDMChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1378,13 +1385,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
         test('should return error when @username not found', async () => {
             // Mock channel registry for DM tracker
-            const mockChannelRegistry = {
+            const mockNotFoundChannelRegistry = {
                 upsertChannel: mock(async () => undefined),
             };
 
             // Mock guild with no matching members
             const mockMembers = new Map();
-            _.assign(mockMembers, { find: () => undefined });
+            assign(mockMembers, { find: () => undefined });
 
             const mockGuild = {
                 members: {
@@ -1398,7 +1405,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 },
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockNotFoundChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1418,9 +1425,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             test('should attach files when valid paths provided', async () => {
                 // Create test files in mock filesystem within CWD
-                const { join } = await import('node:path');
-                const testFile1 = join(process.cwd(), 'test-file-1.txt');
-                const testFile2 = join(process.cwd(), 'test-file-2.txt');
+                const testFile1 = path.join(process.cwd(), 'test-file-1.txt');
+                const testFile2 = path.join(process.cwd(), 'test-file-2.txt');
 
                 // Use mock filesystem
                 await mockFsPromises.writeFile(testFile1, 'test content 1');
@@ -2605,7 +2611,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
     describe('listChannels tool', () => {
         test('should return only unmuted channels by default', async () => {
-            const mockChannelRegistry = {
+            const mockUnmutedChannelRegistry = {
                 getAllChannels: mock(() => [
                     {
                         channelId:    '111111111111111111' as ChannelId,
@@ -2641,7 +2647,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 ]),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockUnmutedChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({});
@@ -2652,12 +2658,12 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.channels).toHaveLength(1);
             expect(parsed.channels[0].channelId).toBe('111111111111111111');
             expect(parsed.channels[0].isMuted).toBe(false);
-            expect(mockChannelRegistry.getUnmutedChannels).toHaveBeenCalled();
-            expect(mockChannelRegistry.getAllChannels).not.toHaveBeenCalled();
+            expect(mockUnmutedChannelRegistry.getUnmutedChannels).toHaveBeenCalled();
+            expect(mockUnmutedChannelRegistry.getAllChannels).not.toHaveBeenCalled();
         });
 
         test('should return all channels when includesMuted is true', async () => {
-            const mockChannelRegistry = {
+            const mockAllChannelsRegistry = {
                 getAllChannels: mock(() => [
                     {
                         channelId:    '111111111111111111' as ChannelId,
@@ -2693,7 +2699,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 ]),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockAllChannelsRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({ includesMuted: true });
@@ -2706,12 +2712,12 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.channels[0].isMuted).toBe(false);
             expect(parsed.channels[1].channelId).toBe('222222222222222222');
             expect(parsed.channels[1].isMuted).toBe(true);
-            expect(mockChannelRegistry.getAllChannels).toHaveBeenCalled();
-            expect(mockChannelRegistry.getUnmutedChannels).not.toHaveBeenCalled();
+            expect(mockAllChannelsRegistry.getAllChannels).toHaveBeenCalled();
+            expect(mockAllChannelsRegistry.getUnmutedChannels).not.toHaveBeenCalled();
         });
 
         test('should return only unmuted channels when includesMuted is false', async () => {
-            const mockChannelRegistry = {
+            const mockExcludeMutedRegistry = {
                 getAllChannels: mock(() => [
                     {
                         channelId:    '111111111111111111' as ChannelId,
@@ -2747,7 +2753,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 ]),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockExcludeMutedRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({ includesMuted: false });
@@ -2758,19 +2764,19 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.channels).toHaveLength(1);
             expect(parsed.channels[0].channelId).toBe('111111111111111111');
             expect(parsed.channels[0].isMuted).toBe(false);
-            expect(mockChannelRegistry.getUnmutedChannels).toHaveBeenCalled();
-            expect(mockChannelRegistry.getAllChannels).not.toHaveBeenCalled();
+            expect(mockExcludeMutedRegistry.getUnmutedChannels).toHaveBeenCalled();
+            expect(mockExcludeMutedRegistry.getAllChannels).not.toHaveBeenCalled();
         });
 
         test('should handle errors from getUnmutedChannels', async () => {
-            const mockChannelRegistry = {
+            const mockErrorChannelRegistry = {
                 getAllChannels:     mock(() => []),
                 getUnmutedChannels: mock(async () => {
                     throw new Error('Database error');
                 }),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockErrorChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({});

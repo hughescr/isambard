@@ -1,6 +1,8 @@
 import { logger } from '@hughescr/logger';
-import type { Client } from 'discord.js';
+import type { Client, TextChannel } from 'discord.js';
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
+import isError from 'lodash/isError';
 import type { CatchUpSessionRunner } from '../catchup';
 import {
     type ChannelRegistryManager,
@@ -14,9 +16,53 @@ import type { InboxManager } from '../inbox';
 import type { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import type { BotStateManager } from '../state';
-import { createUserId, createChannelId, createGuildId } from '../types';
+import { createUserId, createChannelId, createGuildId, type ChannelId } from '../types';
 import { type AnswerClassifier, type QuestionRegistry, type PerchSessionRunner  } from '@/agent';
 import { safeAsyncHandler } from '@/utils';
+
+/**
+ * Sends an urgent error notification to the owner via the fallback channel.
+ */
+async function sendRegistryErrorNotification(
+    client: Client,
+    responseRouter: ResponseRouter,
+    rateLimiter: DiscordRateLimiter,
+    errorMsg: string
+): Promise<void> {
+    try {
+        const notificationContent = `⚠️ **Channel Registry Error**: Failed to load channel mute settings. I'm currently responding to ALL channels until this is resolved. Error: ${errorMsg}`;
+
+        // Route to fallback channel for startup errors
+        const routing = await responseRouter.routeResponse(
+            'processing_message', // Use processing_message as the session type
+            notificationContent,
+            'synthetic-channel' as ChannelId // Will trigger fallback routing
+        );
+
+        // Stryker disable next-line all: Defensive guard - routing always has shouldSend=true and targetChannelId set for error notifications
+        if(routing.shouldSend && routing.targetChannelId) {
+            // Fetch the target channel and send directly
+            const targetChannel = await client.channels.fetch(routing.targetChannelId);
+            // Stryker disable next-line all: Defensive guard - validated in response-sender.test.ts for normal flow
+            if(targetChannel && 'send' in targetChannel) {
+                await rateLimiter.sendToChannel(targetChannel as TextChannel, routing.content);
+                // Stryker disable all: Logging for observability
+                logger.info({
+                    targetChannelId: routing.targetChannelId,
+                    msg:             'Channel registry error notification sent to fallback channel',
+                });
+                // Stryker restore all
+            }
+        }
+    } catch (notificationError) {
+        const notificationErrorMsg = isError(notificationError) ? notificationError.message : String(notificationError);
+        logger.error({
+            error: notificationErrorMsg,
+            msg:   'Failed to send channel registry error notification to owner',
+        });
+        // Continue - notification is best-effort
+    }
+}
 
 /**
  * Initializes the channel registry by warming cache, discovering channels, and setting up event handlers.
@@ -51,7 +97,7 @@ export async function initializeChannelRegistry(
         // Set up event handlers for channel changes
         setupChannelEventHandlers(client, channelRegistry);
     } catch (error) {
-        const errorMsg = _.isError(error) ? error.message : String(error);
+        const errorMsg = isError(error) ? error.message : String(error);
         logger.error({
             error: errorMsg,
             msg:   'Failed to initialize channel registry on startup',
@@ -60,39 +106,7 @@ export async function initializeChannelRegistry(
 
         // Send urgent notification to owner via fallback channel
         if(rateLimiter) {
-            try {
-                const notificationContent = `⚠️ **Channel Registry Error**: Failed to load channel mute settings. I'm currently responding to ALL channels until this is resolved. Error: ${errorMsg}`;
-
-                // Route to fallback channel for startup errors
-                const routing = await responseRouter.routeResponse(
-                    'processing_message', // Use processing_message as the session type
-                    notificationContent,
-                    'synthetic-channel' as import('../types').ChannelId // Will trigger fallback routing
-                );
-
-                // Stryker disable next-line all: Defensive guard - routing always has shouldSend=true and targetChannelId set for error notifications
-                if(routing.shouldSend && routing.targetChannelId) {
-                    // Fetch the target channel and send directly
-                    const targetChannel = await client.channels.fetch(routing.targetChannelId);
-                    // Stryker disable next-line all: Defensive guard - validated in response-sender.test.ts for normal flow
-                    if(targetChannel && 'send' in targetChannel) {
-                        await rateLimiter.sendToChannel(targetChannel as import('discord.js').TextChannel, routing.content);
-                        // Stryker disable all: Logging for observability
-                        logger.info({
-                            targetChannelId: routing.targetChannelId,
-                            msg:             'Channel registry error notification sent to fallback channel',
-                        });
-                        // Stryker restore all
-                    }
-                }
-            } catch (notificationError) {
-                const notificationErrorMsg = _.isError(notificationError) ? notificationError.message : String(notificationError);
-                logger.error({
-                    error: notificationErrorMsg,
-                    msg:   'Failed to send channel registry error notification to owner',
-                });
-                // Continue - notification is best-effort
-            }
+            await sendRegistryErrorNotification(client, responseRouter, rateLimiter, errorMsg);
         }
     }
 }
@@ -138,6 +152,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
 
     // Register message handler AFTER channel registry is initialized
     // This ensures channelRegistry.shouldProcess() has data to work with
+    // Stryker disable StringLiteral: Handler context name is logging configuration
     client.on('messageCreate', safeAsyncHandler(createMessageHandler({
         botUserId: createUserId(readyClient.user!.id),
         channelRegistry,
@@ -151,6 +166,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         perchSessionRunner,
         dmTracker,
     }), logger, 'messageCreate handler'));
+    // Stryker restore StringLiteral
 }
 
 /**
@@ -179,6 +195,7 @@ export function setupChannelCleanupHandlers(params: {
     });
 
     // guildDelete: Clean up coordinator state for all channels in a guild when bot leaves
+    // Stryker disable StringLiteral: Handler context name is logging configuration
     client.on('guildDelete', safeAsyncHandler(async (guild) => {
         if(!coordinator) {
             return;
@@ -187,11 +204,9 @@ export function setupChannelCleanupHandlers(params: {
         const guildId = createGuildId(guild.id);
         // Get all channel IDs for this guild from the channel registry
         const allChannels = channelRegistry.getAllChannels();
-        const guildChannelIds = _(allChannels)
-            .filter(['guildId', guildId])
-            .map('channelId')
-            .value();
+        const guildChannelIds = _(allChannels).filter(['guildId', guildId]).map('channelId').value();
 
         coordinator.removeGuildChannels(guildChannelIds);
     }, logger, 'guildDelete handler'));
+    // Stryker restore StringLiteral
 }

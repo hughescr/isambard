@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message, TextChannel } from 'discord.js';
-import _ from 'lodash';
+import map from 'lodash/map';
 import type { AttachmentMetadata } from './attachments/types';
 import type { CatchUpSessionRunner } from './catchup';
 import type { ChannelRegistryManager, DMTracker } from './channel-registry';
@@ -10,7 +10,7 @@ import type { MessageCoordinator } from './message-coordinator';
 import { withDiscordRetry } from './retry';
 import type { BotStateManager } from './state';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
-import type { QuestionRegistry, AnswerClassifier } from '@/agent';
+import type { QuestionRegistry, AnswerClassifier, PerchSessionRunner } from '@/agent';
 
 /**
  * Helper function to extract attachment metadata from a Discord message.
@@ -21,14 +21,17 @@ import type { QuestionRegistry, AnswerClassifier } from '@/agent';
  */
 export function extractAttachmentMetadata(message: Message): AttachmentMetadata[] {
     // Stryker disable next-line ConditionalExpression: Equivalent for the message-handler tests that cover this — attachments is always a proper Map (never undefined) in those tests; empty Map → Array.from([]).values() returns [] either way
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: message.attachments typed non-nullable but checking defensively against SDK reality
     if(!message.attachments || message.attachments.size === 0) {
         return [];
     }
 
-    return _.map([...message.attachments.values()], attachment => ({
+    return map([...message.attachments.values()], attachment => ({
         url:         attachment.url,
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
         filename:    attachment.name ?? 'unknown',
         // Stryker disable next-line StringLiteral: Equivalent — when attachment.name is null and contentType is null, inferImageContentType('unknown', null) and inferImageContentType('', null) both return 'application/octet-stream'; when contentType is valid (e.g., 'image/png'), the filename is ignored entirely
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
         contentType: inferImageContentType(attachment.name ?? 'unknown', attachment.contentType),
         size:        attachment.size,
         width:       attachment.width ?? undefined,
@@ -50,6 +53,7 @@ export function extractAttachmentMetadata(message: Message): AttachmentMetadata[
  * ```
  */
 export function createReadyHandler(): (client: Client) => void {
+    // eslint-disable-next-line unicorn/consistent-function-scoping -- factory pattern: returns a handler function; keeping inner arrow for future extensibility when params are added
     return (client: Client) => {
         if(client.user) {
             logger.info(`Discord bot ready: Logged in as ${client.user.tag}`);
@@ -73,6 +77,7 @@ export function createReadyHandler(): (client: Client) => void {
  * ```
  */
 export function createErrorHandler(): (error: Error) => void {
+    // eslint-disable-next-line unicorn/consistent-function-scoping -- factory pattern: returns a handler function; keeping inner arrow for future extensibility when params are added
     return (error: Error) => {
         // Use object spread to satisfy logger typing while maintaining structured logging
         logger.error({ error, msg: `Discord client error: ${error.message}` });
@@ -133,7 +138,7 @@ export interface MessageHandlerOptions {
     /**
      * Optional perch session runner for interrupting autonomous perch sessions.
      */
-    perchSessionRunner?: import('@/agent/perch').PerchSessionRunner
+    perchSessionRunner?: PerchSessionRunner
 
     /**
      * Optional DM tracker for tracking DM channels.
@@ -200,6 +205,7 @@ async function handleCatchUpSuspension(
         channelId,
         author:      message.author.username,
         // Stryker disable next-line LogicalOperator: Fallback for DM channels where name is null
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DM channels have null name despite TextChannel cast
         channelName: channel.name ?? message.channel.id,
         content:     message.cleanContent,
     });
@@ -213,7 +219,7 @@ async function handleCatchUpSuspension(
  */
 async function handlePerchInterruption(
     message: Message,
-    perchSessionRunner: import('@/agent/perch').PerchSessionRunner
+    perchSessionRunner: PerchSessionRunner
 ): Promise<void> {
     // Stryker disable all: Logging for observability
     logger.info({
@@ -229,6 +235,7 @@ async function handlePerchInterruption(
     perchSessionRunner.suspend({
         channelId:   createChannelId(message.channel.id),
         author:      message.author.username,
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DM channels have null name despite TextChannel cast
         channelName: channel.name ?? message.channel.id,
         content:     message.cleanContent,
     });
@@ -248,6 +255,7 @@ function updateChannelMetadataInInbox(
     const channel = message.channel as TextChannel;
     inboxManager.updateChannelMetadata(
         createChannelId(message.channel.id),
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DM channels have null name despite TextChannel cast
         channel.name ?? message.channel.id,
         createGuildId(message.guild?.id ?? 'DM')
     );
@@ -287,7 +295,7 @@ async function handleModeInterruptions(
     message: Message,
     botStateManager: BotStateManager | undefined,
     catchUpSessionRunner: CatchUpSessionRunner | undefined,
-    perchSessionRunner: import('@/agent/perch').PerchSessionRunner | undefined
+    perchSessionRunner: PerchSessionRunner | undefined
 ): Promise<void> {
     // Handle catch-up mode suspension
     if(botStateManager?.getMode() === 'catching_up' && catchUpSessionRunner) {
@@ -374,6 +382,7 @@ async function determineResponseContext(
     // For thread messages, check parent channel mute state
     // If parent is muted, threads inherit the mute unless override conditions apply
     let shouldRespond = channelRegistry.shouldProcess(channelId, isDM, isMention, isReplyToBot);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: isThread typed as non-optional but may be absent on older discord.js versions
     if(shouldRespond && message.channel.isThread?.() && message.channel.parentId) {
         const parentChannelId = createChannelId(message.channel.parentId);
         // Check if parent channel is muted. Override conditions (mention, reply) still apply - if someone @mentions Izzy in a thread of a muted channel, still respond.
@@ -472,6 +481,7 @@ async function handlePendingQuestion(
 
     // If unrelated, send polite reply and keep question pending
     // Stryker disable next-line ConditionalExpression: Exhaustive branch - always true here since answer/interruption returned above
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- exhaustive: only 'unrelated' remains after answer/interruption handled above
     if(classification === 'unrelated') {
         // Stryker disable all: Logger debug object
         logger.debug({

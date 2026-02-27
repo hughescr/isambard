@@ -17,11 +17,11 @@ export const discordChannelCheckpointSchema = z
         /** Guild ID where the channel exists, or 'DM' for direct messages */
         guildId:           z.union([guildIdSchema, z.literal('DM')]),
         /** ISO 8601 timestamp when the channel was last seen */
-        lastSeenAt:        z.string().datetime(),
+        lastSeenAt:        z.iso.datetime(),
         /** Discord message ID (snowflake) of the last seen message (optional) */
         lastSeenMessageId: snowflakeSchema.optional(),
         /** ISO 8601 timestamp when this checkpoint was last updated */
-        updatedAt:         z.string().datetime(),
+        updatedAt:         z.iso.datetime(),
     })
     .describe('Last-seen checkpoint for a Discord channel');
 
@@ -46,7 +46,7 @@ export const unreadMessageSchema = z
         /** Message text content */
         content:     z.string(),
         /** ISO 8601 timestamp when the message was created */
-        timestamp:   z.string().datetime(),
+        timestamp:   z.iso.datetime(),
         /** Whether the message has been marked as read */
         isRead:      z.boolean(),
     })
@@ -71,9 +71,9 @@ export const channelSummarySchema = z
         /** Time range spanning the unread messages */
         timeRange:    z.object({
             /** ISO 8601 timestamp of the first unread message */
-            start: z.string().datetime(),
+            start: z.iso.datetime(),
             /** ISO 8601 timestamp of the last unread message */
-            end:   z.string().datetime(),
+            end:   z.iso.datetime(),
         }),
         /** Preview of the first message content (approximately 100 characters) */
         preview: z.string().max(100, 'Preview must not exceed 100 characters'),
@@ -94,7 +94,7 @@ export const messageMetadataSchema = z
         /** Author's display name */
         author:    z.string().min(1, 'Author cannot be empty'),
         /** ISO 8601 timestamp when the message was created */
-        timestamp: z.string().datetime(),
+        timestamp: z.iso.datetime(),
         /** Character count of the message content */
         sizeChars: z.number().int().min(0, 'Size cannot be negative'),
     })
@@ -122,9 +122,9 @@ export const channelSummaryResponseSchema = z
         /** Time range spanning the unread messages */
         timeRange:    z.object({
             /** ISO 8601 timestamp of the first unread message */
-            start: z.string().datetime(),
+            start: z.iso.datetime(),
             /** ISO 8601 timestamp of the last unread message */
-            end:   z.string().datetime(),
+            end:   z.iso.datetime(),
         }),
         /** Array of message metadata for selective reading */
         messages: z.array(messageMetadataSchema),

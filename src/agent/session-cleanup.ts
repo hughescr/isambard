@@ -30,9 +30,13 @@
 
 import { unlink, access, rm, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import path from 'node:path';
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import endsWith from 'lodash/endsWith';
+import filter from 'lodash/filter';
+import isObject from 'lodash/isObject';
+import replace from 'lodash/replace';
+import split from 'lodash/split';
 import type { SystemEvent } from './types';
 
 /**
@@ -43,7 +47,7 @@ import type { SystemEvent } from './types';
 const getProjectPath = (): string => {
     const cwd = process.cwd();
     // SDK converts path to dash-separated format: /Users/foo/bar -> -Users-foo-bar
-    return _.replace(cwd, /\//g, '-');
+    return replace(cwd, /\//g, '-');
 };
 
 /**
@@ -54,7 +58,7 @@ const getProjectPath = (): string => {
  */
 export const getSessionFilePath = (sessionId: string): string => {
     const projectPath = getProjectPath();
-    return join(homedir(), '.claude', 'projects', projectPath, `${sessionId}.jsonl`);
+    return path.join(homedir(), '.claude', 'projects', projectPath, `${sessionId}.jsonl`);
 };
 
 /**
@@ -67,7 +71,7 @@ export const getSessionFilePath = (sessionId: string): string => {
  * @returns Session ID if found, undefined otherwise
  */
 export const extractSessionId = (event: unknown): string | undefined => {
-    if(!_.isObject(event)) {
+    if(!isObject(event)) {
         return undefined;
     }
 
@@ -89,7 +93,7 @@ export const extractSessionId = (event: unknown): string | undefined => {
  * @param sessionId - The UUID of the session to clean up
  */
 const cleanupSessionEnv = async (sessionId: string): Promise<void> => {
-    const sessionEnvPath = join(homedir(), '.claude', 'session-env', sessionId);
+    const sessionEnvPath = path.join(homedir(), '.claude', 'session-env', sessionId);
 
     try {
         await rm(sessionEnvPath, { recursive: true, force: true });
@@ -137,7 +141,7 @@ const cleanupSessionEnv = async (sessionId: string): Promise<void> => {
  * @param projectPath - The project path where session files are stored
  */
 const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): Promise<void> => {
-    const projectsDir = join(homedir(), '.claude', 'projects', projectPath);
+    const projectsDir = path.join(homedir(), '.claude', 'projects', projectPath);
 
     try {
         // Check if projects directory exists - if not, SDK session tracking may have changed
@@ -160,16 +164,17 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
 
         // Filter for agent-*.jsonl files
         // Stryker disable next-line Regex: Regex pattern for agent file matching is correct, mutations would break file detection
-        const agentFiles = _.filter(files, file => /^agent-[^.]+\.jsonl$/.test(file));
+        const agentFiles = filter(files, file => /^agent-[^.]+\.jsonl$/.test(file));
 
         // Check each agent file to see if it belongs to this session
         for(const agentFile of agentFiles) {
-            const agentFilePath = join(projectsDir, agentFile);
+            const agentFilePath = path.join(projectsDir, agentFile);
 
             try {
                 // Read the first line of the file to check for parentUuid
-                const content = await readFile(agentFilePath, 'utf-8');
-                const firstLine = _.split(content, '\n', 1)[0];
+                // eslint-disable-next-line no-await-in-loop -- sequential: per-file I/O with conditional delete
+                const content = await readFile(agentFilePath, 'utf8');
+                const firstLine = split(content, '\n', 1)[0];
 
                 // Stryker disable next-line ConditionalExpression,BlockStatement: Empty firstLine check is defensive coding for malformed files
                 if(!firstLine) {
@@ -181,6 +186,7 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
 
                 if(data.parentUuid === sessionId) {
                     // This is a sub-agent of our session, delete it
+                    // eslint-disable-next-line no-await-in-loop -- sequential: conditional delete depends on prior read
                     await unlink(agentFilePath);
 
                     // Stryker disable next-line ObjectLiteral: Logger debug object
@@ -231,8 +237,8 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
  */
 export const cleanupAllStaleSessions = async (): Promise<void> => {
     const projectPath = getProjectPath();
-    const projectsDir = join(homedir(), '.claude', 'projects', projectPath);
-    const sessionEnvDir = join(homedir(), '.claude', 'session-env');
+    const projectsDir = path.join(homedir(), '.claude', 'projects', projectPath);
+    const sessionEnvDir = path.join(homedir(), '.claude', 'session-env');
 
     let cleanedCount = 0;
 
@@ -243,12 +249,13 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
 
         // List all .jsonl files
         const files = await readdir(projectsDir);
-        const sessionFiles = _.filter(files, file => _.endsWith(file, '.jsonl'));
+        const sessionFiles = filter(files, file => endsWith(file, '.jsonl'));
 
         // Delete each file
         for(const file of sessionFiles) {
             try {
-                await unlink(join(projectsDir, file));
+                // eslint-disable-next-line no-await-in-loop -- sequential: best-effort per-file deletion
+                await unlink(path.join(projectsDir, file));
                 cleanedCount++;
             } catch{
                 // Ignore individual file errors
@@ -264,7 +271,8 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
         const envDirs = await readdir(sessionEnvDir);
         for(const dir of envDirs) {
             try {
-                await rm(join(sessionEnvDir, dir), { recursive: true, force: true });
+                // eslint-disable-next-line no-await-in-loop -- sequential: best-effort per-directory removal
+                await rm(path.join(sessionEnvDir, dir), { recursive: true, force: true });
                 cleanedCount++;
             } catch{
                 // Ignore individual directory errors
@@ -334,7 +342,7 @@ export const cleanupSession = async (sessionId: string, options?: { skipSubAgent
         if((error as NodeJS.ErrnoException).code === 'ENOENT') {
             // Check if the parent directory exists - if not, SDK session storage may have changed
             // Stryker disable next-line StringLiteral: Path constant for SDK session storage location
-            const projectsBaseDir = join(homedir(), '.claude', 'projects');
+            const projectsBaseDir = path.join(homedir(), '.claude', 'projects');
             try {
                 await access(projectsBaseDir);
                 // Directory exists but file doesn't - normal case, already cleaned up

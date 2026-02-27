@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import endsWith from 'lodash/endsWith';
 import { type DiscordChannelCheckpoint, discordChannelCheckpointSchema  } from './types';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 import { type MemoryToolBackend, type MemoryPath, createMemoryPath  } from '@/storage';
@@ -117,17 +117,13 @@ export class CheckpointManager {
         // Check if checkpoint exists
         const existing = await this.backend.get(path);
 
-        if(existing) {
-            // Update existing checkpoint
-            await this.backend.update(path, { content });
-        } else {
-            // Create new checkpoint
-            await this.backend.create({
+        await (existing
+            ? this.backend.update(path, { content })
+            : this.backend.create({
                 path,
                 content,
                 contentType: 'application/json',
-            });
-        }
+            }));
     }
 
     /**
@@ -230,8 +226,8 @@ export class CheckpointManager {
 
         for(const item of result.items) {
             // Only include checkpoint files (not other items in channel directories) - tested with non-checkpoint path test
-            // Stryker disable next-line StringLiteral: _.endsWith(path, '') is always true - equivalent mutant; ConditionalExpression tested by 'should skip non-checkpoint items' test
-            if(_.endsWith(item.path, '/checkpoint')) {
+            // Stryker disable next-line StringLiteral: endsWith(path, '') is always true - equivalent mutant; ConditionalExpression tested by 'should skip non-checkpoint items' test
+            if(endsWith(item.path, '/checkpoint')) {
                 // Stryker disable BlockStatement: Error handling for corrupted/invalid data - tested with invalid JSON test case
                 try {
                     // Parse and validate with Zod

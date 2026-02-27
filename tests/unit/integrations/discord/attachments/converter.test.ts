@@ -84,5 +84,25 @@ describe('Image Converter', () => {
                 'HEIC conversion failed: Invalid HEIC data'
             );
         });
+
+        test('preserves original error as cause on heicConvert failure', async () => {
+            // This test kills the ObjectLiteral mutant: { cause: error } → {}
+            // Without cause, err.cause would be undefined
+            const originalError = new Error('Underlying HEIC parse failure');
+            mockHeicConvert.mockRejectedValueOnce(originalError);
+
+            const inputBuffer = Buffer.from('corrupt-heic-data');
+
+            let caughtError: Error | undefined;
+            try {
+                await convert(inputBuffer, 'image/heic');
+            } catch (err) {
+                caughtError = err as Error;
+            }
+
+            expect(caughtError).toBeDefined();
+            expect(caughtError?.message).toBe('HEIC conversion failed: Underlying HEIC parse failure');
+            expect(caughtError?.cause).toBe(originalError);
+        });
     });
 });

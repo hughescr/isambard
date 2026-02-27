@@ -239,7 +239,7 @@ export function createStreamEventHandler(
     };
 
     // Define stream event handler
-    // eslint-disable-next-line complexity -- Event handler has inherent branching for different event types
+    // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- Event handler has inherent branching for different event types (assistant, tool_progress, result) with nested phase logic
     const onStreamEvent = (event: AgentStreamEvent): void => {
         // Map stream events to presence phases
         switch(event.type) {
@@ -384,7 +384,13 @@ export function createStreamEventHandler(
 
                 break;
             }
-        // No default
+            case 'user':
+            case 'tool_result':
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Last case in switch — removing 'system' or the break has no observable effect since no code follows this case
+            case 'system': {
+            // No presence update needed for these event types
+                break;
+            }
         }
     };
 

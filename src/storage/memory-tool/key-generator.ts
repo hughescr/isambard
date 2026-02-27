@@ -1,4 +1,7 @@
-import { startsWith as _startsWith, split as _split, map as _map, toLower as _toLower } from 'lodash';
+import _map from 'lodash/map';
+import _split from 'lodash/split';
+import _startsWith from 'lodash/startsWith';
+import _toLower from 'lodash/toLower';
 import { DateTime } from 'luxon';
 import { type MemoryPath, extractLayerFromPath  } from './types';
 
@@ -73,6 +76,7 @@ export const MemoryToolKeyGenerator = {
         // Extract layer from path (identity, state, events) or use first path segment as fallback
         const layer = extractLayerFromPath(path);
         // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may return undefined despite string[] type
         const layerStr = layer ?? _split(path, '/')[1] ?? 'unknown';
 
         return {

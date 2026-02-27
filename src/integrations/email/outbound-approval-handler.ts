@@ -1,7 +1,10 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder  } from 'discord.js';
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
+import map from 'lodash/map';
+import split from 'lodash/split';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -42,7 +45,7 @@ export class OutboundApprovalHandler {
     }
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
-        const parts  = _.split(interaction.customId, ':');
+        const parts  = split(interaction.customId, ':');
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -51,8 +54,9 @@ export class OutboundApprovalHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
         const uid = Number.parseInt(uidStr ?? '', 10);
-        if(isNaN(uid)) {
+        if(Number.isNaN(uid)) {
             return;
         }
 
@@ -97,7 +101,7 @@ export class OutboundApprovalHandler {
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-        const parts  = _.split(interaction.customId, ':');
+        const parts  = split(interaction.customId, ':');
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -107,8 +111,9 @@ export class OutboundApprovalHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
         const uid = Number.parseInt(uidStr ?? '', 10);
-        if(isNaN(uid)) {
+        if(Number.isNaN(uid)) {
             return;
         }
 
@@ -147,7 +152,7 @@ export class OutboundApprovalHandler {
     }
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
-        const parts  = _.split(interaction.customId, ':');
+        const parts  = split(interaction.customId, ':');
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -157,8 +162,9 @@ export class OutboundApprovalHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
         const uid = Number.parseInt(uidStr ?? '', 10);
-        if(isNaN(uid)) {
+        if(Number.isNaN(uid)) {
             return;
         }
 
@@ -176,6 +182,7 @@ export class OutboundApprovalHandler {
             for(const email of selectedRecipients) {
                 // Stryker disable BlockStatement: try-catch wraps allowlist write - best-effort
                 try {
+                    // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per recipient
                     await this.allowlist.addEntry({
                         email,
                         addedAt: new Date().toISOString(),
@@ -234,10 +241,8 @@ export class OutboundApprovalHandler {
 
     private async handleApproveShowAllowlist(interaction: ButtonInteraction, uid: number): Promise<void> {
         // Fetch draft message to get to + cc recipients from message fields
-        // Stryker disable next-line ArrayDeclaration: empty initial arrays replaced on successful fetch; mutation testing cannot distinguish empty vs populated arrays here
-        let toAddresses: string[] = [];
-        // Stryker disable next-line ArrayDeclaration: same as above for cc
-        let ccAddresses: string[] = [];
+        let toAddresses: string[];
+        let ccAddresses: string[];
         // Stryker disable BlockStatement: try-catch wraps pre-submit fetch — best-effort, falls back to simple approve
         try {
             const msg   = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
@@ -270,7 +275,7 @@ export class OutboundApprovalHandler {
             // Stryker disable next-line: minimum 0 selections is correct
             .setMinValues(0)
             .setMaxValues(allRecipients.length)
-            .addOptions(_.map(allRecipients, r =>
+            .addOptions(map(allRecipients, r =>
                 new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)
             ));
         // Stryker restore StringLiteral

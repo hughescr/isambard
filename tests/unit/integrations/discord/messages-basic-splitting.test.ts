@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
+import repeat from 'lodash/repeat';
 import {
     splitMessage,
     DISCORD_SAFE_LENGTH
@@ -19,13 +19,13 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should return single-element array for message exactly at max length', () => {
-                const message = _.repeat('a', DISCORD_SAFE_LENGTH);
+                const message = repeat('a', DISCORD_SAFE_LENGTH);
                 const result = splitMessage(message);
                 expect(result).toEqual([message]);
             });
 
             test('should return single-element array for message just under max length', () => {
-                const message = _.repeat('a', DISCORD_SAFE_LENGTH - 1);
+                const message = repeat('a', DISCORD_SAFE_LENGTH - 1);
                 const result = splitMessage(message);
                 expect(result).toEqual([message]);
             });
@@ -43,8 +43,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
         describe('paragraph splitting', () => {
             test('should split long message at paragraph breaks', () => {
-                const paragraph1 = _.repeat('a', 100);
-                const paragraph2 = _.repeat('b', 100);
+                const paragraph1 = repeat('a', 100);
+                const paragraph2 = repeat('b', 100);
                 const message = `${paragraph1}\n\n${paragraph2}`;
 
                 const result = splitMessage(message, 150);
@@ -62,9 +62,9 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should keep paragraphs together when they fit', () => {
-                const paragraph1 = _.repeat('a', 50);
-                const paragraph2 = _.repeat('b', 50);
-                const paragraph3 = _.repeat('c', 50);
+                const paragraph1 = repeat('a', 50);
+                const paragraph2 = repeat('b', 50);
+                const paragraph3 = repeat('c', 50);
                 const message = `${paragraph1}\n\n${paragraph2}\n\n${paragraph3}`;
 
                 const result = splitMessage(message, 110);
@@ -90,8 +90,8 @@ describe.concurrent('Discord Message Splitting', () => {
 
         describe('sentence splitting', () => {
             test('should split long paragraph at sentences when paragraph too long', () => {
-                const sentence1 = `${_.repeat('a', 80)}.`;
-                const sentence2 = `${_.repeat('b', 80)}.`;
+                const sentence1 = `${repeat('a', 80)}.`;
+                const sentence2 = `${repeat('b', 80)}.`;
                 const message = `${sentence1} ${sentence2}`;
 
                 const result = splitMessage(message, 100);
@@ -102,8 +102,8 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should handle sentences ending with exclamation mark', () => {
-                const sentence1 = `${_.repeat('a', 80)}!`;
-                const sentence2 = `${_.repeat('b', 80)}!`;
+                const sentence1 = `${repeat('a', 80)}!`;
+                const sentence2 = `${repeat('b', 80)}!`;
                 const message = `${sentence1} ${sentence2}`;
 
                 const result = splitMessage(message, 100);
@@ -114,8 +114,8 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should handle sentences ending with question mark', () => {
-                const sentence1 = `${_.repeat('a', 80)}?`;
-                const sentence2 = `${_.repeat('b', 80)}?`;
+                const sentence1 = `${repeat('a', 80)}?`;
+                const sentence2 = `${repeat('b', 80)}?`;
                 const message = `${sentence1} ${sentence2}`;
 
                 const result = splitMessage(message, 100);

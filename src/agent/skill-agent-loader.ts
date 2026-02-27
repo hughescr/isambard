@@ -7,10 +7,8 @@
 
 import { constants } from 'node:fs';
 import { readdir, rm, mkdir, copyFile, stat, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import path from 'node:path';
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
-
 /**
  * Recursively copies all files from source to destination using COPYFILE_FICLONE.
  *
@@ -21,25 +19,25 @@ async function copyDirectory(sourceDir: string, destDir: string): Promise<void> 
     const entries = await readdir(sourceDir, { withFileTypes: true });
 
     for(const entry of entries) {
-        const sourcePath = join(sourceDir, entry.name);
-        const destPath = join(destDir, entry.name);
+        const sourcePath = path.join(sourceDir, entry.name);
+        const destPath = path.join(destDir, entry.name);
 
         // Stryker disable ConditionalExpression: isFile() guard only matters for non-regular files (symlinks, etc.)
         if(entry.isDirectory()) {
             // Create directory and recurse
             // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir recursive flag is a safety option
-            await mkdir(destPath, { recursive: true });
-            await copyDirectory(sourcePath, destPath);
+            await mkdir(destPath, { recursive: true }); // eslint-disable-line no-await-in-loop -- sequential: mkdir then recurse in directory order
+            await copyDirectory(sourcePath, destPath); // eslint-disable-line no-await-in-loop -- sequential: recursive copy must follow mkdir
         } else if(entry.isFile()) {
             // Copy file with FICLONE flag
             // For test compatibility, we read and write when copyFile with FICLONE fails
             // Stryker disable BlockStatement — FICLONE copy with read/write fallback for test environments
             try {
-                await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE);
+                await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE); // eslint-disable-line no-await-in-loop -- sequential: per-file copy
             } catch{
                 // Fallback to read/write for environments without copyFile support (like tests)
-                const content = await readFile(sourcePath);
-                await writeFile(destPath, content);
+                const content = await readFile(sourcePath); // eslint-disable-line no-await-in-loop -- sequential: read then write fallback
+                await writeFile(destPath, content); // eslint-disable-line no-await-in-loop -- sequential: write depends on prior read result
             }
             // Stryker enable BlockStatement
         }
@@ -60,7 +58,7 @@ async function clearDirectory(dirPath: string): Promise<void> {
         await mkdir(dirPath, { recursive: true });
     } catch (error) {
         // If removal fails, try to create the directory
-        if(_.get(error, 'code') === 'ENOENT') {
+        if((error as NodeJS.ErrnoException).code === 'ENOENT') {
             await mkdir(dirPath, { recursive: true });
         } else {
             throw error;
@@ -83,10 +81,10 @@ export async function syncAgentsAndSkills(
     sourceRoot: string,
     targetRoot: string
 ): Promise<void> {
-    const agentsSourcePath = join(sourceRoot, 'agents');
-    const skillsSourcePath = join(sourceRoot, 'skills');
-    const agentsTargetPath = join(targetRoot, 'agents');
-    const skillsTargetPath = join(targetRoot, 'skills');
+    const agentsSourcePath = path.join(sourceRoot, 'agents');
+    const skillsSourcePath = path.join(sourceRoot, 'skills');
+    const agentsTargetPath = path.join(targetRoot, 'agents');
+    const skillsTargetPath = path.join(targetRoot, 'skills');
 
     // Process agents directory
     // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral — filesystem I/O with ENOENT graceful degradation when source agents directory is absent
@@ -106,7 +104,7 @@ export async function syncAgentsAndSkills(
             });
         }
     } catch (error) {
-        if(_.get(error, 'code') === 'ENOENT') {
+        if((error as NodeJS.ErrnoException).code === 'ENOENT') {
             // Source doesn't exist, just ensure target exists
             await mkdir(agentsTargetPath, { recursive: true });
             // Stryker disable next-line ObjectLiteral: Log message for observability
@@ -139,7 +137,7 @@ export async function syncAgentsAndSkills(
             });
         }
     } catch (error) {
-        if(_.get(error, 'code') === 'ENOENT') {
+        if((error as NodeJS.ErrnoException).code === 'ENOENT') {
             // Source doesn't exist, just ensure target exists
             await mkdir(skillsTargetPath, { recursive: true });
             // Stryker disable next-line ObjectLiteral: Log message for observability

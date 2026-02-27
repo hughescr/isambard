@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import isError from 'lodash/isError';
 import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord';
 import { type MemoryToolBackend, createMemoryPath  } from '@/storage';
 
@@ -40,7 +40,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 await (existing ? memoryBackend.update(path, { content }) : memoryBackend.create({ path, content, contentType: 'application/json' }));
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
-                const errorMsg = _.isError(error) ? error.message : String(error);
+                const errorMsg = isError(error) ? error.message : String(error);
                 logger.error({
                     error: errorMsg,
                     msg:   'Failed to store catch-up completion signal',
@@ -60,7 +60,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 return JSON.parse(result.content) as CatchUpCompletionSignal;
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
-                const errorMsg = _.isError(error) ? error.message : String(error);
+                const errorMsg = isError(error) ? error.message : String(error);
                 logger.error({
                     error: errorMsg,
                     msg:   'Failed to load catch-up completion signal',
@@ -78,7 +78,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 await (existing ? memoryBackend.update(path, { content }) : memoryBackend.create({ path, content, contentType: 'application/json' }));
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
-                const errorMsg = _.isError(error) ? error.message : String(error);
+                const errorMsg = isError(error) ? error.message : String(error);
                 logger.error({
                     error: errorMsg,
                     msg:   'Failed to store catch-up in-progress signal',
@@ -98,7 +98,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 return JSON.parse(result.content) as CatchUpInProgressSignal;
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
-                const errorMsg = _.isError(error) ? error.message : String(error);
+                const errorMsg = isError(error) ? error.message : String(error);
                 logger.error({
                     error: errorMsg,
                     msg:   'Failed to load catch-up in-progress signal',
@@ -114,7 +114,7 @@ export function createCatchUpSignalAdapter(memoryBackend: MemoryToolBackend): Ca
                 await memoryBackend.delete(path);
             } catch (error) {
                 /* Stryker disable all: Defensive error handling */
-                const errorMsg = _.isError(error) ? error.message : String(error);
+                const errorMsg = isError(error) ? error.message : String(error);
                 logger.error({
                     error: errorMsg,
                     msg:   'Failed to delete catch-up in-progress signal',

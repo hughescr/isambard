@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "description": "AI-powered Discord bot with persistent memory using DynamoDB",
   "type": "module",
-  "main": "src/index.ts",
+  "private": true,
+  "license": "Apache-2.0",
+  "author": "Craig Hughes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hughescr/isambard.git"
+  },
   "scripts": {
     "clones": "jscpd src/",
     "dead-code": "knip",
@@ -25,9 +31,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.58",
-    "@aws-sdk/client-dynamodb": "^3.998.0",
-    "@aws-sdk/lib-dynamodb": "^3.998.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.59",
+    "@aws-sdk/client-dynamodb": "^3.999.0",
+    "@aws-sdk/lib-dynamodb": "^3.999.0",
     "@discordjs/builders": "^1.13.1",
     "@hughescr/logger": "^2.10.0",
     "@sapphire/snowflake": "^3.5.5",
@@ -41,11 +47,11 @@
     "p-limit": "^7.3.0",
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",
-    "sst": "^4.0.6",
+    "sst": "^4.1.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@hughescr/eslint-config-default": "^5.0.3",
+    "@hughescr/eslint-config-default": "^5.0.5",
     "@hughescr/stryker-bun-runner": "^1.1.3",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@stryker-mutator/api": "^9.5.1",
@@ -54,6 +60,7 @@
     "@types/bun": "^1.3.9",
     "@types/heic-convert": "^2.1.0",
     "@types/html-to-text": "^9.0.4",
+    "@types/lodash": "^4.17.24",
     "@types/luxon": "^3.7.1",
     "@types/remove-markdown": "^0.3.4",
     "@types/semver": "^7.7.1",
@@ -70,5 +77,9 @@
   },
   "trustedDependencies": [
     "aws-sdk"
-  ]
+  ],
+  "engines": {
+    "node": ">=23.0.0",
+    "bun": ">=1.3.7"
+  }
 }

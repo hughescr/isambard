@@ -1,16 +1,18 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import {
     DynamoDBDocumentClient,
     GetCommand,
     PutCommand,
     DeleteCommand,
     QueryCommand,
-    ScanCommand as _ScanCommand,
     BatchWriteCommand,
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { assign as _assign, isError as _isError, some as _some, filter as _filter, startsWith as _startsWith, size as _size, find as _find, repeat as _repeat, isObject as _isObject, map as _map, padStart as _padStart } from 'lodash';
+import _filter from 'lodash/filter';
+import _repeat from 'lodash/repeat';
+import _startsWith from 'lodash/startsWith';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
@@ -472,6 +474,7 @@ describe('MemoryToolBackend', () => {
 
                     expect(result.path).toBe(testPath);
                 } finally {
+                    // eslint-disable-next-line require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
                     globalThis.setTimeout = originalSetTimeout;
                 }
             });
@@ -580,6 +583,7 @@ describe('MemoryToolBackend', () => {
 
                     expect(result.content).toBe('New content');
                 } finally {
+                    // eslint-disable-next-line require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
                     globalThis.setTimeout = originalSetTimeout;
                 }
             });
@@ -661,6 +665,7 @@ describe('MemoryToolBackend', () => {
                         tags:        new Set(['tag1', 'tag2']),
                     });
                 } finally {
+                    // eslint-disable-next-line require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
                     globalThis.setTimeout = originalSetTimeout;
                 }
             });

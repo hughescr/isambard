@@ -1,7 +1,11 @@
 import type { Logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
-import _ from 'lodash';
+import find from 'lodash/find';
+import findLast from 'lodash/findLast';
+import isString from 'lodash/isString';
+import noop from 'lodash/noop';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
+import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { PerchConfig } from '@/agent/perch/types';
 import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state';
 
@@ -70,7 +74,7 @@ describe('PerchScheduler', () => {
 
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager() as BotStateManager & { _triggerStateChange: (change: StateChange) => void };
-        mockOnPerchTrigger = mock(_.noop);
+        mockOnPerchTrigger = mock(noop);
         config = {
             enabled:              true,
             timezone:             'America/Los_Angeles',
@@ -217,7 +221,7 @@ describe('PerchScheduler', () => {
         });
 
         test('should unsubscribe from state changes', () => {
-            const unsubscribeMock = mock(_.noop);
+            const unsubscribeMock = mock(noop);
             mockStateManager.subscribe = mock(() => unsubscribeMock);
 
             const deps: PerchSchedulerDeps = {
@@ -1317,7 +1321,7 @@ describe('PerchScheduler', () => {
                 config,
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
-                perchSessionRunner:  mockPerchRunner as unknown as import('@/agent/perch/session-runner').PerchSessionRunner,
+                perchSessionRunner:  mockPerchRunner as unknown as PerchSessionRunner,
             };
 
             mockStateManager.getMode = mock((): OperationalMode => 'idle');
@@ -1345,7 +1349,7 @@ describe('PerchScheduler', () => {
                 config,
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
-                perchSessionRunner:  mockPerchRunner as unknown as import('@/agent/perch/session-runner').PerchSessionRunner,
+                perchSessionRunner:  mockPerchRunner as unknown as PerchSessionRunner,
             };
 
             mockStateManager.getMode = mock((): OperationalMode => 'idle');
@@ -1407,9 +1411,9 @@ describe('PerchScheduler', () => {
 
             // Get the debug log call for scheduling
 
-            const debugCalls = (mockLogger.debug as unknown as Mock<typeof _.noop>).mock.calls;
-            const scheduleCall = _.find(debugCalls, call =>
-                _.isString(call[1]) && call[1].includes('Next perch trigger scheduled')
+            const debugCalls = (mockLogger.debug as unknown as Mock<typeof noop>).mock.calls;
+            const scheduleCall = find(debugCalls, call =>
+                isString(call[1]) && call[1].includes('Next perch trigger scheduled')
             );
 
             expect(scheduleCall).toBeDefined();
@@ -1458,9 +1462,9 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Collect the first scheduled trigger time
-            const debugCalls1 = (mockLogger.debug as unknown as Mock<typeof _.noop>).mock.calls;
-            const firstScheduleCall = _.findLast(debugCalls1, call =>
-                _.isString(call[1]) && call[1].includes('Next perch trigger scheduled')
+            const debugCalls1 = (mockLogger.debug as unknown as Mock<typeof noop>).mock.calls;
+            const firstScheduleCall = findLast(debugCalls1, call =>
+                isString(call[1]) && call[1].includes('Next perch trigger scheduled')
             );
             expect(firstScheduleCall).toBeDefined();
             const firstLog = firstScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
@@ -1471,9 +1475,9 @@ describe('PerchScheduler', () => {
             jest.advanceTimersByTime(firstLog.delaySeconds * 1000 + 1);
 
             // Collect the second scheduled trigger time
-            const debugCalls2 = (mockLogger.debug as unknown as Mock<typeof _.noop>).mock.calls;
-            const secondScheduleCall = _.findLast(debugCalls2, call =>
-                _.isString(call[1]) && call[1].includes('Next perch trigger scheduled')
+            const debugCalls2 = (mockLogger.debug as unknown as Mock<typeof noop>).mock.calls;
+            const secondScheduleCall = findLast(debugCalls2, call =>
+                isString(call[1]) && call[1].includes('Next perch trigger scheduled')
             );
             expect(secondScheduleCall).toBeDefined();
             const secondLog = secondScheduleCall![0] as { delaySeconds: number, nextTrigger: string };

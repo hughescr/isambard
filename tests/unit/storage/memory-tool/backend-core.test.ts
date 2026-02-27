@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { repeat as _repeat } from 'lodash';
+import _repeat from 'lodash/repeat';
 import { MemoryToolBackendCore } from '@/storage/memory-tool/backend-core';
 import type { MemoryToolItem, MemoryPath, MemoryToolItemData } from '@/storage/memory-tool/types';
 import { stripDynamoKeys } from '@/storage/utils/index.js';

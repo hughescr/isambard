@@ -415,7 +415,9 @@ describe('createRetryableQuery', () => {
                 messages.push(msg);
             }
 
+            // Verify retry happened (sleep was called with retryAfter) and stream completed
             expect(sleepMock).toHaveBeenCalledWith(3000);
+            expect(messages.length).toBeGreaterThan(0);
         });
     });
 
@@ -430,6 +432,7 @@ describe('createRetryableQuery', () => {
             const retryableQuery = createRetryableQuery(mockQueryFn, { deps });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
+            // eslint-disable-next-line sonarjs/no-identical-functions -- same consume pattern as other max-attempts tests; different assertion context (default maxAttempts)
             const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here
@@ -455,6 +458,7 @@ describe('createRetryableQuery', () => {
             });
             const result = retryableQuery({ prompt: 'test', options: {} });
 
+            // eslint-disable-next-line sonarjs/no-identical-functions -- same consume pattern as other max-attempts tests; different assertion context (custom maxAttempts=4)
             const consumeGenerator = async () => {
                 for await (const _ of result) {
                     // Should not get here

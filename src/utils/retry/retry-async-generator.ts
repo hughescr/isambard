@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import noop from 'lodash/noop';
 import { defaultClassifier } from './classifier';
 import { calculateDelay } from './delay';
 import { type ErrorClassifier, type RetryDeps, type RetryPolicy, retryPolicySchema  } from './types';
@@ -11,12 +11,12 @@ interface RetryAsyncGeneratorOptions {
 
 // Stryker disable all: Default fallback for incomplete DI - used in production only
 const defaultDeps: RetryDeps = {
-    sleep:  (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
+    sleep:  (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     now:    () => Date.now(),
     logger: {
-        warn:  _.noop.bind(_),
-        error: _.noop.bind(_),
-        debug: _.noop.bind(_),
+        warn:  noop,
+        error: noop,
+        debug: noop,
     },
 };
 // Stryker restore all
@@ -66,6 +66,7 @@ export async function* retryAsyncGenerator<T>(
 
         try {
             // Yield all values from the generator
+            // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, generator replayed from start on error
             for await (const value of generator) {
                 yield value;
             }
@@ -121,6 +122,7 @@ export async function* retryAsyncGenerator<T>(
             });
 
             // Wait before retrying
+            // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
             await sleep(delayMs);
 
             // Loop will restart generator from beginning

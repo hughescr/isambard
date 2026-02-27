@@ -1,5 +1,7 @@
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
+import trim from 'lodash/trim';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
 import { ClassifierError } from './errors';
 import { classifierVerdictSchema, type EmailMetadata, type ClassifierVerdict  } from './types';
@@ -32,7 +34,7 @@ export class EmailClassifier {
             rawText = await generateTextWithSystemPrompt(CLASSIFIER_SYSTEM_PROMPT, userMessage, { model: 'sonnet' });
         } catch (err) {
             throw new ClassifierError(
-                `Classification API call failed: ${_.isError(err) ? err.message : String(err)}`,
+                `Classification API call failed: ${isError(err) ? err.message : String(err)}`,
                 { from: email.from.address, subject: email.subject }
             );
         }
@@ -71,7 +73,7 @@ export class EmailClassifier {
      * Build the user message from email metadata.
      */
     private buildUserMessage(email: EmailMetadata): string {
-        const toAddresses = _.map(
+        const toAddresses = map(
             email.to,
             addr => (addr.name ? `${addr.name} <${addr.address}>` : addr.address)
         ).join(', ');
@@ -108,12 +110,13 @@ export class EmailClassifier {
      * The model is instructed to return only JSON, but may include surrounding whitespace.
      */
     private extractJson(text: string): unknown {
-        const trimmed = _.trim(text);
+        const trimmed = trim(text);
         // Stryker disable BlockStatement — JSON parse with regex fallback; nested try/catch gracefully degrades malformed LLM responses to null
         try {
             return JSON.parse(trimmed);
         } catch{
             // Try to find a JSON object in the text
+            // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- bounded by trimmed LLM response; not user-controlled adversarial input
             const match = /\{[\s\S]*\}/.exec(trimmed);
             if(match) {
                 try {

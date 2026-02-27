@@ -4,7 +4,6 @@
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
-import _ from 'lodash';
 import { BotStateManagerImpl, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
 import { TransitionError } from '@/integrations/discord/state/transitions';
 import { type StateChange, type CatchingUpModeContext } from '@/integrations/discord/state/types';

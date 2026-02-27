@@ -6,7 +6,11 @@
  * task launches and result collections to detect uncollected background tasks.
  */
 
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
+import filter from 'lodash/filter';
+import last from 'lodash/last';
+import trim from 'lodash/trim';
 import { type ToolUseBlock, extractThinkingContent, extractToolUses  } from './agent';
 import { extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
@@ -44,9 +48,9 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
         text?: string
     }
     const content = message.message?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
-    const textBlocks = _.filter(content ?? [], { type: 'text' });
-    return _.chain(textBlocks).map('text').compact().join('\n').trim().value();
+    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
+    const textBlocks = filter(content ?? [], { type: 'text' });
+    return trim(_(textBlocks).map('text').compact().join('\n'));
 }
 
 /**
@@ -95,7 +99,7 @@ export class StreamTracker {
             const toolUses = extractToolUses(message);
             if(toolUses.length > 0) {
                 // Get the last tool_use block
-                this.pendingToolUse = _.last(toolUses) ?? null;
+                this.pendingToolUse = last(toolUses) ?? null;
 
                 // Track background task launches and TaskOutput calls
                 this.trackBackgroundTasks(toolUses);
@@ -112,6 +116,7 @@ export class StreamTracker {
      */
     private trackBackgroundTasks(toolUses: ToolUseBlock[]): void {
         for(const toolUse of toolUses) {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: input may be null/undefined at runtime despite types
             if(toolUse.name === 'Task' && (toolUse.input as Record<string, unknown>)?.run_in_background === true) {
                 this.backgroundTaskLaunches++;
             }

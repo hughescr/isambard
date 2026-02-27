@@ -111,6 +111,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
             const result = await runReconciliation(reconcilerDeps, options);
 
             // Update state
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: interval callback with single async writer, no concurrent writers
             state = {
                 isRunning:       false,
                 currentPhase:    null,

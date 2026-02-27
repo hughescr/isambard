@@ -5,7 +5,7 @@
  * context about what happened during an interrupted processing session.
  */
 
-import _ from 'lodash';
+import map from 'lodash/map';
 import { type ContextBuilder, formatMemoryPreview  } from './context-builder';
 
 /**
@@ -40,7 +40,7 @@ export class EventDeltaTracker {
         // Return only events that occurred after the start marker
         // Events are sorted oldest-first, so new events are at the end
         const newItems = result.items.slice(this.startEventCount);
-        return _.map(newItems, item =>
+        return map(newItems, item =>
             formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now)
         );
     }

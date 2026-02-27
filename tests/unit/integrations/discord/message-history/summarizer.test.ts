@@ -17,7 +17,9 @@
  * - Tests covered by other tests (ID preservation covered by single message test)
  */
 import { describe, test, expect, beforeEach } from 'bun:test';
-import _ from 'lodash';
+import padStart from 'lodash/padStart';
+import repeat from 'lodash/repeat';
+import times from 'lodash/times';
 import { mockGenerateText } from '../../../../setup';
 import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
@@ -173,7 +175,7 @@ describe('createMessageSummarizer', () => {
     describe('concurrency limiting', () => {
         test('should default to maxConcurrent of 10', async () => {
             // Create 15 messages to test default concurrency
-            const messages = _.times(15, i =>
+            const messages = times(15, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
 
@@ -198,8 +200,12 @@ describe('createMessageSummarizer', () => {
             const resultPromise = summarizer.summarizeMessages(messages);
 
             // Wait for all tasks to be queued (give event loop time to start them)
-            await new Promise(resolve => queueMicrotask(resolve));
-            await new Promise(resolve => queueMicrotask(resolve));
+            await new Promise((resolve) => {
+                queueMicrotask(resolve);
+            });
+            await new Promise((resolve) => {
+                queueMicrotask(resolve);
+            });
 
             // Should not exceed default of 10 concurrent requests
             expect(maxConcurrent).toBeLessThanOrEqual(10);
@@ -208,14 +214,17 @@ describe('createMessageSummarizer', () => {
             while(deferreds.length > 0) {
                 const resolver = deferreds.shift();
                 resolver?.('Summary');
-                await new Promise(resolve => queueMicrotask(resolve));
+                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
+                await new Promise((resolve) => {
+                    queueMicrotask(resolve);
+                });
             }
 
             await resultPromise;
         });
 
         test('should respect custom maxConcurrent setting', async () => {
-            const messages = _.times(10, i =>
+            const messages = times(10, i =>
                 createMockSearchResult({ id: `10000000000000000${i}` })
             );
 
@@ -241,8 +250,12 @@ describe('createMessageSummarizer', () => {
             const resultPromise = summarizer.summarizeMessages(messages);
 
             // Wait for tasks to be queued
-            await new Promise(resolve => queueMicrotask(resolve));
-            await new Promise(resolve => queueMicrotask(resolve));
+            await new Promise((resolve) => {
+                queueMicrotask(resolve);
+            });
+            await new Promise((resolve) => {
+                queueMicrotask(resolve);
+            });
 
             // Should not exceed 3 concurrent requests
             expect(maxConcurrent).toBeLessThanOrEqual(3);
@@ -251,7 +264,10 @@ describe('createMessageSummarizer', () => {
             while(deferreds.length > 0) {
                 const resolver = deferreds.shift();
                 resolver?.('Summary');
-                await new Promise(resolve => queueMicrotask(resolve));
+                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
+                await new Promise((resolve) => {
+                    queueMicrotask(resolve);
+                });
             }
 
             await resultPromise;
@@ -301,7 +317,7 @@ describe('createMessageSummarizer', () => {
 
         test('should handle message with very long content', async () => {
             const message = createMockSearchResult({
-                content: _.repeat('Long content. ', 1000),
+                content: repeat('Long content. ', 1000),
             });
 
             const summarizer = createMessageSummarizer({});
@@ -352,12 +368,12 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should batch messages into groups and return batch summaries', async () => {
-            const messages = _.times(25, i =>
+            const messages = times(25, i =>
                 createMockSearchResult({
                     id:             `10000000000000000${i}`,
                     content:        `Message ${i}`,
                     authorUsername: i % 2 === 0 ? 'alice' : 'bob',
-                    timestamp:      `2025-01-15T${_.padStart(String(10 + Math.floor(i / 60)), 2, '0')}:${_.padStart(String(i % 60), 2, '0')}:00.000Z`,
+                    timestamp:      `2025-01-15T${padStart(String(10 + Math.floor(i / 60)), 2, '0')}:${padStart(String(i % 60), 2, '0')}:00.000Z`,
                 })
             );
 
@@ -416,7 +432,7 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should use default batch size of 10', async () => {
-            const messages = _.times(25, i =>
+            const messages = times(25, i =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
@@ -504,7 +520,7 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should respect maxConcurrent for batch processing', async () => {
-            const messages = _.times(30, i =>
+            const messages = times(30, i =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
@@ -531,8 +547,12 @@ describe('createMessageSummarizer', () => {
             const resultPromise = summarizer.summarizeMessageBatch(messages, 10);
 
             // Wait for tasks to be queued
-            await new Promise(resolve => queueMicrotask(resolve));
-            await new Promise(resolve => queueMicrotask(resolve));
+            await new Promise((resolve) => {
+                queueMicrotask(resolve);
+            });
+            await new Promise((resolve) => {
+                queueMicrotask(resolve);
+            });
 
             expect(maxConcurrent).toBeLessThanOrEqual(2);
 
@@ -540,7 +560,10 @@ describe('createMessageSummarizer', () => {
             while(deferreds.length > 0) {
                 const resolver = deferreds.shift();
                 resolver?.('Summary');
-                await new Promise(resolve => queueMicrotask(resolve));
+                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
+                await new Promise((resolve) => {
+                    queueMicrotask(resolve);
+                });
             }
 
             await resultPromise;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { ButtonInteraction, Message, User, InteractionResponse } from 'discord.js';
-import { constant as _constant } from 'lodash';
+import _constant from 'lodash/constant';
 import type { PendingQuestion } from '@/agent/question-registry';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
@@ -12,7 +12,7 @@ describe('createInteractionHandler', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
-        registry = new QuestionRegistry({ defaultTimeoutMs: 5000 });
+        registry = new QuestionRegistry();
         handler = createInteractionHandler({ questionRegistry: registry });
     });
 

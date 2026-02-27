@@ -1,5 +1,6 @@
 import type { Client, Message, TextBasedChannel } from 'discord.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import { ChannelNotAccessibleError, MessageFetchError } from '@/errors';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
@@ -61,6 +62,7 @@ function transformMessage(message: Message): DiscordSearchResult {
     for(const attachment of message.attachments.values()) {
         const transformed: DiscordAttachment = {
             url:      attachment.url,
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
             filename: attachment.name ?? 'unnamed',
         };
         if(attachment.contentType) {
@@ -70,7 +72,7 @@ function transformMessage(message: Message): DiscordSearchResult {
     }
 
     // Transform embeds
-    const embeds: DiscordEmbed[] = _.map(message.embeds, (embed) => {
+    const embeds: DiscordEmbed[] = map(message.embeds, (embed) => {
         const transformed: DiscordEmbed = {};
         if(embed.title) {
             transformed.title = embed.title;
@@ -101,7 +103,7 @@ function transformMessage(message: Message): DiscordSearchResult {
         author:    {
             id:          message.author.id,
             username:    message.author.username,
-            displayName: message.author.displayName ?? message.author.username,
+            displayName: message.author.displayName,
         },
         content:   message.content,
         timestamp: message.createdAt.toISOString(),
@@ -149,6 +151,41 @@ function transformMessage(message: Message): DiscordSearchResult {
  * const message = await fetcher.fetchById('123456789012345678', '987654321098765432');
  * ```
  */
+/**
+ * Processes a batch of messages, filtering by startTime snowflake.
+ * @returns Object containing processed messages, hasMore flag, and whether to stop pagination
+ */
+function processBatch(
+    batch: Map<string, Message>,
+    afterSnowflake: string | undefined,
+    currentMessages: Message[],
+    maxMessages: number
+): { messages: Message[], hasMore: boolean, shouldStop: boolean } {
+    const messages: Message[] = [];
+    let hasMore = false;
+    let shouldStop = false;
+
+    for(const message of batch.values()) {
+        // Check if we've reached before the startTime
+        if(afterSnowflake && BigInt(message.id) < BigInt(afterSnowflake)) {
+            shouldStop = true;
+            break;
+        }
+
+        messages.push(message);
+
+        // Stryker disable all: Loop termination on limit reached prevents infinite pagination
+        if(currentMessages.length + messages.length >= maxMessages) {
+            hasMore = true;
+            shouldStop = true;
+            break;
+        }
+        // Stryker restore all
+    }
+
+    return { messages, hasMore, shouldStop };
+}
+
 export function createMessageFetcher(client: Client): MessageFetcher {
     /**
      * Gets a text-based channel from the client, throwing if not accessible.
@@ -171,43 +208,9 @@ export function createMessageFetcher(client: Client): MessageFetcher {
     }
 
     /**
-     * Processes a batch of messages, filtering by startTime snowflake.
-     * @returns Object containing processed messages, hasMore flag, and whether to stop pagination
-     */
-    function processBatch(
-        batch: Map<string, Message>,
-        afterSnowflake: string | undefined,
-        currentMessages: Message[],
-        maxMessages: number
-    ): { messages: Message[], hasMore: boolean, shouldStop: boolean } {
-        const messages: Message[] = [];
-        let hasMore = false;
-        let shouldStop = false;
-
-        for(const message of batch.values()) {
-            // Check if we've reached before the startTime
-            if(afterSnowflake && BigInt(message.id) < BigInt(afterSnowflake)) {
-                shouldStop = true;
-                break;
-            }
-
-            messages.push(message);
-
-            // Stryker disable all: Loop termination on limit reached prevents infinite pagination
-            if(currentMessages.length + messages.length >= maxMessages) {
-                hasMore = true;
-                shouldStop = true;
-                break;
-            }
-            // Stryker restore all
-        }
-
-        return { messages, hasMore, shouldStop };
-    }
-
-    /**
      * Fetches messages with pagination and optional time filtering.
      */
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- pagination loop with time-filtering and error-handling requires inherent branching
     async function fetchMessages(options: FetchOptions): Promise<FetchResult> {
         const { channelId, startTime, endTime, limit } = options;
         const channel = await getChannel(channelId);
@@ -231,6 +234,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                     fetchOptions.before = cursor;
                 }
 
+                // eslint-disable-next-line no-await-in-loop -- sequential: pagination depends on prior response cursor
                 const batch = await withDiscordRetry(
                     () => channel.messages.fetch(fetchOptions),
                     // Stryker disable next-line StringLiteral: Operation name for retry logging
@@ -265,13 +269,13 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                 throw error;
             }
             // Stryker disable next-line StringLiteral: Default error message is not behavior
-            const reason = _.isError(error) ? error.message : 'Unknown error';
+            const reason = isError(error) ? error.message : 'Unknown error';
             throw new MessageFetchError(channelId, reason);
         }
 
         // Sort messages chronologically (oldest first) and transform
-        const sortedMessages = _.map(
-            allMessages.sort((a, b) => Number(BigInt(a.id) - BigInt(b.id))),
+        const sortedMessages = map(
+            allMessages.toSorted((a, b) => Number(BigInt(a.id) - BigInt(b.id))),
             transformMessage
         );
 
@@ -316,6 +320,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         const results: DiscordSearchResult[] = [];
         for(const messageId of messageIds) {
             try {
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per message
                 const message = await withDiscordRetry(
                     () => channel.messages.fetch(messageId),
                     // Stryker disable next-line StringLiteral: Operation name for retry logging

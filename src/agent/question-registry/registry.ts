@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
+// eslint-disable-next-line boundaries/element-types -- Question registry imports Discord ChannelId type; decouple tracked in roadmap
 import type { ChannelId } from '@/integrations/discord';
 
 export interface QuestionRegistryConfig {
@@ -17,10 +18,6 @@ export class QuestionRegistry {
     private readonly questionsByLocation = new Map<string, StoredQuestion>();
     // Key by questionId for resolution
     private readonly questionsById = new Map<string, StoredQuestion>();
-
-    constructor(_config?: QuestionRegistryConfig) {
-        // Config not currently used, but reserved for future use
-    }
 
     /**
      * Register a question and return a promise that resolves when answered or times out.

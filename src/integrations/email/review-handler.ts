@@ -1,6 +1,8 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, EmbedBuilder  } from 'discord.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import split from 'lodash/split';
+import values from 'lodash/values';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -29,6 +31,7 @@ export class ReviewHandler {
         this.adminDiscordUserId = deps.adminDiscordUserId;
     }
 
+    // eslint-disable-next-line complexity -- approval handler has inherent branching: allow/reject/allowlist x auth x error paths
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         if(interaction.user.id !== this.adminDiscordUserId) {
             await interaction.reply({
@@ -39,7 +42,7 @@ export class ReviewHandler {
             return;
         }
 
-        const parts = _.split(interaction.customId, ':');
+        const parts = split(interaction.customId, ':');
         const prefix    = parts[0];
         const uidStr    = parts[1];
         const folderStr = parts[2];
@@ -49,12 +52,13 @@ export class ReviewHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
         const uid = Number.parseInt(uidStr ?? '', 10);
-        if(isNaN(uid)) {
+        if(Number.isNaN(uid)) {
             return;
         }
 
-        const validFolders = _.values(EmailFolder);
+        const validFolders = values(EmailFolder);
         if(!folderStr || !validFolders.includes(folderStr as EmailFolder)) {
             await interaction.reply({
                 // Stryker disable next-line StringLiteral: Error message is UI configuration
@@ -87,6 +91,8 @@ export class ReviewHandler {
 
                     break;
                 }
+                // eslint-disable-next-line unicorn/no-useless-switch-case -- needed for switch exhaustiveness check
+                case 'email-allowlist':
                 default: {
                     await this.handleAllowlist(interaction, uid, sourceFolder);
                 }
@@ -181,7 +187,7 @@ export class ReviewHandler {
                 components: [],
             });
         } catch (error) {
-            const errMsg = _.isError(error) ? error.message : String(error);
+            const errMsg = isError(error) ? error.message : String(error);
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message is not behavior-affecting
             logger.warn({ error: errMsg, email: email.from.address, msg: 'Failed to add sender to allowlist after allow' });
             await interaction.editReply({

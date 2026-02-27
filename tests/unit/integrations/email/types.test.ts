@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
+import lodashKeys from 'lodash/keys';
 import {
     EmailFolder,
     ClassifierVerdictType,
@@ -21,17 +21,17 @@ describe.concurrent('EmailFolder', () => {
     });
 
     test('should have exactly the expected keys', () => {
-        const keys = _.keys(EmailFolder);
-        expect(keys).toContain('Inbox');
-        expect(keys).toContain('CleanInbox');
-        expect(keys).toContain('Quarantine');
-        expect(keys).toContain('Review');
-        expect(keys).toContain('Junk');
-        expect(keys).toContain('Trash');
-        expect(keys).toContain('Archive');
-        expect(keys).toContain('Drafts');
-        expect(keys).toContain('Sent');
-        expect(keys).toHaveLength(9);
+        const folderKeys = lodashKeys(EmailFolder);
+        expect(folderKeys).toContain('Inbox');
+        expect(folderKeys).toContain('CleanInbox');
+        expect(folderKeys).toContain('Quarantine');
+        expect(folderKeys).toContain('Review');
+        expect(folderKeys).toContain('Junk');
+        expect(folderKeys).toContain('Trash');
+        expect(folderKeys).toContain('Archive');
+        expect(folderKeys).toContain('Drafts');
+        expect(folderKeys).toContain('Sent');
+        expect(folderKeys).toHaveLength(9);
     });
 });
 
@@ -44,12 +44,12 @@ describe.concurrent('ClassifierVerdictType', () => {
     });
 
     test('should have exactly the expected keys', () => {
-        const keys = _.keys(ClassifierVerdictType);
-        expect(keys).toContain('Safe');
-        expect(keys).toContain('Spam');
-        expect(keys).toContain('Uncertain');
-        expect(keys).toContain('Unsafe');
-        expect(keys).toHaveLength(4);
+        const verdictKeys = lodashKeys(ClassifierVerdictType);
+        expect(verdictKeys).toContain('Safe');
+        expect(verdictKeys).toContain('Spam');
+        expect(verdictKeys).toContain('Uncertain');
+        expect(verdictKeys).toContain('Unsafe');
+        expect(verdictKeys).toHaveLength(4);
     });
 });
 
@@ -60,10 +60,10 @@ describe.concurrent('EmailIdentity', () => {
     });
 
     test('should have exactly the expected keys', () => {
-        const keys = _.keys(EmailIdentity);
-        expect(keys).toContain('Formal');
-        expect(keys).toContain('Informal');
-        expect(keys).toHaveLength(2);
+        const identityKeys = lodashKeys(EmailIdentity);
+        expect(identityKeys).toContain('Formal');
+        expect(identityKeys).toContain('Informal');
+        expect(identityKeys).toHaveLength(2);
     });
 });
 

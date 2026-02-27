@@ -1,5 +1,4 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import _ from 'lodash';
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import {

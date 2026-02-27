@@ -1,6 +1,16 @@
 import { query, type McpServerConfig, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
+import filter from 'lodash/filter';
+import isArray from 'lodash/isArray';
+import isError from 'lodash/isError';
+import isPlainObject from 'lodash/isPlainObject';
+import map from 'lodash/map';
+import some from 'lodash/some';
+import split from 'lodash/split';
+import startsWith from 'lodash/startsWith';
+import toPairs from 'lodash/toPairs';
 import { createRetryableQuery } from './claude-retry';
 import type { ContextBuilder } from './context-builder';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
@@ -90,8 +100,8 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
         text?: string
     }
     const content = message.message?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
-    const textBlocks = _.filter(content ?? [], { type: 'text' });
+    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
+    const textBlocks = filter(content ?? [], { type: 'text' });
     return _.chain(textBlocks).map('text').compact().join('\n').trim().value();
 }
 
@@ -111,8 +121,8 @@ export function extractThinkingContent(message: { type: string, message?: { cont
         text?: string
     }
     const content = message.message?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - _.filter on strings returns [] same as on []
-    const thinkingBlocks = _.filter(content ?? [], { type: 'thinking' });
+    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
+    const thinkingBlocks = filter(content ?? [], { type: 'thinking' });
     return _.chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
 }
 
@@ -153,8 +163,8 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
     }
 
     // MCP tools have format: mcp__module__tool (e.g., mcp__DevTools__find_symbol)
-    if(_.startsWith(toolName, 'mcp__')) {
-        const parts = _.split(toolName.slice(5), '__');
+    if(startsWith(toolName, 'mcp__')) {
+        const parts = split(toolName.slice(5), '__');
         if(parts.length >= 2) {
             const module = parts[0];
             const tool = parts.slice(1).join('__');
@@ -191,7 +201,7 @@ const SENSITIVE_KEY_PATTERNS = [
  * @returns true if the key matches a sensitive pattern
  */
 function isSensitiveKey(key: string): boolean {
-    return _.some(SENSITIVE_KEY_PATTERNS, pattern => pattern.test(key));
+    return some(SENSITIVE_KEY_PATTERNS, pattern => pattern.test(key));
 }
 
 /**
@@ -208,14 +218,14 @@ export function redactSensitiveArgs(input: unknown): unknown {
     }
 
     // Handle arrays - map over elements
-    if(_.isArray(input)) {
-        return _.map(input, item => redactSensitiveArgs(item));
+    if(isArray(input)) {
+        return map(input, item => redactSensitiveArgs(item));
     }
 
     // Handle objects - check keys and recurse
-    if(_.isPlainObject(input)) {
+    if(isPlainObject(input)) {
         const result: Record<string, unknown> = {};
-        for(const [key, value] of _.toPairs(input as Record<string, unknown>)) {
+        for(const [key, value] of toPairs(input as Record<string, unknown>)) {
             result[key] = isSensitiveKey(key) ? '[REDACTED]' : redactSensitiveArgs(value);
         }
         return result;
@@ -226,12 +236,12 @@ export function redactSensitiveArgs(input: unknown): unknown {
 }
 
 export function extractToolUses(message: { type: string, message?: { content?: unknown } }): ToolUseBlock[] {
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent - _.filter on non-assistant messages returns [] same as early return
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent - filter on non-assistant messages returns [] same as early return
     if(message.type !== 'assistant') {
         return [];
     }
     const content = message.message?.content as { type: string, id?: string, name?: string, input?: unknown }[] | undefined;
-    return _.filter(content ?? [], { type: 'tool_use' }) as ToolUseBlock[];
+    return filter(content ?? [], { type: 'tool_use' }) as ToolUseBlock[];
 }
 
 export interface ClaudeAgentOptions {
@@ -542,7 +552,9 @@ function logSystemEvent(message: AgentStreamEvent): void {
     // Stryker disable next-line ConditionalExpression: Equivalent mutant - message.type === 'system' is always true here (called from switch case 'system')
     if(message.type === 'system' && 'subtype' in message && message.subtype === 'compact_boundary') {
         const compactMessage = message as SDKCompactBoundaryMessage;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: compact_metadata may be absent in older SDK versions despite types
         const preTokens = compactMessage.compact_metadata?.pre_tokens;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: compact_metadata may be absent in older SDK versions despite types
         const trigger = compactMessage.compact_metadata?.trigger;
         const tokenInfo = preTokens
             ? ` (pre-compaction: ${preTokens.toLocaleString()} tokens)`
@@ -650,7 +662,7 @@ async function buildUserMessageTextForBatch(
 
     // Format multiple messages with timezone fallback
     const resolvedTz = resolveTimezone(timezone);
-    const messageBlocks = _.map(contexts, (ctx) => {
+    const messageBlocks = map(contexts, (ctx) => {
         const timeStr = `${formatLocalDateTime(ctx.timestamp, resolvedTz)} ${resolvedTz} (UTC: ${ctx.timestamp})`;
         return `User @${ctx.userId} in #${ctx.channelId} at ${timeStr}: ${ctx.content}`;
     });
@@ -669,7 +681,6 @@ async function* buildPromptForSdk(
     textContent: string,
     images?: PlatformImage[]
 ): AsyncGenerator<SDKUserMessage> {
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Bun runtime supports crypto.randomUUID
     const sessionId = crypto.randomUUID();
 
     const content = hasImages(images)
@@ -712,7 +723,7 @@ async function handleSessionIdExtraction(
         try {
             await taskPersistenceCoordinator.prepareNewSession(extractedSessionId);
         } catch (error) {
-            const errorMessage = _.isError(error) ? error.message : String(error);
+            const errorMessage = isError(error) ? error.message : String(error);
             logger.warn({ error, sessionId: extractedSessionId }, `Task persistence failed: ${errorMessage}`);
         }
         return { sessionId: extractedSessionId, persistenceCompleted: true };
@@ -831,7 +842,7 @@ async function processStreamEvents(
     } catch (error) {
         // Check for AbortError OR any error when abort signal was triggered
         // The Claude Agent SDK may throw non-standard errors on abort
-        if((_.isError(error) && error.name === 'AbortError') || options?.abortController?.signal.aborted) {
+        if((isError(error) && error.name === 'AbortError') || options?.abortController?.signal.aborted) {
             wasInterrupted = true;
             // All abort-signal errors are expected — SDK throws "Operation aborted" (not standard AbortError)
             logger.info({
@@ -1010,7 +1021,7 @@ function buildErrorHandleInputResult(
     tracker: StreamTracker,
     contextCount: number
 ): HandleInputResult {
-    const errorMessage = _.isError(error) ? error.message : String(error);
+    const errorMessage = isError(error) ? error.message : String(error);
     logger.error({ error, contextCount }, `Failed to process batch: ${errorMessage}`);
     // Check abort signal — SDK may throw non-AbortError on abort
     const abortedBySignal = options?.abortController?.signal.aborted ?? false;
@@ -1052,7 +1063,7 @@ async function attemptAutoResume(
     tracker: StreamTracker,
     lastAssistantText: string,
     capturedSessionId: string,
-    retryableQuery: typeof import('@anthropic-ai/claude-agent-sdk').query,
+    retryableQuery: typeof query,
     queryOptions: ReturnType<typeof buildQueryOptions>,
     options: HandleInputOptions | undefined,
     taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
@@ -1089,7 +1100,7 @@ async function attemptAutoResume(
         }
     } catch (resumeError) {
         /* Stryker disable StringLiteral,ObjectLiteral: Observability - error logging for debugging auto-resume failures */
-        const errorMessage = _.isError(resumeError) ? resumeError.message : String(resumeError);
+        const errorMessage = isError(resumeError) ? resumeError.message : String(resumeError);
         logger.error({ error: resumeError, sessionId: capturedSessionId }, `Auto-resume failed: ${errorMessage}`);
         /* Stryker restore StringLiteral,ObjectLiteral */
     }
@@ -1123,7 +1134,7 @@ async function collectBackgroundTasks(
     lastAssistantText: string,
     capturedSessionId: string | undefined,
     wasInterrupted: boolean,
-    retryableQuery: typeof import('@anthropic-ai/claude-agent-sdk').query,
+    retryableQuery: typeof query,
     resolvedModel: string,
     systemPrompt: string,
     memoryMcpServer: McpServerConfig | undefined,
@@ -1146,6 +1157,7 @@ async function collectBackgroundTasks(
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
         const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options);
+        // eslint-disable-next-line no-await-in-loop -- sequential: each resume attempt depends on prior result
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
             retryableQuery, queryOptions, options, taskPersistenceCoordinator
@@ -1177,7 +1189,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     const agent: ClaudeAgent = {
         handleInput: async (
             contexts: MessageContext[],
-            options?: HandleInputOptions
+            handleOptions?: HandleInputOptions
         ): Promise<HandleInputResult> => {
             const tracker = new StreamTracker();
             // Ref object lets processStreamEvents propagate capturedSessionId even when it throws
@@ -1185,10 +1197,10 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
 
             try {
                 // 1. Load user timezone for user message localization
-                const userTimezone = await loadUserTimezoneForFlow(contextBuilder, options, contexts);
+                const userTimezone = await loadUserTimezoneForFlow(contextBuilder, handleOptions, contexts);
 
                 // 2. Build system prompt with core identity and channel list
-                const channelList = options?.channelList;
+                const channelList = handleOptions?.channelList;
                 const systemPrompt = await buildSystemPrompt({ contextBuilder, channelList });
 
                 // 3. Build user message text
@@ -1196,43 +1208,43 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                     contexts,
                     contextBuilder,
                     userTimezone,
-                    options?.resumeContext,
-                    options?.catchUpPrompt,
-                    options?.perchPrompt
+                    handleOptions?.resumeContext,
+                    handleOptions?.catchUpPrompt,
+                    handleOptions?.perchPrompt
                 );
 
                 // 3.5. Prepend context note if provided
-                const finalMessageText = options?.contextNote
-                    ? `[${options.contextNote}]\n\n${userMessageText}`
+                const finalMessageText = handleOptions?.contextNote
+                    ? `[${handleOptions.contextNote}]\n\n${userMessageText}`
                     : userMessageText;
 
                 // 4. Build prompt (string for text-only, async generator for images or text)
-                const prompt = buildPromptForHandleInput(finalMessageText, options?.images);
+                const prompt = buildPromptForHandleInput(finalMessageText, handleOptions?.images);
 
                 // 5. Log start of processing
                 logger.info({
                     contextCount: contexts.length,
-                    messageIds:   _.map(contexts, 'messageId'),
-                    hasImages:    hasImages(options?.images),
+                    messageIds:   map(contexts, 'messageId'),
+                    hasImages:    hasImages(handleOptions?.images),
                     msg:          'Agent starting batch processing',
                 });
 
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options),
+                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, handleOptions),
                 });
 
                 // 7. Process stream events and track progress
                 const { lastAssistantText: initialText, wasInterrupted: initialInterrupted }
-                    = await processStreamEvents(response, tracker, options, taskPersistenceCoordinator, sessionRef);
+                    = await processStreamEvents(response, tracker, handleOptions, taskPersistenceCoordinator, sessionRef);
                 let lastAssistantText = initialText;
                 const wasInterrupted = initialInterrupted;
 
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, sessionRef.capturedSessionId, wasInterrupted,
-                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options, taskPersistenceCoordinator
+                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, handleOptions, taskPersistenceCoordinator
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 sessionRef.capturedSessionId = resumeCollected.capturedSessionId;
@@ -1254,17 +1266,17 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 return buildHandleInputResult(lastAssistantText, wasInterrupted, sessionRef.capturedSessionId, tracker);
             } catch (error) {
                 // If resume attempt failed before session was established, retry fresh
-                // Guard: options?.sessionId is falsy on retry, preventing infinite recursion
-                if(options?.sessionId && !sessionRef.capturedSessionId) {
+                // Guard: handleOptions?.sessionId is falsy on retry, preventing infinite recursion
+                if(handleOptions?.sessionId && !sessionRef.capturedSessionId) {
                     // Stryker disable StringLiteral,ObjectLiteral: Observability - warn logging for debugging resume retry
                     logger.warn({
-                        sessionId: options.sessionId,
+                        sessionId: handleOptions.sessionId,
                         msg:       'Resume failed before session established, retrying with fresh session',
                     });
                     // Stryker restore StringLiteral,ObjectLiteral
-                    return agent.handleInput(contexts, { ...options, sessionId: undefined });
+                    return agent.handleInput(contexts, { ...handleOptions, sessionId: undefined });
                 }
-                return buildErrorHandleInputResult(error, options, sessionRef.capturedSessionId, tracker, contexts.length);
+                return buildErrorHandleInputResult(error, handleOptions, sessionRef.capturedSessionId, tracker, contexts.length);
             }
         },
     };

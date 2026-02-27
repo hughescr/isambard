@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
-import _ from 'lodash';
+import assign from 'lodash/assign';
+import find from 'lodash/find';
+import includes from 'lodash/includes';
+import isObject from 'lodash/isObject';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
@@ -9,6 +12,7 @@ import type { QuestionRegistry } from '@/agent/question-registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { ChannelRegistryManager, DMTracker } from '@/integrations/discord/channel-registry';
 import { createMessageHandler } from '@/integrations/discord/handlers';
+import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { BotStateManager } from '@/integrations/discord/state';
 import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
 // Note: We don't need to mock the rate limiter module because:
@@ -20,7 +24,7 @@ import { createChannelId, type UserId, type ChannelId  } from '@/integrations/di
 function createMockCoordinator() {
     return {
         handleMessage: mock(),
-    } as unknown as import('@/integrations/discord/message-coordinator').MessageCoordinator & {
+    } as unknown as MessageCoordinator & {
         handleMessage: ReturnType<typeof mock>
     };
 }
@@ -351,7 +355,7 @@ describe('Discord Event Handlers', () => {
 
                 // Find the "Message received" log call
                 type LogCall = [Record<string, unknown>];
-                const messageReceivedCall = _.find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const messageReceivedCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
                     const obj = call[0] as { msg?: string };
                     return obj.msg?.includes('Message received');
                 }) as LogCall | undefined;
@@ -374,7 +378,7 @@ describe('Discord Event Handlers', () => {
 
                 // Find the "Message received" log call
                 type LogCall = [Record<string, unknown>];
-                const messageReceivedCall = _.find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const messageReceivedCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
                     const obj = call[0] as { msg?: string };
                     return obj.msg?.includes('Message received');
                 }) as LogCall | undefined;
@@ -408,7 +412,7 @@ describe('Discord Event Handlers', () => {
 
                 // Find the filtering call from our captured calls
                 type LogCall = [Record<string, unknown>];
-                const filteringCall = _.find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const filteringCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
                     const obj = call[0] as { msg?: string, isMention?: boolean };
                     return obj.msg?.includes('Filtering:') && obj.isMention === true;
                 }) as LogCall | undefined;
@@ -449,7 +453,7 @@ describe('Discord Event Handlers', () => {
 
                 // Find the filtering call from our captured calls
                 type LogCall = [Record<string, unknown>];
-                const filteringCall = _.find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const filteringCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
                     const obj = call[0] as { msg?: string, isDM?: boolean };
                     return obj.msg?.includes('Filtering:') && obj.isDM === true;
                 }) as LogCall | undefined;
@@ -543,7 +547,9 @@ describe('Discord Event Handlers', () => {
                 mockCoordinator.handleMessage.mockClear();
 
                 // Test 2: Self message (same user ID as bot) - should be ignored
+                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.bot = false;
+                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.id = botId;
                 await handler(mockMessage);
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
@@ -552,7 +558,9 @@ describe('Discord Event Handlers', () => {
                 mockCoordinator.handleMessage.mockClear();
 
                 // Test 3: Normal user message - should be processed
+                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.bot = false;
+                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.id = '111111111111111111';
                 await handler(mockMessage);
                 expect(mockCoordinator.handleMessage).toHaveBeenCalled();
@@ -866,9 +874,9 @@ describe('Discord Event Handlers', () => {
                         return await operation();
                     } catch (error) {
                         // Check if it's a transient network error
-                        if(_.isObject(error) && 'code' in error) {
+                        if(isObject(error) && 'code' in error) {
                             const code = (error as { code: string }).code;
-                            if(_.includes(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'], code)) {
+                            if(includes(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'], code)) {
                                 // Retry immediately without delay
                                 return operation();
                             }
@@ -1300,7 +1308,7 @@ describe('Discord Event Handlers', () => {
 
                 const mockBotState = createMockBotStateManager();
                 // Override to return 'perching' mode
-                _.assign(mockBotState, { getMode: mock(() => 'perching' as const) });
+                assign(mockBotState, { getMode: mock(() => 'perching' as const) });
 
                 const handler = createMessageHandler({
                     botUserId:          '999999999999999999' as UserId,

@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Channel } from 'discord.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import startsWith from 'lodash/startsWith';
 import { createGuildId, type ChannelId, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
@@ -60,6 +61,7 @@ export class ChannelRegistryManager {
         ]);
 
         for(const record of [...guildRecords, ...dmRecords]) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
             await this.fetchAndCacheChannel(record);
         }
 
@@ -130,7 +132,7 @@ export class ChannelRegistryManager {
             return metadata;
         } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
-            const errorMsg = _.isError(error) ? error.message : String(error);
+            const errorMsg = isError(error) ? error.message : String(error);
             // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId, error: errorMsg, msg: 'Failed to fetch channel from Discord API' });
             return null;
@@ -200,6 +202,7 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord for each record
         for(const record of storedRecords) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
             const metadata = await this.fetchAndCacheChannel(record);
             if(metadata) {
                 results.push(metadata);
@@ -232,6 +235,7 @@ export class ChannelRegistryManager {
 
         // Fetch channel info from Discord for each record
         for(const record of storedRecords) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
             const metadata = await this.fetchAndCacheChannel(record);
             // Only include unmuted channels
             if(metadata && !metadata.isMuted) {
@@ -288,7 +292,7 @@ export class ChannelRegistryManager {
             return metadata;
         } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
-            const errorMsg = _.isError(error) ? error.message : String(error);
+            const errorMsg = isError(error) ? error.message : String(error);
             // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId: storedRecord.channelId, wellKnownType: type, error: errorMsg, msg: 'Failed to fetch well-known channel from Discord API' });
             return null;
@@ -447,9 +451,9 @@ export class ChannelRegistryManager {
                 channelName = `@${discordChannel.recipient.username}`;
             } else if('name' in discordChannel && discordChannel.name) {
                 // Fallback: if already in "DM - username" format, convert to @username
-                if(_.startsWith(discordChannel.name, 'DM - ')) {
+                if(startsWith(discordChannel.name, 'DM - ')) {
                     channelName = `@${discordChannel.name.slice(5)}`;
-                } else if(_.startsWith(discordChannel.name, '@')) {
+                } else if(startsWith(discordChannel.name, '@')) {
                     // Already in @username format
                     channelName = discordChannel.name;
                 } else {
@@ -518,7 +522,7 @@ export class ChannelRegistryManager {
             this.addToCache(metadata);
             return metadata;
         } catch (error) {
-            const errorMsg = _.isError(error) ? error.message : String(error);
+            const errorMsg = isError(error) ? error.message : String(error);
             // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId: record.channelId, error: errorMsg, msg: 'Skipping channel: Discord API error' });
             return null;

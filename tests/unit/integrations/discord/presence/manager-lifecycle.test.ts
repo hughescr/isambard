@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from 'bun:test';
 import { type Client, ActivityType  } from 'discord.js';
-import _ from 'lodash';
+import filter from 'lodash/filter';
 import { PresenceManager, type PresenceManagerDeps  } from '@/integrations/discord/presence/manager';
 import type { ActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import type { IdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
@@ -1259,7 +1259,7 @@ describe('PresenceManager Lifecycle', () => {
             expect(setIntervalSpy).not.toHaveBeenCalled();
 
             // Also verify no 'Started idle status refresh' log
-            const idleRefreshLogs = _.filter((mockLogger.debug as ReturnType<typeof mock>).mock.calls, [1, 'Started idle status refresh']);
+            const idleRefreshLogs = filter((mockLogger.debug as ReturnType<typeof mock>).mock.calls, [1, 'Started idle status refresh']);
             expect(idleRefreshLogs.length).toBe(0);
 
             setIntervalSpy.mockRestore();

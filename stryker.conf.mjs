@@ -1,7 +1,7 @@
 const isCI = Boolean(process.env.GITHUB_SHA);
 
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
-export default {
+const strykerConfig = {
     checkers:         ['typescript'],
     packageManager:   'npm', // Stryker doesn't support bun yet, but works via npx
     incremental:      !isCI, // Fast incremental runs locally, full runs in CI
@@ -18,3 +18,5 @@ export default {
     tempDirName:      '.stryker-tmp',
     warnings:         { slow: false },
 };
+
+export default strykerConfig;

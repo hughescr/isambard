@@ -7,7 +7,9 @@ import {
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { map as _map, toLower as _toLower, trim as _trim } from 'lodash';
+import _map from 'lodash/map';
+import _toLower from 'lodash/toLower';
+import _trim from 'lodash/trim';
 import type { AllowlistEntry } from '@/integrations/email/types';
 
 const ALLOWLIST_PK    = 'EMAIL#ALLOWLIST';

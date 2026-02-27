@@ -5,7 +5,7 @@
  * which slot corresponds to a given hour.
  */
 
-import _ from 'lodash';
+import find from 'lodash/find';
 import { type PerchSlot, type PerchSlotConfig } from './types';
 
 // ============================================================================
@@ -199,10 +199,10 @@ export function getSlotForHour(hour: number): PerchSlot {
  * ```
  */
 export function getSlotConfig(slot: PerchSlot): PerchSlotConfig | undefined {
-    // Stryker disable next-line BlockStatement,StringLiteral,ConditionalExpression: BlockStatement equivalent (_.find returns undefined for 'unscheduled'); StringLiteral equivalent (empty string never equals slot); ConditionalExpression equivalent (_.find returns undefined for 'unscheduled' anyway — same result)
+    // Stryker disable next-line BlockStatement,StringLiteral,ConditionalExpression: BlockStatement equivalent (find returns undefined for 'unscheduled'); StringLiteral equivalent (empty string never equals slot); ConditionalExpression equivalent (find returns undefined for 'unscheduled' anyway — same result)
     if(slot === 'unscheduled') {
         return undefined;
     }
 
-    return _.find(SLOT_CONFIGS, { slot });
+    return find(SLOT_CONFIGS, { slot });
 }

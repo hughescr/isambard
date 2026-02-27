@@ -50,6 +50,7 @@ async function main() {
     const guildId = createGuildId(args[1]);
     const type = args[2] as WellKnownChannel;
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: args[2] may be undefined despite WellKnownChannel cast
     if(!type || !WELL_KNOWN_CHANNELS.includes(type)) {
         throw new UsageError(`Invalid type: ${type}. Must be one of: ${WELL_KNOWN_CHANNELS.join(', ')}`);
     }
@@ -101,11 +102,13 @@ async function markChannel(
     logger.info({ type, channelId, guildId, msg: 'Successfully pre-registered channel as well-known' });
 }
 
-main().catch((error: unknown) => {
+try {
+    await main();
+} catch (error: unknown) {
     if(error instanceof UsageError) {
         logger.error({ msg: error.message });
     } else {
         logger.error({ error, msg: 'Unexpected error' });
     }
     throw error;
-});
+}

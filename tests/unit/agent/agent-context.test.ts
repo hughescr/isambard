@@ -1,7 +1,11 @@
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import _ from 'lodash';
+import constant from 'lodash/constant';
+import filter from 'lodash/filter';
+import isObject from 'lodash/isObject';
+import map from 'lodash/map';
+import repeat from 'lodash/repeat';
 import { createClaudeAgent } from '../../../src/agent/agent';
 import type { ContextBuilder } from '../../../src/agent/context-builder';
 import type { AgentStreamEvent } from '../../../src/agent/types';
@@ -33,13 +37,13 @@ describe('createClaudeAgent context integration', () => {
 
         // Create mock context builder
         mockContextBuilder = {
-            loadCoreIdentity:       mock(_.constant(Promise.resolve(''))),
-            loadHotState:           mock(_.constant(Promise.resolve(''))),
-            loadUserMemories:       mock(_.constant(Promise.resolve(''))),
+            loadCoreIdentity:       mock(constant(Promise.resolve(''))),
+            loadHotState:           mock(constant(Promise.resolve(''))),
+            loadUserMemories:       mock(constant(Promise.resolve(''))),
             recordAccess:           mock(async () => {}),
-            loadRecentEvents:       mock(_.constant(Promise.resolve({ items: [], isFallback: false }))),
-            loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
-            buildPerchContext:      mock(_.constant(Promise.resolve(''))),
+            loadRecentEvents:       mock(constant(Promise.resolve({ items: [], isFallback: false }))),
+            loadUserTimezone:       mock(constant(Promise.resolve(undefined))),
+            buildPerchContext:      mock(constant(Promise.resolve(''))),
             buildUserMessagePrefix: mock(async (userId: string, _userTimezone?: string): Promise<string> => {
                 const sections: string[] = [];
 
@@ -55,7 +59,8 @@ describe('createClaudeAgent context integration', () => {
 
                 const eventsResult = await mockContextBuilder.loadRecentEvents(50);
                 if(eventsResult.items.length > 0) {
-                    sections.push(`[Recent events]\n${_.map(eventsResult.items, (item: Record<string, unknown>) => `${String(item.path)}: ${String(item.content)}`).join('\n\n')}`);
+                    const eventLines = map(eventsResult.items, (item: Record<string, unknown>) => `${String(item.path)}: ${String(item.content)}`).join('\n\n');
+                    sections.push(`[Recent events]\n${eventLines}`);
                 }
 
                 if(sections.length === 0) {
@@ -714,7 +719,7 @@ describe('createClaudeAgent context integration', () => {
 
     describe('error handling and logging', () => {
         test('should return full long responses without truncation (handlers do chunking)', async () => {
-            const longText = _.repeat('x', 2000);
+            const longText = repeat('x', 2000);
             querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
@@ -903,9 +908,9 @@ describe('createClaudeAgent context integration', () => {
             await agent.handleInput([mockMessageContext]);
 
             // Should only have stream event log, not tool call log
-            const toolCallCalls = _.filter(
+            const toolCallCalls = filter(
                 mockLogger.debug.mock.calls,
-                call => call[0] && _.isObject(call[0]) && 'toolName' in call[0]
+                call => call[0] && isObject(call[0]) && 'toolName' in call[0]
             );
             expect(toolCallCalls.length).toBe(0);
         });

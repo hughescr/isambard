@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import split from 'lodash/split';
+import toLower from 'lodash/toLower';
+import trim from 'lodash/trim';
 import { type ClassificationResult, type MessageToClassify, classificationResultSchema  } from './types';
 import type { PendingQuestion } from '@/agent/question-registry';
 import { generateText } from '@/agent/text-generator';
@@ -70,10 +72,10 @@ Classification:`;
 }
 
 function parseClassificationResponse(response: string): ClassificationResult {
-    const normalized = _.toLower(_.trim(response));
+    const normalized = toLower(trim(response));
 
     // Extract first word if response contains explanation
-    const firstWord = _.split(normalized, /[\s-]/)[0];
+    const firstWord = split(normalized, /[\s-]/)[0];
 
     // Try to parse as valid classification result
     const parseResult = classificationResultSchema.safeParse(firstWord);

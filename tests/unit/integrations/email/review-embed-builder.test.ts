@@ -1,6 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
-import _ from 'lodash';
+import find from 'lodash/find';
+import map from 'lodash/map';
+import repeat from 'lodash/repeat';
 import { buildReviewEmbed, buildUnsafeAlert, buildOutboundApprovalEmbed, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
 import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
 
@@ -60,7 +62,7 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
         const data   = result.embed.toJSON();
 
-        const fromField = _.find(data.fields, { name: 'From' });
+        const fromField = find(data.fields, { name: 'From' });
         expect(fromField?.value).toBe('Alice Sender <alice@example.com>');
         expect(fromField?.inline).toBe(true);
     });
@@ -70,7 +72,7 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
         const data   = result.embed.toJSON();
 
-        const subjectField = _.find(data.fields, { name: 'Subject' });
+        const subjectField = find(data.fields, { name: 'Subject' });
         expect(subjectField?.value).toBe('Hello there');
         expect(subjectField?.inline).toBe(true);
     });
@@ -81,7 +83,7 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
         const data   = result.embed.toJSON();
 
-        const dateField = _.find(data.fields, { name: 'Date' });
+        const dateField = find(data.fields, { name: 'Date' });
         expect(dateField?.value).toBe('2025-01-15T10:00:00.000Z');
         expect(dateField?.inline).toBe(true);
     });
@@ -91,7 +93,7 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
         const data   = result.embed.toJSON();
 
-        const subjectField = _.find(data.fields, { name: 'Subject' });
+        const subjectField = find(data.fields, { name: 'Subject' });
         expect(subjectField?.value).toBe('(no subject)');
     });
 
@@ -100,12 +102,12 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
         const data   = result.embed.toJSON();
 
-        const fromField = _.find(data.fields, { name: 'From' });
+        const fromField = find(data.fields, { name: 'From' });
         expect(fromField?.value).toBe('alice@example.com');
     });
 
     test('truncates long body text to 500 characters in description', () => {
-        const longBody = _.repeat('A', 600);
+        const longBody = repeat('A', 600);
         const email    = makeEmail({ bodyText: longBody });
         const result   = buildReviewEmbed(email, 'Review');
         const data     = result.embed.toJSON();
@@ -131,7 +133,7 @@ describe('buildReviewEmbed', () => {
         const buttons = result.actionRow.components;
         expect(buttons).toHaveLength(4);
 
-        const ids = _.map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).custom_id);
+        const ids = map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).custom_id);
         expect(ids[0]).toBe('email-trash:42:Review');
         expect(ids[1]).toBe('email-junk:42:Review');
         expect(ids[2]).toBe('email-allow:42:Review');
@@ -145,7 +147,7 @@ describe('buildReviewEmbed', () => {
         const buttons = result.actionRow.components;
         expect(buttons).toHaveLength(4);
 
-        const ids = _.map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).custom_id);
+        const ids = map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).custom_id);
         expect(ids[0]).toBe('email-trash:42:Quarantine');
         expect(ids[1]).toBe('email-junk:42:Quarantine');
         expect(ids[2]).toBe('email-allow:42:Quarantine');
@@ -157,7 +159,7 @@ describe('buildReviewEmbed', () => {
         const result = buildReviewEmbed(email, 'Review');
 
         const buttons = result.actionRow.components;
-        const labels  = _.map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).label);
+        const labels  = map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).label);
         expect(labels[0]).toBe('Trash');
         expect(labels[1]).toBe('Junk');
         expect(labels[2]).toBe('Allow');
@@ -194,7 +196,7 @@ describe('buildUnsafeAlert', () => {
         const result  = buildUnsafeAlert(email, verdict, 'Quarantine');
         const data    = result.embed.toJSON();
 
-        const fieldNames = _.map(data.fields, 'name');
+        const fieldNames = map(data.fields, 'name');
         expect(fieldNames).toContain('From');
         expect(fieldNames).toContain('Subject');
         expect(fieldNames).toContain('Date');
@@ -218,7 +220,7 @@ describe('buildUnsafeAlert', () => {
         const buttons = result.actionRow.components;
         expect(buttons).toHaveLength(4);
 
-        const ids = _.map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).custom_id);
+        const ids = map(buttons, b => (b.toJSON() as APIButtonComponentWithCustomId).custom_id);
         expect(ids[0]).toBe('email-trash:99:Quarantine');
         expect(ids[1]).toBe('email-junk:99:Quarantine');
         expect(ids[2]).toBe('email-allow:99:Quarantine');
@@ -231,7 +233,7 @@ describe('buildUnsafeAlert', () => {
         const result  = buildUnsafeAlert(email, verdict, 'Quarantine');
         const data    = result.embed.toJSON();
 
-        const fromField = _.find(data.fields, { name: 'From' });
+        const fromField = find(data.fields, { name: 'From' });
         expect(fromField?.value).toBe('Bad Actor <bad@evil.com>');
     });
 
@@ -241,7 +243,7 @@ describe('buildUnsafeAlert', () => {
         const result  = buildUnsafeAlert(email, verdict, 'Quarantine');
         const data    = result.embed.toJSON();
 
-        const fromField = _.find(data.fields, { name: 'From' });
+        const fromField = find(data.fields, { name: 'From' });
         expect(fromField?.value).toBe('badguy@evil.com');
     });
 
@@ -251,12 +253,12 @@ describe('buildUnsafeAlert', () => {
         const result  = buildUnsafeAlert(email, verdict, 'Quarantine');
         const data    = result.embed.toJSON();
 
-        const subjectField = _.find(data.fields, { name: 'Subject' });
+        const subjectField = find(data.fields, { name: 'Subject' });
         expect(subjectField?.value).toBe('(no subject)');
     });
 
     test('truncates long body text to 500 characters in description', () => {
-        const longBody = _.repeat('B', 600);
+        const longBody = repeat('B', 600);
         const email    = makeEmail({ bodyText: longBody });
         const verdict  = makeVerdict({ reason: 'Phish' });
         const result   = buildUnsafeAlert(email, verdict, 'Quarantine');
@@ -289,52 +291,52 @@ describe('buildOutboundApprovalEmbed', () => {
 
     test('embed includes To field', () => {
         const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
-        const field  = _.find(result.embed.toJSON().fields, { name: 'To' });
+        const field  = find(result.embed.toJSON().fields, { name: 'To' });
         expect(field?.value).toContain('craig@example.com');
     });
 
     test('embed includes Subject field', () => {
         const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Test Subject', draftUid: 99 });
-        const field  = _.find(result.embed.toJSON().fields, { name: 'Subject' });
+        const field  = find(result.embed.toJSON().fields, { name: 'Subject' });
         expect(field?.value).toBe('Test Subject');
     });
 
     test('actionRow has Approve button with correct customId', () => {
         const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
         const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const approve = _.find(buttons, { custom_id: 'email-send-approve:42' });
+        const approve = find(buttons, { custom_id: 'email-send-approve:42' });
         expect(approve).toBeDefined();
     });
 
     test('actionRow has Approve+Allowlist button with correct customId', () => {
         const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
         const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const btn     = _.find(buttons, { custom_id: 'email-send-approveallowlist:42' });
+        const btn     = find(buttons, { custom_id: 'email-send-approveallowlist:42' });
         expect(btn).toBeDefined();
     });
 
     test('actionRow has Reject button with correct customId', () => {
         const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
         const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const reject  = _.find(buttons, { custom_id: 'email-send-reject:42' });
+        const reject  = find(buttons, { custom_id: 'email-send-reject:42' });
         expect(reject).toBeDefined();
     });
 
     test('includes cc in embed when provided', () => {
         const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: ['cc@b.com'] });
-        const field  = _.find(result.embed.toJSON().fields, { name: 'Cc' });
+        const field  = find(result.embed.toJSON().fields, { name: 'Cc' });
         expect(field?.value).toContain('cc@b.com');
     });
 
     test('joins multiple cc addresses with comma separator', () => {
         const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: ['cc1@b.com', 'cc2@b.com'] });
-        const field  = _.find(result.embed.toJSON().fields, { name: 'Cc' });
+        const field  = find(result.embed.toJSON().fields, { name: 'Cc' });
         expect(field?.value).toBe('cc1@b.com, cc2@b.com');
     });
 
     test('omits cc field when cc is empty', () => {
         const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: [] });
-        const field  = _.find(result.embed.toJSON().fields, { name: 'Cc' });
+        const field  = find(result.embed.toJSON().fields, { name: 'Cc' });
         expect(field).toBeUndefined();
     });
 });
@@ -358,21 +360,21 @@ describe('buildRestrictedAccessEmbed', () => {
     test('should include mailbox name as field', () => {
         const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
         const data = embed.toJSON();
-        const mailboxField = _.find(data.fields, { name: 'Mailbox' });
+        const mailboxField = find(data.fields, { name: 'Mailbox' });
         expect(mailboxField?.value).toBe('Quarantine');
     });
 
     test('should include UID as field', () => {
         const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
         const data = embed.toJSON();
-        const uidField = _.find(data.fields, { name: 'UID' });
+        const uidField = find(data.fields, { name: 'UID' });
         expect(uidField?.value).toBe('42');
     });
 
     test('should include reference as field', () => {
         const { embed } = buildRestrictedAccessEmbed('Quarantine', 42, 'Quarantine:42');
         const data = embed.toJSON();
-        const refField = _.find(data.fields, { name: 'Reference' });
+        const refField = find(data.fields, { name: 'Reference' });
         expect(refField?.value).toBe('Quarantine:42');
     });
 

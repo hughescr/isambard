@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
-import { find as _find, map as _map } from 'lodash';
+import _find from 'lodash/find';
+import _map from 'lodash/map';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
 
@@ -30,7 +32,10 @@ describe('MemoryToolBackendTagIndex', () => {
     async function drainTimers(): Promise<void> {
         for(let i = 0; i < 10; i++) {
             jest.runAllTimers();
-            await new Promise(resolve => process.nextTick(resolve));
+            // eslint-disable-next-line no-await-in-loop -- sequential: must run timers then flush microtasks each tick
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
         }
     }
 
@@ -73,8 +78,12 @@ describe('MemoryToolBackendTagIndex', () => {
             const promise = backend.incrementTagCounts(tags);
 
             // Let first call complete and fail, then timer is scheduled
-            await new Promise(resolve => process.nextTick(resolve));
-            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
             expect(callCount).toBe(1);
 
             // Verify a timer was created (kills BlockStatement mutant that removes delay)
@@ -83,8 +92,12 @@ describe('MemoryToolBackendTagIndex', () => {
             // First retry delay should be 100ms (BASE_DELAY_MS * 2^0)
             // Advance exactly 100ms to fire first retry
             jest.advanceTimersByTime(100);
-            await new Promise(resolve => process.nextTick(resolve));
-            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
             expect(callCount).toBe(2);
 
             // Verify another timer was created for second retry
@@ -92,8 +105,12 @@ describe('MemoryToolBackendTagIndex', () => {
 
             // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
             jest.advanceTimersByTime(200);
-            await new Promise(resolve => process.nextTick(resolve));
-            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
             await promise;
             expect(callCount).toBe(3);
         });
@@ -260,8 +277,12 @@ describe('MemoryToolBackendTagIndex', () => {
             const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
             // Let first batch call complete, then timer is scheduled
-            await new Promise(resolve => process.nextTick(resolve));
-            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
             expect(batchCallCount).toBe(1);
 
             // Verify a timer was created (kills BlockStatement mutant that removes delay)
@@ -270,8 +291,12 @@ describe('MemoryToolBackendTagIndex', () => {
             // First retry delay should be 100ms (BASE_DELAY_MS * 2^0)
             // Advance exactly 100ms to fire first retry
             jest.advanceTimersByTime(100);
-            await new Promise(resolve => process.nextTick(resolve));
-            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
             expect(batchCallCount).toBe(2);
 
             // Verify another timer was created for second retry
@@ -279,8 +304,12 @@ describe('MemoryToolBackendTagIndex', () => {
 
             // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
             jest.advanceTimersByTime(200);
-            await new Promise(resolve => process.nextTick(resolve));
-            await new Promise(resolve => process.nextTick(resolve));
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
+            await new Promise((resolve) => {
+                process.nextTick(resolve);
+            });
             await promise;
             expect(batchCallCount).toBe(3);
 
@@ -1025,7 +1054,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const result = await backend.queryByTag('important');
 
             expect(result.nextCursor).toBeDefined();
-            const decodedCursor = JSON.parse(Buffer.from(result.nextCursor!, 'base64').toString('utf-8'));
+            const decodedCursor = JSON.parse(Buffer.from(result.nextCursor!, 'base64').toString('utf8'));
             expect(decodedCursor).toEqual(lastEvaluatedKey);
         });
     });

@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
+import repeat from 'lodash/repeat';
+import trim from 'lodash/trim';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -14,13 +15,13 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should trim paragraphs when splitting', () => {
-                // Tests: map(p => _.trim(p))
+                // Tests: map(p => trim(p))
                 // Force paragraph splitting by making the combined text too long
-                const message = `  ${_.repeat('x', 60)}  \n\n  ${_.repeat('y', 60)}  `;
+                const message = `  ${repeat('x', 60)}  \n\n  ${repeat('y', 60)}  `;
                 const result = splitMessage(message, 80);
                 // Each paragraph should be trimmed - no leading/trailing spaces
                 for(const chunk of result) {
-                    expect(chunk).toBe(_.trim(chunk));
+                    expect(chunk).toBe(trim(chunk));
                 }
                 // Should have at least 2 chunks (one for each paragraph)
                 expect(result.length).toBeGreaterThanOrEqual(2);
@@ -29,8 +30,8 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should filter out zero-length paragraphs', () => {
                 // Tests: filter(p => p.length > 0)
                 // Force paragraph splitting by making content too long
-                const para1 = _.repeat('x', 60);
-                const para2 = _.repeat('y', 60);
+                const para1 = repeat('x', 60);
+                const para2 = repeat('y', 60);
                 const message = `${para1}\n\n\n\n\n\n${para2}`;
                 const result = splitMessage(message, 80);
                 // Should have exactly 2 chunks, not more (empty paragraphs filtered)
@@ -56,14 +57,14 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should handle paragraph exactly at maxLength boundary', () => {
                 // Tests: paragraph.length > maxLength vs >=
-                const para = _.repeat('x', 50);
+                const para = repeat('x', 50);
                 const result = splitMessage(para, 50);
                 expect(result).toEqual([para]);
             });
 
             test('should split paragraph one char over maxLength', () => {
                 // Tests > boundary
-                const para = _.repeat('x', 51);
+                const para = repeat('x', 51);
                 const result = splitMessage(para, 50);
                 expect(result.length).toBe(2);
             });
@@ -71,7 +72,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should flush non-empty currentChunk before splitting long paragraph', () => {
                 // Tests: if(currentChunk.length > 0) before paragraph split
                 const shortPara = 'short';
-                const longPara = _.repeat('x', 100);
+                const longPara = repeat('x', 100);
                 const message = `${shortPara}\n\n${longPara}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('short');
@@ -79,7 +80,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should not flush empty currentChunk before long paragraph', () => {
                 // Tests currentChunk.length > 0 check
-                const longPara = _.repeat('x', 100);
+                const longPara = repeat('x', 100);
                 const result = splitMessage(longPara, 50);
                 expect(result).not.toContain('');
                 expect(result.length).toBe(2);
@@ -87,7 +88,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should reset currentChunk after flushing for long paragraph', () => {
                 // Tests: currentChunk = ''
-                const message = `AA\n\n${_.repeat('x', 100)}\n\nBB`;
+                const message = `AA\n\n${repeat('x', 100)}\n\nBB`;
                 const result = splitMessage(message, 50);
                 expect(result).toContain('AA');
                 expect(result).toContain('BB');
@@ -103,8 +104,8 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should check overflow including 2-char separator', () => {
                 // Tests: separator.length (which is 2 for '\n\n')
                 // Tests arithmetic: currentChunk.length + separator.length + paragraph.length
-                const para1 = _.repeat('x', 47); // 47 chars
-                const para2 = _.repeat('y', 3);  // 3 chars
+                const para1 = repeat('x', 47); // 47 chars
+                const para2 = repeat('y', 3);  // 3 chars
                 // 47 + 2 (separator) + 3 = 52 > 50, should split
                 const message = `${para1}\n\n${para2}`;
                 const result = splitMessage(message, 50);

@@ -4,7 +4,8 @@
  * Defines the agent's identity, capabilities, and behavioral guidelines.
  */
 
-import { map, replace } from 'lodash';
+import map from 'lodash/map';
+import replace from 'lodash/replace';
 import type { ContextBuilder } from '../context-builder.js';
 
 /**

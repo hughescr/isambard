@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import find from 'lodash/find';
+import startsWith from 'lodash/startsWith';
 import { createChannelId, type ChannelId } from '../../discord/types';
 import type { ChannelRegistryManager } from './manager';
 
@@ -30,7 +31,7 @@ import type { ChannelRegistryManager } from './manager';
  */
 export function resolveChannelId(input: string, channelRegistry: ChannelRegistryManager): ChannelId {
     // If doesn't start with #, assume it's a numeric ID
-    if(!_.startsWith(input, '#')) {
+    if(!startsWith(input, '#')) {
         return createChannelId(input);
     }
 
@@ -38,7 +39,7 @@ export function resolveChannelId(input: string, channelRegistry: ChannelRegistry
     const channelName = input.slice(1);
     const allChannels = channelRegistry.getAllChannels();
 
-    const matchingChannel = _.find(allChannels, { channelName });
+    const matchingChannel = find(allChannels, { channelName });
 
     if(!matchingChannel) {
         throw new Error(`Channel not found: ${channelName}`);

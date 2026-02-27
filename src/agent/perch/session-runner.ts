@@ -10,11 +10,14 @@
  */
 
 import type { Logger } from '@hughescr/logger';
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import { type PerchSlot, type PerchConfig } from './types';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { StreamProgress } from '@/agent/stream-tracker';
+// eslint-disable-next-line boundaries/element-types -- Perch session runner imports Discord state types; decouple tracked in roadmap
 import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
 
 /**
@@ -217,12 +220,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             }
             // Clear session state
             currentSessionId = undefined;
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block owns these vars exclusively
             partialWork = null;
             currentSlot = null;
             // Clear session timeout
             if(sessionTimeout) {
                 clearTimeout(sessionTimeout);
                 sessionTimeout = null;
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block owns sessionStartTime exclusively
                 sessionStartTime = null;
             }
         }
@@ -230,7 +235,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
     }
 
     // Helper for running sessions with error handling
-    // eslint-disable-next-line complexity -- timeout handling adds necessary branching
+    // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- timeout handling adds necessary branching; each error case (abort-suspension, timeout, external-abort, other) requires distinct handling
     async function runSessionAndFinalize(options: {
         prompt: string
         slot:   PerchSlot
@@ -244,6 +249,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             });
 
             // Store session ID for resumption
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential assignment after await, no concurrent writers
             currentSessionId = result.sessionId;
 
             // Store partial work if interrupted
@@ -259,6 +265,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                     stateManager.goIdle();
                 }
                 // Clear session state
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential state cleanup, no concurrent writers
                 currentSessionId = undefined;
                 partialWork = null;
                 currentSlot = null;
@@ -268,24 +275,19 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                     sessionTimeout = null;
                     sessionStartTime = null;
                 }
-            } else if(isTimingOut && !result.completed) {
+            } else if(isTimingOut) {
                 // Timeout abort caught via return path (agent caught AbortError internally and returned completed:false)
                 // Run wrap-up using shared helper
                 await runTimeoutWrapUp(options.slot);
-            } else if(!result.completed && suspendedState !== null) {
-                // Suspended — preserve session state for resume
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Session ID storage in suspension path
-                currentSessionId = result.sessionId;
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message in suspension path
-                logger.debug({ slot: options.slot }, 'Session suspended - state preserved for resume');
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: Safety-net path — hard-to-reach unknown non-completion
-            } else if(!result.completed) {
+            } else if(suspendedState === null) {
+                // Safety-net path — hard-to-reach unknown non-completion
                 // Safety net — unknown non-completion, go idle
                 logger.warn({ slot: options.slot }, 'Session returned incomplete for unknown reason - going idle');
                 // Stryker disable next-line ConditionalExpression: Defensive guard — always goes idle on unknown non-completion
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: safety-net state cleanup, no concurrent writers
                 currentSessionId = undefined;
                 partialWork = null;
                 currentSlot = null;
@@ -295,11 +297,18 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                     sessionTimeout = null;
                     sessionStartTime = null;
                 }
+            } else {
+                // Suspended — preserve session state for resume
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Session ID storage in suspension path
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential state update after await, no concurrent writers
+                currentSessionId = result.sessionId;
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message in suspension path
+                logger.debug({ slot: options.slot }, 'Session suspended - state preserved for resume');
             }
         } catch (error) {
             // Check if this is a suspension abort (mode is idle because suspend() called goIdle())
             // Stryker disable all: Suspension abort path — tested via suspension behavior tests
-            if(_.isError(error) && error.name === 'AbortError' && suspendedState !== null) {
+            if(isError(error) && error.name === 'AbortError' && suspendedState !== null) {
                 logger.debug({ slot: options.slot }, 'Perch session aborted by suspension');
                 return;
             }
@@ -307,14 +316,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
             // Check if this is a timeout abort (not a message interrupt)
             // Stryker disable next-line all: Timeout handling tested via behavior in timeout tests
-            if(_.isError(error) && error.name === 'AbortError' && isTimingOut) {
+            if(isError(error) && error.name === 'AbortError' && isTimingOut) {
                 // Run wrap-up using shared helper
                 await runTimeoutWrapUp(currentSlot ?? 'unscheduled');
                 return;
             }
 
             // AbortError without interrupt flag or timeout - external abort
-            if(_.isError(error) && error.name === 'AbortError') {
+            if(isError(error) && error.name === 'AbortError') {
                 logger.debug({ slot: options.slot }, 'Perch session aborted');
                 // Clear timeout for all AbortError cases to prevent orphaned timers
                 // Stryker disable next-line BlockStatement: Defensive cleanup tested via timer count assertions
@@ -332,6 +341,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 stateManager.goIdle();
             }
             // Clear session state
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: error path state cleanup, no concurrent writers
             currentSessionId = undefined;
             partialWork = null;
             currentSlot = null;
@@ -342,6 +352,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 sessionStartTime = null;
             }
         } finally {
+            // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block owns currentAbortController exclusively
             currentAbortController = null;
         }
     }
@@ -414,6 +425,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 partialWork = null;
                 currentSlot = null;
                 // Stryker disable next-line ConditionalExpression: Defensive cleanup - tested via timer count assertions
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: sessionTimeout may be set or null depending on error timing
                 if(sessionTimeout) {
                     clearTimeout(sessionTimeout);
                     sessionTimeout = null;
@@ -504,11 +516,11 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 const eventsResult = await contextBuilder.loadRecentEvents(5);
                 // Filter to events updated after suspension
                 // Stryker disable all: Event filtering and formatting — tested via post-suspension event inclusion tests
-                const newEvents = _.filter(eventsResult.items, item =>
+                const newEvents = filter(eventsResult.items, item =>
                     new Date(item.updatedAt) > savedState.suspendedAt
                 );
                 if(newEvents.length > 0) {
-                    newEventsSummary = _.map(newEvents, item =>
+                    newEventsSummary = map(newEvents, item =>
                         `- ${item.path}: ${item.contentPreview ?? '(no preview)'}`
                     ).join('\n');
                 }

@@ -1,11 +1,11 @@
 import { logger } from '@hughescr/logger';
 import type { Message, TextChannel, Client } from 'discord.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
 import { type ResponseRouter, type RoutingResult, WellKnownChannelNotFoundError  } from './channel-registry';
 import { splitMessage } from './messages';
 import type { DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
-import type { BotStateManager } from './state';
+import type { BotStateManager, SessionType } from './state';
 import { createChannelId } from './types';
 
 /**
@@ -59,6 +59,143 @@ export interface SendToWellKnownConfig {
 }
 
 /**
+ * Handles a WellKnownChannelNotFoundError during routing.
+ * Returns a fallback routing result or a skip result depending on useFallbackOnError.
+ */
+function handleWellKnownChannelError(
+    routeError: WellKnownChannelNotFoundError,
+    sessionType: SessionType,
+    response: string,
+    message: Message,
+    useFallbackOnError: boolean
+): RoutingResult | SendResponseResult {
+    if(useFallbackOnError) {
+        // handlers.ts: fallback to original channel
+        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+        logger.warn({
+            channelType: routeError.context.channelType,
+            msg:         'Well-known channel not found, falling back to original channel',
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+        return {
+            shouldSend:      true,
+            content:         response,
+            targetChannelId: createChannelId(message.channel.id),
+            isFallback:      true,
+            fallbackReason:  routeError.message,
+        } satisfies RoutingResult;
+    }
+    // bot.ts: skip response
+    // Stryker disable all: Logging for observability
+    logger.error({
+        error:       routeError,
+        sessionType,
+        channelType: routeError.context.channelType,
+        msg:         `Cannot route response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
+    });
+    // Stryker restore all
+    return {
+        sent:       false,
+        skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
+    } satisfies SendResponseResult;
+}
+
+/**
+ * Sends message chunks by replying to the origin message (thread-preserving).
+ */
+async function sendChunksByReply(
+    message: Message,
+    chunks: string[],
+    rateLimiter: DiscordRateLimiter
+): Promise<void> {
+    // First chunk uses reply() to thread the response (with retry and rate limiting)
+    const firstReply = await withDiscordRetry(
+        () => rateLimiter.replyToMessage(message, chunks[0]),
+        // Stryker disable next-line StringLiteral: Operation name for logging only
+        'replyToMessage'
+    );
+    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+    logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
+
+    // Subsequent chunks reply to our first message to maintain threading
+    // Stryker disable next-line EqualityOperator: Loop starts at 1 to skip already-sent first chunk
+    for(let i = 1; i < chunks.length; i++) {
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
+        await withDiscordRetry(
+            () => rateLimiter.replyToMessage(firstReply, chunks[i]),
+            // Stryker disable next-line StringLiteral: Operation name for logging
+            'replyToMessage'
+        );
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+        logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
+    }
+}
+
+/**
+ * Sends message chunks to a different target channel (not the origin).
+ */
+async function sendChunksToChannel(
+    message: Message,
+    chunks: string[],
+    targetChannelId: string,
+    client: Client,
+    rateLimiter: DiscordRateLimiter
+): Promise<void> {
+    const targetChannel = await client.channels.fetch(targetChannelId);
+    if(!targetChannel?.isTextBased()) {
+        throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
+    }
+
+    for(let i = 0; i < chunks.length; i++) {
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
+        await withDiscordRetry(
+            () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i]),
+            // Stryker disable next-line StringLiteral: Operation name for logging
+            'sendToChannel'
+        );
+        // Stryker disable all: Logging for observability
+        logger.info({
+            messageId:   message.id,
+            chunkIndex:  i,
+            totalChunks: chunks.length,
+            targetChannelId,
+            msg:         'Message chunk sent successfully',
+        });
+        // Stryker restore all
+    }
+}
+
+/**
+ * Routes a response, handling WellKnownChannelNotFoundError.
+ * Returns { routing } on success, or { skipResult } if response should be skipped.
+ */
+async function resolveRouting(
+    responseRouter: ResponseRouter,
+    sessionType: SessionType,
+    response: string,
+    message: Message,
+    useFallbackOnError: boolean
+): Promise<{ routing: RoutingResult } | { skipResult: SendResponseResult }> {
+    try {
+        const routing = await responseRouter.routeResponse(
+            sessionType,
+            response,
+            createChannelId(message.channel.id)
+        );
+        return { routing };
+    } catch (routeError: unknown) {
+        if(routeError instanceof WellKnownChannelNotFoundError) {
+            const result = handleWellKnownChannelError(routeError, sessionType, response, message, useFallbackOnError);
+            if('shouldSend' in result) {
+                return { routing: result };
+            }
+            return { skipResult: result };
+        }
+        throw routeError;
+    }
+}
+
+/**
  * Shared helper function for routing and sending responses.
  * Handles:
  * - Determining session type from bot state
@@ -77,49 +214,11 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
     const sessionType = botStateManager.getSessionType(message.channel.isDMBased());
 
     // Route response based on session type
-    let routing: RoutingResult;
-    try {
-        routing = await responseRouter.routeResponse(
-            sessionType,
-            response,
-            createChannelId(message.channel.id)
-        );
-    } catch (routeError: unknown) {
-        if(routeError instanceof WellKnownChannelNotFoundError) {
-            if(useFallbackOnError) {
-                // handlers.ts: fallback to original channel
-                // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-                logger.warn({
-                    channelType: routeError.context.channelType,
-                    msg:         'Well-known channel not found, falling back to original channel',
-                });
-                // Stryker restore ObjectLiteral,StringLiteral
-                routing = {
-                    shouldSend:      true,
-                    content:         response,
-                    targetChannelId: createChannelId(message.channel.id),
-                    isFallback:      true,
-                    fallbackReason:  routeError.message,
-                };
-            } else {
-                // bot.ts: skip response
-                // Stryker disable all: Logging for observability
-                logger.error({
-                    error:       routeError,
-                    sessionType,
-                    channelType: routeError.context.channelType,
-                    msg:         `Cannot route response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
-                });
-                // Stryker restore all
-                return {
-                    sent:       false,
-                    skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
-                };
-            }
-        } else {
-            throw routeError;
-        }
+    const routeResult = await resolveRouting(responseRouter, sessionType, response, message, useFallbackOnError);
+    if('skipResult' in routeResult) {
+        return routeResult.skipResult;
     }
+    const routing = routeResult.routing;
 
     const shouldSend = routing.shouldSend;
     const content = routing.content;
@@ -167,58 +266,17 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
     try {
         // If target channel is the same as origin, use reply() for first chunk
         // Otherwise, send all chunks to target channel
-        if(targetChannelId === message.channel.id) {
-            // First chunk uses reply() to thread the response (with retry and rate limiting)
-            const firstReply = await withDiscordRetry(
-                () => rateLimiter.replyToMessage(message, chunks[0]),
-                // Stryker disable next-line StringLiteral: Operation name for logging only
-                'replyToMessage'
-            );
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
-            logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
-
-            // Subsequent chunks reply to our first message to maintain threading
-            // Stryker disable next-line EqualityOperator: Loop starts at 1 to skip already-sent first chunk
-            for(let i = 1; i < chunks.length; i++) {
-                await withDiscordRetry(
-                    () => rateLimiter.replyToMessage(firstReply, chunks[i]),
-                    // Stryker disable next-line StringLiteral: Operation name for logging
-                    'replyToMessage'
-                );
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
-                logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
-            }
-        } else {
-            // Send all chunks to different target channel
-            const targetChannel = await client.channels.fetch(targetChannelId);
-            if(!targetChannel?.isTextBased()) {
-                throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
-            }
-
-            for(let i = 0; i < chunks.length; i++) {
-                await withDiscordRetry(
-                    () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i]),
-                    // Stryker disable next-line StringLiteral: Operation name for logging
-                    'sendToChannel'
-                );
-                // Stryker disable all: Logging for observability
-                logger.info({
-                    messageId:   message.id,
-                    chunkIndex:  i,
-                    totalChunks: chunks.length,
-                    targetChannelId,
-                    msg:         'Message chunk sent successfully',
-                });
-                // Stryker restore all
-            }
-        }
+        await (targetChannelId === message.channel.id
+            ? sendChunksByReply(message, chunks, rateLimiter)
+            : sendChunksToChannel(message, chunks, targetChannelId, client, rateLimiter));
 
         return {
             sent: true,
             routing,
         };
     } catch (replyError) {
-        const err = _.isError(replyError) ? replyError : new Error(String(replyError));
+        const err = isError(replyError) ? replyError : new Error(String(replyError));
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.error({ error: err, messageId: message.id, msg: `Failed to send response: ${err.message}` });
         return {
             sent:  false,
@@ -239,11 +297,14 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
     const { response, sessionType, responseRouter, rateLimiter, client } = config;
 
     // Handle empty/null responses
+    // Stryker disable next-line ConditionalExpression: response.length === 0 is equivalent to !response for empty string (both falsy)
     if(!response || response.length === 0) {
+        // Stryker disable all: Logging for observability
         logger.info({
             sessionType,
             msg: 'No response to send (empty response from agent)',
         });
+        // Stryker restore all
         return {
             sent:       false,
             skipReason: 'Empty response from agent',
@@ -261,12 +322,14 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
         );
     } catch (routeError: unknown) {
         if(routeError instanceof WellKnownChannelNotFoundError) {
+            // Stryker disable all: Logging for observability
             logger.error({
                 error:       routeError,
                 sessionType,
                 channelType: routeError.context.channelType,
                 msg:         `Cannot route response: well-known channel #${routeError.context.channelType} not configured. Response skipped.`,
             });
+            // Stryker restore all
             return {
                 sent:       false,
                 skipReason: `Well-known channel #${routeError.context.channelType} not configured`,
@@ -281,11 +344,13 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
 
     if(!shouldSend) {
         // Agent chose not to respond (@@NO_RESPONSE@@ sentinel)
+        // Stryker disable all: Logging for observability
         logger.info({
             sessionType,
             fullResponse: response,
             msg:          'Agent chose not to respond (@@NO_RESPONSE@@ sentinel detected)',
         });
+        // Stryker restore all
         return {
             sent:       false,
             routing,
@@ -293,10 +358,12 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
         };
     }
 
+    // Stryker disable all: Logging for observability
     logger.info({
         responseLength: content.length,
         msg:            `Response generated (${content.length} chars)`,
     });
+    // Stryker restore all
 
     // Split long messages into Discord-safe chunks
     const chunks = splitMessage(content);
@@ -310,10 +377,13 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
 
         // Send all chunks to the well-known channel
         for(let i = 0; i < chunks.length; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
             await withDiscordRetry(
                 () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i]),
+                // Stryker disable next-line StringLiteral: Operation name for logging only
                 'sendToChannel'
             );
+            // Stryker disable ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator: Logging for observability
             logger.info({
                 sessionType,
                 channelType: sessionType === 'catching_up' ? 'catch-up' : 'perch-time',
@@ -322,6 +392,7 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
                 totalChunks: chunks.length,
                 msg:         i === 0 ? 'Response sent to well-known channel' : 'Continuation sent to well-known channel',
             });
+            // Stryker restore ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator
         }
 
         return {
@@ -329,7 +400,8 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
             routing,
         };
     } catch (sendError) {
-        const err = _.isError(sendError) ? sendError : new Error(String(sendError));
+        const err = isError(sendError) ? sendError : new Error(String(sendError));
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.error({ error: err, sessionType, msg: `Failed to send response: ${err.message}` });
         return {
             sent:  false,

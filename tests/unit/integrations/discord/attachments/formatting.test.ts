@@ -104,6 +104,7 @@ describe('addAttachmentInfoToContexts', () => {
 
     test('preserves all other context properties', () => {
         const original = createContext('Test');
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- test URL, not production HTTP usage
         original.attachments = [{ url: 'http://test', filename: 'test.jpg', contentType: 'image/jpeg', size: 100 }];
 
         const result = addAttachmentInfoToContexts([original], ['[File: x.pdf]']);

@@ -12,9 +12,12 @@
  */
 
 import { readdir, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import path from 'node:path';
 import type { Logger } from '@hughescr/logger';
-import _ from 'lodash';
+import endsWith from 'lodash/endsWith';
+import filter from 'lodash/filter';
+import isError from 'lodash/isError';
+import isString from 'lodash/isString';
 import { getTaskDirectoryPath as getTaskDirectoryPathImpl } from './task-directory-copier';
 import type { SessionId } from '@/storage';
 
@@ -202,7 +205,7 @@ function getRetentionReason(
     }
 
     // Must be blocking an active task
-    const activeBlocked = _.filter(task.blocks, (id) => {
+    const activeBlocked = filter(task.blocks, (id) => {
         const blockedTask = allTasks.get(id);
         return blockedTask && blockedTask.status !== 'completed';
     });
@@ -240,6 +243,7 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
         processTaskDirectory: async (
             previousSessionId: SessionId,
             newSessionId: SessionId
+        // eslint-disable-next-line sonarjs/cognitive-complexity -- sequential task cleanup pipeline: load, filter, evaluate retention, copy/delete; each step has necessary branching
         ): Promise<TaskCleanupResult> => {
             const sourcePath = getTaskDirectoryPathImpl(previousSessionId);
             const destPath = getTaskDirectoryPathImpl(newSessionId);
@@ -251,8 +255,8 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
             const files = await readdirFn(sourcePath);
 
             // Filter to only .json files (files can be string[] or Dirent[])
-            const jsonFiles = _.filter(files, (file): file is string =>
-                _.isString(file) && _.endsWith(file, '.json'));
+            const jsonFiles = filter(files, (file): file is string =>
+                isString(file) && endsWith(file, '.json'));
 
             // Load all tasks
             const allTasks = new Map<string, Task>();
@@ -260,15 +264,17 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
             let errors = 0;
 
             for(const file of jsonFiles) {
-                const filePath = join(sourcePath, file);
+                const filePath = path.join(sourcePath, file);
 
                 try {
-                    const content = await readFileFn(filePath, 'utf-8');
+                    // eslint-disable-next-line no-await-in-loop -- sequential: per-file read with conditional stat
+                    const content = await readFileFn(filePath, 'utf8');
                     const task = JSON.parse(content) as Task;
 
                     // If completed task lacks metadata.completedAt, mark it and add timestamp from file mtime
                     if(task.status === 'completed' && !task.metadata?.completedAt) {
                         tasksWithoutCompletedAt.add(task.id);
+                        // eslint-disable-next-line no-await-in-loop -- sequential: stat depends on prior read result
                         const fileStats = await statFn(filePath);
                         task.metadata ??= {};
                         task.metadata.completedAt = fileStats.mtime.toISOString();
@@ -276,7 +282,7 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
 
                     allTasks.set(task.id, task);
                 } catch (error) {
-                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    const errorMsg = isError(error) ? error.message : String(error);
                     // Stryker disable next-line ObjectLiteral: Logger warn object for observability
                     logger.warn({
                         taskFile: file,
@@ -309,8 +315,9 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                     });
                 } else {
                     // Retain task - write to destination
-                    const destFile = join(destPath, `${taskId}.json`);
+                    const destFile = path.join(destPath, `${taskId}.json`);
                     try {
+                        // eslint-disable-next-line no-await-in-loop -- sequential: per-task file write
                         await writeFileFn(destFile, JSON.stringify(task, null, 2));
                         copied++;
 
@@ -323,7 +330,7 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                             msg: 'Retaining task',
                         });
                     } catch (error) {
-                        const errorMsg = _.isError(error) ? error.message : String(error);
+                        const errorMsg = isError(error) ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral: Logger warn object for observability
                         logger.warn({
                             taskId,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import _ from 'lodash';
+import constant from 'lodash/constant';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
-import { ResponseRouter } from '../../../../../src/integrations/discord/channel-registry/response-router';
+import { ResponseRouter, type SessionType } from '../../../../../src/integrations/discord/channel-registry/response-router';
 import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
@@ -19,7 +19,7 @@ describe('ResponseRouter', () => {
     beforeEach(() => {
         // Create minimal mocks with just the methods we need
         mockManager = {
-            getWellKnownChannel: mock(_.constant(Promise.resolve(null))),
+            getWellKnownChannel: mock(constant(Promise.resolve(null))),
         } as unknown as ChannelRegistryManager;
 
         router = new ResponseRouter({
@@ -106,7 +106,7 @@ describe('ResponseRouter', () => {
                     updatedAt:    new Date().toISOString(),
                 };
 
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(catchupMeta)));
+                mockManager.getWellKnownChannel = mock(constant(Promise.resolve(catchupMeta)));
 
                 const result = await router.routeResponse(
                     'catching_up',
@@ -155,7 +155,7 @@ describe('ResponseRouter', () => {
             });
 
             it('should throw WellKnownChannelNotFoundError when both catch-up and fallback channels missing', () => {
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+                mockManager.getWellKnownChannel = mock(constant(Promise.resolve(null)));
 
                 expect(router.routeResponse(
                     'catching_up',
@@ -176,7 +176,7 @@ describe('ResponseRouter', () => {
                     updatedAt:    new Date().toISOString(),
                 };
 
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(catchupMeta)));
+                mockManager.getWellKnownChannel = mock(constant(Promise.resolve(catchupMeta)));
 
                 const result = await router.routeResponse(
                     'catching_up',
@@ -202,7 +202,7 @@ describe('ResponseRouter', () => {
                     updatedAt:    new Date().toISOString(),
                 };
 
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(perchMeta)));
+                mockManager.getWellKnownChannel = mock(constant(Promise.resolve(perchMeta)));
 
                 const result = await router.routeResponse(
                     'perching',
@@ -251,7 +251,7 @@ describe('ResponseRouter', () => {
             });
 
             it('should throw WellKnownChannelNotFoundError when both perch-time and fallback channels missing', () => {
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+                mockManager.getWellKnownChannel = mock(constant(Promise.resolve(null)));
 
                 expect(router.routeResponse(
                     'perching',
@@ -272,7 +272,7 @@ describe('ResponseRouter', () => {
                     updatedAt:    new Date().toISOString(),
                 };
 
-                mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(perchMeta)));
+                mockManager.getWellKnownChannel = mock(constant(Promise.resolve(perchMeta)));
 
                 const result = await router.routeResponse(
                     'perching',
@@ -289,7 +289,7 @@ describe('ResponseRouter', () => {
             it('should fallback to origin channel for unmapped session type', async () => {
                 // Cast to SessionType to simulate an unknown/unmapped type
                 // This tests the line 68-76 branch where wellKnownType is undefined
-                const unknownType = 'unknown_type' as unknown as import('../../../../../src/integrations/discord/channel-registry/response-router').SessionType;
+                const unknownType = 'unknown_type' as unknown as SessionType;
 
                 const result = await router.routeResponse(
                     unknownType,
@@ -307,7 +307,7 @@ describe('ResponseRouter', () => {
             });
 
             it('should throw when unmapped session type has no origin channel', () => {
-                const unknownType = 'unknown_type' as unknown as import('../../../../../src/integrations/discord/channel-registry/response-router').SessionType;
+                const unknownType = 'unknown_type' as unknown as SessionType;
 
                 expect(router.routeResponse(
                     unknownType,
@@ -365,7 +365,7 @@ describe('ResponseRouter', () => {
                 updatedAt:    new Date().toISOString(),
             };
 
-            mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(catchupMeta)));
+            mockManager.getWellKnownChannel = mock(constant(Promise.resolve(catchupMeta)));
 
             const target = await router.getTargetChannel('catching_up', ORIGIN_CHANNEL);
 
@@ -374,7 +374,7 @@ describe('ResponseRouter', () => {
         });
 
         it('should throw WellKnownChannelNotFoundError when catch-up channel missing', () => {
-            mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+            mockManager.getWellKnownChannel = mock(constant(Promise.resolve(null)));
 
             expect(router.getTargetChannel('catching_up', ORIGIN_CHANNEL)).rejects.toThrow(WellKnownChannelNotFoundError);
         });
@@ -391,7 +391,7 @@ describe('ResponseRouter', () => {
                 updatedAt:    new Date().toISOString(),
             };
 
-            mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(perchMeta)));
+            mockManager.getWellKnownChannel = mock(constant(Promise.resolve(perchMeta)));
 
             const target = await router.getTargetChannel('perching', ORIGIN_CHANNEL);
 
@@ -400,7 +400,7 @@ describe('ResponseRouter', () => {
         });
 
         it('should throw WellKnownChannelNotFoundError when perch-time channel missing', () => {
-            mockManager.getWellKnownChannel = mock(_.constant(Promise.resolve(null)));
+            mockManager.getWellKnownChannel = mock(constant(Promise.resolve(null)));
 
             expect(router.getTargetChannel('perching', ORIGIN_CHANNEL)).rejects.toThrow(WellKnownChannelNotFoundError);
         });
@@ -408,7 +408,7 @@ describe('ResponseRouter', () => {
         it('should return origin channel for unmapped session type', async () => {
             // Cast to SessionType to simulate an unknown/unmapped type
             // This tests the line 111-114 branch where wellKnownType is undefined
-            const unknownType = 'unknown_type' as unknown as import('../../../../../src/integrations/discord/channel-registry/response-router').SessionType;
+            const unknownType = 'unknown_type' as unknown as SessionType;
 
             const target = await router.getTargetChannel(unknownType, ORIGIN_CHANNEL);
 
@@ -418,7 +418,7 @@ describe('ResponseRouter', () => {
         });
 
         it('should throw when unmapped session type has no origin channel', () => {
-            const unknownType = 'unknown_type' as unknown as import('../../../../../src/integrations/discord/channel-registry/response-router').SessionType;
+            const unknownType = 'unknown_type' as unknown as SessionType;
 
             expect(router.getTargetChannel(unknownType, undefined)).rejects.toThrow('originChannelId is required for fallback routing with session type: unknown_type');
         });

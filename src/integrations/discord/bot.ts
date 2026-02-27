@@ -1,6 +1,9 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
+import sortBy from 'lodash/sortBy';
+import startsWith from 'lodash/startsWith';
 import {
     type CatchUpSessionRunner,
     type CatchUpCompletionSignal,
@@ -17,17 +20,17 @@ import {
     type PresenceManager
 } from './presence';
 import { DiscordRateLimiter } from './rate-limiter';
+import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
+import { setupCoordinatorIntegration } from './setup/coordinator-setup';
+import type { EmailSetupResult } from './setup/email-setup';
+import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
 import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader , type PerchScheduler, type PerchSessionRunner, type PerchConfig , type ClaudeAgent, type ContextBuilder  } from '@/agent';
-import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
-import { setupCoordinatorIntegration } from './setup/coordinator-setup';
-import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
-import type { EmailSetupResult } from './setup/email-setup';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 
 /**
@@ -120,7 +123,7 @@ export interface DiscordBotOptions {
     /**
      * Optional event delta tracker for capturing events during message processing interruptions
      */
-    eventDeltaTracker?: import('../../agent/event-delta-tracker').EventDeltaTracker
+    eventDeltaTracker?: EventDeltaTracker
 
     /**
      * Optional context builder for loading memory context into perch prompts.
@@ -248,6 +251,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
     // Register rate limit handler for logging (if rest client is available)
     // Stryker disable next-line ConditionalExpression,BlockStatement: client.rest always exists on Discord.js Client; rate limit logging is observational
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: client.rest typed as non-nullable but checking defensively
     if(client.rest) {
         // Stryker disable all: Rate limit logging is observational only
         // Stryker disable next-line StringLiteral: Event name constant
@@ -267,7 +271,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Register clientReady handler for messageCreate setup
     // This runs after the client is authenticated and ready
     // Use .once() to ensure this setup only runs once, even on reconnects
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity -- clientReady handler must be async; complexity is inherent — it orchestrates presence, coordinator, perch, catch-up, inbox, and email lifecycle in sequence
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- clientReady handler must be async; complexity is inherent — it orchestrates presence, coordinator, perch, catch-up, inbox, and email lifecycle in sequence
     client.once('clientReady', async (readyClient: Client): Promise<void> => {
         // Log that the bot is ready (preserving functionality from removed logging handler)
         createReadyHandler()(readyClient);
@@ -327,38 +331,30 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         });
 
         // Register interaction handler for button clicks and slash commands
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- interactionCreate handler is async
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
         client.on('interactionCreate', async (interaction) => {
             if(interaction.isButton()) {
                 // Route email-send-* buttons to outbound approval handler (before email-* catch-all)
-                if(emailSetup && _.startsWith(interaction.customId, 'email-send-')) {
+                if(emailSetup && startsWith(interaction.customId, 'email-send-')) {
                     await emailSetup.outboundApprovalHandler.handleButton(interaction);
                     return;
                 }
                 // Route email-* buttons to review handler
-                if(emailSetup && _.startsWith(interaction.customId, 'email-')) {
+                if(emailSetup && startsWith(interaction.customId, 'email-')) {
                     await emailSetup.reviewHandler.handleButton(interaction);
                     return;
                 }
                 await interactionHandler.handleButtonInteraction(interaction);
             } else if(interaction.isModalSubmit()) {
-                if(emailSetup && _.startsWith(interaction.customId, 'email-send-reject-reason:')) {
+                if(emailSetup && startsWith(interaction.customId, 'email-send-reject-reason:')) {
                     await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
                 }
-            } else if(interaction.isStringSelectMenu() && _.startsWith(interaction.customId, 'email-allowlist-select:')) {
-                if(emailSetup) {
-                    await emailSetup.outboundApprovalHandler.handleSelectMenu(interaction);
-                } else {
-                    // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                    await interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true });
-                }
+            } else if(interaction.isStringSelectMenu() && startsWith(interaction.customId, 'email-allowlist-select:')) {
+                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+                await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true }));
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
-                if(emailSetup) {
-                    await emailSetup.allowlistHandler.handle(interaction);
-                } else {
-                    // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                    await interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true });
-                }
+                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+                await (emailSetup ? emailSetup.allowlistHandler.handle(interaction) : interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true }));
             }
         });
 
@@ -384,8 +380,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     if(recentMessages.length === 0) {
                         return undefined;
                     }
-                    const sortedMessages = _.sortBy(recentMessages, 'timestamp');
-                    return _.map(sortedMessages, m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
+                    const sortedMessages = sortBy(recentMessages, 'timestamp');
+                    return map(sortedMessages, m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
                 },
                 contextBuilder,
                 getLastThinkingContent,
@@ -452,7 +448,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 logger.info({ msg: 'Admin email channel muted in channel registry' });
             } catch (err) {
                 logger.warn({
-                    error: _.isError(err) ? err.message : String(err),
+                    error: isError(err) ? err.message : String(err),
                     // Stryker disable next-line StringLiteral: log message is not behavior-affecting
                     msg:   'Failed to mute admin email channel — messages there may reach Izzy',
                 });
@@ -526,7 +522,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 logger.info({ msg: 'Email listener started' });
             } catch (err) {
                 logger.error({
-                    error: _.isError(err) ? err.message : String(err),
+                    error: isError(err) ? err.message : String(err),
                     msg:   'Failed to start email listener',
                 });
                 // Continue — email failure is non-fatal
@@ -541,7 +537,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await client.login(config.botToken);
         },
 
-        // eslint-disable-next-line complexity -- shutdown sequencing has inherent branching for each optional component
+        // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- shutdown sequencing has inherent branching for each optional component
         async stop(): Promise<void> {
             // Stop coordinator if it exists
             if(coordinator) {
@@ -594,7 +590,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await emailSetup.listener.stop();
                 } catch (err) {
                     logger.error({
-                        error: _.isError(err) ? err.message : String(err),
+                        error: isError(err) ? err.message : String(err),
                         // Stryker disable next-line StringLiteral: log message is not behavior-affecting
                         msg:   'Email listener stop failed during shutdown',
                     });
@@ -605,7 +601,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await emailSetup.wildDuckClient.shutdown();
                 } catch (err) {
                     logger.error({
-                        error: _.isError(err) ? err.message : String(err),
+                        error: isError(err) ? err.message : String(err),
                         // Stryker disable next-line StringLiteral: log message is not behavior-affecting
                         msg:   'WildDuck client shutdown failed during email teardown',
                     });

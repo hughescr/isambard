@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { keys as _keys } from 'lodash';
+import _keys from 'lodash/keys';
 import {
     discordSearchResultSchema,
     overflowSummarySchema,

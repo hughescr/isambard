@@ -13,6 +13,7 @@ export const EmailFolder = {
     Archive:    'Archive',
     Sent:       'Sent Mail',
 } as const;
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export type EmailFolder = typeof EmailFolder[keyof typeof EmailFolder];
 
 // Classifier verdict
@@ -23,6 +24,7 @@ export const ClassifierVerdictType = {
     Uncertain: 'uncertain',
     Unsafe:    'unsafe',
 } as const;
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export type ClassifierVerdictType = typeof ClassifierVerdictType[keyof typeof ClassifierVerdictType];
 
 export const classifierVerdictSchema = z.object({
@@ -39,6 +41,7 @@ export const EmailIdentity = {
     Formal:   'formal',
     Informal: 'informal',
 } as const;
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export type EmailIdentity = typeof EmailIdentity[keyof typeof EmailIdentity];
 
 // Fetched email attachment data

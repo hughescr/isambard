@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import endsWith from 'lodash/endsWith';
+import startsWith from 'lodash/startsWith';
 import { z } from 'zod';
 
 /**
@@ -11,13 +12,13 @@ import { z } from 'zod';
 export const memoryPathSchema = z
     .string()
     .min(1, 'Path cannot be empty')
-    .refine(path => _.startsWith(path, '/'), {
+    .refine(path => startsWith(path, '/'), {
         message: 'Path must start with /',
     })
     .refine(path => !path.includes('//'), {
         message: 'Path cannot contain double slashes (//)',
     })
-    .refine(path => path === '/' || !_.endsWith(path, '/'), {
+    .refine(path => path === '/' || !endsWith(path, '/'), {
         message: 'Path cannot end with / (except root)',
     })
     .brand<'MemoryPath'>();
@@ -56,9 +57,9 @@ export const memoryToolItemSchema = z.object({
     content:        z.string().min(1).max(300_000), // 300KB limit for DynamoDB
     contentType:    contentTypeSchema,
     metadata:       z.record(z.string(), z.unknown()).default({}),
-    createdAt:      z.string().datetime(),
+    createdAt:      z.iso.datetime(),
     // "Last touched" — updated on both content edits and deliberate memory access (recordAccess)
-    updatedAt:      z.string().datetime(),
+    updatedAt:      z.iso.datetime(),
     // Stryker disable next-line ConditionalExpression: Zod custom validator for Set<string> type checking
     tags:           z.custom<Set<string>>(val => val === undefined || val instanceof Set).optional(),
     contentPreview: z.string().max(100).optional(), // First 100 chars of content for tag index preview
@@ -164,7 +165,7 @@ export function extractLayerFromPath(path: MemoryPath): LayerName | null {
 export const layeredMemoryMetadataSchema = z.object({
     layer:        layerNameSchema,
     importance:   z.number().int().min(1).max(10).default(5),
-    lastAccessed: z.string().datetime().optional(),
+    lastAccessed: z.iso.datetime().optional(),
     accessCount:  z.number().int().min(0).default(0),
     relatedPaths: z.array(memoryPathSchema).default([]),
 });

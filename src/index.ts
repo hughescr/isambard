@@ -1,8 +1,8 @@
 import { stat, mkdir } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
-import _ from 'lodash';
+import isError from 'lodash/isError';
 import { Resource } from 'sst';
 import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
@@ -83,7 +83,7 @@ export async function createApp(): Promise<App> {
             });
         } catch (err) {
             logger.error({
-                error: _.isError(err) ? err.message : String(err),
+                error: isError(err) ? err.message : String(err),
                 msg:   'Email integration setup failed, continuing without email',
             });
         }
@@ -109,7 +109,7 @@ export async function createApp(): Promise<App> {
     });
 
     // Load plugins and create agent
-    const plugins = await loadPlugins(join(resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
+    const plugins = await loadPlugins(path.join(path.resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
     const agent = createClaudeAgent({
         contextBuilder:             contextLayer.contextBuilder,
         memoryMcpServer:            mcpServers.memoryMcpServer,
@@ -184,15 +184,15 @@ export async function createApp(): Promise<App> {
 
 // Application entry point - only run if this is the main module
 // Stryker disable all: Entry point code - not unit testable
-// eslint-disable-next-line n/no-unsupported-features/node-builtins -- import.meta.main is required for Bun
+
 if(import.meta.main) {
     // Change to scratch directory for containment
     // Use absolute path based on project root to prevent nesting on hot reload
     // import.meta.dir is src/, so go up one level to project root
     const scratchDirFromEnv = env.get('SCRATCH_DIR').asString();
     const scratchDir = scratchDirFromEnv
-        ? resolve(process.cwd(), scratchDirFromEnv)
-        : resolve(import.meta.dir, '..', 'scratch');
+        ? path.resolve(process.cwd(), scratchDirFromEnv)
+        : path.resolve(import.meta.dir, '..', 'scratch');
     try {
         await stat(scratchDir);
     } catch{
@@ -213,8 +213,8 @@ if(import.meta.main) {
     logger.info('Isambard starting...');
 
     // Copy agents and skills to scratch/.claude/ for SDK filesystem discovery
-    const aspSourceRoot = resolve(import.meta.dir, '..', 'agents-skills-plugins');
-    const targetClaudeDir = join(process.cwd(), '.claude');
+    const aspSourceRoot = path.resolve(import.meta.dir, '..', 'agents-skills-plugins');
+    const targetClaudeDir = path.join(process.cwd(), '.claude');
     await syncAgentsAndSkills(aspSourceRoot, targetClaudeDir);
 
     const app = await createApp();
@@ -226,14 +226,14 @@ if(import.meta.main) {
     const sigintHandler = safeAsyncHandler(async () => {
         logger.info('Received SIGINT, shutting down gracefully...');
         await app.stop();
-        // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
+        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
     }, logger, 'SIGINT handler');
 
     const sigtermHandler = safeAsyncHandler(async () => {
         logger.info('Received SIGTERM, shutting down gracefully...');
         await app.stop();
-        // eslint-disable-next-line n/no-process-exit -- Graceful shutdown requires exit
+        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- Graceful shutdown requires exit
         process.exit(0);
     }, logger, 'SIGTERM handler');
 
@@ -242,6 +242,7 @@ if(import.meta.main) {
     process.on('SIGTERM', sigtermHandler);
 
     // Hot reload cleanup for bun --hot
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: import.meta.hot is only available when running with bun --hot
     if(import.meta.hot) {
         import.meta.hot.dispose(async () => {
             logger.info('Hot reload detected, cleaning up...');

@@ -1,6 +1,14 @@
 import { type DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { map as _map, filter as _filter, every as _every, includes as _includes, chunk as _chunk, sortBy as _sortBy, keys as _keys, flatMap as _flatMap, values as _values, flatten as _flatten } from 'lodash';
+import _chunk from 'lodash/chunk';
+import _every from 'lodash/every';
+import _filter from 'lodash/filter';
+import _flatten from 'lodash/flatten';
+import _includes from 'lodash/includes';
+import _keys from 'lodash/keys';
+import _map from 'lodash/map';
+import _sortBy from 'lodash/sortBy';
+import _values from 'lodash/values';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
 import { type TagIndexItem, type MemoryPath  } from './types';
@@ -26,13 +34,17 @@ async function retryWithBackoff<T>(
 ): Promise<T | undefined> {
     for(let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
+            // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
         } catch (error) {
             // Stryker disable next-line ConditionalExpression,EqualityOperator: Retry boundary - tested via public API retry count
             if(attempt < MAX_RETRIES) {
                 // Stryker disable next-line ArithmeticOperator: Backoff formula tested via timer verification; * vs / indistinguishable at attempt 1 (2^0=1)
                 const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
-                await new Promise(resolve => setTimeout(resolve, delay));
+                // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
+                await new Promise((resolve) => {
+                    setTimeout(resolve, delay);
+                });
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Observational logging for debugging
                 logger.debug({ attempt, context, msg: `Tag index retry ${attempt}/${MAX_RETRIES}` });
                 continue;
@@ -67,6 +79,7 @@ export class MemoryToolBackendTagIndex {
         // Stryker disable next-line ConditionalExpression,EqualityOperator: While loop condition - tested via public API batch behavior
         while(_keys(unprocessedItems).length > 0 && attempt < MAX_RETRIES) {
             try {
+                // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite retry, each attempt depends on prior unprocessed items
                 const result = await this.docClient.send(new BatchWriteCommand({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- UnprocessedItems has complex type
                     RequestItems: unprocessedItems,
@@ -74,6 +87,7 @@ export class MemoryToolBackendTagIndex {
 
                 // Check if there are unprocessed items
                 // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,OptionalChaining: Unprocessed items check - all branches tested via batch write tests
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DynamoDB SDK result typed non-nullable but checking defensively
                 const hasUnprocessed = result?.UnprocessedItems && _keys(result.UnprocessedItems).length > 0;
 
                 // Stryker disable next-line ConditionalExpression,BlockStatement: Early return on success - tested via empty UnprocessedItems tests
@@ -88,7 +102,10 @@ export class MemoryToolBackendTagIndex {
                 if(attempt < MAX_RETRIES) {
                     // Stryker disable next-line ArithmeticOperator: Backoff formula tested via timer verification; * vs / indistinguishable at attempt 1 (2^0=1)
                     const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
-                    await new Promise(resolve => setTimeout(resolve, delay));
+                    // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between batch write attempts
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, delay);
+                    });
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Observational logging for debugging
                     logger.debug({ attempt, msg: `Batch write retry ${attempt}/${MAX_RETRIES}` });
                 }
@@ -187,7 +204,7 @@ export class MemoryToolBackendTagIndex {
 
             // Delete META_COUNT item if count is 0 or negative
             // Stryker disable next-line ConditionalExpression,EqualityOperator: Defensive check for count <= 0
-            if(result?.Attributes?.count != null && (result.Attributes.count as number) <= 0) {
+            if(result?.Attributes?.count !== null && result?.Attributes?.count !== undefined && (result.Attributes.count as number) <= 0) {
                 // Stryker disable BlockStatement: try-catch block for ConditionalCheckFailedException
                 try {
                     await retryWithBackoff(
@@ -243,6 +260,7 @@ export class MemoryToolBackendTagIndex {
                 queryParams.ExclusiveStartKey = exclusiveStartKey;
             }
 
+            // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
             const result = await this.docClient.send(new QueryCommand({
                 TableName: this.tableName,
                 ...queryParams,
@@ -310,12 +328,14 @@ export class MemoryToolBackendTagIndex {
         // Execute all batches and collect failed requests
         const allFailedRequests: BatchWriteRequest[] = [];
         for(const batch of batches) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite, each batch processed in order
             const failedRequests = await this.batchWriteWithRetry({ [this.tableName]: batch });
             allFailedRequests.push(...failedRequests);
         }
 
         // Extract tags that failed from unprocessed PutRequests
         const failedTags = _map(allFailedRequests, (req) => {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: AWS SDK WriteRequest has optional PutRequest/Item but we know these are PutRequests
             const pk = req.PutRequest?.Item?.PK as string;
             return pk.slice(4); // Remove 'TAG#' prefix
         });
@@ -352,12 +372,14 @@ export class MemoryToolBackendTagIndex {
         // Execute all batches and collect failed requests
         const allFailedRequests: BatchWriteRequest[] = [];
         for(const batch of batches) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite, each batch processed in order
             const failedRequests = await this.batchWriteWithRetry({ [this.tableName]: batch });
             allFailedRequests.push(...failedRequests);
         }
 
         // Extract tags that failed from unprocessed DeleteRequests
         const failedTags = _map(allFailedRequests, (req) => {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: AWS SDK WriteRequest has optional DeleteRequest/Key but we know these are DeleteRequests
             const pk = req.DeleteRequest?.Key?.PK as string;
             return pk.slice(4); // Remove 'TAG#' prefix
         });
@@ -405,6 +427,7 @@ export class MemoryToolBackendTagIndex {
 
         // Execute all batches (no count increment)
         for(const batch of batches) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite, each batch processed in order
             await this.batchWriteWithRetry({ [this.tableName]: batch });
         }
     }
@@ -442,7 +465,7 @@ export class MemoryToolBackendTagIndex {
     /**
      * Queries tag index by a single tag.
      */
-    // eslint-disable-next-line complexity -- Query building requires conditional logic
+
     async queryByTag(
         tag: string,
         layer?: string,
@@ -471,10 +494,10 @@ export class MemoryToolBackendTagIndex {
 
         // Stryker disable next-line ConditionalExpression,LogicalOperator: Guard ensures options exists before accessing properties
         if(options?.startDate ?? options?.endDate) {
-            // Stryker disable next-line OptionalChaining: options is guaranteed defined by guard above
-            const startDate = options?.startDate ?? '1970-01-01T00:00:00.000Z';
-            // Stryker disable next-line OptionalChaining: options is guaranteed defined by guard above
-            const endDate = options?.endDate ?? '9999-12-31T23:59:59.999Z';
+            // Stryker disable next-line LogicalOperator: options.startDate may be undefined even when options is defined
+            const startDate = options.startDate ?? '1970-01-01T00:00:00.000Z';
+            // Stryker disable next-line LogicalOperator: options.endDate may be undefined even when options is defined
+            const endDate = options.endDate ?? '9999-12-31T23:59:59.999Z';
             filterExpressions.push('updatedAt BETWEEN :startDate AND :endDate');
             expressionValues[':startDate'] = startDate;
             expressionValues[':endDate'] = endDate;
@@ -493,7 +516,7 @@ export class MemoryToolBackendTagIndex {
         }
         if(options?.cursor) {
             queryParams.ExclusiveStartKey = JSON.parse(
-                Buffer.from(options.cursor, 'base64').toString('utf-8')
+                Buffer.from(options.cursor, 'base64').toString('utf8')
             );
         }
 
@@ -541,6 +564,7 @@ export class MemoryToolBackendTagIndex {
         // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with internal break
         do {
             // Stryker disable next-line ObjectLiteral: Options passthrough required for layer and date filters
+            // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop, each page depends on prior cursor
             const pageResult = await this.queryByTag(normalizedTags[0], layer, {
                 ...options,
                 cursor: currentCursor,

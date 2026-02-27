@@ -1,5 +1,5 @@
-import _ from 'lodash';
-
+import replace from 'lodash/replace';
+import trim from 'lodash/trim';
 /**
  * The sentinel string that indicates "do not send this response".
  * If the agent's response contains this, suppress sending to Discord.
@@ -22,7 +22,7 @@ export function hasSentinel(response: string): boolean {
  * @returns The response with sentinel removed and trimmed
  */
 export function stripSentinel(response: string): string {
-    return _.trim(_.replace(response, NO_RESPONSE_SENTINEL, ''));
+    return trim(replace(response, NO_RESPONSE_SENTINEL, ''));
 }
 
 /**

@@ -1,13 +1,15 @@
 import { type Mock, describe, test, expect, beforeEach, mock  } from 'bun:test';
 import type { ChatInputCommandInteraction } from 'discord.js';
-import _ from 'lodash';
+import find from 'lodash/find';
+import map from 'lodash/map';
+import split from 'lodash/split';
+import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
+import type { AllowlistEntry } from '@/integrations/email/types';
 
 // Admin Discord user ID used in tests
 // Stryker disable next-line StringLiteral: Test admin user ID is a test configuration constant
 const ADMIN_USER_ID = '423276934781468692';
-import type { EmailAllowlist } from '@/integrations/email/allowlist';
-import type { AllowlistEntry } from '@/integrations/email/types';
 
 // Minimal mock for EmailAllowlist
 function createMockAllowlist(): {
@@ -74,7 +76,7 @@ describe('buildAllowlistCommand()', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
         const subcommands = json.options ?? [];
-        const names = _.map(subcommands, 'name');
+        const names = map(subcommands, 'name');
         expect(names).toContain('list');
         expect(names).toContain('add');
         expect(names).toContain('remove');
@@ -83,10 +85,10 @@ describe('buildAllowlistCommand()', () => {
     test('add subcommand has required email option', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
-        const addCmd = _.find(json.options ?? [], { name: 'add' });
+        const addCmd = find(json.options ?? [], { name: 'add' });
         expect(addCmd).toBeDefined();
         const addOptions: { name: string, required?: boolean }[] = (addCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
-        const emailOpt = _.find(addOptions, { name: 'email' });
+        const emailOpt = find(addOptions, { name: 'email' });
         expect(emailOpt).toBeDefined();
         expect(emailOpt?.required).toBe(true);
     });
@@ -94,10 +96,10 @@ describe('buildAllowlistCommand()', () => {
     test('add subcommand has optional name and notes options', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
-        const addCmd = _.find(json.options ?? [], { name: 'add' });
+        const addCmd = find(json.options ?? [], { name: 'add' });
         const addOptions: { name: string, required?: boolean }[] = (addCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
-        const nameOpt = _.find(addOptions, { name: 'name' });
-        const notesOpt = _.find(addOptions, { name: 'notes' });
+        const nameOpt = find(addOptions, { name: 'name' });
+        const notesOpt = find(addOptions, { name: 'notes' });
         expect(nameOpt).toBeDefined();
         expect(nameOpt?.required).toBeFalsy();
         expect(notesOpt).toBeDefined();
@@ -107,10 +109,10 @@ describe('buildAllowlistCommand()', () => {
     test('remove subcommand has required email option', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
-        const removeCmd = _.find(json.options ?? [], { name: 'remove' });
+        const removeCmd = find(json.options ?? [], { name: 'remove' });
         expect(removeCmd).toBeDefined();
         const removeOptions: { name: string, required?: boolean }[] = (removeCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
-        const emailOpt = _.find(removeOptions, { name: 'email' });
+        const emailOpt = find(removeOptions, { name: 'email' });
         expect(emailOpt).toBeDefined();
         expect(emailOpt?.required).toBe(true);
     });
@@ -279,7 +281,7 @@ describe('AllowlistCommandHandler - /allowlist list', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         const content = replyArg.content ?? '';
         // Two entries should be separated by newline
-        const lines = _.split(content, '\n');
+        const lines = split(content, '\n');
         expect(lines).toHaveLength(2);
         expect(lines[0]).toContain('alice@example.com');
         expect(lines[1]).toContain('bob@example.com');

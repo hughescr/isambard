@@ -1,5 +1,6 @@
 import type { Client, Guild, GuildChannel } from 'discord.js';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import { createChannelId, createGuildId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import type { ChannelMetadata } from './types';
@@ -30,7 +31,7 @@ export async function discoverAllChannels(
     };
 
     // Create promises for discovering channels in each guild (parallel execution)
-    const guildPromises = _.map(
+    const guildPromises = map(
         [...client.guilds.cache.entries()],
         async ([guildId, guild]) => {
             try {
@@ -46,7 +47,7 @@ export async function discoverAllChannels(
                     discovered: 0,
                     updated:    0,
                     guildId,
-                    error:      _.isError(error) ? error.message : String(error),
+                    error:      isError(error) ? error.message : String(error),
                 };
             }
         }
@@ -98,6 +99,7 @@ async function discoverGuildChannels(
         }
 
         // Check if already in registry
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
         const existing = await manager.getChannel(createChannelId(channelId));
         if(existing) {
             // Update existing channel: merge Discord metadata while preserving user settings
@@ -109,6 +111,7 @@ async function discoverGuildChannels(
                 updatedAt:   now,                // Update modification timestamp
                 // Preserve user settings: isMuted, isWellKnown, discoveredAt
             };
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per channel
             await manager.upsertChannel(updatedMetadata);
             updated++;
             continue;
@@ -116,6 +119,7 @@ async function discoverGuildChannels(
 
         // Create metadata and upsert
         const metadata = createChannelMetadata(channel, guild);
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per channel
         await manager.upsertChannel(metadata);
         discovered++;
     }
@@ -158,6 +162,7 @@ export function setupChannelEventHandlers(
 ): void {
     // Channel created
     client.on('channelCreate', (channel) => {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: channel.guild typed non-nullable but DM/unknown channels may lack guild at runtime
         if(!('guild' in channel) || !channel.guild) {
             return;
         }
@@ -171,6 +176,7 @@ export function setupChannelEventHandlers(
 
     // Channel updated (name change, etc.)
     client.on('channelUpdate', (_oldChannel, newChannel) => {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: newChannel.guild typed non-nullable but DM/unknown channels may lack guild at runtime
         if(!('guild' in newChannel) || !newChannel.guild) {
             return;
         }

@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import noop from 'lodash/noop';
 import { defaultClassifier } from './classifier';
 import { calculateDelay } from './delay';
 import { type ErrorClassifier, type RetryDeps, type RetryPolicy, retryPolicySchema  } from './types';
@@ -11,12 +11,12 @@ interface RetryAsyncOptions {
 
 // Stryker disable all: Default fallback for incomplete DI - used in production only
 const defaultDeps: RetryDeps = {
-    sleep:  (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
+    sleep:  (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     now:    () => Date.now(),
     logger: {
-        warn:  _.noop.bind(_),
-        error: _.noop.bind(_),
-        debug: _.noop.bind(_),
+        warn:  noop,
+        error: noop,
+        debug: noop,
     },
 };
 // Stryker restore all
@@ -59,6 +59,7 @@ export async function retryAsync<T>(
 
     for(let attempt = 1; attempt <= maxAttempts; /* Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop */ attempt++) {
         try {
+            // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
         } catch (error) {
             lastError = error;
@@ -109,6 +110,7 @@ export async function retryAsync<T>(
             });
 
             // Wait before retrying
+            // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
             await sleep(delayMs);
         }
     }

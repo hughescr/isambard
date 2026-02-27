@@ -6,7 +6,8 @@
  */
 
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import replace from 'lodash/replace';
+import trim from 'lodash/trim';
 import { getToolDescription, type SynopsisContext, type CatchUpSynopsisContext  } from './types.js';
 import { generateText } from '@/agent';
 import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
@@ -202,13 +203,13 @@ function buildPrompt(
 
     // Build system prompt with identity
     let systemPart = SYSTEM_PROMPT;
-    systemPart = _.replace(systemPart, '{identityContext}', identityContext);
+    systemPart = replace(systemPart, '{identityContext}', identityContext);
 
     // Get user prompt template for this phase
     let userPart = USER_PROMPTS[phase];
 
     // Replace common placeholders
-    userPart = _.replace(userPart, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
+    userPart = replace(userPart, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
 
     // Replace phase-specific placeholders
     // Stryker disable next-line ConditionalExpression: Phase check for thinking content
@@ -218,18 +219,20 @@ function buildPrompt(
         const thinkingSection = thinkingContent
             ? `Your internal thoughts so far: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
             : '';
-        userPart = _.replace(userPart, '{thinkingSection}', thinkingSection);
+        userPart = replace(userPart, '{thinkingSection}', thinkingSection);
     }
 
+    // Stryker disable next-line ConditionalExpression: Equivalent mutant — using_tool template lacks {responseFragment} so respondingphase block is a no-op anyway; templates don't cross-contaminate
     if(phase === 'using_tool') {
         const description = toolDescription ?? getToolDescription(toolName) ?? toolName ?? 'unknown tool';
-        userPart = _.replace(userPart, '{toolDescription}', description);
-        userPart = _.replace(userPart, '{toolInputSummary}', formatToolInputSummary(toolInput));
-        userPart = _.replace(userPart, '{accumulatedText}', (accumulatedText ?? '').slice(0, MAX_ACCUMULATED_TEXT_LENGTH));
+        userPart = replace(userPart, '{toolDescription}', description);
+        userPart = replace(userPart, '{toolInputSummary}', formatToolInputSummary(toolInput));
+        userPart = replace(userPart, '{accumulatedText}', (accumulatedText ?? '').slice(0, MAX_ACCUMULATED_TEXT_LENGTH));
     }
 
+    // Stryker disable next-line ConditionalExpression: Equivalent mutant — responding template lacks {toolDescription}/{toolInputSummary}/{accumulatedText} so using_tool block is a no-op anyway; templates don't cross-contaminate
     if(phase === 'responding') {
-        userPart = _.replace(userPart, '{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
+        userPart = replace(userPart, '{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
     }
 
     // Combine system and user prompts
@@ -297,13 +300,14 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
-                const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
+                const statusText = truncateToWordBoundary(trim(text), HARD_MAX_STATUS_LENGTH);
 
                 // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
                 if(!statusText) {
                     return null;
                 }
 
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: haikuInFlight mutex guards this, no concurrent writers
                 cachedStatus = statusText;
                 logger.info({ phase, statusText, msg: 'Generated dynamic status' });
                 return statusText;
@@ -316,7 +320,9 @@ export function createDynamicStatusGenerator(
                 return null;
             } finally {
                 // Record timestamp for cooldown AFTER call completion (not before)
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
                 lastHaikuCall = Date.now();
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
                 haikuInFlight = false;
             }
         },
@@ -342,17 +348,17 @@ export function createDynamicStatusGenerator(
             try {
                 // Build the prompt with context values
                 let prompt = SYSTEM_PROMPT;
-                prompt = _.replace(prompt, '{identityContext}', identityContext);
+                prompt = replace(prompt, '{identityContext}', identityContext);
                 prompt = `${prompt}\n\n---\n\n${CATCH_UP_PROMPT}`;
 
                 // Replace placeholders with context values
-                prompt = _.replace(prompt, '{totalUnread}', String(context.totalUnread));
-                prompt = _.replace(prompt, '{channelCount}', String(context.channelCount));
-                prompt = _.replace(prompt, '{channelNames}', context.channelNames.join(', '));
-                prompt = _.replace(prompt, '{topAuthors}', context.topAuthors.join(', '));
-                prompt = _.replace(prompt, '{timeSinceLastActive}', context.timeSinceLastActive);
-                prompt = _.replace(prompt, '{timeOfDay}', context.timeOfDay);
-                prompt = _.replace(prompt, '{dayOfWeek}', context.dayOfWeek);
+                prompt = replace(prompt, '{totalUnread}', String(context.totalUnread));
+                prompt = replace(prompt, '{channelCount}', String(context.channelCount));
+                prompt = replace(prompt, '{channelNames}', context.channelNames.join(', '));
+                prompt = replace(prompt, '{topAuthors}', context.topAuthors.join(', '));
+                prompt = replace(prompt, '{timeSinceLastActive}', context.timeSinceLastActive);
+                prompt = replace(prompt, '{timeOfDay}', context.timeOfDay);
+                prompt = replace(prompt, '{dayOfWeek}', context.dayOfWeek);
 
                 logger.debug({
                     totalUnread:  context.totalUnread,
@@ -362,13 +368,14 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
-                const statusText = truncateToWordBoundary(_.trim(text), HARD_MAX_STATUS_LENGTH);
+                const statusText = truncateToWordBoundary(trim(text), HARD_MAX_STATUS_LENGTH);
 
                 // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
                 if(!statusText) {
                     return null;
                 }
 
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: haikuInFlight mutex guards this, no concurrent writers
                 cachedStatus = statusText;
                 logger.info({ statusText, msg: 'Generated catch-up status' });
                 return statusText;
@@ -380,7 +387,9 @@ export function createDynamicStatusGenerator(
                 return null;
             } finally {
                 // Record timestamp for cooldown AFTER call completion (not before)
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
                 lastHaikuCall = Date.now();
+                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
                 haikuInFlight = false;
             }
         },

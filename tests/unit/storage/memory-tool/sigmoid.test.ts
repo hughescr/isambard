@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { map as _map } from 'lodash';
+import _map from 'lodash/map';
 import { sigmoidScore, DEFAULT_SIGMOID_PARAMS, type SigmoidParams  } from '@/storage/memory-tool';
 
 describe.concurrent('sigmoidScore', () => {

@@ -19,6 +19,7 @@ export class IsambardError extends Error {
         this.name = 'IsambardError';
 
         // Maintain proper stack trace for where our error was thrown (only available on V8)
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Error.captureStackTrace is V8-specific and may not exist in all environments
         if(Error.captureStackTrace) {
             Error.captureStackTrace(this, this.constructor);
         }

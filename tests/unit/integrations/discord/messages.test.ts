@@ -1,9 +1,11 @@
 import { describe, test, expect } from 'bun:test';
-import { repeat as _repeat, startsWith as _startsWith } from 'lodash';
+import _repeat from 'lodash/repeat';
+import _startsWith from 'lodash/startsWith';
 import {
     DISCORD_MAX_LENGTH,
     DISCORD_SAFE_LENGTH,
-    exceedsLimit
+    exceedsLimit,
+    splitMessage
 } from '@/integrations/discord/messages';
 
 describe.concurrent('Discord Message Splitting', () => {
@@ -49,9 +51,6 @@ describe.concurrent('Discord Message Splitting', () => {
         });
     });
 });
-
-// Import splitMessage function to test sentence splitting behavior
-import { splitMessage } from '@/integrations/discord/messages';
 
 describe.concurrent('splitMessage sentence splitting', () => {
     describe.concurrent('sentence boundary edge cases', () => {

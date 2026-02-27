@@ -1,4 +1,5 @@
 /* eslint-disable @stylistic/max-statements-per-line -- Test mocks  */
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test mocks use optional chaining inside guards for clarity; the extra ?. operators are intentionally defensive */
 
 /**
  * StatusMiddleware Test Suite
@@ -36,7 +37,13 @@
  */
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { constant as _constant, endsWith as _endsWith, filter as _filter, find as _find, keys as _keys, repeat as _repeat, some as _some, startsWith as _startsWith } from 'lodash';
+import _constant from 'lodash/constant';
+import _endsWith from 'lodash/endsWith';
+import _filter from 'lodash/filter';
+import _find from 'lodash/find';
+import _repeat from 'lodash/repeat';
+import _some from 'lodash/some';
+import _startsWith from 'lodash/startsWith';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import type { AgentStreamEvent, MessageContext } from '@/agent/types';
@@ -160,6 +167,7 @@ describe('StatusMiddleware', () => {
     describe('event mapping to presence phases', () => {
         test('should map assistant event to thinking phase', async () => {
             // Create middleware that will receive stream events
+            // eslint-disable-next-line sonarjs/no-unused-collection -- events array is populated as side effect; existence verified by testing what consumes it
             const events: AgentStreamEvent[] = [];
             const wrappedAgent = {
                 handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
@@ -1434,7 +1442,7 @@ describe('StatusMiddleware', () => {
         describe('rich context passing to generateSynopsis', () => {
             test('should pass complete context with toolInput, toolDescription, and accumulatedText', async () => {
                 const capturedContexts: SynopsisContext[] = [];
-                const mockDynamicStatusGenerator = {
+                const mockCompleteContextGenerator = {
                     generateSynopsis: mock(async (ctx: SynopsisContext) => {
                         capturedContexts.push(ctx);
                         return 'Test status';
@@ -1471,7 +1479,7 @@ describe('StatusMiddleware', () => {
                     presenceManager:        mockPresenceManager,
                     agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
+                    dynamicStatusGenerator: mockCompleteContextGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 
@@ -1494,7 +1502,7 @@ describe('StatusMiddleware', () => {
 
             test('should redact sensitive tool inputs before passing to generateSynopsis', async () => {
                 const capturedContexts: SynopsisContext[] = [];
-                const mockDynamicStatusGenerator = {
+                const mockRedactingStatusGenerator = {
                     generateSynopsis: mock(async (ctx: SynopsisContext) => {
                         capturedContexts.push(ctx);
                         return 'Test status';
@@ -1530,7 +1538,7 @@ describe('StatusMiddleware', () => {
                     presenceManager:        mockPresenceManager,
                     agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
+                    dynamicStatusGenerator: mockRedactingStatusGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 
@@ -1547,7 +1555,7 @@ describe('StatusMiddleware', () => {
 
             test('should accumulate text up to 200 characters, truncating older text', async () => {
                 const capturedContexts: SynopsisContext[] = [];
-                const mockDynamicStatusGenerator = {
+                const mockAccumulatingStatusGenerator = {
                     generateSynopsis: mock(async (ctx: SynopsisContext) => {
                         capturedContexts.push(ctx);
                         return 'Test status';
@@ -1575,7 +1583,7 @@ describe('StatusMiddleware', () => {
                     presenceManager:        mockPresenceManager,
                     agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
+                    dynamicStatusGenerator: mockAccumulatingStatusGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 
@@ -1595,7 +1603,7 @@ describe('StatusMiddleware', () => {
 
             test('should handle missing or undefined context fields appropriately', async () => {
                 const capturedContexts: SynopsisContext[] = [];
-                const mockDynamicStatusGenerator = {
+                const mockMissingContextGenerator = {
                     generateSynopsis: mock(async (ctx: SynopsisContext) => {
                         capturedContexts.push(ctx);
                         return 'Test status';
@@ -1616,7 +1624,7 @@ describe('StatusMiddleware', () => {
                     presenceManager:        mockPresenceManager,
                     agent:                  wrappedAgent as unknown as ClaudeAgent,
                     logger:                 mockLogger,
-                    dynamicStatusGenerator: mockDynamicStatusGenerator as unknown as DynamicStatusGenerator,
+                    dynamicStatusGenerator: mockMissingContextGenerator as unknown as DynamicStatusGenerator,
                     botStateManager:        mockBotStateManager,
                 });
 

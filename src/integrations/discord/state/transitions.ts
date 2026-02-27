@@ -38,8 +38,7 @@ export const VALID_TRANSITIONS: Record<OperationalMode, OperationalMode[]> = {
  * @returns true if the transition is allowed, false otherwise
  */
 export function isValidTransition(from: OperationalMode, to: OperationalMode): boolean {
-    // Stryker disable next-line OptionalChaining,BooleanLiteral: Safe property access with fallback - tested via valid and invalid transitions
-    return VALID_TRANSITIONS[from]?.includes(to) ?? false;
+    return VALID_TRANSITIONS[from].includes(to);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
-import { split as _split, repeat as _repeat } from 'lodash';
+import _repeat from 'lodash/repeat';
+import _split from 'lodash/split';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';

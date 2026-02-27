@@ -6,7 +6,10 @@
  */
 
 import { logger } from '@hughescr/logger';
-import _, { map as _map, isNumber as _isNumber, isString as _isString, sortBy as _sortBy } from 'lodash';
+import _isNumber from 'lodash/isNumber';
+import _isString from 'lodash/isString';
+import _map from 'lodash/map';
+import _sortBy from 'lodash/sortBy';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
@@ -181,6 +184,56 @@ function formatRejectedDraftLine(
 }
 
 /**
+ * Build the admin-rejected subsection: messages sent by Izzy that were rejected by admin.
+ */
+async function buildAdminRejectedSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
+    // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for rejectionLines
+    const rejectionLines: string[] = [];
+    for(const uid of uids) {
+        // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API
+        const msg  = await wdc.getMessage('Drafts', uid);
+        const line = formatRejectedDraftLine(msg?.subject, msg?.to, msg?.metaData);
+        if(line) {
+            rejectionLines.push(line);
+        }
+    }
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no lines = no section
+    if(rejectionLines.length === 0) {
+        return undefined;
+    }
+    // Stryker disable next-line StringLiteral: Cosmetic section header text
+    return `## Messages You Attempted to Send (Rejected by Admin)\n${rejectionLines.join('\n')}`;
+}
+
+/**
+ * Build the gave-up escalation subsection: drafts that could not reach Discord for approval.
+ */
+async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
+    // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for gaveUpLines
+    const gaveUpLines: string[] = [];
+    for(const uid of uids) {
+        // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API
+        const msg    = await wdc.getMessage('Drafts', uid);
+        if(!msg) {
+            continue;
+        }
+        // Stryker disable next-line ArrayDeclaration: defensive fallback for missing to field — equivalent to empty address list
+        const toStr  = _map(msg.to ?? [], 'address').join(', ');
+        const subject = msg.subject ?? '(no subject)';
+        // Stryker disable next-line StringLiteral: Cosmetic line format
+        gaveUpLines.push(`- Drafts:${uid} to ${toStr} — "${subject}"`);
+    }
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no lines = no section
+    if(gaveUpLines.length === 0) {
+        return undefined;
+    }
+    // Stryker disable next-line StringLiteral: Cosmetic section header text
+    return `## CRITICAL: ${uids.length} draft(s) could not be sent for admin approval after multiple attempts:\n${gaveUpLines.join('\n')}\nPlease notify Craig directly to check the Drafts folder.`;
+}
+
+/**
  * Creates a context builder for managing agent memory context
  */
 export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
@@ -207,6 +260,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
     const buildEventSection = async (
         eventsResult: RecentEventsResult,
         now: Date
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- event section builder partitions items into summarized/full buckets, each requiring distinct rendering paths; extraction would obscure the single-pass logic
     ): Promise<string | undefined> => {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - empty items produces empty join anyway, caller checks falsy
         if(eventsResult.items.length === 0) {
@@ -301,60 +355,6 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         }
         // Stryker restore BlockStatement
         return undefined;
-    };
-
-    /**
-     * Build the admin-rejected subsection: messages sent by Izzy that were rejected by admin.
-     */
-    const buildAdminRejectedSubsection = async (
-        uids: number[],
-        wdc: WildDuckService
-    ): Promise<string | undefined> => {
-        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for rejectionLines
-        const rejectionLines: string[] = [];
-        for(const uid of uids) {
-            // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
-            const msg  = await wdc.getMessage('Drafts', uid);
-            const line = formatRejectedDraftLine(msg?.subject, msg?.to, msg?.metaData);
-            if(line) {
-                rejectionLines.push(line);
-            }
-        }
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no lines = no section
-        if(rejectionLines.length === 0) {
-            return undefined;
-        }
-        // Stryker disable next-line StringLiteral: Cosmetic section header text
-        return `## Messages You Attempted to Send (Rejected by Admin)\n${rejectionLines.join('\n')}`;
-    };
-
-    /**
-     * Build the gave-up escalation subsection: drafts that could not reach Discord for approval.
-     */
-    const buildGaveUpSubsection = async (
-        uids: number[],
-        wdc: WildDuckService
-    ): Promise<string | undefined> => {
-        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for gaveUpLines
-        const gaveUpLines: string[] = [];
-        for(const uid of uids) {
-            // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
-            const msg    = await wdc.getMessage('Drafts', uid);
-            if(!msg) {
-                continue;
-            }
-            // Stryker disable next-line ArrayDeclaration: defensive fallback for missing to field — equivalent to empty address list
-            const toStr  = _(msg.to ?? []).map('address').join(', ');
-            const subject = msg.subject ?? '(no subject)';
-            // Stryker disable next-line StringLiteral: Cosmetic line format
-            gaveUpLines.push(`- Drafts:${uid} to ${toStr} — "${subject}"`);
-        }
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no lines = no section
-        if(gaveUpLines.length === 0) {
-            return undefined;
-        }
-        // Stryker disable next-line StringLiteral: Cosmetic section header text
-        return `## CRITICAL: ${uids.length} draft(s) could not be sent for admin approval after multiple attempts:\n${gaveUpLines.join('\n')}\nPlease notify Craig directly to check the Drafts folder.`;
     };
 
     /**
@@ -520,6 +520,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         recordAccess: async (paths: MemoryPath[]): Promise<void> => {
             for(const path of paths) {
                 // Get current item
+                // eslint-disable-next-line no-await-in-loop -- sequential: order-dependent (get then update same item)
                 const item = await backend.get(path);
 
                 if(!item) {
@@ -529,6 +530,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
                 // Get current access count from metadata
                 // Stryker disable next-line OptionalChaining: metadata always exists per schema, ?. is defensive
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata is non-nullable per schema but accessed via generic DynamoDB record type
                 const currentAccessCount = _isNumber(item.metadata?.accessCount)
                     ? item.metadata.accessCount
                     : 0;
@@ -536,6 +538,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 // Update metadata with incremented access count and timestamp
                 // This metadata-only update bumps updatedAt (keeps item visible in GSI1) but skips tag index.
                 // The reconciler handles eventual tag index consistency, avoiding O(num_tags) write amplification.
+                // eslint-disable-next-line no-await-in-loop -- sequential: each update depends on prior get result
                 await backend.update(path, {
                     metadata: {
                         ...item.metadata,
@@ -628,11 +631,9 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         },
 
         buildPerchContext: async (now: Date = new Date()): Promise<string> => {
-            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
-            const sections: string[] = [];
-
             // 1. Time header (no user timezone for perch)
-            sections.push(formatTimeHeader());
+            // Stryker disable next-line ArrayDeclaration: Equivalent - time header is always first element
+            const sections: string[] = [formatTimeHeader()];
 
             // 2. Top state memories (full content, truncated per-item)
             // Stryker disable next-line ObjectLiteral: Config parameter for getStateItemsScored

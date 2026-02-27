@@ -77,13 +77,10 @@ export function setupPresence(params: {
             return cachedIdentity;
         }
         // Stryker disable BlockStatement: Identity loading with fallback - tested via integration
-        if(contextBuilder) {
-            // Stryker disable next-line LogicalOperator: Nullish coalescing fallback for missing identity
-            cachedIdentity = await contextBuilder.loadCoreIdentity() ?? identityContext;
-        } else {
-            cachedIdentity = identityContext;
-        }
+        // eslint-disable-next-line require-atomic-updates -- single-threaded: TTL cache with single async writer, no concurrent writers
+        cachedIdentity = contextBuilder ? await contextBuilder.loadCoreIdentity() : identityContext;
         // Stryker restore BlockStatement
+        // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential update after await, no concurrent writers
         cachedAt = now;
         return cachedIdentity;
     };
@@ -146,7 +143,7 @@ export function setupPresence(params: {
 
     // Bridge: Sync activity phases to presence manager
     const unsubscribeActivityPhase = botStateManager.subscribe((change: StateChange) => {
-        if(change.changeType === 'activity_phase' && presenceManager) {
+        if(change.changeType === 'activity_phase') {
             const phase = change.newState.activityPhase;
             if(phase) {
                 // Throttle active phase updates to avoid Discord rate limits

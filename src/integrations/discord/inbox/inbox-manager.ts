@@ -15,7 +15,10 @@
  */
 
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import type { CheckpointManager } from './checkpoint-manager';
 import { type InboxConfig, DEFAULT_INBOX_CONFIG  } from './config';
 import type { UnreadMessage, UnreadOverview } from './types';
@@ -201,9 +204,11 @@ export class InboxManager {
             // Stryker disable BlockStatement: Error handling logs failure but continues processing other channels
             try {
                 // Initialize checkpoint if it doesn't exist (creates new checkpoint with lastSeenAt = now)
+                // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB init then load for each channel
                 await this.checkpointManager.initializeIfMissing(channelId, channel.guildId);
 
                 // Load the checkpoint (now guaranteed to exist)
+                // eslint-disable-next-line no-await-in-loop -- sequential: load depends on prior init
                 const checkpoint = await this.checkpointManager.load(channelId);
 
                 // If checkpoint doesn't exist after initialization, skip this channel
@@ -240,6 +245,7 @@ export class InboxManager {
                 // Stryker disable next-line ArithmeticOperator: +1 to exclude lastSeen message itself - off-by-one doesn't affect catch-up behavior
                 const effectiveStartTime = new Date(Math.max(lastSeen.getTime() + 1, now.getTime() - maxAgeMs));
 
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
                 const response = await this.messageSearchService.searchMessages({
                     channelId,
                     startTime: effectiveStartTime,
@@ -251,8 +257,8 @@ export class InboxManager {
                 if(response.messages.length > 0) {
                     // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
                     // Stryker disable next-line LogicalOperator,ConditionalExpression,EqualityOperator: No test exercises botUserId filtering path - L-class (no test sets botUserId and verifies filter)
-                    const filteredMessages = _.filter(response.messages, msg => !this.botUserId || msg.author.id !== this.botUserId);
-                    const unreadMessages: UnreadMessage[] = _.map(filteredMessages, msg => ({
+                    const filteredMessages = filter(response.messages, msg => !this.botUserId || msg.author.id !== this.botUserId);
+                    const unreadMessages: UnreadMessage[] = map(filteredMessages, msg => ({
                         id:          msg.id,
                         channelId,
                         channelName: channel.channelName,
@@ -281,7 +287,7 @@ export class InboxManager {
                 successCount++;
             } catch (error) {
                 failCount++;
-                const message = _.isError(error) ? error.message : String(error);
+                const message = isError(error) ? error.message : String(error);
                 // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                 logger.warn({
                     channelId,
@@ -330,7 +336,7 @@ export class InboxManager {
         const channels: UnreadOverview['channels'] = [];
 
         for(const [channelId, messages] of this.unreadMessages) {
-            const unreadCount = _.filter(messages, m => !m.isRead).length;
+            const unreadCount = filter(messages, m => !m.isRead).length;
             if(unreadCount > 0) {
                 const metadata = this.channelMetadata.get(channelId);
                 channels.push({
@@ -361,7 +367,7 @@ export class InboxManager {
      * ```
      */
     getChannelMessages(channelId: ChannelId): UnreadMessage[] {
-        return _.filter(this.unreadMessages.get(channelId) ?? [], m => !m.isRead);
+        return filter(this.unreadMessages.get(channelId) ?? [], m => !m.isRead);
     }
 
     /**
@@ -381,7 +387,7 @@ export class InboxManager {
      * ```
      */
     getMessage(channelId: ChannelId, messageId: string): UnreadMessage | undefined {
-        return _.find(this.unreadMessages.get(channelId) ?? [], ['id', messageId]);
+        return find(this.unreadMessages.get(channelId) ?? [], ['id', messageId]);
     }
 
     /**
@@ -540,7 +546,7 @@ export class InboxManager {
     get totalUnread(): number {
         let total = 0;
         for(const messages of this.unreadMessages.values()) {
-            total += _.filter(messages, m => !m.isRead).length;
+            total += filter(messages, m => !m.isRead).length;
         }
         return total;
     }

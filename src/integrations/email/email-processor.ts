@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import isError from 'lodash/isError';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { checkAuthentication } from '@/integrations/email/auth-checker';
 import type { EmailClassifier } from '@/integrations/email/classifier';
@@ -68,7 +68,7 @@ export class EmailProcessor {
         } catch (err) {
             // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
-                `Failed to move allowlist-bypassed email (uid=${email.uid}): ${_.isError(err) ? err.message : String(err)}`,
+                `Failed to move allowlist-bypassed email (uid=${email.uid}): ${isError(err) ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
             );
             // Stryker enable StringLiteral,ObjectLiteral
@@ -99,7 +99,7 @@ export class EmailProcessor {
         } catch (err) {
             // Stryker disable next-line StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
-                `Classification failed (uid=${email.uid}): ${_.isError(err) ? err.message : String(err)}`,
+                `Classification failed (uid=${email.uid}): ${isError(err) ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
             );
         }
@@ -113,7 +113,7 @@ export class EmailProcessor {
         } catch (err) {
             // Stryker disable next-line StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
-                `Failed to move email (uid=${email.uid}, destination=${destination}): ${_.isError(err) ? err.message : String(err)}`,
+                `Failed to move email (uid=${email.uid}, destination=${destination}): ${isError(err) ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address, destination }
             );
         }

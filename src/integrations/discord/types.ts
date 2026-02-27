@@ -45,7 +45,7 @@ export const discordMessageContextSchema = z.object({
     userId:      userIdSchema,
     messageId:   z.string().min(1),
     content:     z.string(),
-    timestamp:   z.string().datetime(),
+    timestamp:   z.iso.datetime(),
     /** The bot's own user ID (for self-awareness in memory operations) */
     botUserId:   userIdSchema,
     /** Optional attachments metadata from the message */

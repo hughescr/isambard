@@ -5,16 +5,13 @@
  */
 
 import { logger } from '@hughescr/logger';
-import {
-    split as _split,
-    map as _map,
-    endsWith as _endsWith,
-    isError as _isError,
-    replace as _replace,
-    filter as _filter,
-    includes as _includes,
-    groupBy as _groupBy
-} from 'lodash';
+import _endsWith from 'lodash/endsWith';
+import _groupBy from 'lodash/groupBy';
+import _includes from 'lodash/includes';
+import _isError from 'lodash/isError';
+import _map from 'lodash/map';
+import _replace from 'lodash/replace';
+import _split from 'lodash/split';
 import { ZodError } from 'zod';
 import type { MemoryToolBackend } from './backend';
 import {
@@ -315,7 +312,7 @@ export async function recall(
     }
 
     // Group by layer
-    const grouped = _groupBy(items, (item) => {
+    const grouped = _groupBy(items, (item): string => {
         const layer = extractLayerFromPath(item.path);
         return layer ?? 'other';
     });
@@ -330,6 +327,7 @@ export async function recall(
 
         // Skip empty layers
         // Stryker disable next-line ConditionalExpression: layerItems.length === 0 vs false produces equivalent behavior since both skip the layer
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Record indexing typed as always defined but may be undefined for missing keys
         if(!layerItems || layerItems.length === 0) {
             continue;
         }
@@ -340,6 +338,7 @@ export async function recall(
         }
 
         const formatted = _map(layerItems, (item) => {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: content may be absent at runtime despite types
             return `  ${item.path}\n    ${item.content ?? '[no content]'}`;
         });
 
@@ -414,6 +413,7 @@ export async function consolidate(
         const failedDeletions: string[] = [];
         for(const sourcePath of sourcePaths) {
             try {
+                // eslint-disable-next-line no-await-in-loop -- sequential: best-effort DynamoDB delete per source path
                 await backend.delete(sourcePath);
             } catch (error: unknown) {
                 failedDeletions.push(sourcePath);

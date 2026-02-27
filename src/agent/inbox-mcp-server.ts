@@ -1,15 +1,16 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import { z } from 'zod';
-// eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
-// TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
-
 import { generateTextWithSystemPrompt } from './text-generator';
-import { createChannelId, resolveChannelId } from '@/integrations/discord';
-// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap
-import type { InboxManager, ChannelSummaryResponse, MessageMetadata, BotStateManager, ChannelRegistryManager } from '@/integrations/discord';
+// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap (tracked in roadmap comment below)
+import { createChannelId, resolveChannelId, type InboxManager, type ChannelSummaryResponse, type MessageMetadata, type BotStateManager, type ChannelRegistryManager } from '@/integrations/discord';
+// eslint-disable-next-line no-warning-comments, sonarjs/todo-tag -- tracked in roadmap, not forgotten
+// TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
 
 /**
  * System prompt for generating channel summaries.
@@ -31,10 +32,10 @@ Keep it factual and actionable. The assistant will decide whether to read full m
  * @param isError - Whether this is an error response
  * @returns CallToolResult with properly typed text content
  */
-function textResult(text: string, isError = false): CallToolResult {
+function textResult(text: string, isErrorResult = false): CallToolResult {
     return {
         content: [{ type: 'text' as const, text }],
-        ...(isError && { isError: true }),
+        ...(isErrorResult && { isError: true }),
     };
 }
 
@@ -86,7 +87,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify(overview, null, 2));
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -123,7 +124,7 @@ export function createInboxMCPServer(
 
                         // Build message content for summarization
                         // Stryker disable StringLiteral,ArrowFunction: Format strings and arrow fn for LLM prompt are not behavior-tested (generateTextWithSystemPrompt is mocked)
-                        const messagesText = _.map(messages, m =>
+                        const messagesText = map(messages, m =>
                             `[${m.author} at ${m.timestamp}]: ${m.content}`
                         ).join('\n');
 
@@ -135,7 +136,7 @@ export function createInboxMCPServer(
                         // Stryker restore StringLiteral,ArrowFunction
 
                         // Build metadata for each message
-                        const metadata: MessageMetadata[] = _.map(messages, m => ({
+                        const metadata: MessageMetadata[] = map(messages, m => ({
                             id:        m.id,
                             author:    m.author,
                             timestamp: m.timestamp,
@@ -146,7 +147,7 @@ export function createInboxMCPServer(
                         const authors = _(messages).map('author').uniq().value();
 
                         // Get time range
-                        const timestamps = _(messages).map('timestamp').sort().value();
+                        const timestamps = _(messages).map('timestamp').sortBy().value();
                         // Stryker disable next-line ArrayDeclaration,ArithmeticOperator: Array access with [0] and [length-1] for first/last elements
                         const timeRange = {
                             start: timestamps[0],
@@ -175,7 +176,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify(response, null, 2));
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -224,7 +225,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify({ messages: fetchedMessages }, null, 2));
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -254,7 +255,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify({ success: true, markedCount: args.messageIds.length }));
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -281,7 +282,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify({ success: true }));
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }

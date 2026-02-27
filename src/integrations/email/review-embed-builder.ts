@@ -1,5 +1,6 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import _ from 'lodash';
+import join from 'lodash/join';
+import truncate from 'lodash/truncate';
 import type { EmailMetadata, ClassifierVerdict, EmailFolder } from '@/integrations/email/types';
 
 export interface OutboundApprovalEmbedParams {
@@ -41,7 +42,7 @@ export function buildReviewEmbed(email: EmailMetadata, folder: EmailFolder): Rev
             // Stryker disable next-line StringLiteral: Field name is UI label
             { name: 'Date',    value: email.date.toISOString(),        inline: true }
         )
-        .setDescription(_.truncate(email.bodyText, { length: BODY_TRUNCATE_LENGTH }));
+        .setDescription(truncate(email.bodyText, { length: BODY_TRUNCATE_LENGTH }));
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
@@ -82,7 +83,7 @@ export function buildUnsafeAlert(email: EmailMetadata, verdict: ClassifierVerdic
         ? `${email.from.name} <${email.from.address}>`
         : email.from.address;
 
-    const description = `**Reason:** ${verdict.reason}\n\n${_.truncate(email.bodyText, { length: BODY_TRUNCATE_LENGTH })}`;
+    const description = `**Reason:** ${verdict.reason}\n\n${truncate(email.bodyText, { length: BODY_TRUNCATE_LENGTH })}`;
 
     const embed = new EmbedBuilder()
         // Stryker disable next-line StringLiteral: UI label is configuration
@@ -167,7 +168,7 @@ export function buildOutboundApprovalEmbed(params: OutboundApprovalEmbedParams):
     // Stryker disable BooleanLiteral: inline is a UI layout flag — not behavior-affecting
     // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: cc fields only added when non-empty
     const ccFields = params.cc && params.cc.length > 0
-        ? [{ name: 'Cc', value: _.join(params.cc, ', '), inline: true }]
+        ? [{ name: 'Cc', value: join(params.cc, ', '), inline: true }]
         : [];
     // Stryker restore BooleanLiteral
 

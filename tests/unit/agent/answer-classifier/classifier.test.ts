@@ -96,14 +96,14 @@ describe('AnswerClassifier', () => {
             });
 
             it('should only match answer patterns at start of string', async () => {
-                const classifier = new AnswerClassifier();
+                const innerClassifier = new AnswerClassifier();
                 const message: MessageToClassify = {
                     ...baseMessage,
                     content:        'I said yes yesterday',
                     isBotMentioned: false,
                 };
                 // Should NOT match "yes" in the middle - should default to unrelated
-                expect(await classifier.classify(baseQuestion, message)).toBe('unrelated');
+                expect(await innerClassifier.classify(baseQuestion, message)).toBe('unrelated');
             });
 
             it('should classify "no" as answer', async () => {
@@ -204,14 +204,14 @@ describe('AnswerClassifier', () => {
             });
 
             it('should only match interruption patterns at start of string', async () => {
-                const classifier = new AnswerClassifier();
+                const innerClassifier = new AnswerClassifier();
                 const message: MessageToClassify = {
                     ...baseMessage,
                     content:        'I was thinking, by the way this is nice',
                     isBotMentioned: false,
                 };
                 // Should NOT match "by the way" in the middle - should default to unrelated
-                expect(await classifier.classify(baseQuestion, message)).toBe('unrelated');
+                expect(await innerClassifier.classify(baseQuestion, message)).toBe('unrelated');
             });
 
             it('should classify "also" as interruption', async () => {

@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import type { DiscordMessageContext } from '../types';
 
 /**
@@ -30,7 +30,7 @@ export function addAttachmentInfoToContexts(
         return contexts;
     }
 
-    return _.map(contexts, (ctx, idx) => {
+    return map(contexts, (ctx, idx) => {
         // Only add attachment info to the first context
         if(idx === 0) {
             return {

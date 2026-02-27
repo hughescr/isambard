@@ -1,6 +1,8 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
 import {
     fetchImages,
     saveNonImageAttachment,
@@ -11,6 +13,7 @@ import {
 import type { FetchedImage } from '../attachments/types';
 import type { CatchUpSessionRunner } from '../catchup';
 import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
+import type { ChannelMetadata } from '../channel-registry/types';
 import { MessageCoordinator } from '../message-coordinator';
 import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
@@ -18,7 +21,7 @@ import { sendResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
 import type { DiscordMessageContext } from '../types';
 import { createPresenceStreamHandler } from './presence-stream-handler';
-import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner  } from '@/agent';
+import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage  } from '@/agent';
 
 /**
  * Result of processing Discord message attachments
@@ -39,6 +42,7 @@ interface ProcessedAttachments {
  * @returns Processed images and content additions for message text
  */
 // Stryker disable all: Integration function with external dependencies - tested via bot integration tests
+// eslint-disable-next-line sonarjs/cognitive-complexity -- attachment pipeline handles image fetching, format conversion, and non-image file saving; each type requires distinct branching
 async function processAttachments(contexts: DiscordMessageContext[]): Promise<ProcessedAttachments> {
     const allAttachments = contexts.flatMap(ctx => ctx.attachments ?? []);
     let images: FetchedImage[] = [];
@@ -46,7 +50,7 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
 
     if(allAttachments.length > 0) {
         // Fetch images
-        const imageAttachments = _.filter(allAttachments, att => isSupportedImageType(att.contentType));
+        const imageAttachments = filter(allAttachments, att => isSupportedImageType(att.contentType));
         if(imageAttachments.length > 0) {
             const result = await fetchImages(imageAttachments);
             images = result.images;
@@ -75,12 +79,13 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
         }
 
         // Save non-image attachments to scratch directory
-        const nonImageAttachments = _.filter(allAttachments, att => !isSupportedImageType(att.contentType));
+        const nonImageAttachments = filter(allAttachments, att => !isSupportedImageType(att.contentType));
         if(nonImageAttachments.length > 0) {
             const scratchDir = process.cwd();
             const messageId = contexts[0]?.messageId ?? 'unknown';
 
             for(const attachment of nonImageAttachments) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: per-file save to disk
                 const stored = await saveNonImageAttachment(attachment, scratchDir, messageId);
                 if(stored) {
                     contentAdditions.push(
@@ -124,7 +129,7 @@ export interface SetupCoordinatorParams {
     rateLimiter:              DiscordRateLimiter
     readyClient:              Client
     channelRegistry:          ChannelRegistryManager
-    eventDeltaTracker?:       import('../../../agent/event-delta-tracker').EventDeltaTracker
+    eventDeltaTracker?:       EventDeltaTracker
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
@@ -133,7 +138,7 @@ export interface SetupCoordinatorParams {
 /**
  * Maps a single Discord message context to platform-agnostic message context for the agent.
  */
-export function toMessageContext(context: DiscordMessageContext): import('@/agent/types').MessageContext {
+export function toMessageContext(context: DiscordMessageContext): MessageContext {
     return {
         channelId:   context.channelId,
         userId:      context.userId,
@@ -149,15 +154,15 @@ export function toMessageContext(context: DiscordMessageContext): import('@/agen
 /**
  * Maps Discord message contexts to platform-agnostic message contexts for the agent.
  */
-export function toMessageContexts(contexts: DiscordMessageContext[]): import('@/agent/types').MessageContext[] {
-    return _.map(contexts, toMessageContext);
+export function toMessageContexts(contexts: DiscordMessageContext[]): MessageContext[] {
+    return map(contexts, toMessageContext);
 }
 
 /**
  * Maps Discord fetched images to platform-agnostic image format for the agent.
  */
-export function toPlatformImages(images: FetchedImage[]): import('@/agent/types').PlatformImage[] {
-    return _.map(images, img => ({
+export function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
+    return map(images, img => ({
         filename:     img.filename,
         mediaType:    img.mediaType,
         base64Data:   img.base64Data,
@@ -219,7 +224,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 logger.info({ msg: 'Resuming catch-up after suspension' });
                 // Resume catch-up (async, don't await)
                 void catchUpSessionRunner.resumeAfterSuspension().catch((error) => {
-                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    const errorMsg = isError(error) ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after suspension' });
                     // Clear suspension state (error recovery)
                     catchUpSessionRunner.clearSuspension();
@@ -230,7 +235,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             if(botStateManager.getMode() === 'idle' && perchSessionRunner?.isSuspended()) {
                 logger.info({ msg: 'Resuming perch after suspension' });
                 void perchSessionRunner.resumeAfterSuspension().catch((error) => {
-                    const errorMsg = _.isError(error) ? error.message : String(error);
+                    const errorMsg = isError(error) ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume perch after suspension' });
                     perchSessionRunner.clearSuspension();
                 });
@@ -310,7 +315,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             const registry = params.channelRegistry;
             const client = params.readyClient;
             const unmutedChannels = await registry.getUnmutedChannels();
-            const channelList = _.map(unmutedChannels, (channel: import('../channel-registry/types').ChannelMetadata) => {
+            const channelList = map(unmutedChannels, (channel: ChannelMetadata) => {
                 // Get guild name for disambiguation
                 let guildName: string | undefined;
                 if(channel.guildId !== 'DM') {

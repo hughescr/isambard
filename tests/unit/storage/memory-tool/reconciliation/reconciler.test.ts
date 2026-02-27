@@ -1,7 +1,9 @@
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { filter as _filter, map as _map, replace as _replace } from 'lodash';
+import _filter from 'lodash/filter';
+import _map from 'lodash/map';
+import _replace from 'lodash/replace';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
@@ -25,7 +27,7 @@ describe('delay', () => {
     test('should reject if signal already aborted', async () => {
         const controller = new AbortController();
         controller.abort();
-        await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
     test('should reject if signal aborted mid-delay', async () => {
@@ -33,7 +35,7 @@ describe('delay', () => {
         const delayPromise = delay(100, controller.signal);
         // Advance time to fire the abort timeout (simulated as immediate abort)
         controller.abort();
-        await expect(delayPromise).rejects.toThrow('Aborted');
+        expect(delayPromise).rejects.toThrow('Aborted');
     });
 
     test('should return immediately for zero or negative delays', async () => {
@@ -89,8 +91,7 @@ describe('retryWithBackoff', () => {
     test('should return undefined on non-throttling error', async () => {
         const op = mock(() => Promise.reject(new Error('ValidationError')));
         // No retry delay for non-throttling errors
-        const result = await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
-        expect(result).toBeUndefined();
+        await retryWithBackoff(op, { baseDelayMs: 10, maxAttempts: 3 }, 'test');
         expect(op).toHaveBeenCalledTimes(1);
     });
 
@@ -104,8 +105,7 @@ describe('retryWithBackoff', () => {
         jest.runOnlyPendingTimers(); // retry 1: delay(1)
         await Promise.resolve();
         jest.runOnlyPendingTimers(); // retry 2: delay(2)
-        const result = await resultPromise;
-        expect(result).toBeUndefined();
+        await resultPromise;
         expect(op).toHaveBeenCalledTimes(3);
     });
 
@@ -116,7 +116,7 @@ describe('retryWithBackoff', () => {
             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
             return Promise.reject({ name: 'ThrottlingException' });
         });
-        await expect(
+        expect(
             retryWithBackoff(op, { baseDelayMs: 50, maxAttempts: 3 }, 'test', controller.signal)
         ).rejects.toThrow('Aborted');
     });
@@ -921,7 +921,7 @@ describe('runReconciliation', () => {
             // Abort immediately
             controller.abort();
 
-            await expect(
+            expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
         });
@@ -941,7 +941,7 @@ describe('runReconciliation', () => {
                 return Promise.resolve({ Items: [] });
             });
 
-            await expect(
+            expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
         });
@@ -962,7 +962,7 @@ describe('runReconciliation', () => {
                     return Promise.resolve({ Items: [] });
                 });
 
-            await expect(
+            expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
         });
@@ -1413,7 +1413,9 @@ describe('runReconciliation', () => {
                 Key: { PK: 'TAG#tagA', SK: 'PATH#/identity/old-name.md' },
             }).callsFake(async () => {
                 callOrder.push('tagA-called');
-                await new Promise<void>(resolve => resolvers.push(resolve));
+                await new Promise<void>((resolve) => {
+                    resolvers.push(resolve);
+                });
                 return { Item: undefined };
             });
 
@@ -1421,7 +1423,9 @@ describe('runReconciliation', () => {
                 Key: { PK: 'TAG#tagB', SK: 'PATH#/identity/old-name.md' },
             }).callsFake(async () => {
                 callOrder.push('tagB-called');
-                await new Promise<void>(resolve => resolvers.push(resolve));
+                await new Promise<void>((resolve) => {
+                    resolvers.push(resolve);
+                });
                 return { Item: undefined };
             });
 
@@ -1438,6 +1442,7 @@ describe('runReconciliation', () => {
             // Let microtasks run until both GetCommands are in-flight
             // Flush event loop turns until both calls are recorded or we time out
             for(let i = 0; i < 100 && callOrder.length < 2; i++) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: must observe each microtask tick to detect parallel calls
                 await Promise.resolve();
             }
 
@@ -1763,7 +1768,7 @@ describe('runReconciliation', () => {
             // Abort before Phase B
             controller.abort();
 
-            await expect(
+            expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
         });
@@ -1778,7 +1783,7 @@ describe('runReconciliation', () => {
             // Abort before Phase B starts - the abort check at the start of the for loop will catch it
             controller.abort();
 
-            await expect(
+            expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
         });
@@ -2042,7 +2047,7 @@ describe('runReconciliation', () => {
             // We abort synchronously before runReconciliation starts
             controller.abort();
 
-            await expect(
+            expect(
                 runReconciliation(deps, { ...options, signal: controller.signal })
             ).rejects.toThrow('Aborted');
         });

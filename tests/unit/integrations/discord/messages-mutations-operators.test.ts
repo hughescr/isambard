@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
+import repeat from 'lodash/repeat';
+import trim from 'lodash/trim';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -133,7 +134,7 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should filter out empty chunks from final result', () => {
-                // Tests final filter: _.filter(chunks, chunk => chunk.length > 0)
+                // Tests final filter: filter(chunks, chunk => chunk.length > 0)
                 const message = 'word1 word2 word3';
                 const result = splitMessage(message, 10);
                 for(const chunk of result) {
@@ -146,7 +147,7 @@ describe.concurrent('Discord Message Splitting', () => {
         describe('mutation coverage - sentence fallback to words', () => {
             test('should fall back to word splitting when no sentences found', () => {
                 // Kill: if(sentences.length === 0) block in splitBySentences
-                const message = _.trim(_.repeat('word ', 20));
+                const message = trim(repeat('word ', 20));
                 const result = splitMessage(message, 30);
                 expect(result.length).toBeGreaterThan(1);
                 for(const chunk of result) {
@@ -156,7 +157,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should use word splitting for long sentence', () => {
                 // Kill: if(exceedsLimtest(sentence.length, maxLength)) block in splitBySentences
-                const longSentence = `${_.trim(_.repeat('word ', 30))}.`;
+                const longSentence = `${trim(repeat('word ', 30))}.`;
                 const result = splitMessage(longSentence, 50);
                 expect(result.length).toBeGreaterThan(1);
             });

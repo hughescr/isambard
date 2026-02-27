@@ -1,5 +1,8 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import _ from 'lodash';
+import { type query, type Query } from '@anthropic-ai/claude-agent-sdk';
+import isError from 'lodash/isError';
+import isObject from 'lodash/isObject';
+import isString from 'lodash/isString';
+import some from 'lodash/some';
 import { retryAsyncGenerator, type ErrorClassification, type ErrorClassifier, type RetryDeps, type RetryPolicy  } from '@/utils';
 
 export interface ClaudeRetryOptions {
@@ -14,7 +17,7 @@ export interface ClaudeRetryOptions {
 function extractRetryAfter(error: object): number | undefined {
     // Check response body first (already in ms)
     if('retryAfter' in error) {
-        const retryAfter = _.isString(error.retryAfter)
+        const retryAfter = isString(error.retryAfter)
             ? Number.parseInt(error.retryAfter, 10)
             : (error.retryAfter as number);
 
@@ -22,9 +25,9 @@ function extractRetryAfter(error: object): number | undefined {
     }
 
     // Check headers (in seconds, needs conversion to ms)
-    if('headers' in error && _.isObject(error.headers)) {
+    if('headers' in error && isObject(error.headers)) {
         const headers = error.headers as Record<string, unknown>;
-        if('retry-after' in headers && _.isString(headers['retry-after'])) {
+        if('retry-after' in headers && isString(headers['retry-after'])) {
             const retryAfterSeconds = Number.parseInt(headers['retry-after'], 10);
             return retryAfterSeconds >= 0 ? retryAfterSeconds * 1000 : undefined;
         }
@@ -37,7 +40,7 @@ function extractRetryAfter(error: object): number | undefined {
  * Check if error is a network error by code property
  */
 function isNetworkErrorByCode(error: object): ErrorClassification | undefined {
-    if(!('code' in error) || !_.isString(error.code)) {
+    if(!('code' in error) || !isString(error.code)) {
         return undefined;
     }
 
@@ -46,7 +49,7 @@ function isNetworkErrorByCode(error: object): ErrorClassification | undefined {
         return undefined;
     }
 
-    const message = 'message' in error && _.isString(error.message) && error.message
+    const message = 'message' in error && isString(error.message) && error.message
         ? error.message
         : 'Network error';
 
@@ -57,12 +60,12 @@ function isNetworkErrorByCode(error: object): ErrorClassification | undefined {
  * Check if error is a network error by message content
  */
 function isNetworkErrorByMessage(error: object): ErrorClassification | undefined {
-    if(!_.isError(error)) {
+    if(!isError(error)) {
         return undefined;
     }
 
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
-    if(!_.some(networkErrorCodes, code => error.message.includes(code))) {
+    if(!some(networkErrorCodes, code => error.message.includes(code))) {
         return undefined;
     }
 
@@ -77,11 +80,11 @@ function classifyHttpStatusError(error: object): ErrorClassification | undefined
         return undefined;
     }
 
-    const status = _.isString(error.status)
+    const status = isString(error.status)
         ? Number.parseInt(error.status, 10)
         : (error.status as number);
 
-    const message = 'message' in error && _.isString(error.message) && error.message
+    const message = 'message' in error && isString(error.message) && error.message
         ? error.message
         : `HTTP ${status}`;
 
@@ -112,11 +115,11 @@ function classifyHttpStatusError(error: object): ErrorClassification | undefined
  * Get error message from unknown error
  */
 function getErrorMessage(error: unknown): string {
-    if(_.isString(error) && error) {
+    if(isString(error) && error) {
         return error;
     }
 
-    if(_.isObject(error) && 'message' in error && _.isString(error.message) && error.message) {
+    if(isObject(error) && 'message' in error && isString(error.message) && error.message) {
         return error.message;
     }
 
@@ -133,7 +136,7 @@ function getErrorMessage(error: unknown): string {
  */
 export function classifyClaudeError(error: unknown): ErrorClassification {
     // Handle non-object errors as permanent
-    if(!_.isObject(error)) {
+    if(!isObject(error)) {
         return { category: 'permanent', message: getErrorMessage(error) };
     }
 
@@ -171,9 +174,9 @@ export function classifyClaudeError(error: unknown): ErrorClassification {
  * @returns A retryable query function with the same signature as the original
  */
 export function createRetryableQuery(
-    queryFn: typeof import('@anthropic-ai/claude-agent-sdk').query,
+    queryFn: typeof query,
     options: ClaudeRetryOptions = {}
-): typeof import('@anthropic-ai/claude-agent-sdk').query {
+): typeof query {
     const { policy: policyInput = {}, deps = {} } = options;
 
     // Default to 2 max attempts (1 retry) for Claude calls

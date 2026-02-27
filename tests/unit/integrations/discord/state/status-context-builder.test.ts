@@ -3,7 +3,8 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { constant, noop as _ } from 'lodash';
+import constant from 'lodash/constant';
+import _ from 'lodash/noop';
 import { createStatusContextBuilder } from '@/integrations/discord/state/status-context-builder';
 import { type BotState, type BotStateManager, createDefaultBotState } from '@/integrations/discord/state/types';
 import { createChannelId } from '@/integrations/discord/types';

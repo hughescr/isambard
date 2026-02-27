@@ -12,7 +12,6 @@
  */
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
-import _ from 'lodash';
 import { DateTime } from 'luxon';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
@@ -166,6 +165,32 @@ export class PresenceManager {
     }
 
     /**
+     * Generate and apply catch-up status, with optional dynamic synopsis or idle fallback.
+     */
+    private async applyCatchUpStatus(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): Promise<void> {
+        // Stryker disable BlockStatement: Error logging catch block for observability
+        try {
+            // Use dynamic generator if catch-up context provided and generator available
+            if(catchUpContext && this.deps.dynamicStatusGenerator) {
+                const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
+                // Stryker disable next-line ConditionalExpression: Null guard — fall through to idle generator when Haiku returns null
+                if(statusText !== null) {
+                    const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
+                    await this.applyPresenceUpdate(activity);
+                    return;
+                }
+            }
+            // Fallback to idle generator (no dynamic generator, no context, or null result)
+            const activity = await this.deps.idleStatusGenerator.generate();
+            await this.applyPresenceUpdate(activity);
+        } catch (error) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
+            this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
+        }
+        // Stryker restore BlockStatement
+    }
+
+    /**
      * Transition to a new presence display mode, managing status updates and lifecycle.
      * This method has side effects: generates LLM-powered status updates,
      * manages idle refresh loop lifecycle, and handles complex state transitions.
@@ -173,6 +198,7 @@ export class PresenceManager {
      * @param mode - Presence display mode state
      * @param catchUpContext - Optional rich context for catch-up status generation
      */
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- state machine transitions require branching on (currentPhase, mode, previousMode) combinations; each branch is a distinct valid state
     transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void {
         // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
         this.deps.logger.debug({ mode, previousMode: this.presenceDisplayMode }, 'Setting presence display mode');
@@ -198,28 +224,7 @@ export class PresenceManager {
                 // This shows the 📥 prefix immediately
                 // Do NOT start the idle refresh loop - stream handler will drive updates
                 if(enteringCatchUp) {
-                    void (async () => {
-                        // Stryker disable BlockStatement: Error logging catch block for observability
-                        try {
-                            // Use dynamic generator if catch-up context provided and generator available
-                            if(catchUpContext && this.deps.dynamicStatusGenerator) {
-                                const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                                // Stryker disable next-line ConditionalExpression: Null guard — fall through to idle generator when Haiku returns null
-                                if(statusText !== null) {
-                                    const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
-                                    await this.applyPresenceUpdate(activity);
-                                    return;
-                                }
-                            }
-                            // Fallback to idle generator (no dynamic generator, no context, or null result)
-                            const activity = await this.deps.idleStatusGenerator.generate();
-                            await this.applyPresenceUpdate(activity);
-                        } catch (error) {
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
-                            this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
-                        }
-                        // Stryker restore BlockStatement
-                    })();
+                    void this.applyCatchUpStatus(mode, catchUpContext);
                 }
                 // When exiting catch-up mode, generate an immediate idle refresh
                 // This ensures we show normal idle status without waiting for the next interval
@@ -239,28 +244,7 @@ export class PresenceManager {
                 // Generate catch-up status (with 📥 prefix)
                 // Note: We can't use refreshIdleStatus() here because it checks currentPhase.type === 'idle'
                 // and returns early if false. At startup, currentPhase is null.
-                void (async () => {
-                    // Stryker disable BlockStatement: Error logging catch block for observability
-                    try {
-                        // Use dynamic generator if catch-up context provided and generator available
-                        if(catchUpContext && this.deps.dynamicStatusGenerator) {
-                            const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                            // Stryker disable next-line ConditionalExpression: Null guard — fall through to idle generator when Haiku returns null
-                            if(statusText !== null) {
-                                const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
-                                await this.applyPresenceUpdate(activity);
-                                return;
-                            }
-                        }
-                        // Fallback to idle generator (no dynamic generator, no context, or null result)
-                        const activity = await this.deps.idleStatusGenerator.generate();
-                        await this.applyPresenceUpdate(activity);
-                    } catch (error) {
-                        // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
-                        this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
-                    }
-                    // Stryker restore BlockStatement
-                })();
+                void this.applyCatchUpStatus(mode, catchUpContext);
             }
         }
 

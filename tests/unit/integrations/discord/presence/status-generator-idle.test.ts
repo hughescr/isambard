@@ -1,6 +1,10 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ActivityType } from 'discord.js';
-import { constant as _constant, keys as _keys, repeat as _repeat, replace as _replace, size as _size, isString as _isString } from 'lodash';
+import _constant from 'lodash/constant';
+import _isString from 'lodash/isString';
+import _keys from 'lodash/keys';
+import _repeat from 'lodash/repeat';
+import _replace from 'lodash/replace';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
 import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 

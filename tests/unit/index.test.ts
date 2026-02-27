@@ -1,7 +1,7 @@
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
-import { find as _find } from 'lodash';
+import _find from 'lodash/find';
 import { mockLogger, resetMockSstResource } from '../setup';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import { createGuildId } from '@/integrations/discord/types';

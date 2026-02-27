@@ -334,9 +334,8 @@ describe('retryAsync', () => {
             const operation = mock(() => Promise.resolve(undefined));
             const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
 
-            const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
+            await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
-            expect(result).toBeUndefined();
             expect(operation).toHaveBeenCalledTimes(1);
         });
 

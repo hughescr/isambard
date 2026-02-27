@@ -1,9 +1,16 @@
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import path from 'node:path';
 import type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import constant from 'lodash/constant';
+import filter from 'lodash/filter';
+import isError from 'lodash/isError';
+import last from 'lodash/last';
+import map from 'lodash/map';
+import partition from 'lodash/partition';
+import sortBy from 'lodash/sortBy';
+import startsWith from 'lodash/startsWith';
 import semver from 'semver';
 import { z } from 'zod';
 
@@ -25,8 +32,8 @@ export type PluginsConfig = z.infer<typeof PluginsConfigSchema>;
  * @returns Absolute path with ~ expanded
  */
 export function resolveExternalPath(inputPath: string): string {
-    if(_.startsWith(inputPath, '~/')) {
-        return join(homedir(), inputPath.slice(2));
+    if(startsWith(inputPath, '~/')) {
+        return path.join(homedir(), inputPath.slice(2));
     }
     if(inputPath === '~') {
         return homedir();
@@ -69,9 +76,9 @@ async function isDirectory(dirPath: string): Promise<boolean> {
  * @returns true if directory contains .claude-plugin subdirectory
  */
 async function isValidPluginDirectory(dirPath: string): Promise<boolean> {
-    const pluginManifestDir = join(dirPath, '.claude-plugin');
+    const pluginManifestDir = path.join(dirPath, '.claude-plugin');
     // Stryker disable next-line BooleanLiteral,ArrowFunction: Error handler for pathExists rejection
-    return pathExists(pluginManifestDir).then(exists => exists && isDirectory(pluginManifestDir)).catch(_.constant(false));
+    return pathExists(pluginManifestDir).then(exists => exists && isDirectory(pluginManifestDir)).catch(constant(false));
 }
 
 /**
@@ -83,7 +90,7 @@ async function isValidPluginDirectory(dirPath: string): Promise<boolean> {
  * @returns Absolute path to the latest version directory, or undefined if not found
  */
 export async function findLatestMarketplaceVersion(marketplacePath: string, pluginName: string): Promise<string | undefined> {
-    const pluginDir = join(marketplacePath, pluginName);
+    const pluginDir = path.join(marketplacePath, pluginName);
 
     if(!await pathExists(pluginDir)) {
         return undefined;
@@ -91,26 +98,26 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 
     // Read version directories
     const entries = await readdir(pluginDir, { withFileTypes: true });
-    const versionDirs = _.filter(entries, e => e.isDirectory());
+    const versionDirs = filter(entries, e => e.isDirectory());
 
     // Filter to valid plugin directories with semver names
-    const withVersionInfo = _.map(versionDirs, dir => ({
+    const withVersionInfo = map(versionDirs, dir => ({
         name:    dir.name,
-        path:    join(pluginDir, dir.name),
+        path:    path.join(pluginDir, dir.name),
         version: semver.valid(dir.name),
     }));
 
-    const withSemver = _.filter(withVersionInfo, v => v.version !== null);
+    const withSemver = filter(withVersionInfo, v => v.version !== null);
 
     // Check each directory for validity in parallel
     const validityChecks = await Promise.all(
-        _.map(withSemver, async v => ({
+        map(withSemver, async v => ({
             ...v,
             isValid: await isValidPluginDirectory(v.path),
         }))
     );
 
-    const validVersions = _.filter(validityChecks, 'isValid');
+    const validVersions = filter(validityChecks, 'isValid');
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Early return when no valid plugin versions found is defensive coding
     if(validVersions.length === 0) {
@@ -118,8 +125,8 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
     }
 
     // Sort by semver descending and return the first (latest)
-    const sorted = _.sortBy(validVersions, v => semver.parse(v.version));
-    const latest = _.last(sorted);
+    const sorted = sortBy(validVersions, v => semver.parse(v.version));
+    const latest = last(sorted);
 
     return latest?.path;
 }
@@ -136,22 +143,22 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
     }
 
     const entries = await readdir(pluginsDir, { withFileTypes: true });
-    const directories = _.filter(entries, e => e.isDirectory());
+    const directories = filter(entries, e => e.isDirectory());
 
-    const withPaths = _.map(directories, dir => ({
+    const withPaths = map(directories, dir => ({
         name: dir.name,
-        path: join(pluginsDir, dir.name),
+        path: path.join(pluginsDir, dir.name),
     }));
 
     // Check validity in parallel
     const validityChecks = await Promise.all(
-        _.map(withPaths, async d => ({
+        map(withPaths, async d => ({
             ...d,
             isValid: await isValidPluginDirectory(d.path),
         }))
     );
 
-    const [validDirs, invalidDirs] = _.partition(validityChecks, 'isValid');
+    const [validDirs, invalidDirs] = partition(validityChecks, 'isValid');
 
     // Warn about directories without .claude-plugin/ - likely misconfiguration
     for(const invalid of invalidDirs) {
@@ -162,7 +169,7 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
         });
     }
 
-    return _.map(validDirs, d => ({ type: 'local' as const, path: d.path }));
+    return map(validDirs, d => ({ type: 'local' as const, path: d.path }));
 }
 
 /**
@@ -171,7 +178,7 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
  * @returns Parsed config or default empty config
  */
 async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
-    const configPath = join(pluginsDir, 'plugins.json');
+    const configPath = path.join(pluginsDir, 'plugins.json');
 
     if(!await pathExists(configPath)) {
         // Stryker disable next-line ArrayDeclaration,ObjectLiteral: Default config when file missing, tested in line 497-507
@@ -179,7 +186,7 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
     }
 
     try {
-        const content = await readFile(configPath, 'utf-8');
+        const content = await readFile(configPath, 'utf8');
         const parsed = JSON.parse(content) as unknown;
         const result = PluginsConfigSchema.safeParse(parsed);
 
@@ -197,7 +204,7 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
     } catch (error) {
         logger.warn({
             path:  configPath,
-            error: _.isError(error) ? error.message : String(error),
+            error: isError(error) ? error.message : String(error),
             msg:   'Failed to parse plugins.json, using defaults',
         });
         // Stryker disable next-line ArrayDeclaration,ObjectLiteral: Default config for parse errors, tested in lines 510-525
@@ -216,7 +223,7 @@ async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<
 
     for(const rawPath of externalPaths) {
         const resolvedPath = resolveExternalPath(rawPath);
-        const name = basename(resolvedPath);
+        const name = path.basename(resolvedPath);
 
         // Skip if already loaded (deduplication)
         if(loadedNames.has(name)) {
@@ -231,6 +238,7 @@ async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<
         }
 
         // Check path exists
+        // eslint-disable-next-line no-await-in-loop -- sequential: filesystem I/O checks per plugin
         if(!await pathExists(resolvedPath)) {
             logger.warn({
                 path: resolvedPath,
@@ -240,6 +248,7 @@ async function resolveExternalPlugins(externalPaths: string[], loadedNames: Set<
         }
 
         // Check for .claude-plugin directory
+        // eslint-disable-next-line no-await-in-loop -- sequential: filesystem I/O checks per plugin
         if(!await isValidPluginDirectory(resolvedPath)) {
             logger.warn({
                 path: resolvedPath,
@@ -281,6 +290,7 @@ async function resolveMarketplacePlugins(
             continue;
         }
 
+        // eslint-disable-next-line no-await-in-loop -- sequential: filesystem version lookup per plugin
         const latestPath = await findLatestMarketplaceVersion(marketplacePath, name);
 
         if(!latestPath) {
@@ -314,7 +324,7 @@ async function resolveMarketplacePlugins(
 export async function loadPlugins(
     pluginsDir: string,
     // Stryker disable next-line StringLiteral: Default marketplace path constant
-    marketplacePath: string = join(homedir(), '.claude', 'plugins')
+    marketplacePath: string = path.join(homedir(), '.claude', 'plugins')
 ): Promise<SdkPluginConfig[]> {
     const loadedNames = new Set<string>();
     const allPlugins: SdkPluginConfig[] = [];
@@ -322,7 +332,7 @@ export async function loadPlugins(
     // 1. Discover in-repo plugins (highest priority)
     const inRepoPlugins = await discoverInRepoPlugins(pluginsDir);
     for(const plugin of inRepoPlugins) {
-        const name = basename(plugin.path);
+        const name = path.basename(plugin.path);
         loadedNames.add(name);
         allPlugins.push(plugin);
     }
@@ -331,7 +341,7 @@ export async function loadPlugins(
     if(inRepoPlugins.length > 0) {
         logger.info({
             count:   inRepoPlugins.length,
-            plugins: _.map(inRepoPlugins, p => basename(p.path)),
+            plugins: map(inRepoPlugins, p => path.basename(p.path)),
             msg:     'Discovered in-repo plugins',
         });
     }
@@ -348,7 +358,7 @@ export async function loadPlugins(
     if(externalPlugins.length > 0) {
         logger.info({
             count:   externalPlugins.length,
-            plugins: _.map(externalPlugins, p => basename(p.path)),
+            plugins: map(externalPlugins, p => path.basename(p.path)),
             msg:     'Loaded external plugins',
         });
     }
@@ -362,7 +372,7 @@ export async function loadPlugins(
     if(marketplacePlugins.length > 0) {
         logger.info({
             count:   marketplacePlugins.length,
-            plugins: _.map(marketplacePlugins, p => basename(p.path)),
+            plugins: map(marketplacePlugins, p => path.basename(p.path)),
             msg:     'Loaded marketplace plugins',
         });
     }

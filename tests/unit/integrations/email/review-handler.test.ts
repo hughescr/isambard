@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { ButtonInteraction, InteractionUpdateOptions } from 'discord.js';
-import _ from 'lodash';
+import constant from 'lodash/constant';
 import { mockLogger } from '../../../setup';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { ReviewHandler } from '@/integrations/email/review-handler';
@@ -381,7 +381,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('editReply shows error when getFullMessage returns null (message not found)', async () => {
             const moveMessage    = mock(async () => undefined);
-            const getFullMessage = mock(_.constant(Promise.resolve(null)));
+            const getFullMessage = mock(constant(Promise.resolve(null)));
             const wildDuckConn   = { moveMessage, getFullMessage } as unknown as WildDuckClient;
             const allowlist      = makeAllowlist();
             const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });

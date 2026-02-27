@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
-import { map as _map, join as _join } from 'lodash';
+import _join from 'lodash/join';
+import _map from 'lodash/map';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 
 /**

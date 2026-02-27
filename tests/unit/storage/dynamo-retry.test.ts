@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { noop, constant } from 'lodash';
+import constant from 'lodash/constant';
+import noop from 'lodash/noop';
 import { withDynamoTimeout, DynamoTimeoutError } from '@/storage/dynamo-retry';
 import type { RetryLogger } from '@/utils/retry/types';
 
@@ -249,7 +250,9 @@ describe('withDynamoTimeout', () => {
         it('should propagate errors even if they occur after timeout', async () => {
             const operation = mock(async () => {
                 // This will still run even after timeout
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise((resolve) => {
+                    setTimeout(resolve, 2000);
+                });
                 throw new Error('Late error');
             });
 

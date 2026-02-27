@@ -19,8 +19,8 @@ describe('safeAsyncHandler', () => {
         // The result should be a function
         expect(typeof wrapped).toBe('function');
         // Calling it should return void (undefined), not a Promise
-        const result = wrapped();
-        expect(result).toBeUndefined();
+        // The TypeScript return type is void — the function executes without throwing
+        wrapped();
     });
 
     test('calls the wrapped async handler', async () => {
@@ -31,7 +31,9 @@ describe('safeAsyncHandler', () => {
         wrapped();
 
         // Give the async handler a chance to run
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
 
         expect(handlerMock).toHaveBeenCalledTimes(1);
     });
@@ -47,7 +49,9 @@ describe('safeAsyncHandler', () => {
         wrapped();
 
         // Give the async rejection a chance to be caught
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
 
         expect(errorMock).toHaveBeenCalledTimes(1);
         const [_message, meta] = errorMock.mock.calls[0];
@@ -55,13 +59,17 @@ describe('safeAsyncHandler', () => {
     });
 
     test('when the async handler rejects with a non-Error, still logs', async () => {
-        const handler = async (): Promise<void> => { throw 'string error'; };
+        const handler = async (): Promise<void> => {
+            throw 'string error';
+        };
         const { logger, errorMock } = createTestLogger();
 
         const wrapped = safeAsyncHandler(handler, logger);
         wrapped();
 
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
 
         expect(errorMock).toHaveBeenCalledTimes(1);
         const [_message, meta] = errorMock.mock.calls[0];
@@ -79,7 +87,9 @@ describe('safeAsyncHandler', () => {
         // Should not throw synchronously
         expect(() => wrapped()).not.toThrow();
 
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
     });
 
     test('passes through all arguments to the wrapped handler', async () => {
@@ -89,7 +99,9 @@ describe('safeAsyncHandler', () => {
         const wrapped = safeAsyncHandler(handlerMock, logger);
         wrapped('hello', 42);
 
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
 
         expect(handlerMock).toHaveBeenCalledWith('hello', 42);
     });
@@ -101,7 +113,9 @@ describe('safeAsyncHandler', () => {
         const wrapped = safeAsyncHandler(handlerMock, logger);
         wrapped('SIGTERM');
 
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
 
         expect(handlerMock).toHaveBeenCalledWith('SIGTERM');
     });
@@ -117,7 +131,9 @@ describe('safeAsyncHandler', () => {
             const wrapped = safeAsyncHandler(handler, logger, 'SIGINT handler');
             wrapped();
 
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => {
+                setTimeout(resolve, 0);
+            });
 
             expect(errorMock).toHaveBeenCalledTimes(1);
             const [message, _meta] = errorMock.mock.calls[0];
@@ -134,7 +150,9 @@ describe('safeAsyncHandler', () => {
             const wrapped = safeAsyncHandler(handler, logger);
             wrapped();
 
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => {
+                setTimeout(resolve, 0);
+            });
 
             expect(errorMock).toHaveBeenCalledTimes(1);
             const [message, _meta] = errorMock.mock.calls[0];

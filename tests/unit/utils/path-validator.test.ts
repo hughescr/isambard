@@ -1,13 +1,13 @@
-import { join } from 'node:path';
+import path from 'node:path';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mockFsPromises, resetMockFs } from '../../setup';
 import { validateFilePath, validateFilePaths, PathSecurityError } from '@/utils/path-validator';
 
 // Setup test fixtures in a temp directory inside CWD
-const testDir = join(process.cwd(), 'test-fixtures-path-validator');
-const validFile = join(testDir, 'valid.txt');
-const subDir = join(testDir, 'subdir');
-const subDirFile = join(subDir, 'nested.txt');
+const testDir = path.join(process.cwd(), 'test-fixtures-path-validator');
+const validFile = path.join(testDir, 'valid.txt');
+const subDir = path.join(testDir, 'subdir');
+const subDirFile = path.join(subDir, 'nested.txt');
 
 describe('path-validator', () => {
     beforeAll(() => {
@@ -41,38 +41,38 @@ describe('path-validator', () => {
         });
 
         test('should reject path outside CWD with ..', async () => {
-            await expect(validateFilePath('../etc/passwd')).rejects.toThrow(PathSecurityError);
-            await expect(validateFilePath('../etc/passwd')).rejects.toThrow('SECURITY');
-            await expect(validateFilePath('../etc/passwd')).rejects.toThrow('outside the working directory');
+            expect(validateFilePath('../etc/passwd')).rejects.toThrow(PathSecurityError);
+            expect(validateFilePath('../etc/passwd')).rejects.toThrow('SECURITY');
+            expect(validateFilePath('../etc/passwd')).rejects.toThrow('outside the working directory');
         });
 
         test('should reject absolute path outside CWD', async () => {
-            await expect(validateFilePath('/etc/passwd')).rejects.toThrow(PathSecurityError);
-            await expect(validateFilePath('/etc/passwd')).rejects.toThrow('SECURITY');
+            expect(validateFilePath('/etc/passwd')).rejects.toThrow(PathSecurityError);
+            expect(validateFilePath('/etc/passwd')).rejects.toThrow('SECURITY');
         });
 
         test('should reject non-existent files', async () => {
-            await expect(validateFilePath(join(testDir, 'nonexistent.txt'))).rejects.toThrow(PathSecurityError);
-            await expect(validateFilePath(join(testDir, 'nonexistent.txt'))).rejects.toThrow('not found');
+            expect(validateFilePath(path.join(testDir, 'nonexistent.txt'))).rejects.toThrow(PathSecurityError);
+            expect(validateFilePath(path.join(testDir, 'nonexistent.txt'))).rejects.toThrow('not found');
         });
 
         test('should reject directories', async () => {
-            await expect(validateFilePath(subDir)).rejects.toThrow(PathSecurityError);
-            await expect(validateFilePath(subDir)).rejects.toThrow('Not a file');
+            expect(validateFilePath(subDir)).rejects.toThrow(PathSecurityError);
+            expect(validateFilePath(subDir)).rejects.toThrow('Not a file');
         });
 
         test('should include "Do NOT circumvent" in security errors', async () => {
-            await expect(validateFilePath('../etc/passwd')).rejects.toThrow('Do NOT circumvent');
+            expect(validateFilePath('../etc/passwd')).rejects.toThrow('Do NOT circumvent');
         });
 
         test('should reject symlinks', async () => {
-            const symlinkPath = join(testDir, 'link.txt');
+            const symlinkPath = path.join(testDir, 'link.txt');
             // Create a symlink in the mock filesystem
             void mockFsPromises.symlink(validFile, symlinkPath);
 
-            await expect(validateFilePath(symlinkPath)).rejects.toThrow(PathSecurityError);
-            await expect(validateFilePath(symlinkPath)).rejects.toThrow('SECURITY');
-            await expect(validateFilePath(symlinkPath)).rejects.toThrow('Symlinks not allowed');
+            expect(validateFilePath(symlinkPath)).rejects.toThrow(PathSecurityError);
+            expect(validateFilePath(symlinkPath)).rejects.toThrow('SECURITY');
+            expect(validateFilePath(symlinkPath)).rejects.toThrow('Symlinks not allowed');
         });
     });
 
@@ -88,7 +88,7 @@ describe('path-validator', () => {
         });
 
         test('should reject if any path is invalid', async () => {
-            await expect(validateFilePaths([validFile, '../etc/passwd'])).rejects.toThrow(PathSecurityError);
+            expect(validateFilePaths([validFile, '../etc/passwd'])).rejects.toThrow(PathSecurityError);
         });
     });
 

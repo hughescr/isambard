@@ -253,7 +253,7 @@ describe('EmailClassifier', () => {
 
             const classifier = new EmailClassifier();
 
-            await expect(classifier.classify(makeEmail()))
+            expect(classifier.classify(makeEmail()))
                 .rejects.toThrow(ClassifierError);
         });
 
@@ -262,7 +262,7 @@ describe('EmailClassifier', () => {
 
             const classifier = new EmailClassifier();
 
-            await expect(classifier.classify(makeEmail()))
+            expect(classifier.classify(makeEmail()))
                 .rejects.toThrow(ClassifierError);
         });
 
@@ -271,7 +271,7 @@ describe('EmailClassifier', () => {
 
             const classifier = new EmailClassifier();
 
-            await expect(classifier.classify(makeEmail()))
+            expect(classifier.classify(makeEmail()))
                 .rejects.toThrow('ECONNREFUSED');
         });
 
@@ -335,7 +335,7 @@ describe('EmailClassifier', () => {
             mockGenerateTextWithSystemPrompt.mockRejectedValue(new Error('Network error'));
             const classifier = new EmailClassifier();
 
-            await expect(classifier.classify(makeEmail())).rejects.toThrow();
+            expect(classifier.classify(makeEmail())).rejects.toThrow();
             expect(mockLogger.info).not.toHaveBeenCalled();
         });
     });

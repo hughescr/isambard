@@ -1,5 +1,5 @@
 import type { Client } from 'discord.js';
-import _ from 'lodash';
+import startsWith from 'lodash/startsWith';
 import { type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
 import type { ChannelRegistryManager } from './manager';
 
@@ -15,7 +15,7 @@ export function formatDMChannelName(username: string): string {
  * Checks if a channel name is a DM channel format.
  */
 export function isDMChannelName(channelName: string): boolean {
-    return _.startsWith(channelName, '@');
+    return startsWith(channelName, '@');
 }
 
 /**
@@ -79,11 +79,12 @@ export class DMTracker {
         // Search all guilds the bot is in for a member with this username
         for(const guild of this.client.guilds.cache.values()) {
             // Fetch members (search by username)
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API, stop on first match
             const members = await guild.members.fetch({ query: username, limit: 10 });
 
             // Try exact match on username or full tag (username#discriminator)
             // Discord.js Collection is a Map subclass, so we must use its find method directly
-            // eslint-disable-next-line lodash/prefer-lodash-method -- Discord.js Collection.find not compatible with _.find
+            // eslint-disable-next-line lodash/prefer-lodash-method -- Discord.js Collection.find not compatible with find
             const member = members.find(m =>
                 m.user.username === username
                 || m.user.tag === username

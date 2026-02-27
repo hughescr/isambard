@@ -1,11 +1,12 @@
-/* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch natively */
 import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import map from 'lodash/map';
+import values from 'lodash/values';
 import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
+import { type EmailMetadata, type EmailAddress, type EmailHeaders, EmailFolder  } from '@/integrations/email/types';
 
 export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
-import { type EmailMetadata, type EmailAddress, type EmailHeaders, EmailFolder  } from '@/integrations/email/types';
 
 /**
  * Maps IMAP/WildDuck specialUse flag to the logical EmailFolder value.
@@ -21,6 +22,20 @@ export const SPECIAL_USE_FLAGS: Record<string, string> = {
     '\\Archive': 'Archive',
 };
 // Stryker restore StringLiteral,ObjectLiteral
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps a WildDuck address object to the EmailAddress type.
+ */
+function mapAddress(addr: { address: string, name?: string }): EmailAddress {
+    return {
+        address: addr.address,
+        ...(addr.name ? { name: addr.name } : {}),
+    };
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -221,13 +236,8 @@ interface FullMessageResponse {
  * Extract and optionally convert body text, truncating at UTF-8 boundary.
  */
 function extractBody(content: string, isHtml: boolean, maxBytes: number): string {
-    let text: string;
-    if(isHtml) {
-        // Stryker disable next-line ObjectLiteral: wordwrap:false is configuration for html-to-text conversion
-        text = convert(content, { wordwrap: false });
-    } else {
-        text = content;
-    }
+    // Stryker disable next-line ObjectLiteral: wordwrap:false is configuration for html-to-text conversion
+    const text = isHtml ? convert(content, { wordwrap: false }) : content;
     // Stryker disable next-line ConditionalExpression,EqualityOperator: truncation guard; > vs >= differ only at exact boundary, equivalence holds for non-boundary content
     if(Buffer.byteLength(text, 'utf8') > maxBytes) {
         const buf = Buffer.from(text, 'utf8');
@@ -269,9 +279,11 @@ export class WildDuckClient {
         await this.authenticate();
         await this.loadMailboxes();
         // Create any missing required folders
-        const missingFolders = _(EmailFolder).values().filter(folder => !this.reverseMailboxMap.has(folder)).value();
+        // eslint-disable-next-line lodash/chaining -- two-step: values() + filter(); chain has single method, direct composition preferred for readability
+        const missingFolders = filter(values(EmailFolder), folder => !this.reverseMailboxMap.has(folder));
         if(missingFolders.length > 0) {
             for(const folder of missingFolders) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API per folder
                 await this.createMailbox(folder);
             }
             await this.loadMailboxes();
@@ -326,13 +338,13 @@ export class WildDuckClient {
             query:     { keyword },
             mailboxes: [mailboxPath],
         });
-        const uids = _.map(results, (result) => {
+        const uids = map(results, (result) => {
             const colonIdx = result.message.lastIndexOf(':');
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: guard against missing colon in search result
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator,ArithmeticOperator: guard against missing colon in search result; message is always 'folder:uid' format so colonIdx===-1 is defensive; UnaryOperator(-1→+1) is equivalent since message always has a colon
             return colonIdx === -1 ? 0 : Number.parseInt(result.message.slice(colonIdx + 1), 10);
         });
         // Stryker disable next-line EqualityOperator: filter uids > 0 removes sentinel zeros for bad results
-        return _.filter(uids, uid => uid > 0);
+        return filter(uids, uid => uid > 0);
     }
 
     /**
@@ -704,7 +716,7 @@ export class WildDuckClient {
         const url = `/users/me/search?${searchParams.toString()}`;
         const response = await this.makeRequest<SearchResponse>(url, { method: 'GET' });
 
-        return _.map(response.results, result => this.mapSearchResult(result));
+        return map(response.results, result => this.mapSearchResult(result));
     }
 
     private mapSearchResult(result: SearchResultEntry): WildDuckSearchResult {
@@ -716,7 +728,7 @@ export class WildDuckClient {
             ? `${result.from.name} <${result.from.address ?? ''}>`
             : (result.from.address ?? '');
 
-        const to = _.map(result.to, addr => (
+        const to = map(result.to, addr => (
             addr.name ? `${addr.name} <${addr.address ?? ''}>` : (addr.address ?? '')
         ));
         // Stryker restore StringLiteral
@@ -897,20 +909,15 @@ export class WildDuckClient {
         }
 
         // Map addresses
-        const mapAddress = (addr: { address: string, name?: string }): EmailAddress => ({
-            address: addr.address,
-            ...(addr.name ? { name: addr.name } : {}),
-        });
-
         const from = response.from ? mapAddress(response.from) : { address: '' };
-        const to   = _.map(response.to ?? [], mapAddress);
-        const cc   = _.map(response.cc ?? [], mapAddress);
+        const to   = map(response.to ?? [], mapAddress);
+        const cc   = map(response.cc ?? [], mapAddress);
 
         // Map headers
         const headers = this.mapHeaders(response.headers ?? {}, response.replyTo);
 
         // Map attachment metadata for lazy fetching (data not fetched here)
-        const attachmentMeta: WildDuckAttachmentMeta[] = _.map(response.attachments ?? [], att => ({
+        const attachmentMeta: WildDuckAttachmentMeta[] = map(response.attachments ?? [], att => ({
             id:          att.id,
             filename:    att.filename,
             contentType: att.contentType,
@@ -967,8 +974,10 @@ export class WildDuckClient {
 
         if(!response.ok) {
             const body = await response.text();
-            // Stryker disable next-line StringLiteral: Error message is configuration
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`);
+            // Stryker disable next-line StringLiteral,ConditionalExpression: Error message is configuration
+            const bodySuffix = body ? `: ${body}` : '';
+            // Stryker disable next-line StringLiteral: Error message is configuration — template literal content is informational only
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }
 
         const arrayBuffer = await response.arrayBuffer();
@@ -1002,8 +1011,9 @@ export class WildDuckClient {
 
         if(!response.ok) {
             const body = await response.text();
-            // Stryker disable next-line StringLiteral: Error message is configuration
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`);
+            // Stryker disable next-line StringLiteral,ConditionalExpression: Error message is configuration
+            const bodySuffix = body ? `: ${body}` : '';
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }
 
         return response.json() as Promise<T>;
@@ -1030,8 +1040,9 @@ export class WildDuckClient {
 
         if(!response.ok) {
             const body = await response.text();
-            // Stryker disable next-line StringLiteral: Error message is configuration
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`);
+            // Stryker disable next-line StringLiteral,ConditionalExpression: Error message is configuration
+            const bodySuffix = body ? `: ${body}` : '';
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
         }
 
         return response.json() as Promise<T>;

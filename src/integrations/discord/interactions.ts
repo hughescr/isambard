@@ -90,7 +90,7 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
         // Determine channelId and threadId from interaction context
         // Stryker disable OptionalChaining: equivalent mutant - channel existence guaranteed by isThread() check
         const channelId = interaction.channel?.isThread()
-            ? createChannelId(interaction.channel?.parentId ?? interaction.channelId)
+            ? createChannelId(interaction.channel.parentId ?? interaction.channelId)
             : createChannelId(interaction.channelId);
         // Stryker restore OptionalChaining
         const threadId = interaction.channel?.isThread() ? interaction.channelId : undefined;

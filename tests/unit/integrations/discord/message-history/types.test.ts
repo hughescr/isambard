@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import { keys as _keys, values as _values } from 'lodash';
+import _keys from 'lodash/keys';
+import _values from 'lodash/values';
 import {
     discordAuthorSchema,
     discordAttachmentSchema,

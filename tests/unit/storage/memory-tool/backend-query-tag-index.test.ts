@@ -157,7 +157,7 @@ describe('MemoryToolBackendQuery - searchByTags', () => {
 
         expect(result.nextCursor).toBeDefined();
         const decodedCursor = JSON.parse(
-            Buffer.from(result.nextCursor!, 'base64').toString('utf-8')
+            Buffer.from(result.nextCursor!, 'base64').toString('utf8')
         );
         expect(decodedCursor).toEqual(lastEvaluatedKey);
     });

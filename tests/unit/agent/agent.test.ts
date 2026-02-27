@@ -1,8 +1,17 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on cast values for safety; the casts are non-nullable but the ?. provides defensive access */
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
-import _ from 'lodash';
+import every from 'lodash/every';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import findIndex from 'lodash/findIndex';
+import isArray from 'lodash/isArray';
+import keys from 'lodash/keys';
+import map from 'lodash/map';
+import split from 'lodash/split';
 import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs } from '../../../src/agent/agent';
+import { type PlatformImage } from '../../../src/agent/types';
 import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '../../../src/integrations/discord/types';
 import { mockLogger } from '../../setup';
 
@@ -438,7 +447,7 @@ describe('createClaudeAgent', () => {
             expect(tools).toContain('Skill');
 
             // Verify none are empty strings
-            expect(_.every(tools, (tool: string) => tool !== '')).toBe(true);
+            expect(every(tools, (tool: string) => tool !== '')).toBe(true);
         });
 
         test('should define EXPLICIT_AGENTS with correct structure', async () => {
@@ -449,7 +458,7 @@ describe('createClaudeAgent', () => {
             const agents = queryParams.options.agents;
 
             // Verify exact agent structure
-            expect(_.keys(agents).sort()).toEqual(['Explore', 'Plan', 'general-purpose'].sort());
+            expect(keys(agents).toSorted((a, b) => a.localeCompare(b))).toEqual(['Explore', 'Plan', 'general-purpose'].toSorted((a, b) => a.localeCompare(b)));
 
             // Verify general-purpose agent with exact values
             expect(agents['general-purpose']).toEqual({
@@ -483,7 +492,7 @@ describe('createClaudeAgent', () => {
             const agents = queryParams.options.agents;
 
             // Verify agents object is not empty (kills ObjectLiteral mutant on line 49)
-            expect(_.keys(agents).length).toBeGreaterThan(0);
+            expect(keys(agents).length).toBeGreaterThan(0);
             expect(agents).not.toEqual({});
         });
 
@@ -507,7 +516,7 @@ describe('createClaudeAgent', () => {
             expect(exploreTools).toEqual(['Read', 'Glob', 'Grep']);
 
             // Verify none are empty strings
-            expect(_.every(exploreTools, (tool: string) => tool !== '')).toBe(true);
+            expect(every(exploreTools, (tool: string) => tool !== '')).toBe(true);
         });
 
         test('should include exact tools array for Plan agent', async () => {
@@ -532,7 +541,7 @@ describe('createClaudeAgent', () => {
             expect(planTools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
 
             // Verify none are empty strings
-            expect(_.every(planTools, (tool: string) => tool !== '')).toBe(true);
+            expect(every(planTools, (tool: string) => tool !== '')).toBe(true);
         });
     });
 
@@ -1012,8 +1021,8 @@ describe('createClaudeAgent', () => {
             expect(prompt).toContain('First message\n\nUser @');
             expect(prompt).toContain('Second message');
             // Verify double newline exists between messages
-            const lines = _.split(prompt, '\n');
-            const firstIndex = _.findIndex(lines, l => l.includes('First message'));
+            const lines = split(prompt, '\n');
+            const firstIndex = findIndex(lines, l => l.includes('First message'));
             expect(lines[firstIndex + 1]).toBe('');
         });
 
@@ -1170,7 +1179,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #7: verify log structure on abort error
             const logCalls = mockLogger.info.mock.calls;
-            const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
+            const abortLog = find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
             expect(abortLog).toBeDefined();
             const abortLogData = abortLog![0] as { sessionId?: string, msg?: string };
             // Verify log has sessionId property (even if undefined)
@@ -1216,7 +1225,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #8: verify log includes 'messageIds' property
             const logCalls = mockLogger.info.mock.calls;
-            const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
+            const startLog = find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
             expect(startLog).toBeDefined();
             const startLogData = startLog![0] as { messageIds?: string[], msg?: string };
             expect(startLogData).toHaveProperty('messageIds');
@@ -1229,13 +1238,13 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #9: verify log object is not empty
             const logCalls = mockLogger.info.mock.calls;
-            const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
+            const startLog = find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('starting batch processing')) as unknown[] | undefined;
             expect(startLog).toBeDefined();
             const startLogData = startLog![0] as Record<string, unknown>;
             expect(startLogData).toHaveProperty('contextCount');
             expect(startLogData).toHaveProperty('messageIds');
             expect(startLogData).toHaveProperty('msg');
-            expect(_.keys(startLogData).length).toBeGreaterThan(0);
+            expect(keys(startLogData).length).toBeGreaterThan(0);
         });
 
         test('should log batch start with specific message', async () => {
@@ -1244,7 +1253,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #10: verify specific log message
             const logCalls = mockLogger.info.mock.calls;
-            const startLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg === 'Agent starting batch processing');
+            const startLog = find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg === 'Agent starting batch processing');
             expect(startLog).toBeDefined();
             const startLogData = startLog![0] as { msg: string };
             expect(startLogData.msg).toBe('Agent starting batch processing');
@@ -1360,12 +1369,12 @@ describe('createClaudeAgent', () => {
 
             // Verify info is used for all abort-signal errors (SDK never throws standard AbortError)
             const infoCalls = mockLogger.info.mock.calls;
-            const infoAbortLog = _.find(infoCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
+            const infoAbortLog = find(infoCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
             expect(infoAbortLog).toBeDefined();
 
             // Verify warn was NOT used for this case
             const warnCalls = mockLogger.warn.mock.calls;
-            const abortLog = _.find(warnCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
+            const abortLog = find(warnCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort')) as unknown[] | undefined;
             expect(abortLog).toBeUndefined();
         });
 
@@ -1473,7 +1482,9 @@ describe('createClaudeAgent', () => {
 
             // Session cleanup should be called on completion
             // Use a small delay to allow fire-and-forget to trigger
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise((resolve) => {
+                setTimeout(resolve, 10);
+            });
             expect(cleanupSpy).toHaveBeenCalledWith('test-session');
 
             cleanupSpy.mockRestore();
@@ -1497,7 +1508,9 @@ describe('createClaudeAgent', () => {
                     // Abort mid-stream
                     abortController.abort();
                     // Add a small delay to simulate async processing
-                    await new Promise(resolve => setTimeout(resolve, 5));
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 5);
+                    });
                     yield {
                         type:    'assistant' as const,
                         message: {
@@ -1518,12 +1531,13 @@ describe('createClaudeAgent', () => {
             expect(result.wasInterrupted).toBe(true);
             expect(result.response).toBeNull(); // No response when interrupted mid-stream
             const logCalls = mockLogger.info.mock.calls;
-            const abortLog = _.find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort signal')) as unknown[] | undefined;
+            const abortLog = find(logCalls, (call: unknown[]) => (call[0] as { msg?: string })?.msg?.includes('interrupted by abort signal')) as unknown[] | undefined;
             expect(abortLog).toBeDefined();
         });
 
         test('should return null when only empty text is yielded (Mutant #310)', async () => {
             querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                // eslint-disable-next-line sonarjs/no-identical-functions -- same generator body as lastAssistantText test; different test purpose (null response vs empty text tracking)
                 async function* mockGenerator() {
                     yield {
                         type:    'assistant' as const,
@@ -1572,7 +1586,7 @@ describe('createClaudeAgent', () => {
 
             // Error should be logged by outer try-catch
             const errorLogCalls = mockLogger.error.mock.calls;
-            const errorLog = _.find(errorLogCalls, (call: unknown[]) => {
+            const errorLog = find(errorLogCalls, (call: unknown[]) => {
                 const logData = call[0] as { error?: Error };
                 return logData?.error?.message === 'Database connection failed';
             });
@@ -1725,7 +1739,7 @@ describe('createClaudeAgent', () => {
 
             // Verify error was logged
             const logCalls = mockLogger.warn.mock.calls;
-            const taskErrorLog = _.find(logCalls, (call: unknown[]) => {
+            const taskErrorLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { error?: Error };
                 return logData?.error?.message === 'Task persistence failed';
             });
@@ -1792,7 +1806,7 @@ describe('createClaudeAgent', () => {
 
         test('should build multimodal prompt when images are provided', async () => {
             const agent = createClaudeAgent({});
-            const testImage: import('../../../src/agent/types').PlatformImage = {
+            const testImage: PlatformImage = {
                 filename:     'test.png',
                 mediaType:    'image/png',
                 base64Data:   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -1813,7 +1827,7 @@ describe('createClaudeAgent', () => {
             const promptIterator = queryParams.prompt[Symbol.asyncIterator]();
             const firstYield = await promptIterator.next();
 
-            expect(_.isArray(firstYield.value.message.content)).toBe(true);
+            expect(isArray(firstYield.value.message.content)).toBe(true);
 
             expect(firstYield.value.message.content[0].type).toBe('image');
 
@@ -1879,7 +1893,7 @@ describe('createClaudeAgent', () => {
 
             // Find the user event log
             const logCalls = mockLogger.debug.mock.calls;
-            const userLog = _.find(logCalls, (call: unknown[]) => {
+            const userLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, msg?: string };
                 return logData?.eventType === 'user';
             });
@@ -1928,7 +1942,7 @@ describe('createClaudeAgent', () => {
 
             // Find the tool_response log
             const logCalls = mockLogger.debug.mock.calls;
-            const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
+            const toolResponseLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, toolName?: string };
                 return logData?.eventType === 'tool_response';
             });
@@ -1970,7 +1984,7 @@ describe('createClaudeAgent', () => {
 
             // Find the tool_request log
             const logCalls = mockLogger.debug.mock.calls;
-            const toolRequestLog = _.find(logCalls, (call: unknown[]) => {
+            const toolRequestLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, toolName?: string };
                 return logData?.eventType === 'tool_request' && logData?.toolName === 'Grep';
             });
@@ -2002,7 +2016,7 @@ describe('createClaudeAgent', () => {
 
             // Find the assistant thinking log
             const logCalls = mockLogger.debug.mock.calls;
-            const thinkingLog = _.find(logCalls, (call: unknown[]) => {
+            const thinkingLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, hasText?: boolean };
                 return logData?.eventType === 'assistant' && logData?.hasText === false;
             });
@@ -2034,7 +2048,7 @@ describe('createClaudeAgent', () => {
 
             // Find the assistant responding log
             const logCalls = mockLogger.debug.mock.calls;
-            const respondingLog = _.find(logCalls, (call: unknown[]) => {
+            const respondingLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string, hasText?: boolean };
                 return logData?.eventType === 'assistant' && logData?.hasText === true;
             });
@@ -2083,7 +2097,7 @@ describe('createClaudeAgent', () => {
 
             // Find all tool_response logs
             const logCalls = mockLogger.debug.mock.calls;
-            const toolResponseLogs = _.filter(logCalls, (call: unknown[]) => {
+            const toolResponseLogs = filter(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_response';
             });
@@ -2091,7 +2105,7 @@ describe('createClaudeAgent', () => {
             // Should log 2 tool responses
             expect(toolResponseLogs).toHaveLength(2);
 
-            const toolNames = _.map(toolResponseLogs, (log: unknown[]) => {
+            const toolNames = map(toolResponseLogs, (log: unknown[]) => {
                 const logData = log[0] as { toolName?: string };
                 return logData?.toolName;
             });
@@ -2137,7 +2151,7 @@ describe('createClaudeAgent', () => {
 
             // Find all user event logs
             const logCalls = mockLogger.debug.mock.calls;
-            const userLogs = _.filter(logCalls, (call: unknown[]) => {
+            const userLogs = filter(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'user';
             });
@@ -2170,7 +2184,7 @@ describe('createClaudeAgent', () => {
 
             // Find the compaction log
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2204,7 +2218,7 @@ describe('createClaudeAgent', () => {
 
             // Find the compaction log
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2240,7 +2254,7 @@ describe('createClaudeAgent', () => {
 
             // Find the tool_progress log (kills mutant #2: StringLiteral on line 565)
             const logCalls = mockLogger.debug.mock.calls;
-            const progressLog = _.find(logCalls, (call: unknown[]) => {
+            const progressLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_progress';
             });
@@ -2271,7 +2285,7 @@ describe('createClaudeAgent', () => {
 
             // Find the tool_progress log (kills mutant #5: StringLiteral on line 568)
             const logCalls = mockLogger.debug.mock.calls;
-            const progressLog = _.find(logCalls, (call: unknown[]) => {
+            const progressLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_progress';
             });
@@ -2300,7 +2314,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #3: BlockStatement on line 562 - function body must execute
             const logCalls = mockLogger.debug.mock.calls;
-            const progressLog = _.find(logCalls, (call: unknown[]) => {
+            const progressLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_progress';
             });
@@ -2326,7 +2340,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #6: ObjectLiteral on line 578 - log object must not be empty
             const logCalls = mockLogger.debug.mock.calls;
-            const resultLog = _.find(logCalls, (call: unknown[]) => {
+            const resultLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_result';
             });
@@ -2337,7 +2351,7 @@ describe('createClaudeAgent', () => {
             expect(resultLogData).toHaveProperty('module');
             expect(resultLogData).toHaveProperty('tool');
             expect(resultLogData).toHaveProperty('msg');
-            expect(_.keys(resultLogData).length).toBeGreaterThan(0);
+            expect(keys(resultLogData).length).toBeGreaterThan(0);
             expect(resultLogData).not.toEqual({});
         });
 
@@ -2359,7 +2373,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #7: StringLiteral on line 582
             const logCalls = mockLogger.debug.mock.calls;
-            const resultLog = _.find(logCalls, (call: unknown[]) => {
+            const resultLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_result';
             });
@@ -2388,7 +2402,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #4: BlockStatement on line 576 - function body must execute
             const logCalls = mockLogger.debug.mock.calls;
-            const resultLog = _.find(logCalls, (call: unknown[]) => {
+            const resultLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_result';
             });
@@ -2420,7 +2434,7 @@ describe('createClaudeAgent', () => {
 
             // Kills ConditionalExpression mutant on line 592: message.type === 'system'
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2446,7 +2460,7 @@ describe('createClaudeAgent', () => {
 
             // Kills ConditionalExpression mutant on line 592: 'subtype' in message
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2473,7 +2487,7 @@ describe('createClaudeAgent', () => {
 
             // Kills ConditionalExpression mutant on line 592: message.subtype === 'compact_boundary'
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2501,7 +2515,7 @@ describe('createClaudeAgent', () => {
             // Kills mutants #10 & #11: OptionalChaining on lines 594 & 595
             // Should not crash and should log without token info
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2535,7 +2549,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutants #8 & #9: ConditionalExpression on line 592
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2552,6 +2566,7 @@ describe('createClaudeAgent', () => {
             mockLogger.info.mockClear();
 
             querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                // eslint-disable-next-line sonarjs/no-identical-functions -- same generator body as line 2203 test; different test assertions (omit token info vs without token info)
                 async function* mockGenerator() {
                     yield {
                         type:             'system' as const,
@@ -2570,7 +2585,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutants #8 & #9: ConditionalExpression on line 592 (false branch)
             const logCalls = mockLogger.info.mock.calls;
-            const compactionLog = _.find(logCalls, (call: unknown[]) => {
+            const compactionLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'compaction';
             });
@@ -2616,7 +2631,7 @@ describe('createClaudeAgent', () => {
 
             // Kills mutant #12: StringLiteral on line 754 - verify error message template
             const logCalls = mockLogger.warn.mock.calls;
-            const errorLog = _.find(logCalls, (call: unknown[]) => {
+            const errorLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { error?: Error };
                 return logData?.error?.message === 'DynamoDB connection timeout';
             });
@@ -2653,7 +2668,7 @@ describe('createClaudeAgent', () => {
             // Kills ArrayDeclaration mutant on line 496: pendingToolRequests must start empty
             // User event should log as message send, not tool response
             const logCalls = mockLogger.debug.mock.calls;
-            const userLog = _.find(logCalls, (call: unknown[]) => {
+            const userLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'user';
             });
@@ -2662,7 +2677,7 @@ describe('createClaudeAgent', () => {
             const userLogData = userLog![0] as { msg: string };
             expect(userLogData.msg).toBe('Sending message to Claude LLM');
             // Should NOT be logging as tool_response since no tools were pending
-            const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
+            const toolResponseLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_response';
             });
@@ -2702,6 +2717,7 @@ describe('createClaudeAgent', () => {
             // Clear logs and run another batch
             mockLogger.debug.mockClear();
             querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                // eslint-disable-next-line sonarjs/no-identical-functions -- same generator body as initial state test; different test purpose (after reset vs initial state)
                 async function* mockGenerator() {
                     yield {
                         type:    'user' as const,
@@ -2716,7 +2732,7 @@ describe('createClaudeAgent', () => {
             // Kills mutant #1: ArrayDeclaration on line 496
             // After reset, next user event should log as message send, not tool response
             const logCalls = mockLogger.debug.mock.calls;
-            const userLog = _.find(logCalls, (call: unknown[]) => {
+            const userLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'user';
             });
@@ -2725,7 +2741,7 @@ describe('createClaudeAgent', () => {
             const userLogData = userLog![0] as { msg: string };
             expect(userLogData.msg).toBe('Sending message to Claude LLM');
             // Should NOT be logging as tool_response
-            const toolResponseLog = _.find(logCalls, (call: unknown[]) => {
+            const toolResponseLog = find(logCalls, (call: unknown[]) => {
                 const logData = call[0] as { eventType?: string };
                 return logData?.eventType === 'tool_response';
             });

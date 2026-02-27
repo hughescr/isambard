@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import { BaseRepository } from '../repositories/base';
 import { stripDynamoKeys } from '../utils/index.js';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
-import { MemoryToolBackendQuery, type ListOptions, type ListResult } from './backend-query';
+import { MemoryToolBackendQuery, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
 import { normalizeTags, generateContentPreview } from './key-generator';
 import {
@@ -94,9 +94,8 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         const contentOrTagsChanged = input.content !== undefined || input.tags !== undefined;
 
         // Only fetch existing item for tag comparison when content/tags are changing
-        const oldTags = contentOrTagsChanged
-            ? (await this.coreOps.get(path))?.tags
-            : undefined;
+        const existingItem = contentOrTagsChanged ? await this.coreOps.get(path) : undefined;
+        const oldTags = existingItem?.tags;
 
         const result = await this.coreOps.update(path, input);
 
@@ -194,7 +193,7 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
     async getStateItemsScored(
         options?: { maxItems?: number, now?: Date }
-    ): Promise<import('./backend-query').ScoredMemoryItem[]> {
+    ): Promise<ScoredMemoryItem[]> {
         return this.queryOps.getStateItemsScored(options);
     }
 

@@ -9,7 +9,9 @@ import type { Logger } from '@hughescr/logger';
 import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
 import { getSlotForHour } from './schedule';
+import { type PerchSessionRunner } from './session-runner';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
+// eslint-disable-next-line boundaries/element-types -- Perch scheduler imports Discord state types; decouple tracked in roadmap
 import type { BotStateManager, StateChange } from '@/integrations/discord';
 
 /**
@@ -27,7 +29,7 @@ export interface PerchSchedulerDeps {
     /** Callback when perch should start */
     onPerchTrigger:       (slot: PerchSlot) => void
     /** Optional perch session runner for suspension check */
-    perchSessionRunner?:  import('./session-runner').PerchSessionRunner
+    perchSessionRunner?:  PerchSessionRunner
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import _ from 'lodash';
+import constant from 'lodash/constant';
 import { defaultClassifier, createHttpStatusClassifier } from '../../../../src/utils/retry/classifier';
 import type { ErrorCategory } from '../../../../src/utils/retry/types';
 
@@ -15,6 +15,7 @@ describe.concurrent('defaultClassifier', () => {
         });
 
         it('should classify Error without message as transient with default message', () => {
+            // eslint-disable-next-line unicorn/error-message -- intentionally testing no-message Error behavior
             const error = new Error();
             const result = defaultClassifier(error);
 
@@ -24,6 +25,7 @@ describe.concurrent('defaultClassifier', () => {
         });
 
         it('should classify Error with empty message as transient with default message', () => {
+            // eslint-disable-next-line unicorn/error-message -- intentionally testing empty-message Error behavior
             const error = new Error('');
             const result = defaultClassifier(error);
 
@@ -387,7 +389,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
 
         it('should not classify error when code is object', () => {
-            const error = { code: { toString: _.constant('ETIMEDOUT') }, message: 'Fake timeout' };
+            const error = { code: { toString: constant('ETIMEDOUT') }, message: 'Fake timeout' };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 

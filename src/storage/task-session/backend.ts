@@ -1,4 +1,3 @@
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DateTime } from 'luxon';
 import { BaseRepository } from '../repositories/base';
 import { type SessionId, type TaskSessionItem, createSessionId  } from './types';
@@ -13,10 +12,6 @@ const SINGLETON_KEY = {
  * Uses singleton pattern - only one "current" session record exists.
  */
 export class TaskSessionBackend extends BaseRepository<TaskSessionItem> {
-    constructor(docClient: DynamoDBDocumentClient, tableName: string) {
-        super(docClient, tableName);
-    }
-
     /**
      * Get the current session ID from DynamoDB.
      * @returns SessionId if found, undefined otherwise

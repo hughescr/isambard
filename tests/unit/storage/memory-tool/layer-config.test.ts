@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import _ from 'lodash';
+import keys from 'lodash/keys';
 import {
     layerConfigSchema,
     LAYER_CONFIGS,
@@ -62,7 +62,7 @@ describe.concurrent('LAYER_CONFIGS', () => {
         expect(LAYER_CONFIGS).toHaveProperty('identity');
         expect(LAYER_CONFIGS).toHaveProperty('state');
         expect(LAYER_CONFIGS).toHaveProperty('events');
-        expect(_.keys(LAYER_CONFIGS)).toHaveLength(3);
+        expect(keys(LAYER_CONFIGS)).toHaveLength(3);
     });
 
     test('should have identity config with correct values', () => {

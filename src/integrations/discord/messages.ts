@@ -1,5 +1,8 @@
+// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
 import _ from 'lodash';
-
+import compact from 'lodash/compact';
+import split from 'lodash/split';
+import trim from 'lodash/trim';
 /**
  * Maximum message length allowed by Discord API.
  */
@@ -48,9 +51,10 @@ function splitWordByCharacters(word: string, maxLength: number): string[] {
  * @param maxLength Maximum length per chunk
  * @returns Array of chunks split at word boundaries (always non-empty)
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- chunk-accumulator pattern requires tracking multiple edge cases; extracting helpers would obscure the algorithm
 function splitByWords(text: string, maxLength: number): string[] {
-    // Stryker disable next-line Regex: Equivalent - _.compact() filters empty strings from single \s split
-    const words = _.compact(_.split(text, /\s+/));
+    // Stryker disable next-line Regex: Equivalent - compact() filters empty strings from single \s split
+    const words = compact(split(text, /\s+/));
 
     // Pre-condition: callers guarantee non-empty trimmed text, so words is non-empty
     const chunks: string[] = [];
@@ -116,6 +120,7 @@ function extractSentences(text: string): string[] {
     }
 
     // Stryker disable next-line Regex: Equivalent - remaining text handler (lines 122-128) catches unmatched sentences
+    // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- sentence-splitting pattern; inputs are Discord messages (bounded length), not user-controlled adversarial strings
     const sentencePattern = /[^.!?]*[.!?](?:\s|$)/g;
     const sentences: string[] = [];
     let match;
@@ -123,7 +128,7 @@ function extractSentences(text: string): string[] {
 
     // Stryker disable all: extractSentences has intentionally redundant logic for robustness
     while((match = sentencePattern.exec(text)) !== null) {
-        const trimmed = _.trim(match[0]);
+        const trimmed = trim(match[0]);
         if(trimmed) {
             sentences.push(trimmed);
         }
@@ -132,7 +137,7 @@ function extractSentences(text: string): string[] {
 
     // Handle any remaining text after the last sentence
     if(lastIndex < text.length) {
-        const remaining = _.trim(text.slice(lastIndex));
+        const remaining = trim(text.slice(lastIndex));
         if(remaining) {
             sentences.push(remaining);
         }
@@ -149,6 +154,7 @@ function extractSentences(text: string): string[] {
  * @param maxLength Maximum length per chunk
  * @returns Array of chunks split at sentence boundaries (always non-empty)
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- chunk-accumulator pattern requires tracking multiple edge cases; extracting helpers would obscure the algorithm
 function splitBySentences(text: string, maxLength: number): string[] {
     const sentences = extractSentences(text);
 
@@ -219,9 +225,10 @@ function splitBySentences(text: string, maxLength: number): string[] {
  * @param maxLength Maximum length per chunk
  * @returns Array of chunks split at paragraph boundaries (always non-empty)
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- chunk-accumulator pattern requires tracking multiple edge cases; extracting helpers would obscure the algorithm
 function splitByParagraphs(text: string, maxLength: number): string[] {
     // Split on paragraph breaks (two or more newlines)
-    const paragraphs = _(text).split(/\n{2,}/).map(p => _.trim(p)).compact().value();
+    const paragraphs = _(split(text, /\n{2,}/)).map(p => trim(p)).compact().value();
 
     // Pre-condition: caller guarantees non-empty trimmed text
     // The text will produce at least one paragraph (even without \n\n)
@@ -301,7 +308,7 @@ function splitByParagraphs(text: string, maxLength: number): string[] {
  */
 export function splitMessage(text: string, maxLength: number = DISCORD_SAFE_LENGTH): string[] {
     // Normalize input: trim whitespace
-    const normalized = _.trim(text);
+    const normalized = trim(text);
 
     // Handle empty or whitespace-only input
     // Stryker disable next-line all: Equivalent - early return optimization, full split handles edge cases

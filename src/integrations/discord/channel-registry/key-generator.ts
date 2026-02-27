@@ -1,5 +1,4 @@
-import { startsWith as _startsWith } from 'lodash';
-
+import _startsWith from 'lodash/startsWith';
 /**
  * DynamoDB key structure for Channel Registry items
  */

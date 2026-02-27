@@ -1,3 +1,4 @@
+// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import config from '@hughescr/eslint-config-default';
 import { boundariesConfig } from './eslint-boundaries.config.mjs';
 import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal.mjs';
@@ -22,7 +23,7 @@ import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal
  *    email      - Email integration, depends on agent
  * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together
  */
-export default [
+const eslintConfig = [
     ...config,
     {
         ignores: [
@@ -48,7 +49,7 @@ export default [
     {
         rules: {
             'n/no-missing-import':     'off',
-            'n/no-unpublished-import': 'off'
+            'n/no-unpublished-import': 'off',
         }
     },
     boundariesConfig,
@@ -69,26 +70,9 @@ export default [
         files: ['tests/**/*.ts'],
         rules: {
             // Bun's expect().rejects is thenable at runtime but types don't declare PromiseLike
-            '@typescript-eslint/await-thenable':          'off',
-            // Mock assertions use expect(mock.method).toHaveBeenCalled() — unbound reference is fundamental to mock libraries
-            '@typescript-eslint/unbound-method':          'off',
-            // Test mock callbacks use () => {} for mock creation
-            '@typescript-eslint/no-empty-function':       'off',
-            // Tests verify behavior with non-Error throwables (HTTP error objects, strings)
-            '@typescript-eslint/only-throw-error':        'off',
-            // Mock callbacks use () => value; lodash _.constant() doesn't compose with Bun's mock()
-            'lodash/prefer-constant':                     'off',
-            // Same as above for () => {} vs _.noop
-            'lodash/prefer-noop':                         'off',
-            // Tests for generators that throw before first yield are intentional
-            'require-yield':                              'off',
-            // Disable high-volume type-unsafe noise from mock interactions;
-            // no-explicit-any stays enforced to require developers to type their mocks
-            '@typescript-eslint/no-unsafe-assignment':    'off',
-            '@typescript-eslint/no-unsafe-member-access': 'off',
-            '@typescript-eslint/no-unsafe-call':          'off',
-            '@typescript-eslint/no-unsafe-argument':      'off',
-            '@typescript-eslint/no-unsafe-return':        'off',
+            '@typescript-eslint/await-thenable': 'off',
         }
     }
 ];
+
+export default eslintConfig;

@@ -1,6 +1,9 @@
-/* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports EventSource natively */
 import { logger } from '@hughescr/logger';
-import _ from 'lodash';
+import isError from 'lodash/isError';
+import isFinite from 'lodash/isFinite';
+import isNumber from 'lodash/isNumber';
+import isObject from 'lodash/isObject';
+import map from 'lodash/map';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckSearchResult } from '@/integrations/email/wildduck-client';
@@ -68,6 +71,7 @@ export class WildDuckListener {
             // Fetch and process any messages that arrived before this session
             // Re-fetch immediately while there are more messages (batch cap was hit)
             // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-await-in-loop -- defensive: _running may be set to false by stop(); await inside while is sequential pagination
             while(this._running && await this.fetchAndProcess()) { /* drain backlog */ }
 
             // Check for pending notification failures on startup (best-effort)
@@ -119,10 +123,11 @@ export class WildDuckListener {
         try {
             // Re-fetch immediately while there are more messages (batch cap was hit)
             // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+            // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop drains backlog one batch at a time
             while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
         } catch (err) {
             logger.warn({
-                error: _.isError(err) ? err.message : String(err),
+                error: isError(err) ? err.message : String(err),
                 msg:   'Poll cycle failed, will retry',
             });
         }
@@ -166,6 +171,7 @@ export class WildDuckListener {
             }
 
             for(const summary of toProcess) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API per email
                 await this.processOne(summary.id);
             }
 
@@ -187,7 +193,7 @@ export class WildDuckListener {
         } catch (err) {
             logger.warn({
                 uid,
-                error: _.isError(err) ? err.message : String(err),
+                error: isError(err) ? err.message : String(err),
                 msg:   'Failed to process email, continuing',
             });
         }
@@ -203,7 +209,7 @@ export class WildDuckListener {
         try {
             const msg      = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
             // Stryker disable next-line ConditionalExpression: defensive fallback to 2 when metadata absent
-            const attempts = _.isNumber(msg?.metaData?.notifyAttempts) ? (msg.metaData.notifyAttempts) + 1 : 2;
+            const attempts = isNumber(msg?.metaData?.notifyAttempts) ? (msg.metaData.notifyAttempts) + 1 : 2;
 
             if(attempts >= MAX_NOTIFY_ATTEMPTS) {
                 // Give up — transition to GaveUp flag
@@ -248,19 +254,20 @@ export class WildDuckListener {
             for(const result of results) {
                 // Parse UID from 'FolderName:uid' format
                 const colonIdx = result.message.lastIndexOf(':');
-                // Stryker disable next-line ConditionalExpression,EqualityOperator: guard against missing colon in result
+                // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator: guard against missing colon in result; message is always 'folder:uid' so colonIdx===-1 is defensive; UnaryOperator(-1→+1) is equivalent
                 if(colonIdx === -1) {
                     continue;
                 }
                 const uidStr = result.message.slice(colonIdx + 1);
                 const uid    = Number.parseInt(uidStr, 10);
                 // Stryker disable next-line ConditionalExpression: guard against non-numeric UIDs
-                if(!_.isFinite(uid)) {
+                if(!isFinite(uid)) {
                     continue;
                 }
 
                 // Stryker disable BlockStatement: try-catch wraps individual notification retry - best-effort
                 try {
+                    // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API per draft
                     const msg = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
                     // Stryker disable next-line ConditionalExpression,BlockStatement: skip missing messages
                     if(!msg) {
@@ -268,19 +275,23 @@ export class WildDuckListener {
                     }
 
                     // Stryker disable next-line ArrayDeclaration: to only sent when non-empty; fallback [] produces same empty string via lodash map
-                    const toStr       = _(msg.to ?? []).map('address').join(', ');
+                    const toStr       = map(msg.to ?? [], 'address').join(', ');
                     const subject     = msg.subject ?? '';
-                    const ccAddresses = _.map(msg.cc ?? [], 'address');
+                    const ccAddresses = map(msg.cc ?? [], 'address');
 
                     // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: cc only passed when non-empty
+                    // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord approval request per draft
                     await onSendApprovalRequest(toStr, subject, uid, ccAddresses.length > 0 ? ccAddresses : undefined);
 
                     // Success — clear the flag and reset attempt count
                     // Stryker disable next-line StringLiteral: flag name is configuration
+                    // eslint-disable-next-line no-await-in-loop -- sequential: flag clear then metadata reset per draft
                     await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { removeFlags: ['DiscordNotifyFailed'] });
+                    // eslint-disable-next-line no-await-in-loop -- sequential: metadata update depends on prior flag clear
                     await this.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, { notifyAttempts: 0 });
                 } catch (err) {
                     // Notification retry failed — check if we should give up
+                    // eslint-disable-next-line no-await-in-loop -- sequential: escalation depends on per-draft error
                     await this.escalateFailedNotification(uid);
                     // Stryker restore BlockStatement
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -316,7 +327,7 @@ export class WildDuckListener {
         const source = new EventSource(url);
         this.sseSource = source;
 
-        source.onmessage = (event: MessageEvent) => {
+        source.addEventListener('message', (event: MessageEvent) => {
             let data: unknown;
             try {
                 data = JSON.parse(String(event.data)) as unknown;
@@ -324,12 +335,12 @@ export class WildDuckListener {
                 return;
             }
 
-            if(_.isObject(data) && 'command' in data && (data as { command: unknown }).command === 'EXISTS') {
+            if(isObject(data) && 'command' in data && (data as { command: unknown }).command === 'EXISTS') {
                 void this.fetchAndProcess();
             }
-        };
+        });
 
-        source.onerror = (_event: Event) => {
+        source.addEventListener('error', (_event: Event) => {
             source.close();
             if(this.sseSource === source) {
                 this.sseSource = null;
@@ -346,7 +357,7 @@ export class WildDuckListener {
                     this.connectSSE();
                 }
             }, reconnectDelay);
-        };
+        });
     }
     // Stryker restore all
 }

@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import _ from 'lodash';
 import {
     retryConfigSchema,
     loadRetryConfig,

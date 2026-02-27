@@ -1,5 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use typeof guards on string results for defensive checking; always truthy but clarifies intent */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { isString as _isString, split as _split, some as _some, startsWith as _startsWith } from 'lodash';
+import _isString from 'lodash/isString';
+import _some from 'lodash/some';
+import _split from 'lodash/split';
+import _startsWith from 'lodash/startsWith';
 import { mockLogger } from '../../setup';
 import {
     timeContextSchema,
@@ -88,7 +92,9 @@ describe('relative time formatting boundary conditions', () => {
             desc:          '364 days as months (days < 365)',
             now:           new Date('2024-12-30T12:00:00Z'),
             date:          new Date('2024-01-01T12:00:00Z'),
+            // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
             expectedLong:  /\d+ months ago/,
+            // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
             expectedShort: /\d+mo ago/
         },
         {
@@ -130,6 +136,7 @@ describe('getCurrentTimeContext', () => {
         const fixedTime = new RealDate('2025-01-01T22:30:45Z');
 
         // Mock Date constructor to return our fixed time
+        // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
             if(new.target) {
                 // Called with 'new'
@@ -199,6 +206,7 @@ describe('formatTimeSince', () => {
         const since = new RealDate(now.getTime() - hours * 60 * 60 * 1000);
 
         // Mock Date constructor to return fixed 'now'
+        // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
             if(new.target) {
                 if(args.length === 0) {
@@ -276,6 +284,7 @@ describe('formatTimeHeader', () => {
         RealDate = globalThis.Date;
 
         // Mock Date constructor to return fixed time
+        // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
             if(new.target) {
                 if(args.length === 0) {

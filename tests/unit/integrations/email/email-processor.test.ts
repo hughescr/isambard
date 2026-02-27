@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import _ from 'lodash';
+import isError from 'lodash/isError';
 import { mockLogger } from '../../../setup';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
@@ -51,7 +51,7 @@ function makeAllowlist(isAllowed: boolean): EmailAllowlist {
 }
 
 function makeClassifier(verdict: ClassifierVerdict | Error): EmailClassifier {
-    if(_.isError(verdict)) {
+    if(isError(verdict)) {
         const err = verdict;
         return { classify: mock(async () => {
             throw err;
@@ -421,7 +421,7 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
+            expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
 
         test('IMAP move error → throws EmailProcessingError', async () => {
@@ -438,7 +438,7 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
+            expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
 
         test('IMAP move error on allowlist bypass → throws EmailProcessingError', async () => {
@@ -454,7 +454,7 @@ describe('EmailProcessor', () => {
                 wildDuckClient: conn,
             });
 
-            await expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
+            expect(processor.processEmail(makeEmail())).rejects.toBeInstanceOf(EmailProcessingError);
         });
     });
 

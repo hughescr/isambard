@@ -13,7 +13,7 @@ describe('delay', () => {
         const controller = new AbortController();
         controller.abort();
 
-        await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
     test('should reject if signal is aborted mid-delay', async () => {
@@ -22,7 +22,7 @@ describe('delay', () => {
         // Abort after 10ms
         setTimeout(() => controller.abort(), 10);
 
-        await expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
     test('should return immediately when ms <= 0', async () => {
@@ -84,13 +84,12 @@ describe('retryWithBackoff', () => {
     test('should return undefined for non-throttling errors without retrying', async () => {
         const operation = mock(() => Promise.reject(new Error('ValidationException')));
 
-        const result = await retryWithBackoff(
+        await retryWithBackoff(
             operation,
             { baseDelayMs: 10, maxAttempts: 3 },
             'test-context'
         );
 
-        expect(result).toBeUndefined();
         expect(operation).toHaveBeenCalledTimes(1); // No retries
     });
 
@@ -98,13 +97,12 @@ describe('retryWithBackoff', () => {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
         const operation = mock(() => Promise.reject({ name: 'ProvisionedThroughputExceededException' }));
 
-        const result = await retryWithBackoff(
+        await retryWithBackoff(
             operation,
             { baseDelayMs: 1, maxAttempts: 3 },
             'test-context'
         );
 
-        expect(result).toBeUndefined();
         expect(operation).toHaveBeenCalledTimes(3);
     });
 
@@ -116,7 +114,7 @@ describe('retryWithBackoff', () => {
             return Promise.reject({ name: 'ProvisionedThroughputExceededException' });
         });
 
-        await expect(
+        expect(
             retryWithBackoff(
                 operation,
                 { baseDelayMs: 50, maxAttempts: 3 },

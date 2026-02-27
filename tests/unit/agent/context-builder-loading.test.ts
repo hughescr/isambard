@@ -1,6 +1,16 @@
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import _ from 'lodash';
+import constant from 'lodash/constant';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import includes from 'lodash/includes';
+import isString from 'lodash/isString';
+import repeat from 'lodash/repeat';
+import some from 'lodash/some';
+import split from 'lodash/split';
+import startsWith from 'lodash/startsWith';
+import times from 'lodash/times';
+import trim from 'lodash/trim';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
@@ -287,7 +297,7 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should truncate content with ellipsis and overflow note when exceeding maxIdentityChars', async () => {
-            const longContent = _.repeat('x', 3000);
+            const longContent = repeat('x', 3000);
 
             backend.listByLayer = mock(async () => ({
                 items: [
@@ -311,11 +321,11 @@ describe('createContextBuilder loading methods', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             // Should contain truncated content (397 x's + '...')
-            expect(identity).toContain(`${_.repeat('x', 397)}...`);
+            expect(identity).toContain(`${repeat('x', 397)}...`);
             // Should contain overflow note
             expect(identity).toContain("...and 1 total identity memories (use 'list /identity' to see all)");
             // Verify the truncated portion starts correctly
-            expect(identity.slice(0, 397)).toBe(_.repeat('x', 397));
+            expect(identity.slice(0, 397)).toBe(repeat('x', 397));
         });
 
         test.each([
@@ -324,7 +334,7 @@ describe('createContextBuilder loading methods', () => {
             { contentLength: 400, description: 'exactly at maxIdentityChars', shouldTruncate: false },
             { contentLength: 300, description: 'less than maxIdentityChars', shouldTruncate: false },
         ])('should handle truncation when $description', async ({ contentLength, shouldTruncate }) => {
-            const content = _.repeat('x', contentLength);
+            const content = repeat('x', contentLength);
 
             backend.listByLayer = mock(async () => ({
                 items: [
@@ -349,9 +359,9 @@ describe('createContextBuilder loading methods', () => {
 
             if(shouldTruncate) {
                 // Truncated content: 397 x's + '...' + overflow note
-                expect(identity).toContain(`${_.repeat('x', 397)}...`);
+                expect(identity).toContain(`${repeat('x', 397)}...`);
                 expect(identity).toContain("...and 1 total identity memories (use 'list /identity' to see all)");
-                expect(identity.slice(0, 397)).toBe(_.repeat('x', 397));
+                expect(identity.slice(0, 397)).toBe(repeat('x', 397));
             } else {
                 expect(identity).toBe(content);
                 expect(identity).not.toContain('total identity memories');
@@ -361,7 +371,7 @@ describe('createContextBuilder loading methods', () => {
         test('should truncate content at exactly maxIdentityChars - 3 characters before ellipsis', async () => {
             // Use content of exactly 403 chars with a budget of 400 chars
             // This ensures the slice at (maxIdentityChars - 3) = 397 is precise
-            const content = `${_.repeat('a', 397)}BCDEFG`; // 404 chars
+            const content = `${repeat('a', 397)}BCDEFG`; // 404 chars
 
             backend.listByLayer = mock(async () => ({
                 items: [
@@ -385,12 +395,12 @@ describe('createContextBuilder loading methods', () => {
             const identity = await contextBuilder.loadCoreIdentity();
 
             // Should have exactly 397 a's followed by '...' (not 'BCDEFG')
-            expect(identity).toContain(`${_.repeat('a', 397)}...`);
+            expect(identity).toContain(`${repeat('a', 397)}...`);
             expect(identity).not.toContain('B');
         });
 
         test('should log identity length including overflow note', async () => {
-            const longContent = _.repeat('x', 500);
+            const longContent = repeat('x', 500);
 
             backend.listByLayer = mock(async () => ({
                 items: [
@@ -466,7 +476,7 @@ describe('createContextBuilder loading methods', () => {
         test('should use preview format for items that overflow full tier', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             // Create 9 items to exceed maxStateFullItems (default 8)
-            const items = _.times(9, i => ({
+            const items = times(9, i => ({
                 item: {
                     path:           createMemoryPath(`/state/task${i}.md`),
                     content:        `Content ${i}`,
@@ -494,10 +504,10 @@ describe('createContextBuilder loading methods', () => {
 
         test('should show overflow indicator when items exceed both tiers', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(50, i => ({
+            const items = times(50, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
-                    content:     _.repeat('x', 200),
+                    content:     repeat('x', 200),
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
@@ -521,10 +531,10 @@ describe('createContextBuilder loading methods', () => {
 
         test('should respect maxStateFullItems count', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(3, i => ({
+            const items = times(3, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
-                    content:     _.repeat('x', 500),
+                    content:     repeat('x', 500),
                     contentType: 'text/markdown' as const,
                     metadata:    {},
                     version:     1,
@@ -550,10 +560,10 @@ describe('createContextBuilder loading methods', () => {
 
         test('should respect maxStatePreviewItems count', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(40, i => ({
+            const items = times(40, i => ({
                 item: {
                     path:           createMemoryPath(`/state/task${i}.md`),
-                    content:        _.repeat('x', 5000),
+                    content:        repeat('x', 5000),
                     contentPreview: `Preview ${i}`,
                     contentType:    'text/markdown' as const,
                     metadata:       {},
@@ -582,7 +592,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should truncate items exceeding maxStateItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('x', 3000);
+            const longContent = repeat('x', 3000);
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -606,14 +616,14 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadHotState(now);
 
             // Should be truncated to 2000 chars with truncation message
-            expect(result).toContain(_.repeat('x', 2000));
+            expect(result).toContain(repeat('x', 2000));
             expect(result).toContain('[truncated — use \'memory view /state/long.md\' for full content]');
-            expect(result).not.toContain(_.repeat('x', 2001));
+            expect(result).not.toContain(repeat('x', 2001));
         });
 
         test('should not truncate items within maxStateItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const content = _.repeat('x', 500);
+            const content = repeat('x', 500);
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -643,7 +653,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should break early when both tiers are full', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(20, i => ({
+            const items = times(20, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
                     content:     `Content ${i}`,
@@ -676,7 +686,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should include all items when count exactly equals maxStateFullItems', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(8, i => ({
+            const items = times(8, i => ({
                 item: {
                     path:        createMemoryPath(`/state/task${i}.md`),
                     content:     `Content ${i}`,
@@ -784,7 +794,7 @@ describe('createContextBuilder loading methods', () => {
         test('should track preview tier count correctly', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
             // Item with very long content that will be truncated in full tier
-            const longContent = _.repeat('x', 15_000);
+            const longContent = repeat('x', 15_000);
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -800,7 +810,7 @@ describe('createContextBuilder loading methods', () => {
                     score: 0.95,
                 },
                 // 9 more items to push first one beyond full tier
-                ..._.times(9, i => ({
+                ...times(9, i => ({
                     item: {
                         path:        createMemoryPath(`/state/item${i}.md`),
                         content:     'Content',
@@ -936,10 +946,10 @@ describe('createContextBuilder loading methods', () => {
 
         test('should respect maxUserTokens budget', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(50, i => ({
+            const items = times(50, i => ({
                 path:           createMemoryPath(`/users/user123/memory${i}`),
-                content:        _.repeat('x', 200),
-                contentPreview: _.repeat('x', 100),
+                content:        repeat('x', 200),
+                contentPreview: repeat('x', 100),
                 contentType:    'text/plain' as const,
                 metadata:       {},
                 version:        1,
@@ -962,10 +972,10 @@ describe('createContextBuilder loading methods', () => {
 
         test('should show overflow indicator when items exceed budget', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(100, i => ({
+            const items = times(100, i => ({
                 path:           createMemoryPath(`/users/user123/memory${i}`),
-                content:        _.repeat('x', 200),
-                contentPreview: _.repeat('x', 100),
+                content:        repeat('x', 200),
+                contentPreview: repeat('x', 100),
                 contentType:    'text/plain' as const,
                 metadata:       {},
                 version:        1,
@@ -1100,7 +1110,7 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.loadUserMemories('user123', now);
 
             // Items should be separated by \n
-            const lines = _.split(result, '\n');
+            const lines = split(result, '\n');
             expect(lines).toHaveLength(2);
             expect(lines[0]).toContain('/users/user123/pref1');
             expect(lines[1]).toContain('/users/user123/pref2');
@@ -1108,10 +1118,10 @@ describe('createContextBuilder loading methods', () => {
 
         test('should log correct memoryCount excluding overflows', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const items = _.times(50, i => ({
+            const items = times(50, i => ({
                 path:           createMemoryPath(`/users/u1/memory${i}`),
-                content:        _.repeat('x', 200),
-                contentPreview: _.repeat('x', 100),
+                content:        repeat('x', 200),
+                contentPreview: repeat('x', 100),
                 contentType:    'text/plain' as const,
                 metadata:       {},
                 version:        1,
@@ -1129,8 +1139,8 @@ describe('createContextBuilder loading methods', () => {
 
             // Should have logged with memoryCount < 50 and overflowCount > 0
             const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>, string][];
-            const loadedCall = _.find(debugCalls, call =>
-                _.isString(call[1]) && call[1] === 'User memories loaded'
+            const loadedCall = find(debugCalls, call =>
+                isString(call[1]) && call[1] === 'User memories loaded'
             );
             expect(loadedCall).toBeTruthy();
             const logObj = loadedCall![0] as { memoryCount: number, overflowCount: number };
@@ -1146,8 +1156,8 @@ describe('createContextBuilder loading methods', () => {
                 items: [
                     {
                         path:           createMemoryPath('/users/u1/mem1'),
-                        content:        _.repeat('x', 5000),
-                        contentPreview: _.repeat('x', 100),
+                        content:        repeat('x', 5000),
+                        contentPreview: repeat('x', 100),
                         contentType:    'text/plain' as const,
                         metadata:       {},
                         version:        1,
@@ -1239,7 +1249,8 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend });
             await contextBuilder.loadRecentEvents(limit);
 
-            const [, , layerArg, optionsArg] = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
+            const callArgs = (backend.searchByTimeRange as ReturnType<typeof mock>).mock.calls[0] as [string, string, string, { limit: number }];
+            const [layerArg, optionsArg] = [callArgs[2], callArgs[3]];
             expect(layerArg).toBe('events');
             expect(optionsArg).toEqual({ limit: expectedLimit });
         });
@@ -1537,7 +1548,7 @@ describe('createContextBuilder loading methods', () => {
 
             expect(result).toContain('## Current Time');
             // Time header should be first
-            const lines = _.split(result, '\n\n');
+            const lines = split(result, '\n\n');
             expect(lines[0]).toContain('## Current Time');
         });
 
@@ -2048,8 +2059,8 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('- /events/event6');
 
             // Verify event11 (newest) is NOT in preview format (should be full display)
-            const event11Lines = _.filter(_.split(result, '\n'), line => _.includes(line, '/events/event11'));
-            expect(_.some(event11Lines, line => _.startsWith(line, '- '))).toBe(false);
+            const event11Lines = filter(split(result, '\n'), line => includes(line, '/events/event11'));
+            expect(some(event11Lines, line => startsWith(line, '- '))).toBe(false);
 
             // Verify the split is correct by checking full display format for event11
             expect(result).toMatch(/\/events\/event11 \([^)]+\):\nEvent 11 content/);
@@ -2081,7 +2092,7 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('Event 4 content');
 
             // Should NOT have any preview format items (no lines starting with "- /events/")
-            const previewLines = _.filter(_.split(result, '\n'), line => _.startsWith(_.trim(line), '- /events/'));
+            const previewLines = filter(split(result, '\n'), line => startsWith(trim(line), '- /events/'));
             expect(previewLines).toHaveLength(0);
         });
 
@@ -2145,7 +2156,7 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should truncate event content when it exceeds maxEventItemMaxChars', async () => {
-            const longContent = _.repeat('A', 3000); // Longer than default 2000
+            const longContent = repeat('A', 3000); // Longer than default 2000
             backend.list = mock(async () => ({ items: [] }));
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => [
@@ -2175,7 +2186,7 @@ describe('createContextBuilder loading methods', () => {
         });
 
         test('should respect custom maxEventItemMaxChars option', async () => {
-            const longContent = _.repeat('B', 1500);
+            const longContent = repeat('B', 1500);
             backend.list = mock(async () => ({ items: [] }));
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => [
@@ -2342,7 +2353,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should truncate state items exceeding maxStateItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('x', 3000);
+            const longContent = repeat('x', 3000);
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -2365,7 +2376,7 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext(now);
 
             expect(result).toContain('[truncated');
-            expect(result).not.toContain(_.repeat('x', 3000));
+            expect(result).not.toContain(repeat('x', 3000));
         });
 
         test('should include all state items when exactly at perchStateCount boundary', async () => {
@@ -2422,7 +2433,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should NOT truncate content exactly at maxStateItemMaxChars boundary', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const exactContent = _.repeat('x', 2000); // Exactly 2000 chars
+            const exactContent = repeat('x', 2000); // Exactly 2000 chars
 
             backend.getStateItemsScored = mock(async () => [
                 {
@@ -2477,7 +2488,7 @@ describe('createContextBuilder loading methods', () => {
 
         test('should truncate event content exceeding maxEventItemMaxChars', async () => {
             const now = new Date('2025-01-15T12:00:00.000Z');
-            const longContent = _.repeat('y', 3000);
+            const longContent = repeat('y', 3000);
 
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => [
@@ -2497,7 +2508,7 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext(now);
 
             expect(result).toContain('[truncated');
-            expect(result).not.toContain(_.repeat('y', 3000));
+            expect(result).not.toContain(repeat('y', 3000));
         });
 
         test('should NOT truncate event content within maxEventItemMaxChars', async () => {
@@ -2550,7 +2561,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 5, unseen: 2 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => [
                         { id: 1, from: { name: 'Alice', address: 'alice@example.com' }, subject: 'Hello', date: '2025-01-15T10:00:00.000Z' },
                         { id: 2, from: { address: 'bob@example.com' },                  subject: 'World', date: '2025-01-15T11:00:00.000Z' },
@@ -2583,7 +2594,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 5, unseen: 0 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => []),
                     searchByKeyword:  mock(async () => []),
                 },
@@ -2607,7 +2618,7 @@ describe('createContextBuilder loading methods', () => {
                     getMailboxCounts: mock(async () => {
                         throw new Error('WildDuck timeout');
                     }),
-                    getMessage:      mock(_.constant(Promise.resolve(null))),
+                    getMessage:      mock(constant(Promise.resolve(null))),
                     listMessages:    mock(async () => []),
                     searchByKeyword: mock(async () => []),
                 },
@@ -2631,7 +2642,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 3, unseen: 1 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => [
                         { id: 10, from: { address: 'x@x.com' }, subject: 'Only', date: '2025-01-15T09:00:00.000Z' },
                     ]),
@@ -2655,7 +2666,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 3, unseen: 1 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => [
                         { id: 42, from: { address: 'sender@example.com' }, subject: 'Test', date: '2025-01-15T09:00:00.000Z' },
                     ]),
@@ -2718,7 +2729,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => []),
                     searchByKeyword:  mock(async () => []),
                 },
@@ -2767,7 +2778,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => []),
                     searchByKeyword:  mock(async () => {
                         throw new Error('WildDuck keyword search failed');
@@ -2826,7 +2837,7 @@ describe('createContextBuilder loading methods', () => {
             const emailService = {
                 wildDuckClient: {
                     getMailboxCounts: mock(async () => ({ total: 0, unseen: 0 })),
-                    getMessage:       mock(_.constant(Promise.resolve(null))),
+                    getMessage:       mock(constant(Promise.resolve(null))),
                     listMessages:     mock(async () => []),
                     searchByKeyword:  mock(async () => []),
                 },

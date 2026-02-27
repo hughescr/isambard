@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import _ from 'lodash';
+import find from 'lodash/find';
+import isObject from 'lodash/isObject';
 import { mockLogger } from '../../../../setup';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
@@ -561,7 +562,7 @@ describe('InboxManager', () => {
             // Verify the summary log message contains correct counts
             // Look for the log call with successCount and failCount
             const infoCalls = (mockLogger.info as ReturnType<typeof mock>).mock.calls as unknown[][];
-            const summaryLogCall = _.find(infoCalls, (call: unknown[]) => _.isObject(call[0]) && 'successCount' in call[0] && 'failCount' in call[0]);
+            const summaryLogCall = find(infoCalls, (call: unknown[]) => isObject(call[0]) && 'successCount' in call[0] && 'failCount' in call[0]);
 
             expect(summaryLogCall).toBeDefined();
             const summaryArg = summaryLogCall![0] as Record<string, unknown>;

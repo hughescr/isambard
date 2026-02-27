@@ -8,7 +8,7 @@ describe('QuestionRegistry', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
-        registry = new QuestionRegistry({ defaultTimeoutMs: 5000 });
+        registry = new QuestionRegistry();
     });
 
     afterEach(() => {
@@ -546,7 +546,7 @@ describe('QuestionRegistry', () => {
 
     describe('custom timeout configuration', () => {
         it('should use custom timeout when provided', async () => {
-            const customRegistry = new QuestionRegistry({ defaultTimeoutMs: 10_000 });
+            const customRegistry = new QuestionRegistry();
 
             const now = Date.now();
             const question: Omit<PendingQuestion, 'state'> = {

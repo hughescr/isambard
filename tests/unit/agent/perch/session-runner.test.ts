@@ -1,6 +1,7 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
 import type { Logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import _ from 'lodash';
+import constant from 'lodash/constant';
 import type { ContextBuilder } from '@/agent/context-builder';
 import {
     createPerchSessionRunner,
@@ -27,14 +28,14 @@ function createMockLogger(): Logger {
 // Mock context builder
 function createMockContextBuilder(overrides?: Partial<ContextBuilder>): ContextBuilder {
     return {
-        loadCoreIdentity:       mock(_.constant(Promise.resolve(''))),
-        loadHotState:           mock(_.constant(Promise.resolve(''))),
-        loadUserMemories:       mock(_.constant(Promise.resolve(''))),
-        recordAccess:           mock(_.constant(Promise.resolve())),
+        loadCoreIdentity:       mock(constant(Promise.resolve(''))),
+        loadHotState:           mock(constant(Promise.resolve(''))),
+        loadUserMemories:       mock(constant(Promise.resolve(''))),
+        recordAccess:           mock(constant(Promise.resolve())),
         loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
-        loadUserTimezone:       mock(_.constant(Promise.resolve(undefined))),
-        buildUserMessagePrefix: mock(_.constant(Promise.resolve(''))),
-        buildPerchContext:      mock(_.constant(Promise.resolve(''))),
+        loadUserTimezone:       mock(constant(Promise.resolve(undefined))),
+        buildUserMessagePrefix: mock(constant(Promise.resolve(''))),
+        buildPerchContext:      mock(constant(Promise.resolve(''))),
         ...overrides,
     };
 }
@@ -837,17 +838,15 @@ describe('PerchSessionRunner - Suspension', () => {
         let callCount = 0;
         const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
             callCount++;
-            if(callCount === 1) {
+            return callCount === 1
                 // First call - will be suspended
-                return new Promise((resolve) => {
+                ? new Promise((resolve) => {
                     options.abortSignal.addEventListener('abort', () => {
                         resolve({ completed: false, sessionId: 'session-123' });
                     });
-                });
-            } else {
+                })
                 // Resumed call - complete
-                return { completed: true, sessionId: 'session-123' };
-            }
+                : { completed: true, sessionId: 'session-123' };
         });
 
         const deps: PerchSessionRunnerDeps = {
@@ -1462,24 +1461,21 @@ describe('PerchSessionRunner - Timeout', () => {
     });
 
     test('should include session duration in timeout prompt', async () => {
-        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
-            // First call - wait for abort
-            if(sessionMock.mock.calls.length <= 1) {
-                return new Promise((_resolve, reject) => {
+        const sessionMock = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> =>
+            // First call - wait for abort; second call - complete immediately
+            (sessionMock.mock.calls.length <= 1
+                ? new Promise((_resolve, reject) => {
                     options.abortSignal.addEventListener('abort', () => {
                         const error = new Error('AbortError');
                         error.name = 'AbortError';
                         reject(error);
                     });
-                });
-            } else {
-                // Second call - complete immediately
-                return {
+                })
+                : {
                     completed: true,
                     sessionId: 'wrap-up-session',
-                };
-            }
-        });
+                })
+        );
 
         const deps: PerchSessionRunnerDeps = {
             stateManager:    mockStateManager,
@@ -1506,24 +1502,21 @@ describe('PerchSessionRunner - Timeout', () => {
     });
 
     test('should preserve partial work in timeout prompt', async () => {
-        const sessionWithPartialWork = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> => {
-            // First call - wait for abort
-            if(sessionWithPartialWork.mock.calls.length <= 1) {
-                return new Promise((_resolve, reject) => {
+        const sessionWithPartialWork = mock(async (options: RunAgentSessionOptions): Promise<AgentSessionResult> =>
+            // First call - wait for abort; second call - complete immediately
+            (sessionWithPartialWork.mock.calls.length <= 1
+                ? new Promise((_resolve, reject) => {
                     options.abortSignal.addEventListener('abort', () => {
                         const error = new Error('AbortError');
                         error.name = 'AbortError';
                         reject(error);
                     });
-                });
-            } else {
-                // Second call - complete immediately
-                return {
+                })
+                : {
                     completed: true,
                     sessionId: 'wrap-up-session',
-                };
-            }
-        });
+                })
+        );
 
         const deps: PerchSessionRunnerDeps = {
             stateManager:    mockStateManager,

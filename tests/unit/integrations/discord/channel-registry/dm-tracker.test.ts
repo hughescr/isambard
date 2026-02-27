@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
-import _ from 'lodash';
+import noop from 'lodash/noop';
 import { DMTracker, formatDMChannelName, isDMChannelName } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
 import { createChannelId, createUserId } from '../../../../../src/integrations/discord/types';
@@ -59,7 +59,7 @@ describe('DMTracker', () => {
     beforeEach(() => {
         // Mock ChannelRegistryManager
         mockManager = {
-            upsertChannel: mock(_.noop),
+            upsertChannel: mock(noop),
         } as unknown as ChannelRegistryManager;
 
         // Mock Discord.js Client
@@ -94,13 +94,13 @@ describe('DMTracker', () => {
             // Mock Discord.js User and DMChannel
             const mockDMChannel = {
                 id: channelId,
-            } as unknown as import('discord.js').DMChannel;
+            } as unknown as DMChannel;
 
             const mockUser = {
                 id:       userId,
                 username,
                 createDM: mock(async () => mockDMChannel),
-            } as unknown as { id: string, username: string, createDM: () => Promise<import('discord.js').DMChannel> };
+            } as unknown as { id: string, username: string, createDM: () => Promise<DMChannel> };
 
             mockClient.users = {
                 fetch: mock(async () => mockUser),

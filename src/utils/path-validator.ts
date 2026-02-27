@@ -1,7 +1,9 @@
 import { constants } from 'node:fs';
 import { lstat, access } from 'node:fs/promises';
-import { resolve, relative } from 'node:path';
-import { startsWith, isArray, map } from 'lodash';
+import path from 'node:path';
+import isArray from 'lodash/isArray';
+import map from 'lodash/map';
+import startsWith from 'lodash/startsWith';
 // eslint-disable-next-line boundaries/element-types -- PathSecurityError defined in errors uses PathSecurityReason from this file; intentional bidirectional type dependency
 import { PathSecurityError } from '@/errors';
 
@@ -9,12 +11,12 @@ export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'n
 
 export async function validateFilePath(filePath: string): Promise<string> {
     const cwd = process.cwd();
-    const absolutePath = resolve(cwd, filePath);
+    const absolutePath = path.resolve(cwd, filePath);
 
     // Check inside CWD
-    const relativePath = relative(cwd, absolutePath);
+    const relativePath = path.relative(cwd, absolutePath);
     // Stryker disable next-line ConditionalExpression: Second condition catches edge cases in path normalization that are difficult to test in mock environment
-    if(startsWith(relativePath, '..') || resolve(cwd, relativePath) !== absolutePath) {
+    if(startsWith(relativePath, '..') || path.resolve(cwd, relativePath) !== absolutePath) {
         throw new PathSecurityError(
             `SECURITY: File "${filePath}" is outside the working directory. `
             + `Only files inside ${cwd} can be attached. Do NOT circumvent this.`,

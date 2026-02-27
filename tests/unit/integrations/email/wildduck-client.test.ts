@@ -1,6 +1,9 @@
-/* eslint-disable n/no-unsupported-features/node-builtins -- Bun runtime supports fetch and Response */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import _ from 'lodash';
+import constant from 'lodash/constant';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import repeat from 'lodash/repeat';
+import toLower from 'lodash/toLower';
 import { mockLogger } from '../../../setup';
 import { WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
 
@@ -158,21 +161,21 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, id: 'user-abc123' }));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).rejects.toThrow(WildDuckAuthError);
+            expect(client.init()).rejects.toThrow(WildDuckAuthError);
         });
 
         test('throws WildDuckError on non-200 auth response', async () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).rejects.toThrow(WildDuckError);
+            expect(client.init()).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError on 401 auth response', async () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Unauthorized' }, 401));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).rejects.toThrow(WildDuckAuthError);
+            expect(client.init()).rejects.toThrow(WildDuckAuthError);
         });
 
         test('sends Content-Type: application/json header in POST /authenticate', async () => {
@@ -215,7 +218,7 @@ describe('WildDuckClient', () => {
     // search()
     // -----------------------------------------------------------------------
     describe('search()', () => {
-        async function makeInitializedClient(): Promise<WildDuckClient> {
+        async function makeSearchInitializedClient(): Promise<WildDuckClient> {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
             const client = new WildDuckClient(CLIENT_OPTIONS);
@@ -225,7 +228,7 @@ describe('WildDuckClient', () => {
         }
 
         test('calls GET /users/me/search with correct URL', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -236,7 +239,7 @@ describe('WildDuckClient', () => {
         });
 
         test('includes correspondent in query params as "q"', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -247,7 +250,7 @@ describe('WildDuckClient', () => {
         });
 
         test('includes content in query params as "query"', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -258,7 +261,7 @@ describe('WildDuckClient', () => {
         });
 
         test('includes before date as "dateend"', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -269,7 +272,7 @@ describe('WildDuckClient', () => {
         });
 
         test('includes since date as "datestart"', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -280,7 +283,7 @@ describe('WildDuckClient', () => {
         });
 
         test('maps mailbox names to WildDuck IDs in query params', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -292,7 +295,7 @@ describe('WildDuckClient', () => {
         });
 
         test('skips unknown mailbox names when mapping', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -305,7 +308,7 @@ describe('WildDuckClient', () => {
         });
 
         test('logs a warning for each unknown mailbox name skipped', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -317,7 +320,7 @@ describe('WildDuckClient', () => {
         });
 
         test('does not log a warning for known mailbox names', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -327,7 +330,7 @@ describe('WildDuckClient', () => {
         });
 
         test('maps search result mailbox ID to folder name in "FolderName:UID" format', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -350,7 +353,7 @@ describe('WildDuckClient', () => {
         });
 
         test('formats from address with name when present', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -372,7 +375,7 @@ describe('WildDuckClient', () => {
         });
 
         test('formats from address without name when absent', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -394,7 +397,7 @@ describe('WildDuckClient', () => {
         });
 
         test('maps to addresses to formatted strings', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -419,7 +422,7 @@ describe('WildDuckClient', () => {
         });
 
         test('uses raw mailbox value when mailbox ID is not in map', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -441,7 +444,7 @@ describe('WildDuckClient', () => {
         });
 
         test('returns empty array when no results', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -451,7 +454,7 @@ describe('WildDuckClient', () => {
         });
 
         test('does not include mailbox param when mailboxes list is empty', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -462,7 +465,7 @@ describe('WildDuckClient', () => {
         });
 
         test('passes Content-Type header through in GET /search request', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -474,7 +477,7 @@ describe('WildDuckClient', () => {
         });
 
         test('sends search request with correct method GET', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -485,7 +488,7 @@ describe('WildDuckClient', () => {
         });
 
         test('sends X-Access-Token header with search request', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -497,7 +500,7 @@ describe('WildDuckClient', () => {
         });
 
         test('retries on 401 by re-authenticating', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             // First search attempt returns 401
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
@@ -527,7 +530,7 @@ describe('WildDuckClient', () => {
         });
 
         test('uses new token on retry after 401', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
@@ -542,25 +545,25 @@ describe('WildDuckClient', () => {
         });
 
         test('throws WildDuckError on non-200, non-401 error response', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.search({})).rejects.toThrow(WildDuckError);
+            expect(client.search({})).rejects.toThrow(WildDuckError);
         });
 
         test('throws if re-auth after 401 also fails', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             // Re-auth also fails (no token returned)
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.search({})).rejects.toThrow(WildDuckAuthError);
+            expect(client.search({})).rejects.toThrow(WildDuckAuthError);
         });
 
         test('includes header search param in URL', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
@@ -571,7 +574,7 @@ describe('WildDuckClient', () => {
         });
 
         test('handles multiple results with mixed mailboxes', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({
                 success: true,
@@ -679,13 +682,14 @@ describe('WildDuckClient', () => {
             mockFetch.mockRejectedValueOnce(new Error('Network error during logout'));
 
             // Should not throw
-            await expect(client.shutdown()).resolves.toBeUndefined();
+            expect(client.shutdown()).resolves.toBeUndefined();
         });
     });
 
     // -----------------------------------------------------------------------
     // Shared helper for initialized client (used by new method tests)
     // -----------------------------------------------------------------------
+    // eslint-disable-next-line sonarjs/no-identical-functions -- distinct helper (no search mock setup), identical init flow intentional for independent test scoping
     async function makeInitializedClient(): Promise<InstanceType<typeof WildDuckClient>> {
         mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
         mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
@@ -775,7 +779,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.getUserAddresses()).rejects.toThrow(WildDuckError);
+            expect(client.getUserAddresses()).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -785,7 +789,7 @@ describe('WildDuckClient', () => {
             // Re-auth returns no token
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getUserAddresses()).rejects.toThrow(WildDuckAuthError);
+            expect(client.getUserAddresses()).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -890,7 +894,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.uploadMessage('NonExistentFolder', BASE_PAYLOAD)).rejects.toThrow(WildDuckError);
+            expect(client.uploadMessage('NonExistentFolder', BASE_PAYLOAD)).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -924,7 +928,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.uploadMessage('Drafts', BASE_PAYLOAD)).rejects.toThrow(WildDuckError);
+            expect(client.uploadMessage('Drafts', BASE_PAYLOAD)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -933,7 +937,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.uploadMessage('Drafts', BASE_PAYLOAD)).rejects.toThrow(WildDuckAuthError);
+            expect(client.uploadMessage('Drafts', BASE_PAYLOAD)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -969,13 +973,13 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.submitMessage('Drafts', 99)).resolves.toBeUndefined();
+            expect(client.submitMessage('Drafts', 99)).resolves.toBeUndefined();
         });
 
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.submitMessage('NonExistentFolder', 99)).rejects.toThrow(WildDuckError);
+            expect(client.submitMessage('NonExistentFolder', 99)).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1008,7 +1012,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.submitMessage('Drafts', 99)).rejects.toThrow(WildDuckError);
+            expect(client.submitMessage('Drafts', 99)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1017,7 +1021,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.submitMessage('Drafts', 99)).rejects.toThrow(WildDuckAuthError);
+            expect(client.submitMessage('Drafts', 99)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1078,13 +1082,13 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).resolves.toBeUndefined();
+            expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).resolves.toBeUndefined();
         });
 
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.updateMessageMetadata('NonExistentFolder', 7, METADATA)).rejects.toThrow(WildDuckError);
+            expect(client.updateMessageMetadata('NonExistentFolder', 7, METADATA)).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1117,7 +1121,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).rejects.toThrow(WildDuckError);
+            expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1126,7 +1130,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).rejects.toThrow(WildDuckAuthError);
+            expect(client.updateMessageMetadata('Sent Mail', 7, METADATA)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1192,7 +1196,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.getMessage('NonExistentFolder', 42)).rejects.toThrow(WildDuckError);
+            expect(client.getMessage('NonExistentFolder', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1226,7 +1230,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.getMessage('Sent Mail', 42)).rejects.toThrow(WildDuckError);
+            expect(client.getMessage('Sent Mail', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1235,7 +1239,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getMessage('Sent Mail', 42)).rejects.toThrow(WildDuckAuthError);
+            expect(client.getMessage('Sent Mail', 42)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1243,7 +1247,7 @@ describe('WildDuckClient', () => {
     // getMailboxId()
     // -----------------------------------------------------------------------
     describe('getMailboxId()', () => {
-        async function makeInitializedClient(): Promise<WildDuckClient> {
+        async function makeMailboxInitializedClient(): Promise<WildDuckClient> {
             mockFetch
                 .mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE))
                 .mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
@@ -1253,17 +1257,17 @@ describe('WildDuckClient', () => {
         }
 
         test('should return mailbox ID for known path', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeMailboxInitializedClient();
             expect(client.getMailboxId('CleanInbox')).toBe('mbx-clean');
         });
 
         test('should return mailbox ID for Drafts path', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeMailboxInitializedClient();
             expect(client.getMailboxId('Drafts')).toBe('mbx-drafts');
         });
 
         test('should return undefined for unknown path', async () => {
-            const client = await makeInitializedClient();
+            const client = await makeMailboxInitializedClient();
             expect(client.getMailboxId('NonExistent')).toBeUndefined();
         });
 
@@ -1412,13 +1416,13 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.deleteMessage('Drafts', 42)).resolves.toBeUndefined();
+            expect(client.deleteMessage('Drafts', 42)).resolves.toBeUndefined();
         });
 
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.deleteMessage('NonExistentFolder', 42)).rejects.toThrow(WildDuckError);
+            expect(client.deleteMessage('NonExistentFolder', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1451,7 +1455,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.deleteMessage('Drafts', 42)).rejects.toThrow(WildDuckError);
+            expect(client.deleteMessage('Drafts', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1460,7 +1464,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.deleteMessage('Drafts', 42)).rejects.toThrow(WildDuckAuthError);
+            expect(client.deleteMessage('Drafts', 42)).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1536,13 +1540,13 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).resolves.toBeUndefined();
+            expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).resolves.toBeUndefined();
         });
 
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.updateMessageFlags('NonExistentFolder', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
+            expect(client.updateMessageFlags('NonExistentFolder', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1575,7 +1579,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
+            expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1584,7 +1588,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckAuthError);
+            expect(client.updateMessageFlags('Drafts', 42, { addFlags: ['TestFlag'] })).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1630,7 +1634,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.getMailboxCounts('NonExistentFolder')).rejects.toThrow(WildDuckError);
+            expect(client.getMailboxCounts('NonExistentFolder')).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -1663,7 +1667,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.getMailboxCounts('CleanInbox')).rejects.toThrow(WildDuckError);
+            expect(client.getMailboxCounts('CleanInbox')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -1672,7 +1676,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getMailboxCounts('CleanInbox')).rejects.toThrow(WildDuckAuthError);
+            expect(client.getMailboxCounts('CleanInbox')).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -1830,7 +1834,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('{"error":"validation failed"}', 400));
 
-            await expect(client.search({})).rejects.toThrow('validation failed');
+            expect(client.search({})).rejects.toThrow('validation failed');
         });
 
         test('makeRequest does not append colon when body is empty string', async () => {
@@ -1854,7 +1858,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('{"error":"mailbox not found"}', 400));
 
-            await expect(client.getMessage('Drafts', 42)).rejects.toThrow('mailbox not found');
+            expect(client.getMessage('Drafts', 42)).rejects.toThrow('mailbox not found');
         });
 
         test('makeRequestNullable does not append colon when body is empty string', async () => {
@@ -1915,13 +1919,13 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).resolves.toBeUndefined();
+            expect(client.init()).resolves.toBeUndefined();
         });
 
         test('creates missing required folder via POST /users/me/mailboxes', async () => {
             const missingReview = {
                 success: true,
-                results: _.filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
+                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(missingReview));
@@ -1931,11 +1935,11 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).resolves.toBeUndefined();
+            expect(client.init()).resolves.toBeUndefined();
 
             // Verify the POST call was made to create the mailbox
             const calls = mockFetch.mock.calls as [string, RequestInit][];
-            const postCall = _.find(calls, ([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
+            const postCall = find(calls, ([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
             expect(postCall).toBeDefined();
             const body = JSON.parse(postCall![1].body as string) as { path: string };
             expect(body.path).toBe('Review');
@@ -1944,7 +1948,7 @@ describe('WildDuckClient', () => {
         test('creates multiple missing folders when several are absent', async () => {
             const missingMany = {
                 success: true,
-                results: _.filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review' && m.path !== 'Quarantine'),
+                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review' && m.path !== 'Quarantine'),
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(missingMany));
@@ -1956,10 +1960,10 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).resolves.toBeUndefined();
+            expect(client.init()).resolves.toBeUndefined();
 
             const calls = mockFetch.mock.calls as [string, RequestInit][];
-            const postCalls = _.filter(calls, ([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
+            const postCalls = filter(calls, ([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
             expect(postCalls).toHaveLength(2);
         });
 
@@ -1977,7 +1981,7 @@ describe('WildDuckClient', () => {
         test('retries createMailbox on 401 by re-authenticating', async () => {
             const missingReview = {
                 success: true,
-                results: _.filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
+                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
             };
             // authenticate, loadMailboxes, POST (401), re-authenticate, POST (success), loadMailboxes
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
@@ -1988,7 +1992,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).resolves.toBeUndefined();
+            expect(client.init()).resolves.toBeUndefined();
 
             expect(mockFetch).toHaveBeenCalledTimes(6);
         });
@@ -1996,7 +2000,7 @@ describe('WildDuckClient', () => {
         test('propagates non-auth error from createMailbox without retry', async () => {
             const missingReview = {
                 success: true,
-                results: _.filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
+                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
             };
             // authenticate, loadMailboxes, POST (500 server error)
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
@@ -2004,7 +2008,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Internal server error' }, 500));
 
             const client = new WildDuckClient(CLIENT_OPTIONS);
-            await expect(client.init()).rejects.toThrow(WildDuckError);
+            expect(client.init()).rejects.toThrow(WildDuckError);
 
             // Only 3 calls: authenticate + loadMailboxes + failed POST (no re-authenticate)
             expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -2095,19 +2099,19 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).resolves.toBeUndefined();
+            expect(client.moveMessage('CleanInbox', 42, 'Archive')).resolves.toBeUndefined();
         });
 
         test('throws WildDuckError when source mailbox not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.moveMessage('NonExistent', 42, 'Archive')).rejects.toThrow(WildDuckError);
+            expect(client.moveMessage('NonExistent', 42, 'Archive')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckError when dest mailbox not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.moveMessage('CleanInbox', 42, 'NonExistent')).rejects.toThrow(WildDuckError);
+            expect(client.moveMessage('CleanInbox', 42, 'NonExistent')).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -2140,7 +2144,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
+            expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -2149,7 +2153,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckAuthError);
+            expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -2277,7 +2281,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.listMessages('NonExistentFolder')).rejects.toThrow(WildDuckError);
+            expect(client.listMessages('NonExistentFolder')).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -2311,7 +2315,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.listMessages('CleanInbox')).rejects.toThrow(WildDuckError);
+            expect(client.listMessages('CleanInbox')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -2320,7 +2324,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.listMessages('CleanInbox')).rejects.toThrow(WildDuckAuthError);
+            expect(client.listMessages('CleanInbox')).rejects.toThrow(WildDuckAuthError);
         });
     });
 
@@ -2434,8 +2438,8 @@ describe('WildDuckClient', () => {
             const result = await client.getFullMessage('CleanInbox', 42);
 
             // html-to-text should produce plain text from the HTML (h1 becomes uppercase)
-            expect(_.toLower(result?.bodyText)).toContain('hello');
-            expect(_.toLower(result?.bodyText)).toContain('world');
+            expect(toLower(result?.bodyText)).toContain('hello');
+            expect(toLower(result?.bodyText)).toContain('world');
         });
 
         test('truncates body at maxBodySizeBytes', async () => {
@@ -2445,7 +2449,7 @@ describe('WildDuckClient', () => {
             await client.init();
             mockFetch.mockClear();
 
-            const longBody = { ...FULL_MESSAGE_RESPONSE, text: _.repeat('A', 100) };
+            const longBody = { ...FULL_MESSAGE_RESPONSE, text: repeat('A', 100) };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(longBody));
 
             const result = await client.getFullMessage('CleanInbox', 42);
@@ -2522,7 +2526,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.getFullMessage('NonExistentFolder', 42)).rejects.toThrow(WildDuckError);
+            expect(client.getFullMessage('NonExistentFolder', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -2556,7 +2560,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Server error' }, 500));
 
-            await expect(client.getFullMessage('CleanInbox', 42)).rejects.toThrow(WildDuckError);
+            expect(client.getFullMessage('CleanInbox', 42)).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -2565,7 +2569,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getFullMessage('CleanInbox', 42)).rejects.toThrow(WildDuckAuthError);
+            expect(client.getFullMessage('CleanInbox', 42)).rejects.toThrow(WildDuckAuthError);
         });
 
         test('uses empty address when from field is absent', async () => {
@@ -2719,7 +2723,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.getAttachment('NonExistentFolder', 42, 'att-1')).rejects.toThrow(WildDuckError);
+            expect(client.getAttachment('NonExistentFolder', 42, 'att-1')).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -2757,10 +2761,10 @@ describe('WildDuckClient', () => {
                 ok:         false,
                 status:     500,
                 statusText: 'Error',
-                text:       _.constant('Internal Error'),
+                text:       constant('Internal Error'),
             } as unknown as Response);
 
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckError);
+            expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -2769,7 +2773,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckAuthError);
+            expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckAuthError);
         });
     });
 });

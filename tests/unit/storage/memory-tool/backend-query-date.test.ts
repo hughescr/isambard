@@ -4,7 +4,9 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { forEach as _forEach, map as _map, padStart as _padStart } from 'lodash';
+import _forEach from 'lodash/forEach';
+import _map from 'lodash/map';
+import _padStart from 'lodash/padStart';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
 

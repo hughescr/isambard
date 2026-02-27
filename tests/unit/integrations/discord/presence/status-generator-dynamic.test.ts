@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import _, { constant as _constant, repeat as _repeat } from 'lodash';
+import _constant from 'lodash/constant';
+import isArray from 'lodash/isArray';
+import _repeat from 'lodash/repeat';
 import { mockGenerateText, mockLogger } from '../../../../setup';
-
-// Import after mocking
 import {
     createDynamicStatusGenerator,
     resetCooldownState,
@@ -241,7 +242,7 @@ describe('DynamicStatusGenerator', () => {
 
             it('should replace {thinkingSection} placeholder when thinkingContent is provided', async () => {
                 // This test kills the mutant that replaces '{thinkingSection}' with ""
-                // With the mutation, _.replace("", thinkingSection) won't find anything,
+                // With the mutation, replace("", thinkingSection) won't find anything,
                 // leaving the literal {thinkingSection} in the prompt
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -304,117 +305,76 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should NOT attempt responseFragment replacement in thinking phase', async () => {
-                // Track calls to _.replace to verify {responseFragment} is never passed as pattern
-                const originalReplace = _.replace.bind(_);
-                const replaceCalls: string[] = [];
+                // This kills the mutant: if(phase === 'responding') -> if(true)
+                // With the mutation, 'Some unique response value' WOULD appear in the prompt
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
 
-                // Temporarily override _.replace to track what patterns are being replaced
-                (_ as unknown as { replace: (str: string, pattern: string, replacement: string) => string }).replace = (str: string, pattern: string, replacement: string) => {
-                    replaceCalls.push(pattern);
-                    return originalReplace(str, pattern, replacement);
+                const context: SynopsisContext = {
+                    phase:            'thinking',
+                    userMessage:      'Test',
+                    responseFragment: 'Some unique response value 9x7z',
                 };
 
-                try {
-                    const generator = createDynamicStatusGenerator({
-                        identityContext: 'Test identity',
-                    });
+                await generator.generateSynopsis(context);
 
-                    const context: SynopsisContext = {
-                        phase:            'thinking',
-                        userMessage:      'Test',
-                        responseFragment: 'Some response value',
-                    };
-
-                    await generator.generateSynopsis(context);
-
-                    // {responseFragment} should NOT be in the patterns we tried to replace
-                    // This kills the mutant: if(phase === 'responding') -> if(true)
-                    // With the mutation, {responseFragment} WOULD be in replaceCalls even for 'thinking' phase
-                    expect(replaceCalls).not.toContain('{responseFragment}');
-                } finally {
-                    // Restore original _.replace
-                    (_ as unknown as { replace: typeof _.replace }).replace = originalReplace;
-                }
+                const prompt = mockGenerateText.mock.calls[0][0];
+                // If mutant fires (if(true)), the value would be inserted into the prompt
+                expect(prompt).not.toContain('Some unique response value 9x7z');
             });
 
             it('should NOT attempt responseFragment replacement in using_tool phase', async () => {
-                // Track calls to _.replace to verify {responseFragment} is never passed as pattern
-                const originalReplace = _.replace.bind(_);
-                const replaceCalls: string[] = [];
+                // This kills the mutant: if(phase === 'responding') -> if(true)
+                // With the mutation, 'Some unique response value' WOULD appear in the prompt
+                // Reset cooldown state to allow call
+                resetCooldownState();
 
-                // Temporarily override _.replace to track what patterns are being replaced
-                (_ as unknown as { replace: (str: string, pattern: string, replacement: string) => string }).replace = (str: string, pattern: string, replacement: string) => {
-                    replaceCalls.push(pattern);
-                    return originalReplace(str, pattern, replacement);
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:            'using_tool',
+                    userMessage:      'Test',
+                    toolName:         'Read',
+                    responseFragment: 'Some unique response value 9x7z',
                 };
 
-                try {
-                    // Reset cooldown state to allow call
-                    resetCooldownState();
+                await generator.generateSynopsis(context);
 
-                    const generator = createDynamicStatusGenerator({
-                        identityContext: 'Test identity',
-                    });
-
-                    const context: SynopsisContext = {
-                        phase:            'using_tool',
-                        userMessage:      'Test',
-                        toolName:         'Read',
-                        responseFragment: 'Some response value',
-                    };
-
-                    await generator.generateSynopsis(context);
-
-                    // {responseFragment} should NOT be in the patterns we tried to replace
-                    // This kills the mutant: if(phase === 'responding') -> if(true)
-                    expect(replaceCalls).not.toContain('{responseFragment}');
-                } finally {
-                    // Restore original _.replace
-                    (_ as unknown as { replace: typeof _.replace }).replace = originalReplace;
-                }
+                const prompt = mockGenerateText.mock.calls[0][0];
+                // If mutant fires (if(true)), the value would be inserted into the prompt
+                expect(prompt).not.toContain('Some unique response value 9x7z');
             });
 
             it('should NOT attempt tool-specific replacements in thinking phase', async () => {
-                // Track calls to _.replace to verify tool placeholders are never passed as pattern
-                const originalReplace = _.replace.bind(_);
-                const replaceCalls: string[] = [];
+                // This kills the mutant: if(phase === 'using_tool') -> if(true)
+                // With the mutation, tool-specific values WOULD appear in the prompt
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
 
-                // Temporarily override _.replace to track what patterns are being replaced
-                (_ as unknown as { replace: (str: string, pattern: string, replacement: string) => string }).replace = (str: string, pattern: string, replacement: string) => {
-                    replaceCalls.push(pattern);
-                    return originalReplace(str, pattern, replacement);
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    toolName:        'Read',
+                    toolDescription: 'Reading a unique file 9x7z',
+                    toolInput:       { path: '/test' },
+                    accumulatedText: 'Some unique accumulated text 9x7z',
                 };
 
-                try {
-                    const generator = createDynamicStatusGenerator({
-                        identityContext: 'Test identity',
-                    });
+                await generator.generateSynopsis(context);
 
-                    const context: SynopsisContext = {
-                        phase:           'thinking',
-                        userMessage:     'Test',
-                        toolName:        'Read',
-                        toolDescription: 'Reading a file',
-                        toolInput:       { path: '/test' },
-                        accumulatedText: 'Some accumulated text',
-                    };
-
-                    await generator.generateSynopsis(context);
-
-                    // Tool-specific placeholders should NOT be in the patterns we tried to replace
-                    // This kills the mutant: if(phase === 'using_tool') -> if(true)
-                    expect(replaceCalls).not.toContain('{toolDescription}');
-                    expect(replaceCalls).not.toContain('{toolInputSummary}');
-                    expect(replaceCalls).not.toContain('{accumulatedText}');
-                } finally {
-                    // Restore original _.replace
-                    (_ as unknown as { replace: typeof _.replace }).replace = originalReplace;
-                }
+                const prompt = mockGenerateText.mock.calls[0][0];
+                // If mutant fires (if(true)), these values would be inserted into the prompt
+                expect(prompt).not.toContain('Reading a unique file 9x7z');
+                expect(prompt).not.toContain('Some unique accumulated text 9x7z');
             });
 
             it('should replace {toolInputSummary} placeholder completely in using_tool phase', async () => {
                 // This test kills the mutant that replaces '{toolInputSummary}' with ""
-                // With the mutation, _.replace(str, "", value) replaces at position 0,
+                // With the mutation, replace(str, "", value) replaces at position 0,
                 // leaving the literal {toolInputSummary} in the prompt
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1288,7 +1248,7 @@ describe('DynamicStatusGenerator', () => {
                     (fn as { mockClear: () => void }).mockClear();
                     // Also verify the mock has a .mock.calls array (meaning it's recording)
                     const mockCalls = (fn as { mock: { calls: unknown[] } }).mock?.calls;
-                    return _.isArray(mockCalls);
+                    return isArray(mockCalls);
                 } catch{
                     return false;
                 }

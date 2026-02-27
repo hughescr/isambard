@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, spyOn, mock  } from 'bun:test';
-import { split as _split, some as _some, includes as _includes, repeat as _repeat } from 'lodash';
 import { mockLogger } from '../../../setup';
 import {
     PathNotFoundError,

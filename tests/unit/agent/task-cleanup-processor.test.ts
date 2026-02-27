@@ -8,10 +8,14 @@
  * - Dependencies (tasks that block active tasks must be retained)
  */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import path from 'node:path';
+import { type logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { filter, constant } from 'lodash';
+import constant from 'lodash/constant';
+import filter from 'lodash/filter';
 import { mockLogger } from '../../setup';
+import { createTaskCleanupProcessor, getTaskDirectoryPath, type TaskCleanupDeps } from '@/agent/task-cleanup-processor';
+import type { SessionId } from '@/storage/task-session/types';
 
 // Create local mocks for fs operations
 const mockReaddir = mock((_path: string) => Promise.resolve([] as string[]));
@@ -19,10 +23,6 @@ const mockReadFile = mock((_path: string, _encoding?: string) => Promise.resolve
 const mockWriteFile = mock((_path: string, _content: string) => Promise.resolve());
 const mockStat = mock((_path: string) => Promise.resolve({ mtime: new Date(), isDirectory: constant(false), isFile: constant(true) }));
 const mockMkdir = mock((_path: string, _options?: object) => Promise.resolve());
-
-// Import after setup.ts has mocked the modules
-import { createTaskCleanupProcessor, getTaskDirectoryPath, type TaskCleanupDeps } from '@/agent/task-cleanup-processor';
-import type { SessionId } from '@/storage/task-session/types';
 
 // Create a deps object that can be used in tests with proper type cast
 const createTestDeps = (now: () => number): TaskCleanupDeps => ({
@@ -84,7 +84,7 @@ describe('getTaskDirectoryPath', () => {
         const result = getTaskDirectoryPath(testSessionId);
 
         // SDK stores tasks at ~/.claude/tasks/{sessionId}/
-        const expectedPath = join(homedir(), '.claude', 'tasks', testSessionId);
+        const expectedPath = path.join(homedir(), '.claude', 'tasks', testSessionId);
 
         expect(result).toBe(expectedPath);
     });
@@ -127,7 +127,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -158,7 +158,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -169,7 +169,7 @@ describe('processTaskDirectory', () => {
             expect(result.deleted).toBe(0);
             expect(result.errors).toBe(0);
             expect(mockWriteFile).toHaveBeenCalledWith(
-                join(destDir, '1.json'),
+                path.join(destDir, '1.json'),
                 JSON.stringify(task1, null, 2)
             );
         });
@@ -192,7 +192,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -202,7 +202,7 @@ describe('processTaskDirectory', () => {
             expect(result.copied).toBe(1);
             expect(result.deleted).toBe(0);
             expect(mockWriteFile).toHaveBeenCalledWith(
-                join(destDir, '1.json'),
+                path.join(destDir, '1.json'),
                 JSON.stringify(task1, null, 2)
             );
         });
@@ -226,7 +226,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -236,7 +236,7 @@ describe('processTaskDirectory', () => {
             expect(result.copied).toBe(1);
             expect(result.deleted).toBe(0);
             expect(mockWriteFile).toHaveBeenCalledWith(
-                join(destDir, '1.json'),
+                path.join(destDir, '1.json'),
                 JSON.stringify(task1, null, 2)
             );
         });
@@ -259,7 +259,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -292,11 +292,11 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['1.json', '2.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('1.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
                     return JSON.stringify(task1);
                 }
-                if(path.includes('2.json')) {
+                if(filePath.includes('2.json')) {
                     return JSON.stringify(task2);
                 }
                 throw new Error('Unexpected file');
@@ -305,7 +305,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -337,11 +337,11 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['1.json', '2.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('1.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
                     return JSON.stringify(task1);
                 }
-                if(path.includes('2.json')) {
+                if(filePath.includes('2.json')) {
                     return JSON.stringify(task2);
                 }
                 throw new Error('Unexpected file');
@@ -349,7 +349,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -388,14 +388,14 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['A.json', 'B.json', 'C.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('A.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('A.json')) {
                     return JSON.stringify(taskA);
                 }
-                if(path.includes('B.json')) {
+                if(filePath.includes('B.json')) {
                     return JSON.stringify(taskB);
                 }
-                if(path.includes('C.json')) {
+                if(filePath.includes('C.json')) {
                     return JSON.stringify(taskC);
                 }
                 throw new Error('Unexpected file');
@@ -404,7 +404,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -444,14 +444,14 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['A.json', 'B.json', 'C.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('A.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('A.json')) {
                     return JSON.stringify(taskA);
                 }
-                if(path.includes('B.json')) {
+                if(filePath.includes('B.json')) {
                     return JSON.stringify(taskB);
                 }
-                if(path.includes('C.json')) {
+                if(filePath.includes('C.json')) {
                     return JSON.stringify(taskC);
                 }
                 throw new Error('Unexpected file');
@@ -459,7 +459,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -495,11 +495,11 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['A.json', 'B.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('A.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('A.json')) {
                     return JSON.stringify(taskA);
                 }
-                if(path.includes('B.json')) {
+                if(filePath.includes('B.json')) {
                     return JSON.stringify(taskB);
                 }
                 throw new Error('Unexpected file');
@@ -508,7 +508,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -550,14 +550,14 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['A.json', 'B.json', 'C.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('A.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('A.json')) {
                     return JSON.stringify(taskA);
                 }
-                if(path.includes('B.json')) {
+                if(filePath.includes('B.json')) {
                     return JSON.stringify(taskB);
                 }
-                if(path.includes('C.json')) {
+                if(filePath.includes('C.json')) {
                     return JSON.stringify(taskC);
                 }
                 throw new Error('Unexpected file');
@@ -566,7 +566,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -597,7 +597,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -620,11 +620,11 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['1.json', '2.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('1.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
                     return JSON.stringify(task1);
                 }
-                if(path.includes('2.json')) {
+                if(filePath.includes('2.json')) {
                     return 'invalid json{{{';
                 }
                 throw new Error('Unexpected file');
@@ -632,7 +632,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -658,7 +658,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -695,7 +695,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -728,7 +728,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -755,8 +755,8 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks - directory contains .json and other files
             mockReaddir.mockResolvedValue(['1.json', '.DS_Store', 'readme.txt', '2.json.bak']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('1.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
                     return JSON.stringify(task1);
                 }
                 throw new Error('Should not read non-JSON files');
@@ -764,7 +764,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -795,7 +795,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -822,11 +822,11 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['1.json', '2.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('1.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
                     return JSON.stringify(task1);
                 }
-                if(path.includes('2.json')) {
+                if(filePath.includes('2.json')) {
                     return JSON.stringify(task2);
                 }
                 throw new Error('Unexpected file');
@@ -835,7 +835,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -844,11 +844,11 @@ describe('processTaskDirectory', () => {
             // Both tasks should be written
             expect(mockWriteFile).toHaveBeenCalledTimes(2);
             expect(mockWriteFile).toHaveBeenCalledWith(
-                join(destDir, '1.json'),
+                path.join(destDir, '1.json'),
                 JSON.stringify(task1, null, 2)
             );
             expect(mockWriteFile).toHaveBeenCalledWith(
-                join(destDir, '2.json'),
+                path.join(destDir, '2.json'),
                 JSON.stringify(task2, null, 2)
             );
         });
@@ -869,7 +869,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -895,7 +895,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockRejectedValue(new Error('Disk full'));
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -932,7 +932,7 @@ describe('processTaskDirectory', () => {
 
             // Use 7-day retention instead of default 14
             const processor = createTaskCleanupProcessor({
-                logger:        mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger:        mockLogger as unknown as typeof logger,
                 retentionDays: 7,
                 deps:          createTestDeps(() => NOW),
             });
@@ -964,7 +964,7 @@ describe('processTaskDirectory', () => {
 
             // Use 30-day retention
             const processor = createTaskCleanupProcessor({
-                logger:        mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger:        mockLogger as unknown as typeof logger,
                 retentionDays: 30,
                 deps:          createTestDeps(() => NOW),
             });
@@ -995,11 +995,11 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['1.json', '2.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('1.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
                     return JSON.stringify(task1);
                 }
-                if(path.includes('2.json')) {
+                if(filePath.includes('2.json')) {
                     return JSON.stringify(task2);
                 }
                 throw new Error('Unexpected file');
@@ -1008,7 +1008,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -1043,7 +1043,7 @@ describe('processTaskDirectory', () => {
             mockWriteFile.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -1075,7 +1075,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 
@@ -1129,17 +1129,17 @@ describe('processTaskDirectory', () => {
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['A.json', 'B.json', 'C.json', 'D.json']);
-            mockReadFile.mockImplementation(async (path: string) => {
-                if(path.includes('A.json')) {
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('A.json')) {
                     return JSON.stringify(taskA);
                 }
-                if(path.includes('B.json')) {
+                if(filePath.includes('B.json')) {
                     return JSON.stringify(taskB);
                 }
-                if(path.includes('C.json')) {
+                if(filePath.includes('C.json')) {
                     return JSON.stringify(taskC);
                 }
-                if(path.includes('D.json')) {
+                if(filePath.includes('D.json')) {
                     return JSON.stringify(taskD);
                 }
                 throw new Error('Unexpected file');
@@ -1147,7 +1147,7 @@ describe('processTaskDirectory', () => {
             mockMkdir.mockResolvedValue(undefined);
 
             const processor = createTaskCleanupProcessor({
-                logger: mockLogger as unknown as typeof import('@hughescr/logger').logger,
+                logger: mockLogger as unknown as typeof logger,
                 deps:   createTestDeps(() => NOW),
             });
 

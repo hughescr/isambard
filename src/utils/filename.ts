@@ -1,5 +1,5 @@
-import _ from 'lodash';
-
+import replace from 'lodash/replace';
+import trim from 'lodash/trim';
 /**
  * Sanitize a filename to prevent path traversal and filesystem issues.
  * Strips path separators, control chars, and dotdot sequences.
@@ -8,10 +8,10 @@ import _ from 'lodash';
 export function sanitizeFilename(name: string): string {
     // Remove null bytes, path-separator chars, and other unsafe chars; then remove dotdot sequences; then trim leading/trailing dots/spaces
     // Stryker disable next-line StringLiteral: '_' replacement is equivalent to '' — tests only verify dangerous chars are absent, not what replaced them
-    const noSeparators = _.replace(name, /[/\\?%*:|"<>\u0000-\u001F]/g, '_');
+    const noSeparators = replace(name, /[/\\?%*:|"<>\u0000-\u001F]/g, '_');
     // Stryker disable next-line StringLiteral: '_' replacement is equivalent to '' for dotdot sequences given upstream char substitution already ran
-    const noDotDot     = _.replace(noSeparators, /\.{2,}/g, '_');
-    return _.trim(noDotDot, '. ') || 'attachment';
+    const noDotDot     = replace(noSeparators, /\.{2,}/g, '_');
+    return trim(noDotDot, '. ') || 'attachment';
 }
 
 /**

@@ -3,19 +3,26 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
-import _ from 'lodash';
+import isArray from 'lodash/isArray';
+import isError from 'lodash/isError';
+import map from 'lodash/map';
+import startsWith from 'lodash/startsWith';
 import { z } from 'zod';
-// eslint-disable-next-line no-warning-comments -- tracked in roadmap, not forgotten
+// eslint-disable-next-line no-warning-comments, sonarjs/todo-tag -- tracked in roadmap, not forgotten
 // TODO: Decouple - Discord MCP server should expose platform-agnostic MCP tool interfaces wrapping messaging platform capabilities
 // eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord message history; decouple per roadmap
 import { buildQuestionButtons } from '../integrations/discord/button-builder';
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord channel registry; decouple per roadmap
 import { type ChannelRegistryManager, DMTracker, resolveChannelId  } from '../integrations/discord/channel-registry';
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord message history; decouple per roadmap
 import type { MessageSearchService } from '../integrations/discord/message-history/search';
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord messages; decouple per roadmap
 import { splitMessage } from '../integrations/discord/messages';
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord retry; decouple per roadmap
 import { withDiscordRetry } from '../integrations/discord/retry';
+// eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord types; decouple per roadmap
 import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
-
 import { validateFilePaths, PathSecurityError, formatLocalDateTime } from '@/utils';
 
 /**
@@ -494,7 +501,7 @@ export function createDiscordMCPServer(
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -536,7 +543,7 @@ export function createDiscordMCPServer(
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -562,7 +569,7 @@ export function createDiscordMCPServer(
                     try {
                         const channelId = resolveChannelId(args.channelId, channelRegistry);
                         // Handle array input
-                        if(_.isArray(args.messageId)) {
+                        if(isArray(args.messageId)) {
                             const results = await searchService.getMessagesById(
                                 channelId,
                                 args.messageId
@@ -600,7 +607,7 @@ export function createDiscordMCPServer(
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -639,6 +646,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     files:            z.union([z.string(), z.array(z.string())]).optional().describe('File path(s) to attach. Must be inside the working directory (no symlinks).'),
                 },
+                // eslint-disable-next-line sonarjs/cognitive-complexity -- MCP tool handler validates inputs, resolves channels, sends chunks, and creates threads; branching is inherent to the multi-step protocol
                 async (args): Promise<CallToolResult> => {
                     try {
                         // Validate inputs
@@ -666,10 +674,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         }
 
                         // Resolve channel identifier (handle #channel-name and @username)
-                        let resolvedChannelId = args.channelId;
+                        let resolvedChannelId: typeof args.channelId;
 
                         // First, check for @username (DM resolution)
-                        if(_.startsWith(args.channelId, '@')) {
+                        if(startsWith(args.channelId, '@')) {
                             const username = args.channelId.slice(1); // Remove @
                             const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
                             if(!dmChannelId) {
@@ -706,6 +714,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         // Send remaining chunks (no reply reference, no files)
                         // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
                         for(let i = 1; i < chunks.length; i++) {
+                            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
                             const msg = await sendMessage(channelResult.channel, chunks[i]);
                             sentMessages.push(msg);
                         }
@@ -720,7 +729,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         const result = {
                             success:     true,
-                            messageIds:  _.map(sentMessages, 'id'),
+                            messageIds:  map(sentMessages, 'id'),
                             chunksCount: chunks.length,
                             ...(threadId && { threadId }),
                             ...(validatedFiles && { filesAttached: validatedFiles.length }),
@@ -730,7 +739,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -835,7 +844,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         // 8. Format and return result
                         return formatQuestionResult(result, questionId, args.channelId, threadId);
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -877,6 +886,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             'fetchMessage'
                         );
 
+                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Discord.js types fetch() as non-nullable but runtime may return falsy
                         if(!message) {
                             // Stryker disable next-line all: Logging for observability
                             logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error: Message not found');
@@ -887,7 +897,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         }
 
                         // Normalize emoji to array
-                        const emojis = _.isArray(args.emoji) ? args.emoji : [args.emoji];
+                        const emojis = isArray(args.emoji) ? args.emoji : [args.emoji];
 
                         // Add reactions sequentially
                         const addedEmojis: string[] = [];
@@ -895,6 +905,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         for(const emoji of emojis) {
                             try {
+                                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
                                 await withDiscordRetry(
                                     () => message.react(emoji),
                                     // Stryker disable next-line StringLiteral: Operation name for logging
@@ -902,7 +913,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                                 );
                                 addedEmojis.push(emoji);
                             } catch (error) {
-                                const errorMessage = _.isError(error) ? error.message : String(error);
+                                const errorMessage = isError(error) ? error.message : String(error);
                                 failedEmojis.push({ emoji, error: errorMessage });
                             }
                         }
@@ -928,7 +939,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             ...(failedEmojis.length > 0 && { isError: true }),
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
                         return {
@@ -959,7 +970,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'muteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -990,7 +1001,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'unmuteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -1020,7 +1031,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             : await channelRegistry.getUnmutedChannels();
 
                         // Format output
-                        const formatted = _.map(channels, ch => ({
+                        const formatted = map(channels, ch => ({
                             channelId:     ch.channelId,
                             channelName:   ch.channelName,
                             guildId:       ch.guildId,
@@ -1032,7 +1043,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify({ channels: formatted, count: formatted.length }) }],
                         };
                     } catch (error) {
-                        const message = _.isError(error) ? error.message : String(error);
+                        const message = isError(error) ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'listChannels', error: message }, 'Discord tool returned error');
                         return {
