@@ -31,7 +31,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.59",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.62",
     "@aws-sdk/client-dynamodb": "^3.999.0",
     "@aws-sdk/lib-dynamodb": "^3.999.0",
     "@discordjs/builders": "^1.13.1",
