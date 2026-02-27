@@ -1,10 +1,7 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder  } from 'discord.js';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import map from 'lodash/map';
-import split from 'lodash/split';
+import { chain } from 'lodash-es';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -45,7 +42,7 @@ export class OutboundApprovalHandler {
     }
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
-        const parts  = split(interaction.customId, ':');
+        const parts  = interaction.customId.split(':');
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -101,7 +98,7 @@ export class OutboundApprovalHandler {
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-        const parts  = split(interaction.customId, ':');
+        const parts  = interaction.customId.split(':');
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -152,7 +149,7 @@ export class OutboundApprovalHandler {
     }
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
-        const parts  = split(interaction.customId, ':');
+        const parts  = interaction.customId.split(':');
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -247,9 +244,9 @@ export class OutboundApprovalHandler {
         try {
             const msg   = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
             // Stryker disable next-line StringLiteral,LogicalOperator,ArrayDeclaration: 'address' is property shorthand; ?? [] is defensive fallback for null/undefined msg fields
-            toAddresses = _(msg?.to ?? []).map('address').compact().value();
+            toAddresses = chain(msg?.to ?? []).map('address').compact().value();
             // Stryker disable next-line StringLiteral,ArrayDeclaration: 'address' is property shorthand; ?? [] is defensive fallback for null/undefined cc field
-            ccAddresses = _(msg?.cc ?? []).map('address').compact().value();
+            ccAddresses = chain(msg?.cc ?? []).map('address').compact().value();
         } catch (error) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ err: error, uid, msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve' });
@@ -275,9 +272,8 @@ export class OutboundApprovalHandler {
             // Stryker disable next-line: minimum 0 selections is correct
             .setMinValues(0)
             .setMaxValues(allRecipients.length)
-            .addOptions(map(allRecipients, r =>
-                new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)
-            ));
+            .addOptions(allRecipients.map(r =>
+                new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)));
         // Stryker restore StringLiteral
 
         const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);

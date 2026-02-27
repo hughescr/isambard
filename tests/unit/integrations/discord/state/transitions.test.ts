@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import forEach from 'lodash/forEach';
 import {
     VALID_TRANSITIONS,
     isValidTransition,
@@ -28,9 +27,9 @@ describe('VALID_TRANSITIONS', () => {
 
     test('includes all operational modes', () => {
         const modes: OperationalMode[] = ['idle', 'catching_up', 'processing_message', 'perching'];
-        forEach(modes, (mode) => {
+        for(const mode of modes) {
             expect(VALID_TRANSITIONS).toHaveProperty(mode);
-        });
+        }
     });
 });
 

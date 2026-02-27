@@ -1,6 +1,6 @@
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import '../setup'; // SST mock is applied via side effects
 import * as agentAgent from '@/agent/agent';
 import type { ClaudeAgent } from '@/agent/agent';

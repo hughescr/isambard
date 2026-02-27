@@ -170,11 +170,13 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         // Stryker disable next-line StringLiteral,ObjectLiteral: Cron expression format and config
         const expression = CronExpressionParser.parse('H * * * *', { tz: config.timezone });
         let nextTime = expression.next().toDate();
-        // Skip past the previously scheduled time to avoid double-fires:
+        // Skip past the previously scheduled hour to avoid double-fires:
         // a fresh parser picks a random minute that may land in the same hour
-        // Stryker disable all: Defensive guard against non-deterministic H minute; only triggers when random value collides with previous
+        // as the previous trigger (H is re-randomised per parser instance).
+        // Stryker disable all: Defensive guard against non-deterministic H minute; only triggers when random value collides with previous hour
         if(lastScheduledTime) {
-            while(nextTime.getTime() <= lastScheduledTime.getTime()) {
+            const lastHourStart = Math.floor(lastScheduledTime.getTime() / 3_600_000) * 3_600_000;
+            while(nextTime.getTime() < lastHourStart + 3_600_000) {
                 nextTime = expression.next().toDate();
             }
         }

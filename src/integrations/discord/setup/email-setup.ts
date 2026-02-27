@@ -2,7 +2,6 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes  } from 'discord.js';
-import isError from 'lodash/isError';
 import { createEmailMCPServer } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
@@ -106,7 +105,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     }
                 } catch (err) {
                     logger.error({
-                        error: isError(err) ? err.message : String(err),
+                        error: err instanceof Error ? err.message : String(err),
                         msg:   'Failed to send safe-but-not-allowlisted notification to admin channel',
                     });
                 }
@@ -120,7 +119,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     }
                 } catch (err) {
                     logger.error({
-                        error: isError(err) ? err.message : String(err),
+                        error: err instanceof Error ? err.message : String(err),
                         msg:   'Failed to send email review embed to admin channel',
                     });
                 }
@@ -134,7 +133,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     }
                 } catch (err) {
                     logger.error({
-                        error: isError(err) ? err.message : String(err),
+                        error: err instanceof Error ? err.message : String(err),
                         msg:   'Failed to send unsafe alert to admin channel',
                     });
                 }
@@ -228,7 +227,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 }
             } catch (err) {
                 logger.error({
-                    error: isError(err) ? err.message : String(err),
+                    error: err instanceof Error ? err.message : String(err),
                     msg:   'Failed to send restricted mailbox notification to admin channel',
                 });
             }
@@ -284,7 +283,7 @@ async function registerAllowlistCommand(botToken: string, applicationId: string)
     } catch (err) {
         // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.error({
-            error: isError(err) ? err.message : String(err),
+            error: err instanceof Error ? err.message : String(err),
             msg:   'Failed to register /allowlist slash command',
         });
         // Stryker restore ObjectLiteral,StringLiteral

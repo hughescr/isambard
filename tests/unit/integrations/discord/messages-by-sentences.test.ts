@@ -1,5 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import repeat from 'lodash/repeat';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -75,7 +74,7 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should flush currentChunk before splitting long sentence', () => {
                 // Tests: if(currentChunk.length > 0) before sentence split
                 const shortSentence = 'Short.';
-                const longSentence = `${repeat('x', 100)}.`;
+                const longSentence = `${'x'.repeat(100)}.`;
                 const message = `${shortSentence} ${longSentence}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('Short.');
@@ -83,21 +82,21 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should reset currentChunk after flushing for long sentence', () => {
                 // Tests: currentChunk = '' after pushing
-                const message = `AA. ${repeat('x', 60)}. BB.`;
+                const message = `AA. ${'x'.repeat(60)}. BB.`;
                 const result = splitMessage(message, 50);
                 expect(result).toContain('AA.');
             });
 
             test('should handle sentence exactly at maxLength boundary', () => {
                 // Tests: sentence.length > maxLength vs sentence.length >= maxLength
-                const sentence = `${repeat('x', 48)}.`;
+                const sentence = `${'x'.repeat(48)}.`;
                 const result = splitMessage(sentence, 50);
                 expect(result).toEqual([sentence]);
             });
 
             test('should split sentence that is one char over maxLength', () => {
                 // Tests > boundary for sentence length
-                const sentence = `${repeat('x', 49)}.`;
+                const sentence = `${'x'.repeat(49)}.`;
                 const result = splitMessage(sentence, 50);
                 expect(result).toEqual([sentence]);
             });

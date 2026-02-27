@@ -2,8 +2,8 @@
  * Tests for Discord infrastructure factory.
  */
 
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { mockLogger } from '../../setup';
 import type { DiscordConfig } from '@/config/schemas';

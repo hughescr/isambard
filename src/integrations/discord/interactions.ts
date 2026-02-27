@@ -25,7 +25,7 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
 
     async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
         // Parse customId: question:${questionId}:${value}
-        // eslint-disable-next-line lodash/prefer-lodash-method -- simple string split doesn't need lodash
+
         const parts = interaction.customId.split(':');
 
         // Ignore if not a question button

@@ -1,3 +1,4 @@
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -5,8 +6,6 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import _repeat from 'lodash/repeat';
 import { MemoryToolBackendCore } from '@/storage/memory-tool/backend-core';
 import type { MemoryToolItem, MemoryPath, MemoryToolItemData } from '@/storage/memory-tool/types';
 import { stripDynamoKeys } from '@/storage/utils/index.js';
@@ -145,7 +144,7 @@ describe('MemoryToolBackendCore', () => {
             ddbMock.on(GetCommand).resolves({ Item: existingItem });
             ddbMock.on(PutCommand).resolves({});
 
-            const longContent = _repeat('x', 150);
+            const longContent = 'x'.repeat(150);
             await backend.update('/state/preview-conditional' as MemoryPath, {
                 content: longContent,
             });
@@ -153,7 +152,7 @@ describe('MemoryToolBackendCore', () => {
             const putCalls = ddbMock.commandCalls(PutCommand);
             const mainItem = putCalls[0].args[0].input.Item as MemoryToolItemData;
 
-            expect(mainItem.contentPreview).toBe(_repeat('x', 100));
+            expect(mainItem.contentPreview).toBe('x'.repeat(100));
             expect((mainItem.contentPreview!).length).toBe(100);
         });
 

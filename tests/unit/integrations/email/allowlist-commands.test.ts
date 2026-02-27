@@ -1,8 +1,5 @@
 import { type Mock, describe, test, expect, beforeEach, mock  } from 'bun:test';
 import type { ChatInputCommandInteraction } from 'discord.js';
-import find from 'lodash/find';
-import map from 'lodash/map';
-import split from 'lodash/split';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
 import type { AllowlistEntry } from '@/integrations/email/types';
@@ -76,7 +73,7 @@ describe('buildAllowlistCommand()', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
         const subcommands = json.options ?? [];
-        const names = map(subcommands, 'name');
+        const names = subcommands.map(s => s.name);
         expect(names).toContain('list');
         expect(names).toContain('add');
         expect(names).toContain('remove');
@@ -85,10 +82,10 @@ describe('buildAllowlistCommand()', () => {
     test('add subcommand has required email option', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
-        const addCmd = find(json.options ?? [], { name: 'add' });
+        const addCmd = (json.options ?? []).find(o => o.name === 'add');
         expect(addCmd).toBeDefined();
         const addOptions: { name: string, required?: boolean }[] = (addCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
-        const emailOpt = find(addOptions, { name: 'email' });
+        const emailOpt = addOptions.find(o => o.name === 'email');
         expect(emailOpt).toBeDefined();
         expect(emailOpt?.required).toBe(true);
     });
@@ -96,10 +93,10 @@ describe('buildAllowlistCommand()', () => {
     test('add subcommand has optional name and notes options', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
-        const addCmd = find(json.options ?? [], { name: 'add' });
+        const addCmd = (json.options ?? []).find(o => o.name === 'add');
         const addOptions: { name: string, required?: boolean }[] = (addCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
-        const nameOpt = find(addOptions, { name: 'name' });
-        const notesOpt = find(addOptions, { name: 'notes' });
+        const nameOpt = addOptions.find(o => o.name === 'name');
+        const notesOpt = addOptions.find(o => o.name === 'notes');
         expect(nameOpt).toBeDefined();
         expect(nameOpt?.required).toBeFalsy();
         expect(notesOpt).toBeDefined();
@@ -109,10 +106,10 @@ describe('buildAllowlistCommand()', () => {
     test('remove subcommand has required email option', () => {
         const cmd = buildAllowlistCommand();
         const json = cmd.toJSON();
-        const removeCmd = find(json.options ?? [], { name: 'remove' });
+        const removeCmd = (json.options ?? []).find(o => o.name === 'remove');
         expect(removeCmd).toBeDefined();
         const removeOptions: { name: string, required?: boolean }[] = (removeCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
-        const emailOpt = find(removeOptions, { name: 'email' });
+        const emailOpt = removeOptions.find(o => o.name === 'email');
         expect(emailOpt).toBeDefined();
         expect(emailOpt?.required).toBe(true);
     });
@@ -281,7 +278,7 @@ describe('AllowlistCommandHandler - /allowlist list', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         const content = replyArg.content ?? '';
         // Two entries should be separated by newline
-        const lines = split(content, '\n');
+        const lines = content.split('\n');
         expect(lines).toHaveLength(2);
         expect(lines[0]).toContain('alice@example.com');
         expect(lines[1]).toContain('bob@example.com');

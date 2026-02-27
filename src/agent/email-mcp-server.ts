@@ -4,19 +4,7 @@ import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import castArray from 'lodash/castArray';
-import every from 'lodash/every';
-import filter from 'lodash/filter';
-import find from 'lodash/find';
-import includes from 'lodash/includes';
-import isError from 'lodash/isError';
-import isString from 'lodash/isString';
-import map from 'lodash/map';
-import replace from 'lodash/replace';
-import toLower from 'lodash/toLower';
-import trim from 'lodash/trim';
+import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter, type EmailAllowlist  } from '@/integrations/email';
 import { sanitizeFilename, deduplicateFilename } from '@/utils';
@@ -129,7 +117,7 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
             throw new Error(`Attachment file not found: ${filePath}`);
         }
         const filename    = path.basename(filePath);
-        const ext         = toLower(path.extname(filePath)).slice(1);
+        const ext         = path.extname(filePath).toLowerCase().slice(1);
         // Stryker disable next-line StringLiteral: fallback MIME type is specification constant
         const contentType = MIME_TYPE_MAP[ext] ?? 'application/octet-stream';
         result.push({ filename, contentType, content: data.toString('base64') });
@@ -182,7 +170,7 @@ async function saveEmailAttachments(
             }
             attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${meta.contentType})`);
         } catch (error) {
-            const errMsg = isError(error) ? error.message : String(error);
+            const errMsg = error instanceof Error ? error.message : String(error);
             logger.warn({ error: errMsg, filename: safeFilename, msg: 'Failed to save attachment (best-effort)' });
             attachmentLines.push(`- Note: could not save attachment ${safeFilename}: ${errMsg}`);
         }
@@ -226,6 +214,19 @@ const ALL_SEARCH_MAILBOXES: readonly string[] = [
     EmailFolder.Review,
 ];
 
+/**
+ * Normalizes a to-address argument (string, object, array, or undefined) to an array or undefined.
+ */
+function normalizeToAddresses<T>(to: T | T[] | undefined): T[] | undefined {
+    if(to === undefined) {
+        return undefined;
+    }
+    if(Array.isArray(to)) {
+        return to;
+    }
+    return [to];
+}
+
 // Stryker disable ObjectLiteral,StringLiteral: emailAddressSchema is a configuration constant for address parsing
 const emailAddressSchema = z.union([
     z.email(),
@@ -259,8 +260,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         addressLoadingPromise ??= (async () => {
             try {
                 const addresses = await wildDuckClient.getUserAddresses();
-                const formal    = find(addresses, addr => includes(addr.tags, 'formal'));
-                const informal  = find(addresses, addr => includes(addr.tags, 'informal'));
+                const formal    = addresses.find(addr => addr.tags.includes('formal'));
+                const informal  = addresses.find(addr => addr.tags.includes('informal'));
                 if(formal) {
                     formalAddress = { address: formal.address, ...(formal.name ? { name: formal.name } : {}) };
                 }
@@ -312,7 +313,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 await sendApprovalRequest(toAddress, subject, draftUid, cc);
             } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ error: isError(error) ? error.message : String(error), msg: 'Failed to send outbound approval request' });
+                logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send outbound approval request' });
                 // Best-effort: flag the draft so periodic recheck can retry notification
                 // Stryker disable BlockStatement: catch block logs best-effort warning — logger.warn call on flagErr not verified by approval tests
                 try {
@@ -321,7 +322,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, draftUid, { notifyAttempts: 1 });
                 } catch (flagError) {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.warn({ error: isError(flagError) ? flagError.message : String(flagError), msg: 'Failed to set DiscordNotifyFailed flag on draft' });
+                    logger.warn({ error: flagError instanceof Error ? flagError.message : String(flagError), msg: 'Failed to set DiscordNotifyFailed flag on draft' });
                 }
                 // Stryker restore BlockStatement
                 // Stryker disable next-line StringLiteral: Result message is configuration
@@ -354,7 +355,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         ]);
                         const result = {
                             counters: { total: countsData.total, unread: countsData.unseen },
-                            messages: map(messages, m => ({
+                            messages: messages.map(m => ({
                                 // Stryker disable next-line StringLiteral: MailboxName is configuration constant
                                 uid:         `${EmailFolder.CleanInbox}:${m.id}`,
                                 from:        formatAddressForDisplay(m.from),
@@ -368,7 +369,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             content: [{ type: 'text' as const, text: JSON.stringify(result) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, msg: 'Failed to check inbox' });
                         return {
@@ -406,7 +407,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                     await sendAdminNotification({ mailboxName, uid, reference: args.message });
                                 } catch (error) {
                                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                    logger.warn({ error: isError(error) ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
+                                    logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
                                 }
                                 // Stryker restore BlockStatement
                             }
@@ -433,25 +434,25 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // and our Haraka/WildDuck stack guarantees it.
                         const attachmentLines = await saveEmailAttachments(wildDuckClient, mailboxName, uid, email.messageId, email.attachmentMeta);
 
-                        const toList = map(email.to, addr => formatAddressForDisplay(addr)).join(', ');
-                        const lines = filter([
+                        const toList = email.to.map(addr => formatAddressForDisplay(addr)).join(', ');
+                        const lines = ([
                             `From: ${formatAddressForDisplay(email.from)}`,
                             `To: ${toList}`,
-                            email.cc.length > 0 ? `Cc: ${map(email.cc, addr => formatAddressForDisplay(addr)).join(', ')}` : undefined,
+                            email.cc.length > 0 ? `Cc: ${email.cc.map(addr => formatAddressForDisplay(addr)).join(', ')}` : undefined,
                             `Subject: ${email.subject}`,
                             `Date: ${email.date.toISOString()}`,
                             '',
                             email.bodyText,
                             // Stryker disable next-line ConditionalExpression,BlockStatement,ArrayDeclaration: attachment section only added when there are attachments
                             ...(attachmentLines.length > 0 ? ['\nAttachments:', ...attachmentLines] : []),
-                        ], line => line !== undefined);
-                        // Stryker disable next-line Regex,StringLiteral: /^\n/ and '' are defensive no-ops — the text always starts with 'From:' so the regex never matches; trim() on the next line also covers any edge case
-                        const text = replace(lines.join('\n'), /^\n/, '');
+                        ]).filter(line => line !== undefined);
+                        // Stryker disable next-line Regex,StringLiteral: /^\n/ and '' are defensive no-ops — the text always starts with 'From:' so the regex never matches; .trim() on the next line also covers any edge case
+                        const text = lines.join('\n').replace(/^\n/, '');
                         return {
-                            content: [{ type: 'text' as const, text: trim(text) }],
+                            content: [{ type: 'text' as const, text: text.trim() }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to fetch email content' });
                         return {
@@ -493,7 +494,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             content: [{ type: 'text' as const, text: `Email UID ${uid} archived successfully.` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to archive email' });
                         return {
@@ -573,7 +574,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const lines = [
                             // Stryker disable next-line StringLiteral: Result format is configuration
                             `Found ${results.length} email${results.length === 1 ? '' : 's'}:`,
-                            ...map(results, (r) => {
+                            ...results.map((r) => {
                                 const toStr = r.to.length > 0 ? r.to.join(', ') : '(none)';
                                 // Stryker disable next-line StringLiteral: Result line format is configuration
                                 return `- ${r.message} | From: ${r.from} | To: ${toStr} | Subject: ${r.subject} | Date: ${r.date}`;
@@ -585,7 +586,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             content: [{ type: 'text' as const, text: lines.join('\n') }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, msg: 'Failed to search emails' });
                         return {
@@ -636,9 +637,9 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         }
 
                         // Normalize to to an array of address objects
-                        const toArr = castArray(args.to);
-                        const toAddresses = map(toArr, (addr) => {
-                            if(isString(addr)) {
+                        const toArr = Array.isArray(args.to) ? args.to : [args.to];
+                        const toAddresses = toArr.map((addr) => {
+                            if(typeof addr === 'string') {
                                 return { address: addr };
                             }
                             return { name: addr.name, address: addr.email_address };
@@ -668,14 +669,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
                         // Stryker disable next-line BooleanLiteral: ?? false unreachable when allowlist always provided
-                        const isAllAllowed = every(toAddresses, addr => allowlist?.isAllowed(addr.address) ?? false);
-                        const toStr        = map(toAddresses, 'address').join(', ');
+                        const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed(addr.address) ?? false);
+                        const toStr        = toAddresses.map(addr => addr.address).join(', ');
                         const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
                         return {
                             content: [{ type: 'text' as const, text }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, to: args.to, msg: 'Failed to send email' });
                         return {
@@ -791,7 +792,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // For plain reply, check allowlist for primary recipient.
                         const isAllowedOverride: boolean | undefined = args.mode === 'replyAll' ? false : undefined;
                         const ccAddresses = args.mode === 'replyAll'
-                            ? _(original.cc ?? []).map('address').compact().value()
+                            ? chain(original.cc ?? []).map('address').compact().value()
                             : undefined;
                         // Stryker disable next-line StringLiteral,LogicalOperator: Result message is configuration; ?? '' is defensive fallback when subject absent
                         const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, ccAddresses, isAllowedOverride);
@@ -799,7 +800,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             content: [{ type: 'text' as const, text }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to reply to email' });
                         return {
@@ -831,7 +832,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             content: [{ type: 'text' as const, text: `Draft ${args.message} deleted.` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to delete draft' });
                         return {
@@ -885,11 +886,11 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const subject = args.subject ?? original.subject ?? '';
                         const body    = args.body ?? original.text ?? '';
 
-                        // Normalize args.to: undefined → use original recipients; structured/plain string → address objects
-                        const argToArr = args.to ? castArray(args.to) : undefined;
+                        // Normalize args.to: undefined → use original recipients; structured/plain string → array
+                        const argToArr = normalizeToAddresses(args.to);
                         const argToAddresses = argToArr
-                            ? map(argToArr, (addr) => {
-                                if(isString(addr)) {
+                            ? argToArr.map((addr) => {
+                                if(typeof addr === 'string') {
                                     return { address: addr };
                                 }
                                 return { name: addr.name, address: addr.email_address };
@@ -923,7 +924,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const amendResult = await submitOrRequestApproval(
                             newUid,
                             // Stryker disable next-line StringLiteral: join separator is cosmetic formatting — tested via multi-recipient amend test
-                            map(toAddresses, 'address').join(', '),
+                            toAddresses.map(addr => addr.address).join(', '),
                             subject,
                             // Stryker disable next-line StringLiteral: empty string — no rate limit warning for amend (rate limiter not called on approval path)
                             '',
@@ -936,7 +937,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             content: [{ type: 'text' as const, text: amendResult }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to amend and resubmit draft' });
                         return {

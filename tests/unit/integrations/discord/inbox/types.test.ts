@@ -1,5 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import repeat from 'lodash/repeat';
 import {
     discordChannelCheckpointSchema,
     unreadMessageSchema,
@@ -141,13 +140,13 @@ describe.concurrent('channelSummarySchema', () => {
     });
 
     test('should accept preview at exactly 100 characters', () => {
-        const maxPreview = { ...validSummary, preview: repeat('a', 100) };
+        const maxPreview = { ...validSummary, preview: 'a'.repeat(100) };
         const result = channelSummarySchema.safeParse(maxPreview);
         expect(result.success).toBe(true);
     });
 
     test('should reject preview over 100 characters', () => {
-        const invalid = { ...validSummary, preview: repeat('a', 101) };
+        const invalid = { ...validSummary, preview: 'a'.repeat(101) };
         const result = channelSummarySchema.safeParse(invalid);
         expect(result.success).toBe(false);
         if(!result.success) {

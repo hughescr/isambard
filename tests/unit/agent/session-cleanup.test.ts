@@ -6,10 +6,6 @@
  * bot interactions that don't need session persistence.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import filter from 'lodash/filter';
-import map from 'lodash/map';
-import replace from 'lodash/replace';
-import some from 'lodash/some';
 import { cleanupSession, getSessionFilePath, extractSessionId, cleanupAllStaleSessions } from '../../../src/agent/session-cleanup';
 import type { SystemEvent } from '../../../src/agent/types';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
@@ -55,7 +51,7 @@ describe('getSessionFilePath', () => {
 
         // Current working directory should be converted to dash-separated format
         const cwd = process.cwd();
-        const expectedProjectPath = replace(cwd, /\//g, '-');
+        const expectedProjectPath = cwd.replaceAll('/', '-');
         expect(result).toContain(expectedProjectPath);
     });
 });
@@ -286,9 +282,9 @@ describe('cleanupSession', () => {
         expect(mockReadFile).toHaveBeenCalledWith(expect.stringContaining('agent-def.jsonl'), 'utf8');
 
         // Should have deleted the matching agent files
-        const unlinkCalls = map(mockUnlink.mock.calls, 0);
-        expect(some(unlinkCalls, path => path.includes('agent-abc.jsonl'))).toBe(true);
-        expect(some(unlinkCalls, path => path.includes('agent-def.jsonl'))).toBe(true);
+        const unlinkCalls = mockUnlink.mock.calls.map(call => call[0]);
+        expect(unlinkCalls.some(path => path.includes('agent-abc.jsonl'))).toBe(true);
+        expect(unlinkCalls.some(path => path.includes('agent-def.jsonl'))).toBe(true);
     });
 
     test('should handle sub-agent cleanup errors gracefully', async () => {
@@ -408,8 +404,8 @@ describe('cleanupSession', () => {
         await cleanupSession(sessionId);
 
         // Should not attempt to unlink the file
-        const unlinkCalls = map(mockUnlink.mock.calls, 0);
-        expect(some(unlinkCalls, path => path.includes(fileName))).toBe(false);
+        const unlinkCalls = mockUnlink.mock.calls.map(call => call[0]);
+        expect(unlinkCalls.some(path => path.includes(fileName))).toBe(false);
     });
 
     test('should continue processing other files when one has empty first line', async () => {
@@ -429,9 +425,9 @@ describe('cleanupSession', () => {
         await cleanupSession(sessionId);
 
         // Only valid file should be deleted
-        const unlinkCalls = map(mockUnlink.mock.calls, 0);
-        expect(some(unlinkCalls, path => path.includes('agent-empty.jsonl'))).toBe(false);
-        expect(some(unlinkCalls, path => path.includes('agent-valid.jsonl'))).toBe(true);
+        const unlinkCalls = mockUnlink.mock.calls.map(call => call[0]);
+        expect(unlinkCalls.some(path => path.includes('agent-empty.jsonl'))).toBe(false);
+        expect(unlinkCalls.some(path => path.includes('agent-valid.jsonl'))).toBe(true);
     });
 
     test('should handle whitespace-only session ID', async () => {
@@ -550,7 +546,7 @@ describe('cleanupSession', () => {
 
         // Should NOT warn about SDK changes
         const warnCalls = mockLogger.warn.mock.calls;
-        const sdkWarnings = filter(warnCalls, (call: unknown[]) => {
+        const sdkWarnings = warnCalls.filter((call: unknown[]) => {
             const logObj = call[0] as { msg?: string };
             return logObj.msg?.includes('SDK projects directory not found');
         });

@@ -1,7 +1,6 @@
+import { describe, test, expect, beforeEach } from 'bun:test';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { describe, test, expect, beforeEach } from 'bun:test';
-import map from 'lodash/map';
 import { mockLogger, mockFsPromises, resetMockFsPrefix } from '../../setup';
 import { loadPlugins, resolveExternalPath, findLatestMarketplaceVersion } from '@/agent/plugin-loader';
 
@@ -180,7 +179,7 @@ describe('loadPlugins', () => {
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
             expect(result).toHaveLength(2);
-            const paths = map(result, 'path');
+            const paths = result.map(item => item.path);
             expect(paths).toContain(plugin1);
             expect(paths).toContain(plugin2);
         });
@@ -371,7 +370,7 @@ describe('loadPlugins', () => {
             const result = await loadPlugins(pluginsDir, marketplaceDir);
 
             expect(result).toHaveLength(3);
-            const paths = map(result, 'path');
+            const paths = result.map(item => item.path);
             expect(paths).toContain(inRepoPlugin);
             expect(paths).toContain(externalPlugin);
             expect(paths).toContain(marketplacePlugin);

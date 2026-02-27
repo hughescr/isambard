@@ -1,6 +1,4 @@
 import type { Client, Message, TextBasedChannel } from 'discord.js';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
 import { ChannelNotAccessibleError, MessageFetchError } from '@/errors';
 import { timestampToSnowflake } from '@/integrations/discord/message-history/snowflake';
 import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReaction } from '@/integrations/discord/message-history/types';
@@ -72,7 +70,7 @@ function transformMessage(message: Message): DiscordSearchResult {
     }
 
     // Transform embeds
-    const embeds: DiscordEmbed[] = map(message.embeds, (embed) => {
+    const embeds: DiscordEmbed[] = message.embeds.map((embed) => {
         const transformed: DiscordEmbed = {};
         if(embed.title) {
             transformed.title = embed.title;
@@ -269,15 +267,12 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                 throw error;
             }
             // Stryker disable next-line StringLiteral: Default error message is not behavior
-            const reason = isError(error) ? error.message : 'Unknown error';
+            const reason = error instanceof Error ? error.message : 'Unknown error';
             throw new MessageFetchError(channelId, reason);
         }
 
         // Sort messages chronologically (oldest first) and transform
-        const sortedMessages = map(
-            allMessages.toSorted((a, b) => Number(BigInt(a.id) - BigInt(b.id))),
-            transformMessage
-        );
+        const sortedMessages = allMessages.toSorted((a, b) => Number(BigInt(a.id) - BigInt(b.id))).map(msg => transformMessage(msg));
 
         return {
             messages: sortedMessages,

@@ -71,6 +71,14 @@ const eslintConfig = [
         rules: {
             // Bun's expect().rejects is thenable at runtime but types don't declare PromiseLike
             '@typescript-eslint/await-thenable': 'off',
+            // bun:* is a builtin under Bun but classified as external under Node; force it to builtin
+            'import-x/order':                    ['warn', {
+                groups:                        ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+                pathGroups:                    [{ pattern: 'bun:*', group: 'builtin' }],
+                pathGroupsExcludedImportTypes: [],
+                'newlines-between':            'never',
+                alphabetize:                   { order: 'asc', caseInsensitive: true },
+            }],
         }
     }
 ];

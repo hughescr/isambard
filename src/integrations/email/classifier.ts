@@ -1,7 +1,4 @@
 import { logger } from '@hughescr/logger';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
-import trim from 'lodash/trim';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
 import { ClassifierError } from './errors';
 import { classifierVerdictSchema, type EmailMetadata, type ClassifierVerdict  } from './types';
@@ -34,7 +31,7 @@ export class EmailClassifier {
             rawText = await generateTextWithSystemPrompt(CLASSIFIER_SYSTEM_PROMPT, userMessage, { model: 'sonnet' });
         } catch (err) {
             throw new ClassifierError(
-                `Classification API call failed: ${isError(err) ? err.message : String(err)}`,
+                `Classification API call failed: ${err instanceof Error ? err.message : String(err)}`,
                 { from: email.from.address, subject: email.subject }
             );
         }
@@ -73,10 +70,7 @@ export class EmailClassifier {
      * Build the user message from email metadata.
      */
     private buildUserMessage(email: EmailMetadata): string {
-        const toAddresses = map(
-            email.to,
-            addr => (addr.name ? `${addr.name} <${addr.address}>` : addr.address)
-        ).join(', ');
+        const toAddresses = email.to.map(addr => (addr.name ? `${addr.name} <${addr.address}>` : addr.address)).join(', ');
 
         const fromHeader = email.from.name
             ? `${email.from.name} <${email.from.address}>`
@@ -110,7 +104,7 @@ export class EmailClassifier {
      * The model is instructed to return only JSON, but may include surrounding whitespace.
      */
     private extractJson(text: string): unknown {
-        const trimmed = trim(text);
+        const trimmed = text.trim();
         // Stryker disable BlockStatement — JSON parse with regex fallback; nested try/catch gracefully degrades malformed LLM responses to null
         try {
             return JSON.parse(trimmed);

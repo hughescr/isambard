@@ -1,5 +1,3 @@
-import toLower from 'lodash/toLower';
-import trim from 'lodash/trim';
 import type { ClassificationResult, MessageToClassify, ClassifierConfig } from './types';
 import type { PendingQuestion } from '@/agent/question-registry';
 
@@ -34,7 +32,7 @@ export class AnswerClassifier {
         }
 
         // Layer 2: Heuristics
-        const text = toLower(trim(message.content));
+        const text = message.content.trim().toLowerCase();
 
         // Answer patterns - short affirmative/negative responses, direct answers
         // Longer alternatives first to avoid substring matches

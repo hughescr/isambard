@@ -1,6 +1,5 @@
 import { logger } from '@hughescr/logger';
 import type { Message, TextChannel, Client } from 'discord.js';
-import isError from 'lodash/isError';
 import { type ResponseRouter, type RoutingResult, WellKnownChannelNotFoundError  } from './channel-registry';
 import { splitMessage } from './messages';
 import type { DiscordRateLimiter } from './rate-limiter';
@@ -275,7 +274,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
             routing,
         };
     } catch (replyError) {
-        const err = isError(replyError) ? replyError : new Error(String(replyError));
+        const err = replyError instanceof Error ? replyError : new Error(String(replyError));
         // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.error({ error: err, messageId: message.id, msg: `Failed to send response: ${err.message}` });
         return {
@@ -400,7 +399,7 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
             routing,
         };
     } catch (sendError) {
-        const err = isError(sendError) ? sendError : new Error(String(sendError));
+        const err = sendError instanceof Error ? sendError : new Error(String(sendError));
         // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.error({ error: err, sessionType, msg: `Failed to send response: ${err.message}` });
         return {

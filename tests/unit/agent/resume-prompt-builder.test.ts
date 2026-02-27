@@ -1,5 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import split from 'lodash/split';
 import { buildResumePrompt, type ResumeContext  } from '../../../src/agent/resume-prompt-builder';
 import type { MessageContext } from '../../../src/agent/types';
 
@@ -352,7 +351,7 @@ describe('buildResumePrompt', () => {
             const result = buildResumePrompt(context);
 
             // Check for double newlines between sections
-            const sections = split(result, '\n\n');
+            const sections = result.split('\n\n');
             expect(sections.length).toBeGreaterThan(3); // At least header, thinking, response, events, messages
         });
     });

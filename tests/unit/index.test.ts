@@ -1,7 +1,6 @@
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
-import _find from 'lodash/find';
 import { mockLogger, resetMockSstResource } from '../setup';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import { createGuildId } from '@/integrations/discord/types';
@@ -927,7 +926,7 @@ describe('createApp', () => {
             // Kills mutant on lines 136-140: Verify error was caught and logged
             expect(mockLogger.warn).toHaveBeenCalled();
             const warnCalls = mockLogger.warn.mock.calls;
-            const identityWarning = _find(warnCalls, (call: unknown[]) => (call[0] as string).includes('Failed to load identity context'));
+            const identityWarning = warnCalls.find((call: unknown[]) => (call[0] as string).includes('Failed to load identity context'));
             expect(identityWarning).toBeDefined();
             expect(identityWarning![0]).toContain('Failed to load identity from DynamoDB');
 
@@ -1449,7 +1448,7 @@ describe('createApp', () => {
 
             // Optionally verify logger.debug was called with skip message on second call
             const debugCalls = mockLogger.debug.mock.calls;
-            const skipMessage = _find(debugCalls, (call: unknown[]) => (call[0] as string).includes('already stopped'));
+            const skipMessage = debugCalls.find((call: unknown[]) => (call[0] as string).includes('already stopped'));
             expect(skipMessage).toBeDefined();
         });
     });

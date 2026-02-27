@@ -14,8 +14,6 @@
 
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type { Message, TextChannel, Client, DMChannel } from 'discord.js';
-import constant from 'lodash/constant';
-import repeat from 'lodash/repeat';
 import { type ResponseRouter, WellKnownChannelNotFoundError  } from '@/integrations/discord/channel-registry';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { sendResponse } from '@/integrations/discord/response-sender';
@@ -45,7 +43,7 @@ describe('sendResponse', () => {
         } as unknown as ResponseRouter;
 
         // Mock bot state manager
-        const getModeMock = mock(constant('idle'));
+        const getModeMock = mock(() => 'idle');
         mockBotStateManager = {
             getMode:        getModeMock,
             getSessionType: mock((isDMChannel?: boolean) => {
@@ -75,7 +73,7 @@ describe('sendResponse', () => {
         mockChannelSend = mock(async () => ({ id: 'msg-123' }));
         mockChannel = {
             id:        'origin-channel-123',
-            isDMBased: constant(false),
+            isDMBased: () => false,
             send:      mockChannelSend,
         } as unknown as TextChannel;
 
@@ -84,7 +82,7 @@ describe('sendResponse', () => {
         mockTargetChannel = {
             id:          'target-channel-456',
             send:        mockTargetChannelSend,
-            isTextBased: constant(true),
+            isTextBased: () => true,
         } as unknown as TextChannel;
 
         // Mock client
@@ -160,7 +158,7 @@ describe('sendResponse', () => {
         test('uses "dm" session type when message is in DM', async () => {
             const dmChannel = {
                 id:        'dm-channel-123',
-                isDMBased: constant(true),
+                isDMBased: () => true,
             } as unknown as DMChannel;
 
             const dmMessage = {
@@ -353,7 +351,7 @@ describe('sendResponse', () => {
         });
 
         test('splits long messages and sends continuation chunks', async () => {
-            const longResponse = repeat('a', 2500); // Exceeds 2000 char limit
+            const longResponse = 'a'.repeat(2500); // Exceeds 2000 char limit
 
             mockRouteResponse.mockResolvedValue({
                 targetChannelId: 'origin-channel-123' as ChannelId,
@@ -381,8 +379,8 @@ describe('sendResponse', () => {
 
         test('sends exactly N messages for N chunks without attempting extra', async () => {
             // Create a message that produces exactly 2 chunks (1900 chars each = DISCORD_SAFE_LENGTH)
-            const chunk1 = repeat('a', 1900);
-            const chunk2 = repeat('b', 1900);
+            const chunk1 = 'a'.repeat(1900);
+            const chunk2 = 'b'.repeat(1900);
             const twoChunkMessage = chunk1 + chunk2;
 
             mockRouteResponse.mockResolvedValue({
@@ -670,7 +668,7 @@ describe('sendResponse', () => {
             const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
 
             // Create a message that produces exactly 2 chunks (1900 chars each)
-            const twoChunkResponse = repeat('a', 1900) + repeat('b', 1900);
+            const twoChunkResponse = 'a'.repeat(1900) + 'b'.repeat(1900);
 
             mockRouteResponse.mockResolvedValue({
                 targetChannelId: 'catch-up-channel-789' as ChannelId,

@@ -1,9 +1,4 @@
 import { logger } from '@hughescr/logger';
-import isError from 'lodash/isError';
-import isFinite from 'lodash/isFinite';
-import isNumber from 'lodash/isNumber';
-import isObject from 'lodash/isObject';
-import map from 'lodash/map';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckSearchResult } from '@/integrations/email/wildduck-client';
@@ -127,7 +122,7 @@ export class WildDuckListener {
             while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
         } catch (err) {
             logger.warn({
-                error: isError(err) ? err.message : String(err),
+                error: err instanceof Error ? err.message : String(err),
                 msg:   'Poll cycle failed, will retry',
             });
         }
@@ -193,7 +188,7 @@ export class WildDuckListener {
         } catch (err) {
             logger.warn({
                 uid,
-                error: isError(err) ? err.message : String(err),
+                error: err instanceof Error ? err.message : String(err),
                 msg:   'Failed to process email, continuing',
             });
         }
@@ -209,7 +204,7 @@ export class WildDuckListener {
         try {
             const msg      = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
             // Stryker disable next-line ConditionalExpression: defensive fallback to 2 when metadata absent
-            const attempts = isNumber(msg?.metaData?.notifyAttempts) ? (msg.metaData.notifyAttempts) + 1 : 2;
+            const attempts = typeof msg?.metaData?.notifyAttempts === 'number' ? (msg.metaData.notifyAttempts) + 1 : 2;
 
             if(attempts >= MAX_NOTIFY_ATTEMPTS) {
                 // Give up — transition to GaveUp flag
@@ -261,7 +256,7 @@ export class WildDuckListener {
                 const uidStr = result.message.slice(colonIdx + 1);
                 const uid    = Number.parseInt(uidStr, 10);
                 // Stryker disable next-line ConditionalExpression: guard against non-numeric UIDs
-                if(!isFinite(uid)) {
+                if(!Number.isFinite(uid)) {
                     continue;
                 }
 
@@ -274,10 +269,10 @@ export class WildDuckListener {
                         continue;
                     }
 
-                    // Stryker disable next-line ArrayDeclaration: to only sent when non-empty; fallback [] produces same empty string via lodash map
-                    const toStr       = map(msg.to ?? [], 'address').join(', ');
+                    // Stryker disable next-line ArrayDeclaration: to only sent when non-empty; fallback [] produces same empty string via map
+                    const toStr       = (msg.to ?? []).map(addr => addr.address).join(', ');
                     const subject     = msg.subject ?? '';
-                    const ccAddresses = map(msg.cc ?? [], 'address');
+                    const ccAddresses = (msg.cc ?? []).map(addr => addr.address);
 
                     // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: cc only passed when non-empty
                     // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord approval request per draft
@@ -335,7 +330,7 @@ export class WildDuckListener {
                 return;
             }
 
-            if(isObject(data) && 'command' in data && (data as { command: unknown }).command === 'EXISTS') {
+            if(typeof data === 'object' && data !== null && 'command' in data && (data as { command: unknown }).command === 'EXISTS') {
                 void this.fetchAndProcess();
             }
         });

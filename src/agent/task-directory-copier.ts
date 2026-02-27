@@ -14,7 +14,6 @@ import { cp, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Logger } from '@hughescr/logger';
-import isError from 'lodash/isError';
 import type { TaskCleanupProcessor } from './task-cleanup-processor';
 import type { SessionId } from '@/storage';
 
@@ -92,7 +91,7 @@ export function createTaskDirectoryCopier(options: TaskDirectoryCopierOptions): 
                     });
                     return true;
                 } catch (error) {
-                    const errorMsg = isError(error) ? error.message : String(error);
+                    const errorMsg = error instanceof Error ? error.message : String(error);
                     // Stryker disable next-line ObjectLiteral: Logger warn object for observability
                     logger.warn({
                         previousSessionId,
@@ -124,7 +123,7 @@ export function createTaskDirectoryCopier(options: TaskDirectoryCopierOptions): 
 
                 return true;
             } catch (error) {
-                const errorMsg = isError(error) ? error.message : String(error);
+                const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.warn({
                     previousSessionId,
                     newSessionId,

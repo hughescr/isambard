@@ -1,5 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import _keys from 'lodash/keys';
 import {
     discordSearchResultSchema,
     overflowSummarySchema,
@@ -72,7 +71,7 @@ describe.concurrent('discordSearchResultSchema', () => {
         ['embeds', { embeds: undefined }],
         ['reactions', { reactions: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = _keys(override)[0] as keyof typeof validSearchResult;
+        const key = Object.keys(override)[0] as keyof typeof validSearchResult;
         const { [key]: _removed, ...incomplete } = validSearchResult;
         const result = discordSearchResultSchema.safeParse(incomplete);
         expect(result.success).toBe(false);
@@ -112,7 +111,7 @@ describe('overflowSummarySchema', () => {
         ['author', { author: undefined }],
         ['synopsis', { synopsis: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = _keys(override)[0] as keyof typeof validOverflow;
+        const key = Object.keys(override)[0] as keyof typeof validOverflow;
         const { [key]: _removed, ...incomplete } = validOverflow;
         const result = overflowSummarySchema.safeParse(incomplete);
         expect(result.success).toBe(false);
@@ -150,7 +149,7 @@ describe('batchOverflowSummarySchema', () => {
         ['authors', { authors: undefined }],
         ['synopsis', { synopsis: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = _keys(override)[0] as keyof typeof validBatch;
+        const key = Object.keys(override)[0] as keyof typeof validBatch;
         const { [key]: _removed, ...incomplete } = validBatch;
         const result = batchOverflowSummarySchema.safeParse(incomplete);
         expect(result.success).toBe(false);
@@ -235,7 +234,7 @@ describe('searchResponseSchema', () => {
         ['messages', { messages: undefined }],
         ['metadata', { metadata: undefined }],
     ])('should require %s field', (_fieldName, override) => {
-        const key = _keys(override)[0] as keyof typeof validSearchResponse;
+        const key = Object.keys(override)[0] as keyof typeof validSearchResponse;
         const { [key]: _removed, ...incomplete } = validSearchResponse;
         const result = searchResponseSchema.safeParse(incomplete);
         expect(result.success).toBe(false);

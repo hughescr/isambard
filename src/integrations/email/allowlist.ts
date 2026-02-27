@@ -7,9 +7,6 @@ import {
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import _map from 'lodash/map';
-import _toLower from 'lodash/toLower';
-import _trim from 'lodash/trim';
 import type { AllowlistEntry } from '@/integrations/email/types';
 
 const ALLOWLIST_PK    = 'EMAIL#ALLOWLIST';
@@ -132,7 +129,7 @@ export class EmailAllowlist {
                 ':prefix': ADDR_SK_PREFIX,
             },
         }));
-        return _map(result.Items ?? [], item => ({
+        return (result.Items ?? []).map(item => ({
             email:   item.email as string,
             name:    item.name as string | undefined,
             notes:   item.notes as string | undefined,
@@ -142,6 +139,6 @@ export class EmailAllowlist {
     }
 
     private normalize(email: string): string {
-        return _toLower(_trim(email));
+        return email.trim().toLowerCase();
     }
 }

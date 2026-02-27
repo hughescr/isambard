@@ -5,10 +5,10 @@
  * from a previous session to a new session to maintain task continuity across
  * bot restarts.
  */
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { type logger } from '@hughescr/logger';
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import type { TaskCleanupProcessor, TaskCleanupResult } from '@/agent/task-cleanup-processor';
 import { createTaskDirectoryCopier, getTaskDirectoryPath } from '@/agent/task-directory-copier';

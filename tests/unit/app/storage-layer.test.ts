@@ -1,6 +1,6 @@
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import { mockLogger } from '../../setup';
 import type { TaskCleanupProcessor } from '@/agent/task-cleanup-processor';
 import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';

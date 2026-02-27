@@ -1,8 +1,4 @@
 import env from 'env-var';
-import includes from 'lodash/includes';
-import map from 'lodash/map';
-import some from 'lodash/some';
-import toLower from 'lodash/toLower';
 import { Resource, type Resource as SstResource  } from 'sst';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
 import { resolveTimezone } from '@/utils';
@@ -110,11 +106,10 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
 
     if(!result.success) {
         const sensitiveFields = ['password', 'token', 'secret'];
-        const safeErrors = map(result.error.issues, (issue) => {
+        const safeErrors = result.error.issues.map((issue) => {
             const path = issue.path.join('.');
-            const isSensitive = some(issue.path, p =>
-                some(sensitiveFields, sf => includes(toLower(String(p)), sf))
-            );
+            const isSensitive = issue.path.some(p =>
+                sensitiveFields.some(sf => String(p).toLowerCase().includes(sf)));
             return {
                 path,
                 message: isSensitive ? '[REDACTED]' : issue.message,

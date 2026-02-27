@@ -1,8 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test uses ?? operator on typed values that may be undefined at runtime despite non-nullable types */
 import { describe, test, expect } from 'bun:test';
-import filter from 'lodash/filter';
-import keys from 'lodash/keys';
-import startsWith from 'lodash/startsWith';
 import {
     getToolDescription,
     ToolDescriptions,
@@ -40,7 +37,7 @@ describe.concurrent('types.ts', () => {
         });
 
         test('should have the correct number of tool descriptions', () => {
-            expect(keys(ToolDescriptions)).toHaveLength(13);
+            expect(Object.keys(ToolDescriptions)).toHaveLength(13);
         });
     });
 
@@ -85,8 +82,8 @@ describe.concurrent('types.ts', () => {
     describe('ToolStatusMap vs ToolDescriptions alignment', () => {
         test('should have ToolDescriptions entries for all memory tools in ToolStatusMap', () => {
             // All memory tools in ToolStatusMap should have descriptions
-            // eslint-disable-next-line lodash/chaining -- two-step: keys() + filter(); chain has single method, direct composition preferred for readability
-            const memoryTools = filter(keys(ToolStatusMap), k => startsWith(k, 'mcp__memory__'));
+
+            const memoryTools = Object.keys(ToolStatusMap).filter(k => k.startsWith('mcp__memory__'));
             for(const tool of memoryTools) {
                 expect(ToolDescriptions[tool]).toBeDefined();
             }

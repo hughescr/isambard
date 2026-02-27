@@ -1,7 +1,3 @@
-import replace from 'lodash/replace';
-import split from 'lodash/split';
-import toLower from 'lodash/toLower';
-import trim from 'lodash/trim';
 import type { AuthCheckResult } from '@/integrations/email/types';
 
 /**
@@ -18,7 +14,7 @@ function extractDomain(emailOrDomain: string): string {
     }
     // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
     // Stryker disable next-line Regex: anchor mutations produce equivalent results — exact domain comparison treats malformed inputs as non-alignable regardless
-    const cleaned = replace(trim(emailOrDomain), /^<|>$/g, '');
+    const cleaned = emailOrDomain.trim().replaceAll(/^<|>$/g, '');
     const atIdx = cleaned.indexOf('@');
     // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator,MethodExpression,ArithmeticOperator: atIdx boundary distinguishes address from bare domain; slice(atIdx+1) extracts domain after @; UnaryOperator(-1→+1) is equivalent since atIdx is never 1 for valid domains
     return atIdx === -1 ? cleaned : cleaned.slice(atIdx + 1);
@@ -36,7 +32,7 @@ function checkSpfAlignment(normalized: string, normalizedFromDomain: string): bo
     if(!mailfromMatch) {
         return false;
     }
-    const mailfromDomain = extractDomain(toLower(mailfromMatch[1]));
+    const mailfromDomain = extractDomain(mailfromMatch[1].toLowerCase());
     return Boolean(mailfromDomain) && mailfromDomain === normalizedFromDomain;
 }
 
@@ -52,7 +48,7 @@ function checkDkimAlignment(normalized: string, normalizedFromDomain: string): b
     if(!headerdMatch) {
         return false;
     }
-    const dkimDomain = toLower(headerdMatch[1]);
+    const dkimDomain = headerdMatch[1].toLowerCase();
     return Boolean(dkimDomain) && dkimDomain === normalizedFromDomain;
 }
 
@@ -77,15 +73,15 @@ export function checkAuthentication(authenticationResults: string | undefined, f
     if(!fromDomain) {
         return { spfPass: false, dkimPass: false };
     }
-    const normalizedFromDomain = toLower(fromDomain);
+    const normalizedFromDomain = fromDomain.toLowerCase();
 
-    const parts = split(authenticationResults, ';');
+    const parts = authenticationResults.split(';');
 
     let spfPass  = false;
     let dkimPass = false;
 
     for(const part of parts) {
-        const normalized = trim(part);
+        const normalized = part.trim();
         if(checkSpfAlignment(normalized, normalizedFromDomain)) {
             spfPass = true;
         }

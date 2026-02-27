@@ -5,12 +5,7 @@
  * by a new message, we can capture what work was in progress. Also tracks background
  * task launches and result collections to detect uncollected background tasks.
  */
-
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import filter from 'lodash/filter';
-import last from 'lodash/last';
-import trim from 'lodash/trim';
+import { chain } from 'lodash-es';
 import { type ToolUseBlock, extractThinkingContent, extractToolUses  } from './agent';
 import { extractSessionId } from './session-cleanup';
 import type { AgentStreamEvent } from './types';
@@ -49,8 +44,8 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
     }
     const content = message.message?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
-    const textBlocks = filter(content ?? [], { type: 'text' });
-    return trim(_(textBlocks).map('text').compact().join('\n'));
+    const textBlocks = (content ?? []).filter(block => block.type === 'text');
+    return chain(textBlocks).map('text').compact().join('\n').value().trim();
 }
 
 /**
@@ -99,7 +94,7 @@ export class StreamTracker {
             const toolUses = extractToolUses(message);
             if(toolUses.length > 0) {
                 // Get the last tool_use block
-                this.pendingToolUse = last(toolUses) ?? null;
+                this.pendingToolUse = toolUses.at(-1) ?? null;
 
                 // Track background task launches and TaskOutput calls
                 this.trackBackgroundTasks(toolUses);

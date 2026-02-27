@@ -10,10 +10,6 @@
  * - Rate limit errors are permanent (Discord.js auto-retries with proper retry-after)
  * - All other Discord errors are permanent (invalid input, permissions, etc.)
  */
-
-import isError from 'lodash/isError';
-import isObject from 'lodash/isObject';
-import isString from 'lodash/isString';
 import { RateLimitError } from '@/errors';
 import { retryAsync, type ErrorClassification, type ErrorClassifier, type RetryPolicy, type RetryDeps  } from '@/utils';
 
@@ -36,16 +32,16 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
     // Extract message for all error types
     let message = 'Unknown error';
 
-    if(isError(error) && error.message) {
+    if(error instanceof Error && error.message) {
         message = error.message;
-    } else if(isString(error) && error) {
+    } else if(typeof error === 'string' && error) {
         message = error;
     }
 
     // Check for network errors (transient)
-    if(isObject(error) && 'code' in error) {
+    if(typeof error === 'object' && error !== null && 'code' in error) {
         const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
-        if(isString(error.code) && networkErrorCodes.includes(error.code)) {
+        if(typeof error.code === 'string' && networkErrorCodes.includes(error.code)) {
             return {
                 category: 'transient',
                 message,

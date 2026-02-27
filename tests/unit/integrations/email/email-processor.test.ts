@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import isError from 'lodash/isError';
 import { mockLogger } from '../../../setup';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { EmailClassifier } from '@/integrations/email/classifier';
@@ -51,7 +50,7 @@ function makeAllowlist(isAllowed: boolean): EmailAllowlist {
 }
 
 function makeClassifier(verdict: ClassifierVerdict | Error): EmailClassifier {
-    if(isError(verdict)) {
+    if(verdict instanceof Error) {
         const err = verdict;
         return { classify: mock(async () => {
             throw err;

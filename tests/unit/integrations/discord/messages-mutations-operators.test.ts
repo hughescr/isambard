@@ -1,6 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import repeat from 'lodash/repeat';
-import trim from 'lodash/trim';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -147,7 +145,7 @@ describe.concurrent('Discord Message Splitting', () => {
         describe('mutation coverage - sentence fallback to words', () => {
             test('should fall back to word splitting when no sentences found', () => {
                 // Kill: if(sentences.length === 0) block in splitBySentences
-                const message = trim(repeat('word ', 20));
+                const message = 'word '.repeat(20).trim();
                 const result = splitMessage(message, 30);
                 expect(result.length).toBeGreaterThan(1);
                 for(const chunk of result) {
@@ -157,7 +155,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should use word splitting for long sentence', () => {
                 // Kill: if(exceedsLimtest(sentence.length, maxLength)) block in splitBySentences
-                const longSentence = `${trim(repeat('word ', 30))}.`;
+                const longSentence = `${'word '.repeat(30).trim()}.`;
                 const result = splitMessage(longSentence, 50);
                 expect(result.length).toBeGreaterThan(1);
             });

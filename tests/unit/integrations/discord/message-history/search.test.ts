@@ -1,7 +1,4 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
-import map from 'lodash/map';
-import some from 'lodash/some';
-import times from 'lodash/times';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import {
     createMessageSearchService,
@@ -262,8 +259,8 @@ describe('createMessageSearchService', () => {
                 });
 
                 expect(result.messages).toHaveLength(2);
-                expect(some(result.messages, ['content', 'Hello World'])).toBe(true);
-                expect(some(result.messages, ['content', 'HELLO again'])).toBe(true);
+                expect(result.messages.some(m => m.content === 'Hello World')).toBe(true);
+                expect(result.messages.some(m => m.content === 'HELLO again')).toBe(true);
             });
 
             test('should include query in response metadata', async () => {
@@ -317,7 +314,7 @@ describe('createMessageSearchService', () => {
                     ],
                 },
             ])('should NOT filter messages $description - all messages returned unfiltered', async ({ query, messages }) => {
-                const fetchedMessages = map(messages, m => createMockSearchResult(m));
+                const fetchedMessages = messages.map(m => createMockSearchResult(m));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -345,12 +342,11 @@ describe('createMessageSearchService', () => {
 
         describe('limit and overflow handling', () => {
             test('should respect limit parameter', async () => {
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -368,12 +364,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should use default limit of 10 when not specified', async () => {
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -396,12 +391,11 @@ describe('createMessageSearchService', () => {
                     defaultLimit: 5,
                 });
 
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -418,12 +412,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should generate overflow batch summaries for messages beyond limit', async () => {
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -454,12 +447,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should include totalFound in metadata', async () => {
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -477,12 +469,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should not have overflow when messages are within limit', async () => {
-                const messages = times(5, i =>
+                const messages = Array.from({ length: 5 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -514,12 +505,11 @@ describe('createMessageSearchService', () => {
                     expectedOverflowCount: 1,
                 },
             ])('should handle overflow boundary $description', async ({ messageCount, limit, expectOverflow, expectedOverflowCount }) => {
-                const messages = times(messageCount, i =>
+                const messages = Array.from({ length: messageCount }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -559,12 +549,11 @@ describe('createMessageSearchService', () => {
 
         describe('batch overflow summarization', () => {
             test('should call summarizeMessageBatch instead of summarizeMessages for overflow', async () => {
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -595,12 +584,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should cap overflow at 100 messages for batch summarization', async () => {
-                const messages = times(150, i =>
+                const messages = Array.from({ length: 150 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -635,12 +623,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should not set hasMore when overflow is within cap', async () => {
-                const messages = times(50, i =>
+                const messages = Array.from({ length: 50 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -671,12 +658,11 @@ describe('createMessageSearchService', () => {
 
             test('should not set hasMore when overflow is exactly MAX_OVERFLOW_FOR_SUMMARY (100)', async () => {
                 // 110 messages with limit 10 = exactly 100 overflow
-                const messages = times(110, i =>
+                const messages = Array.from({ length: 110 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -709,12 +695,11 @@ describe('createMessageSearchService', () => {
 
             test('should set hasMore when overflow is exactly one more than cap (101)', async () => {
                 // 111 messages with limit 10 = 101 overflow (just over cap)
-                const messages = times(111, i =>
+                const messages = Array.from({ length: 111 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -820,12 +805,11 @@ describe('createMessageSearchService', () => {
             });
 
             test('should propagate summarizer errors', async () => {
-                const messages = times(15, i =>
+                const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
                         content: `Message ${i}`,
-                    })
-                );
+                    }));
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
@@ -853,12 +837,11 @@ describe('createMessageSearchService', () => {
             { description: 'with limit parameter', limit: 5, expectedLength: 5 },
             { description: 'with default limit', limit: undefined, expectedLength: 10 },
         ])('should respect limit $description', async ({ limit, expectedLength }) => {
-            const messages = times(20, i =>
+            const messages = Array.from({ length: 20 }, (_, i) =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
-                })
-            );
+                }));
 
             (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.resolve({
@@ -875,12 +858,11 @@ describe('createMessageSearchService', () => {
         });
 
         test('should not call summarizer for overflow (count-only)', async () => {
-            const messages = times(20, i =>
+            const messages = Array.from({ length: 20 }, (_, i) =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
-                })
-            );
+                }));
 
             (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.resolve({

@@ -1,14 +1,5 @@
 import { type DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import _chunk from 'lodash/chunk';
-import _every from 'lodash/every';
-import _filter from 'lodash/filter';
-import _flatten from 'lodash/flatten';
-import _includes from 'lodash/includes';
-import _keys from 'lodash/keys';
-import _map from 'lodash/map';
-import _sortBy from 'lodash/sortBy';
-import _values from 'lodash/values';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
 import { type TagIndexItem, type MemoryPath  } from './types';
@@ -77,7 +68,7 @@ export class MemoryToolBackendTagIndex {
         let attempt = 0;
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator: While loop condition - tested via public API batch behavior
-        while(_keys(unprocessedItems).length > 0 && attempt < MAX_RETRIES) {
+        while(Object.keys(unprocessedItems as Record<string, unknown>).length > 0 && attempt < MAX_RETRIES) {
             try {
                 // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite retry, each attempt depends on prior unprocessed items
                 const result = await this.docClient.send(new BatchWriteCommand({
@@ -88,7 +79,7 @@ export class MemoryToolBackendTagIndex {
                 // Check if there are unprocessed items
                 // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,OptionalChaining: Unprocessed items check - all branches tested via batch write tests
                 // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DynamoDB SDK result typed non-nullable but checking defensively
-                const hasUnprocessed = result?.UnprocessedItems && _keys(result.UnprocessedItems).length > 0;
+                const hasUnprocessed = result?.UnprocessedItems && Object.keys(result.UnprocessedItems).length > 0;
 
                 // Stryker disable next-line ConditionalExpression,BlockStatement: Early return on success - tested via empty UnprocessedItems tests
                 if(!hasUnprocessed) {
@@ -113,13 +104,13 @@ export class MemoryToolBackendTagIndex {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Observational logging for debugging
                 logger.warn({ error, msg: 'Batch write threw exception - treating current batch as failed' });
                 // Return current unprocessed items as failed (items that succeeded in prior iterations are excluded)
-                // eslint-disable-next-line lodash/chaining,@typescript-eslint/no-unsafe-return -- unprocessedItems has complex UnprocessedItems type
-                return _flatten(_values(unprocessedItems));
+
+                return (Object.values(unprocessedItems as Record<string, BatchWriteRequest[]>).flat());
             }
         }
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Post-loop unprocessed items check
-        if(_keys(unprocessedItems).length > 0) {
+        if(Object.keys(unprocessedItems as Record<string, unknown>).length > 0) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Observational logging for debugging
             logger.warn({ unprocessedItems, msg: `Batch write failed after ${MAX_RETRIES} attempts` });
         }
@@ -127,9 +118,8 @@ export class MemoryToolBackendTagIndex {
         // Flatten UnprocessedItems to array of WriteRequests
         const failedRequests: BatchWriteRequest[] = [];
 
-        for(const tableName of _keys(unprocessedItems)) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access,@typescript-eslint/no-unsafe-argument -- UnprocessedItems type is complex
-            failedRequests.push(...unprocessedItems[tableName]);
+        for(const tableName of Object.keys(unprocessedItems as Record<string, unknown>)) {
+            failedRequests.push(...(unprocessedItems as Record<string, BatchWriteRequest[]>)[tableName]);
         }
 
         return failedRequests;
@@ -146,7 +136,7 @@ export class MemoryToolBackendTagIndex {
         }
 
         const normalizedTags = normalizeTags(tags);
-        const operations = _map([...normalizedTags], tag =>
+        const operations = [...normalizedTags].map(tag =>
             retryWithBackoff(
                 async () => this.docClient.send(new UpdateCommand({
                     TableName: this.tableName,
@@ -165,8 +155,7 @@ export class MemoryToolBackendTagIndex {
                 })),
                 // Stryker disable next-line StringLiteral: Context string for retry logging is observational
                 `incrementTagCount:${tag}`
-            )
-        );
+            ));
 
         await Promise.all(operations);
     }
@@ -183,7 +172,7 @@ export class MemoryToolBackendTagIndex {
 
         const normalizedTags = normalizeTags(tags);
 
-        const operations = _map([...normalizedTags], async (tag) => {
+        const operations = [...normalizedTags].map(async (tag) => {
             const result = await retryWithBackoff(
                 async () => this.docClient.send(new UpdateCommand({
                     TableName: this.tableName,
@@ -286,7 +275,7 @@ export class MemoryToolBackendTagIndex {
         // Stryker restore ConditionalExpression,BlockStatement
 
         // Sort by tag name
-        return _sortBy(results, 'tag');
+        return results.toSorted((a, b) => a.tag.localeCompare(b.tag));
     }
 
     /**
@@ -300,7 +289,7 @@ export class MemoryToolBackendTagIndex {
         contentPreview: string,
         layer: string
     ): Promise<void> {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - normalizeTags([]) returns [], making _map a no-op
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - normalizeTags([]) returns [], making map a no-op
         if(tags.size === 0) {
             return;
         }
@@ -308,7 +297,7 @@ export class MemoryToolBackendTagIndex {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests: BatchWriteRequest[] = _map([...normalizedTags], tag => ({
+        const writeRequests: BatchWriteRequest[] = [...normalizedTags].map(tag => ({
             PutRequest: {
                 Item: {
                     PK:         `TAG#${tag}`,
@@ -323,7 +312,7 @@ export class MemoryToolBackendTagIndex {
         }));
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
-        const batches = _chunk(writeRequests, 25);
+        const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
 
         // Execute all batches and collect failed requests
         const allFailedRequests: BatchWriteRequest[] = [];
@@ -334,14 +323,14 @@ export class MemoryToolBackendTagIndex {
         }
 
         // Extract tags that failed from unprocessed PutRequests
-        const failedTags = _map(allFailedRequests, (req) => {
+        const failedTags = new Set(allFailedRequests.map((req) => {
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: AWS SDK WriteRequest has optional PutRequest/Item but we know these are PutRequests
             const pk = req.PutRequest?.Item?.PK as string;
             return pk.slice(4); // Remove 'TAG#' prefix
-        });
+        }));
 
         // Only increment counts for tags that succeeded
-        const succeededTags = new Set(_filter([...normalizedTags], t => !_includes(failedTags, t)));
+        const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
         await this.incrementTagCounts(succeededTags);
     }
 
@@ -349,7 +338,7 @@ export class MemoryToolBackendTagIndex {
      * Deletes tag index items for a memory path.
      */
     async deleteTagIndexItems(path: MemoryPath, tags: Set<string>): Promise<void> {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - normalizeTags([]) returns [], making _map a no-op
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - normalizeTags([]) returns [], making map a no-op
         if(tags.size === 0) {
             return;
         }
@@ -357,7 +346,7 @@ export class MemoryToolBackendTagIndex {
         const normalizedTags = normalizeTags(tags);
 
         // Build delete requests for tag index items
-        const writeRequests: BatchWriteRequest[] = _map([...normalizedTags], tag => ({
+        const writeRequests: BatchWriteRequest[] = [...normalizedTags].map(tag => ({
             DeleteRequest: {
                 Key: {
                     PK: `TAG#${tag}`,
@@ -367,7 +356,7 @@ export class MemoryToolBackendTagIndex {
         }));
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
-        const batches = _chunk(writeRequests, 25);
+        const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
 
         // Execute all batches and collect failed requests
         const allFailedRequests: BatchWriteRequest[] = [];
@@ -378,14 +367,14 @@ export class MemoryToolBackendTagIndex {
         }
 
         // Extract tags that failed from unprocessed DeleteRequests
-        const failedTags = _map(allFailedRequests, (req) => {
+        const failedTags = new Set(allFailedRequests.map((req) => {
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: AWS SDK WriteRequest has optional DeleteRequest/Key but we know these are DeleteRequests
             const pk = req.DeleteRequest?.Key?.PK as string;
             return pk.slice(4); // Remove 'TAG#' prefix
-        });
+        }));
 
         // Only decrement counts for tags that succeeded
-        const succeededTags = new Set(_filter([...normalizedTags], t => !_includes(failedTags, t)));
+        const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
         await this.decrementTagCounts(succeededTags);
     }
 
@@ -408,7 +397,7 @@ export class MemoryToolBackendTagIndex {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests: BatchWriteRequest[] = _map([...normalizedTags], tag => ({
+        const writeRequests: BatchWriteRequest[] = [...normalizedTags].map(tag => ({
             PutRequest: {
                 Item: {
                     PK:         `TAG#${tag}`,
@@ -423,7 +412,7 @@ export class MemoryToolBackendTagIndex {
         }));
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
-        const batches = _chunk(writeRequests, 25);
+        const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
 
         // Execute all batches (no count increment)
         for(const batch of batches) {
@@ -447,9 +436,9 @@ export class MemoryToolBackendTagIndex {
         const normalizedOld = normalizeTags(oldTags);
         const normalizedNew = normalizeTags(newTags);
 
-        const added = new Set(_filter([...normalizedNew], t => !normalizedOld.has(t)));
-        const removed = new Set(_filter([...normalizedOld], t => !normalizedNew.has(t)));
-        const unchanged = new Set(_filter([...normalizedOld], t => normalizedNew.has(t)));
+        const added = new Set([...normalizedNew].filter(t => !normalizedOld.has(t)));
+        const removed = new Set([...normalizedOld].filter(t => !normalizedNew.has(t)));
+        const unchanged = new Set([...normalizedOld].filter(t => normalizedNew.has(t)));
 
         // Execute all operations in parallel
         await Promise.all([
@@ -574,9 +563,8 @@ export class MemoryToolBackendTagIndex {
             // Filter for items that contain ALL remaining tags
             // Stryker disable next-line MethodExpression: Slicing removes driving tag, but since all items already have it (from query), keeping it is equivalent
             const remainingTags = normalizedTags.slice(1);
-            const matching = _filter(pageResult.items, item =>
-                _every(remainingTags, tag => item.tags.has(tag))
-            );
+            const matching = pageResult.items.filter(item =>
+                remainingTags.every(tag => item.tags.has(tag)));
             collectedItems.push(...matching);
 
             // Update cursor for next page

@@ -1,10 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
+import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { generateTextWithSystemPrompt } from './text-generator';
 // eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap (tracked in roadmap comment below)
@@ -87,7 +84,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify(overview, null, 2));
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -124,9 +121,8 @@ export function createInboxMCPServer(
 
                         // Build message content for summarization
                         // Stryker disable StringLiteral,ArrowFunction: Format strings and arrow fn for LLM prompt are not behavior-tested (generateTextWithSystemPrompt is mocked)
-                        const messagesText = map(messages, m =>
-                            `[${m.author} at ${m.timestamp}]: ${m.content}`
-                        ).join('\n');
+                        const messagesText = messages.map(m =>
+                            `[${m.author} at ${m.timestamp}]: ${m.content}`).join('\n');
 
                         // Generate AI summary
                         const summary = await generateTextWithSystemPrompt(
@@ -136,7 +132,7 @@ export function createInboxMCPServer(
                         // Stryker restore StringLiteral,ArrowFunction
 
                         // Build metadata for each message
-                        const metadata: MessageMetadata[] = map(messages, m => ({
+                        const metadata: MessageMetadata[] = messages.map(m => ({
                             id:        m.id,
                             author:    m.author,
                             timestamp: m.timestamp,
@@ -144,10 +140,10 @@ export function createInboxMCPServer(
                         }));
 
                         // Get unique authors
-                        const authors = _(messages).map('author').uniq().value();
+                        const authors = chain(messages).map('author').uniq().value();
 
                         // Get time range
-                        const timestamps = _(messages).map('timestamp').sortBy().value();
+                        const timestamps = chain(messages).map('timestamp').sortBy().value();
                         // Stryker disable next-line ArrayDeclaration,ArithmeticOperator: Array access with [0] and [length-1] for first/last elements
                         const timeRange = {
                             start: timestamps[0],
@@ -176,7 +172,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify(response, null, 2));
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -225,7 +221,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify({ messages: fetchedMessages }, null, 2));
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -255,7 +251,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify({ success: true, markedCount: args.messageIds.length }));
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }
@@ -282,7 +278,7 @@ export function createInboxMCPServer(
 
                         return textResult(JSON.stringify({ success: true }));
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return textResult(`Error: ${message}`, true);
                     }
                 }

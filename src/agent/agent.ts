@@ -1,16 +1,6 @@
 import { query, type McpServerConfig, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import filter from 'lodash/filter';
-import isArray from 'lodash/isArray';
-import isError from 'lodash/isError';
-import isPlainObject from 'lodash/isPlainObject';
-import map from 'lodash/map';
-import some from 'lodash/some';
-import split from 'lodash/split';
-import startsWith from 'lodash/startsWith';
-import toPairs from 'lodash/toPairs';
+import { chain, isPlainObject, toPairs } from 'lodash-es';
 import { createRetryableQuery } from './claude-retry';
 import type { ContextBuilder } from './context-builder';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
@@ -101,8 +91,8 @@ function extractAssistantText(message: { type: string, message?: { content?: unk
     }
     const content = message.message?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
-    const textBlocks = filter(content ?? [], { type: 'text' });
-    return _.chain(textBlocks).map('text').compact().join('\n').trim().value();
+    const textBlocks = (content ?? []).filter(block => block.type === 'text');
+    return chain(textBlocks).map('text').compact().join('\n').trim().value();
 }
 
 /**
@@ -122,8 +112,8 @@ export function extractThinkingContent(message: { type: string, message?: { cont
     }
     const content = message.message?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
-    const thinkingBlocks = filter(content ?? [], { type: 'thinking' });
-    return _.chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
+    const thinkingBlocks = (content ?? []).filter(block => block.type === 'thinking');
+    return chain(thinkingBlocks).map('text').compact().join('\n').trim().value();
 }
 
 /**
@@ -163,8 +153,8 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
     }
 
     // MCP tools have format: mcp__module__tool (e.g., mcp__DevTools__find_symbol)
-    if(startsWith(toolName, 'mcp__')) {
-        const parts = split(toolName.slice(5), '__');
+    if(toolName.startsWith('mcp__')) {
+        const parts = toolName.slice(5).split('__');
         if(parts.length >= 2) {
             const module = parts[0];
             const tool = parts.slice(1).join('__');
@@ -201,7 +191,7 @@ const SENSITIVE_KEY_PATTERNS = [
  * @returns true if the key matches a sensitive pattern
  */
 function isSensitiveKey(key: string): boolean {
-    return some(SENSITIVE_KEY_PATTERNS, pattern => pattern.test(key));
+    return SENSITIVE_KEY_PATTERNS.some(pattern => pattern.test(key));
 }
 
 /**
@@ -218,8 +208,8 @@ export function redactSensitiveArgs(input: unknown): unknown {
     }
 
     // Handle arrays - map over elements
-    if(isArray(input)) {
-        return map(input, item => redactSensitiveArgs(item));
+    if(Array.isArray(input)) {
+        return input.map(item => redactSensitiveArgs(item));
     }
 
     // Handle objects - check keys and recurse
@@ -241,7 +231,7 @@ export function extractToolUses(message: { type: string, message?: { content?: u
         return [];
     }
     const content = message.message?.content as { type: string, id?: string, name?: string, input?: unknown }[] | undefined;
-    return filter(content ?? [], { type: 'tool_use' }) as ToolUseBlock[];
+    return (content ?? []).filter(block => block.type === 'tool_use') as ToolUseBlock[];
 }
 
 export interface ClaudeAgentOptions {
@@ -662,7 +652,7 @@ async function buildUserMessageTextForBatch(
 
     // Format multiple messages with timezone fallback
     const resolvedTz = resolveTimezone(timezone);
-    const messageBlocks = map(contexts, (ctx) => {
+    const messageBlocks = contexts.map((ctx) => {
         const timeStr = `${formatLocalDateTime(ctx.timestamp, resolvedTz)} ${resolvedTz} (UTC: ${ctx.timestamp})`;
         return `User @${ctx.userId} in #${ctx.channelId} at ${timeStr}: ${ctx.content}`;
     });
@@ -723,7 +713,7 @@ async function handleSessionIdExtraction(
         try {
             await taskPersistenceCoordinator.prepareNewSession(extractedSessionId);
         } catch (error) {
-            const errorMessage = isError(error) ? error.message : String(error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
             logger.warn({ error, sessionId: extractedSessionId }, `Task persistence failed: ${errorMessage}`);
         }
         return { sessionId: extractedSessionId, persistenceCompleted: true };
@@ -842,7 +832,7 @@ async function processStreamEvents(
     } catch (error) {
         // Check for AbortError OR any error when abort signal was triggered
         // The Claude Agent SDK may throw non-standard errors on abort
-        if((isError(error) && error.name === 'AbortError') || options?.abortController?.signal.aborted) {
+        if((error instanceof Error && error.name === 'AbortError') || options?.abortController?.signal.aborted) {
             wasInterrupted = true;
             // All abort-signal errors are expected — SDK throws "Operation aborted" (not standard AbortError)
             logger.info({
@@ -1021,7 +1011,7 @@ function buildErrorHandleInputResult(
     tracker: StreamTracker,
     contextCount: number
 ): HandleInputResult {
-    const errorMessage = isError(error) ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error({ error, contextCount }, `Failed to process batch: ${errorMessage}`);
     // Check abort signal — SDK may throw non-AbortError on abort
     const abortedBySignal = options?.abortController?.signal.aborted ?? false;
@@ -1100,7 +1090,7 @@ async function attemptAutoResume(
         }
     } catch (resumeError) {
         /* Stryker disable StringLiteral,ObjectLiteral: Observability - error logging for debugging auto-resume failures */
-        const errorMessage = isError(resumeError) ? resumeError.message : String(resumeError);
+        const errorMessage = resumeError instanceof Error ? resumeError.message : String(resumeError);
         logger.error({ error: resumeError, sessionId: capturedSessionId }, `Auto-resume failed: ${errorMessage}`);
         /* Stryker restore StringLiteral,ObjectLiteral */
     }
@@ -1224,7 +1214,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 5. Log start of processing
                 logger.info({
                     contextCount: contexts.length,
-                    messageIds:   map(contexts, 'messageId'),
+                    messageIds:   contexts.map(ctx => ctx.messageId),
                     hasImages:    hasImages(handleOptions?.images),
                     msg:          'Agent starting batch processing',
                 });

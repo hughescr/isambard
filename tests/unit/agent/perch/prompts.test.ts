@@ -1,8 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import filter from 'lodash/filter';
-import split from 'lodash/split';
-import startsWith from 'lodash/startsWith';
-import toLower from 'lodash/toLower';
 import {
     buildPerchPrompt,
     buildTestPerchPrompt,
@@ -155,7 +151,7 @@ describe.concurrent('buildPerchPrompt', () => {
 
         test('prompt should start with BASE_PROMPT for scheduled slots', () => {
             const prompt = buildPerchPrompt('pre-dawn');
-            expect(startsWith(prompt, BASE_PROMPT)).toBe(true);
+            expect(prompt.startsWith(BASE_PROMPT)).toBe(true);
         });
     });
 });
@@ -266,14 +262,14 @@ describe.concurrent('banned phrase sweep', () => {
 
     test('BASE_PROMPT should not contain banned phrases', () => {
         for(const phrase of BANNED_PHRASES) {
-            expect(toLower(BASE_PROMPT)).not.toContain(toLower(phrase));
+            expect(BASE_PROMPT.toLowerCase()).not.toContain(phrase.toLowerCase());
         }
     });
 
     test('no slot hint should contain banned phrases', () => {
         for(const config of SLOT_CONFIGS) {
             for(const phrase of BANNED_PHRASES) {
-                expect(toLower(config.hint)).not.toContain(toLower(phrase));
+                expect(config.hint.toLowerCase()).not.toContain(phrase.toLowerCase());
             }
         }
     });
@@ -423,8 +419,8 @@ describe.concurrent('buildPerchResumedPrompt', () => {
 
         const prompt = buildPerchResumedPrompt(options);
         // Should not contain specific event paths (only the interrupting message)
-        const lines = split(prompt, '\n');
-        const eventLines = filter(lines, line => startsWith(line, '- /'));
+        const lines = prompt.split('\n');
+        const eventLines = lines.filter(line => line.startsWith('- /'));
         expect(eventLines.length).toBe(0);
     });
 
@@ -515,7 +511,7 @@ describe.concurrent('buildPerchTimeoutPrompt', () => {
 
         const prompt = buildPerchTimeoutPrompt(options);
         // Verify it's a multi-line prompt (array was used correctly)
-        const lines = split(prompt, '\n');
+        const lines = prompt.split('\n');
         expect(lines.length).toBeGreaterThan(10);
     });
 

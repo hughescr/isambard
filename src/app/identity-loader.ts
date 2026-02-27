@@ -1,5 +1,4 @@
 import { logger } from '@hughescr/logger';
-import isError from 'lodash/isError';
 import type { ContextBuilder } from '@/agent';
 
 /**
@@ -31,7 +30,7 @@ export async function loadIdentityContext(
             return await contextBuilder.loadCoreIdentity() || 'Isambard - AI Assistant';
         // Stryker disable next-line BlockStatement: Catch block for optional initialization - equivalent mutant
         } catch (error) {
-            const errorMessage = isError(error) ? error.message : String(error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
             logger.warn(`Failed to load identity context: ${errorMessage}`);
             // Stryker disable next-line StringLiteral: Fallback default string is not behavior-affecting
             return 'Isambard - AI Assistant';

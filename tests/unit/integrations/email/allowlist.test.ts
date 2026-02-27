@@ -1,3 +1,4 @@
+import { describe, test, expect, beforeEach } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -7,7 +8,6 @@ import {
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach } from 'bun:test';
 import { EmailAllowlist } from '@/integrations/email/allowlist';
 import type { AllowlistEntry } from '@/integrations/email/types';
 

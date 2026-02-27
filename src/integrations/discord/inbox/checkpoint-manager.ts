@@ -1,4 +1,3 @@
-import endsWith from 'lodash/endsWith';
 import { type DiscordChannelCheckpoint, discordChannelCheckpointSchema  } from './types';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 import { type MemoryToolBackend, type MemoryPath, createMemoryPath  } from '@/storage';
@@ -226,8 +225,8 @@ export class CheckpointManager {
 
         for(const item of result.items) {
             // Only include checkpoint files (not other items in channel directories) - tested with non-checkpoint path test
-            // Stryker disable next-line StringLiteral: endsWith(path, '') is always true - equivalent mutant; ConditionalExpression tested by 'should skip non-checkpoint items' test
-            if(endsWith(item.path, '/checkpoint')) {
+            // Stryker disable next-line StringLiteral: path.endsWith('') is always true - equivalent mutant; ConditionalExpression tested by 'should skip non-checkpoint items' test
+            if(item.path.endsWith('/checkpoint')) {
                 // Stryker disable BlockStatement: Error handling for corrupted/invalid data - tested with invalid JSON test case
                 try {
                     // Parse and validate with Zod

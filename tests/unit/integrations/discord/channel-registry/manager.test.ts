@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Client, Channel } from 'discord.js';
-import find from 'lodash/find';
-import map from 'lodash/map';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
@@ -39,8 +37,7 @@ describe('ChannelRegistryManager', () => {
     // Helper to set up Discord client mock for specific channels
     const mockDiscordChannels = (channels: ChannelMetadata[]) => {
         client.channels.fetch = mock((channelId: string) => {
-            // eslint-disable-next-line lodash/matches-prop-shorthand -- Branded types require explicit comparison
-            const channel = find(channels, (ch: ChannelMetadata) => ch.channelId === channelId);
+            const channel = channels.find((ch: ChannelMetadata) => ch.channelId === channelId);
             if(channel) {
                 return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);
             }
@@ -513,8 +510,8 @@ describe('ChannelRegistryManager', () => {
             const results = await manager.getChannelsByGuild(homeGuildId);
 
             expect(results).toHaveLength(2);
-            expect(map(results, 'channelId')).toContain(channel1.channelId);
-            expect(map(results, 'channelId')).toContain(channel2.channelId);
+            expect(results.map(r => r.channelId)).toContain(channel1.channelId);
+            expect(results.map(r => r.channelId)).toContain(channel2.channelId);
             // Cache should be used - no additional backend calls
             expect(backend.getChannelsByGuild).toHaveBeenCalledTimes(2);
         });
@@ -573,9 +570,9 @@ describe('ChannelRegistryManager', () => {
             const results = await manager.getUnmutedChannels();
 
             expect(results).toHaveLength(2);
-            expect(map(results, 'channelId')).toContain(unmuted1.channelId);
-            expect(map(results, 'channelId')).toContain(unmuted2.channelId);
-            expect(map(results, 'channelId')).not.toContain(muted.channelId);
+            expect(results.map(r => r.channelId)).toContain(unmuted1.channelId);
+            expect(results.map(r => r.channelId)).toContain(unmuted2.channelId);
+            expect(results.map(r => r.channelId)).not.toContain(muted.channelId);
         });
 
         it('should fallback to backend if cache is cold', async () => {
@@ -698,7 +695,7 @@ describe('ChannelRegistryManager', () => {
             const result = manager.getAllChannels();
 
             expect(result).toHaveLength(2);
-            const channelIds = map(result, 'channelId');
+            const channelIds = result.map(r => r.channelId);
             expect(channelIds).toContain(channel1.channelId);
             expect(channelIds).toContain(channel2.channelId);
         });

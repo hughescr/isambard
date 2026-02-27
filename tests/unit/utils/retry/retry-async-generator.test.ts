@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
-import startsWith from 'lodash/startsWith';
 import { retryAsyncGenerator } from '../../../../src/utils/retry/retry-async-generator';
 import type { ErrorClassification, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
 
@@ -803,7 +802,7 @@ describe('retryAsyncGenerator', () => {
             const generatorFactory = mock(generator);
             const classifier = mock((error: unknown) => {
                 const err = error as Error;
-                if(startsWith(err.message, 'Rate limit')) {
+                if(err.message.startsWith('Rate limit')) {
                     return {
                         category:     'rate_limited',
                         message:      err.message,

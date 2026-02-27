@@ -1,14 +1,5 @@
 import { describe, test, expect, mock } from 'bun:test';
 import type { Client, TextChannel, Message, Collection, User } from 'discord.js';
-import constant from 'lodash/constant';
-import every from 'lodash/every';
-import filter from 'lodash/filter';
-import find from 'lodash/find';
-import findIndex from 'lodash/findIndex';
-import has from 'lodash/has';
-import isString from 'lodash/isString';
-import map from 'lodash/map';
-import some from 'lodash/some';
 import { ErrorCode } from '@/errors';
 import {
     createMessageFetcher,
@@ -40,7 +31,7 @@ function buildReactionsMap(reactions: { emoji: string, count: number }[]): Map<s
     const reactionsMap = new Map<string, { emoji: { toString: () => string }, count: number }>();
     for(const [idx, r] of reactions.entries()) {
         reactionsMap.set(idx.toString(), {
-            emoji: { toString: constant(r.emoji) },
+            emoji: { toString: () => r.emoji },
             count: r.count,
         });
     }
@@ -80,7 +71,7 @@ function createMockMessage(overrides: {
     } = overrides;
 
     // Create embeds array
-    const embedsArray = map(embeds, e => ({
+    const embedsArray = embeds.map(e => ({
         title:       e.title ?? null,
         description: e.description ?? null,
         url:         e.url ?? null,
@@ -139,12 +130,12 @@ function createMockChannel(
         let result = messages;
 
         if(options.before) {
-            const beforeIdx = findIndex(messages, ['id', options.before]);
+            const beforeIdx = messages.findIndex(m => m.id === options.before);
             if(beforeIdx > 0) {
                 result = messages.slice(0, beforeIdx);
             } else if(beforeIdx === -1) {
                 // before snowflake is smaller than all messages, filter by snowflake comparison
-                result = filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                result = messages.filter(m => BigInt(m.id) < BigInt(options.before!));
             }
         }
 
@@ -170,12 +161,12 @@ function createMockChannel(
 
     return {
         id:          channelId,
-        isTextBased: constant(true),
+        isTextBased: () => true,
         messages:    {
             fetch: mock(async (options: { limit?: number, before?: string } | string) => {
                 // Handle single message fetch by ID
-                if(isString(options)) {
-                    const msg = find(messages, ['id', options]);
+                if(typeof options === 'string') {
+                    const msg = messages.find(m => m.id === options);
                     if(!msg) {
                         throw new Error(`Message ${options} not found`);
                     }
@@ -260,7 +251,7 @@ describe.concurrent('createMessageFetcher', () => {
                     filename: 'file.bin',
                 });
                 expect('contentType' in result.messages[0].attachments[0]).toBe(false);
-                expect(has(result.messages[0].attachments[0], 'contentType')).toBe(false);
+                expect('contentType' in result.messages[0].attachments[0]).toBe(false);
             });
 
             test('should NOT include title in embed when embed.title is null', async () => {
@@ -284,7 +275,7 @@ describe.concurrent('createMessageFetcher', () => {
                 expect(result.messages[0].embeds[0]).toEqual({ description: 'Description only' });
                 expect('title' in result.messages[0].embeds[0]).toBe(false);
                 expect('url' in result.messages[0].embeds[0]).toBe(false);
-                expect(has(result.messages[0].embeds[0], 'title')).toBe(false);
+                expect('title' in result.messages[0].embeds[0]).toBe(false);
             });
 
             test('should use "unnamed" as filename when attachment.name is null', async () => {
@@ -470,7 +461,7 @@ describe.concurrent('createMessageFetcher', () => {
                     let result = [...messages];
 
                     if(options.before) {
-                        result = filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                        result = messages.filter(m => BigInt(m.id) < BigInt(options.before!));
                     }
 
                     return result.slice(-limit).toReversed();
@@ -532,7 +523,7 @@ describe.concurrent('createMessageFetcher', () => {
                     let result = [...messages];
 
                     if(options.before) {
-                        result = filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                        result = messages.filter(m => BigInt(m.id) < BigInt(options.before!));
                     }
 
                     return result.slice(-limit).toReversed();
@@ -668,7 +659,7 @@ describe.concurrent('createMessageFetcher', () => {
                     let result = [...messages];
 
                     if(options.before) {
-                        result = filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                        result = messages.filter(m => BigInt(m.id) < BigInt(options.before!));
                     }
 
                     return result.slice(-limit).toReversed();
@@ -731,9 +722,8 @@ describe.concurrent('createMessageFetcher', () => {
                     startTime: new Date('2024-01-01T00:00:00.000Z'),
                 });
 
-                expect(every(result.messages, m =>
-                    new Date(m.timestamp) >= new Date('2024-01-01T00:00:00.000Z')
-                )).toBe(true);
+                expect(result.messages.every(m =>
+                    new Date(m.timestamp) >= new Date('2024-01-01T00:00:00.000Z'))).toBe(true);
             });
 
             test('should include message when ID equals afterSnowflake exactly (boundary test)', async () => {
@@ -764,7 +754,7 @@ describe.concurrent('createMessageFetcher', () => {
                 const channel = createMockChannel('123456789012345678', messages, (options) => {
                     let result = [...messages];
                     if(options.before) {
-                        result = filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                        result = messages.filter(m => BigInt(m.id) < BigInt(options.before!));
                     }
                     return result.toReversed();
                 });
@@ -778,9 +768,9 @@ describe.concurrent('createMessageFetcher', () => {
                     startTime: boundaryDate,
                 });
 
-                expect(some(result.messages, ['id', boundarySnowflake])).toBe(true);
-                expect(some(result.messages, ['id', newerSnowflake])).toBe(true);
-                expect(some(result.messages, ['id', olderSnowflake])).toBe(false);
+                expect(result.messages.some(m => m.id === boundarySnowflake)).toBe(true);
+                expect(result.messages.some(m => m.id === newerSnowflake)).toBe(true);
+                expect(result.messages.some(m => m.id === olderSnowflake)).toBe(false);
             });
 
             test('should stop pagination loop when shouldStop is set to true by processBatch', async () => {
@@ -816,7 +806,7 @@ describe.concurrent('createMessageFetcher', () => {
                     let result = [...messages];
 
                     if(options.before) {
-                        result = filter(messages, m => BigInt(m.id) < BigInt(options.before!));
+                        result = messages.filter(m => BigInt(m.id) < BigInt(options.before!));
                     }
 
                     return result.slice(-limit).toReversed();
@@ -868,7 +858,7 @@ describe.concurrent('createMessageFetcher', () => {
             test('should rethrow ChannelNotAccessibleError from fetchMessages loop when thrown during message fetch', async () => {
                 const channel = {
                     id:          '123456789012345678',
-                    isTextBased: constant(true),
+                    isTextBased: () => true,
                     messages:    {
                         fetch: mock(async () => {
                             throw new ChannelNotAccessibleError('123456789012345678');
@@ -894,7 +884,7 @@ describe.concurrent('createMessageFetcher', () => {
             test('should use "Unknown error" as reason when non-Error value is thrown', async () => {
                 const channel = {
                     id:          '123456789012345678',
-                    isTextBased: constant(true),
+                    isTextBased: () => true,
                     messages:    {
                         fetch: mock(async () => {
                             throw 'network failure';
@@ -940,7 +930,7 @@ describe.concurrent('createMessageFetcher', () => {
         test('should return null when message not found', async () => {
             const channel = {
                 id:          '123456789012345678',
-                isTextBased: constant(true),
+                isTextBased: () => true,
                 messages:    {
                     fetch: mock(async (id: string) => {
                         throw new Error(`Message ${id} not found`);
@@ -968,10 +958,10 @@ describe.concurrent('createMessageFetcher', () => {
 
             const channel = {
                 id:          '123456789012345678',
-                isTextBased: constant(true),
+                isTextBased: () => true,
                 messages:    {
                     fetch: mock(async (messageId: string) => {
-                        const msg = find(messages, ['id', messageId]);
+                        const msg = messages.find(m => m.id === messageId);
                         if(!msg) {
                             throw new Error('Not found');
                         }
@@ -1000,10 +990,10 @@ describe.concurrent('createMessageFetcher', () => {
 
             const channel = {
                 id:          '123456789012345678',
-                isTextBased: constant(true),
+                isTextBased: () => true,
                 messages:    {
                     fetch: mock(async (messageId: string) => {
-                        const msg = find(messages, ['id', messageId]);
+                        const msg = messages.find(m => m.id === messageId);
                         if(!msg) {
                             throw new Error('Not found');
                         }

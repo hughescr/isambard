@@ -14,12 +14,6 @@
  */
 
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
-import constant from 'lodash/constant';
-import endsWith from 'lodash/endsWith';
-import filter from 'lodash/filter';
-import find from 'lodash/find';
-import repeat from 'lodash/repeat';
-import some from 'lodash/some';
 import type { AgentStreamEvent } from '../../../../../src/agent/types.js';
 import type { PresenceManager } from '../../../../../src/integrations/discord/presence/manager.js';
 import type { DynamicStatusGenerator } from '../../../../../src/integrations/discord/presence/status-generator-dynamic.js';
@@ -53,8 +47,8 @@ describe('StreamEventHandler', () => {
     beforeEach(() => {
         mockPresenceManager = {
             updatePhase: mock(async () => undefined),
-            start:       mock(constant(undefined)),
-            stop:        mock(constant(undefined)),
+            start:       mock(() => undefined),
+            stop:        mock(() => undefined),
         } as unknown as PresenceManager;
 
         mockDynamicStatusGenerator = {
@@ -63,15 +57,15 @@ describe('StreamEventHandler', () => {
         };
 
         mockLogger = {
-            error: mock(constant(undefined)),
+            error: mock(() => undefined),
         };
 
         mockBotStateManager = {
-            shouldUpdatePresence: mock(constant(true)),
+            shouldUpdatePresence: mock(() => true),
             updateActivityPhase:  mock(() => undefined),
             clearActivityPhase:   mock(() => undefined),
             recordPresenceUpdate: mock(() => undefined),
-            getMode:              mock(constant('idle' as const)),
+            getMode:              mock(() => 'idle' as const),
             goIdle:               mock(() => undefined),
         };
 
@@ -111,7 +105,7 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Verify thinkingContent is still undefined (text blocks should not be accumulated)
-            const thinkingContext = find(capturedContexts, { phase: 'thinking' });
+            const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
             expect(thinkingContext?.thinkingContent).toBeUndefined();
         });
 
@@ -142,7 +136,7 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Verify only blocks with type: 'thinking' AND thinking property were accumulated
-            const thinkingContext = find(capturedContexts, { phase: 'thinking' });
+            const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
             expect(thinkingContext?.thinkingContent).toBe('First thoughtSecond thought');
         });
     });
@@ -211,7 +205,7 @@ describe('StreamEventHandler', () => {
 
             // Verify it was NOT called with 'responding' phase (due to early return)
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            const respondingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
+            const respondingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
             expect(respondingCalls.length).toBe(0);
         });
     });
@@ -248,7 +242,7 @@ describe('StreamEventHandler', () => {
             );
 
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            const thinkingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
+            const thinkingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
             expect(thinkingCalls.length).toBe(0);
         });
 
@@ -280,7 +274,7 @@ describe('StreamEventHandler', () => {
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             expect((calls[0]?.[0] as { type?: string })?.type).toBe('using_tool');
 
-            const respondingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
+            const respondingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
             expect(respondingCalls.length).toBe(0);
         });
     });
@@ -316,9 +310,9 @@ describe('StreamEventHandler', () => {
 
             // Verify we got thinking, responding, and using_tool instead
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            expect(some(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking')).toBe(true);
-            expect(some(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'responding')).toBe(true);
-            expect(some(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'using_tool')).toBe(true);
+            expect(calls.some((call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking')).toBe(true);
+            expect(calls.some((call: unknown[]) => (call[0] as { type?: string })?.type === 'responding')).toBe(true);
+            expect(calls.some((call: unknown[]) => (call[0] as { type?: string })?.type === 'using_tool')).toBe(true);
         });
 
         it('should NOT transition to idle for other event types (tool_result, user, system)', async () => {
@@ -340,7 +334,7 @@ describe('StreamEventHandler', () => {
         });
 
         it('should verify complete() only clears activity phase without calling goIdle', async () => {
-            mockBotStateManager.getMode = mock(constant('processing_message' as const));
+            mockBotStateManager.getMode = mock(() => 'processing_message' as const);
             const { complete } = createStreamEventHandler(baseDeps);
 
             mockBotStateManager.clearActivityPhase.mockClear();
@@ -471,7 +465,7 @@ describe('StreamEventHandler', () => {
             await flushPromises();
 
             // Verify toolInput was stored and redacted
-            const toolContext = find(capturedContexts, { phase: 'using_tool' });
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
             expect(toolContext?.toolInput).toBeDefined();
             expect((toolContext?.toolInput as Record<string, string>).url).toBe('https://example.com');
             expect((toolContext?.toolInput as Record<string, string>).apiKey).toBe('[REDACTED]');
@@ -510,12 +504,11 @@ describe('StreamEventHandler', () => {
 
             // Verify fallback to thinkingSynopsis was used
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            const thinkingCalls = filter(calls, (call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
+            const thinkingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
 
             // Find a call that used the fallback thinkingSynopsis
-            const fallbackCall = find(thinkingCalls, (call: unknown[]) =>
-                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Fallback thinking status'
-            );
+            const fallbackCall = thinkingCalls.find((call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Fallback thinking status');
             expect(fallbackCall).toBeDefined();
         });
     });
@@ -531,8 +524,8 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send multiple text chunks exceeding 200 chars
-            const longText1 = repeat('X', 150);
-            const longText2 = repeat('Y', 60);
+            const longText1 = 'X'.repeat(150);
+            const longText2 = 'Y'.repeat(60);
 
             onStreamEvent({ type: 'assistant', delta: { text: longText1 } } as AgentStreamEvent);
             onStreamEvent({ type: 'assistant', delta: { text: longText2 } } as AgentStreamEvent);
@@ -541,11 +534,11 @@ describe('StreamEventHandler', () => {
             onStreamEvent({ type: 'tool_progress', tool_name: 'Bash' } as AgentStreamEvent);
             await flushPromises();
 
-            const toolContext = find(capturedContexts, { phase: 'using_tool' });
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
             expect(toolContext?.accumulatedText).toBeDefined();
             expect(toolContext!.accumulatedText!.length).toBe(200);
             // Should end with most recent text
-            expect(endsWith(toolContext!.accumulatedText, repeat('Y', 60))).toBe(true);
+            expect(toolContext!.accumulatedText!.endsWith('Y'.repeat(60))).toBe(true);
         });
 
         it('should track recent tool calls with MAX_RECENT_TOOLS limit', async () => {
@@ -568,7 +561,7 @@ describe('StreamEventHandler', () => {
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
             await flushPromises();
 
-            const thinkingContext = find(capturedContexts, { phase: 'thinking' });
+            const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
             expect(thinkingContext?.recentToolCalls).toBeDefined();
             // Should only keep last 3 tools (most recent first)
             expect(thinkingContext?.recentToolCalls).toEqual(['Tool5', 'Tool4', 'Tool3']);
@@ -609,9 +602,8 @@ describe('StreamEventHandler', () => {
 
             // updateActivityPhase should NOT have been called with the stale synopsis
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            const staleCalls = filter(calls, (call: unknown[]) =>
-                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Stale synopsis'
-            );
+            const staleCalls = calls.filter((call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Stale synopsis');
             expect(staleCalls).toHaveLength(0);
         });
 
@@ -646,7 +638,7 @@ describe('StreamEventHandler', () => {
             // updateActivityPhase should NOT have been called after complete()
             const callsAfterComplete = mockBotStateManager.updateActivityPhase.mock.calls;
             // Only calls before complete() should exist (the initial non-synopsis update)
-            const postCompleteCalls = filter(callsAfterComplete, (call: unknown[]) => {
+            const postCompleteCalls = callsAfterComplete.filter((call: unknown[]) => {
                 const phase = call[0] as { type?: string };
                 return phase?.type === 'responding';
             });
@@ -704,9 +696,8 @@ describe('StreamEventHandler', () => {
 
             // updateActivityPhase should NOT have been called with the stale thinking synopsis
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            const staleCalls = filter(calls, (call: unknown[]) =>
-                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Stale thinking synopsis'
-            );
+            const staleCalls = calls.filter((call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Stale thinking synopsis');
             expect(staleCalls).toHaveLength(0);
         });
 
@@ -757,9 +748,8 @@ describe('StreamEventHandler', () => {
 
             // updateActivityPhase should NOT have been called with the fallback after complete()
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
-            const fallbackCalls = filter(calls, (call: unknown[]) =>
-                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Thinking fallback'
-            );
+            const fallbackCalls = calls.filter((call: unknown[]) =>
+                (call[0] as { generatedStatus?: string })?.generatedStatus === 'Thinking fallback');
             expect(fallbackCalls).toHaveLength(0);
         });
     });

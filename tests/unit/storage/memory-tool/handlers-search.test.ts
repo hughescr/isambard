@@ -1,6 +1,4 @@
 import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
-import _repeat from 'lodash/repeat';
-import _split from 'lodash/split';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
@@ -163,7 +161,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
         describe('output formatting', () => {
             test('should truncate content preview to 100 characters', async () => {
                 const backend = createMockBackend();
-                const longContent = _repeat('A', 200);
+                const longContent = 'A'.repeat(200);
                 backend.searchByTags = mock(async () => ({
                     items: [
                         {
@@ -181,9 +179,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
                 const result = await searchHandler(backend, { tags: ['tag1'] });
 
-                expect(result).toContain(_repeat('A', 100));
+                expect(result).toContain('A'.repeat(100));
                 expect(result).toContain('...');
-                expect(result).not.toContain(_repeat('A', 101));
+                expect(result).not.toContain('A'.repeat(101));
             });
 
             test('should return "No results found" when search returns empty', async () => {
@@ -219,7 +217,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should not truncate content preview at exactly 100 characters', async () => {
                 const backend = createMockBackend();
-                const exactContent = _repeat('A', 100);
+                const exactContent = 'A'.repeat(100);
                 backend.searchByTags = mock(async () => ({
                     items: [
                         {
@@ -237,7 +235,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
                 const result = await searchHandler(backend, { tags: ['tag1'] });
 
-                expect(result).toContain(_repeat('A', 100));
+                expect(result).toContain('A'.repeat(100));
                 expect(result).not.toContain('...');
             });
 
@@ -622,7 +620,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect(result).not.toContain('state:');
                 expect(result).not.toContain('events:');
                 // Verify result doesn't contain multiple empty sections
-                const sections = _split(result, '\n\n');
+                const sections = result.split('\n\n');
                 expect(sections.length).toBe(1); // Only identity section
             });
         });
@@ -943,7 +941,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         it('should format time_range search with content preview (>100 chars)', async () => {
-            const longContent = _repeat('B', 150);
+            const longContent = 'B'.repeat(150);
             mockBackend.searchByTimeRange = mock(async () => [
                 {
                     path:        '/events/log.md' as MemoryPath,
@@ -960,9 +958,9 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
             });
 
-            expect(result).toContain(_repeat('B', 100));
+            expect(result).toContain('B'.repeat(100));
             expect(result).toContain('...');
-            expect(result).not.toContain(_repeat('B', 101));
+            expect(result).not.toContain('B'.repeat(101));
         });
 
         it('should format time_range search with content preview (<=100 chars)', async () => {

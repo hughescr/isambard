@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
-import assign from 'lodash/assign';
-import find from 'lodash/find';
-import includes from 'lodash/includes';
-import isObject from 'lodash/isObject';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
 import type { AnswerClassifier } from '@/agent/answer-classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
@@ -355,10 +351,10 @@ describe('Discord Event Handlers', () => {
 
                 // Find the "Message received" log call
                 type LogCall = [Record<string, unknown>];
-                const messageReceivedCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const messageReceivedCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
                     const obj = call[0] as { msg?: string };
                     return obj.msg?.includes('Message received');
-                }) as LogCall | undefined;
+                });
 
                 expect(messageReceivedCall).toBeDefined();
                 // Kills BooleanLiteral mutant (!message.guild → message.guild)
@@ -378,10 +374,10 @@ describe('Discord Event Handlers', () => {
 
                 // Find the "Message received" log call
                 type LogCall = [Record<string, unknown>];
-                const messageReceivedCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const messageReceivedCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
                     const obj = call[0] as { msg?: string };
                     return obj.msg?.includes('Message received');
-                }) as LogCall | undefined;
+                });
 
                 expect(messageReceivedCall).toBeDefined();
                 // Verify isDM is false when guild exists
@@ -412,10 +408,10 @@ describe('Discord Event Handlers', () => {
 
                 // Find the filtering call from our captured calls
                 type LogCall = [Record<string, unknown>];
-                const filteringCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const filteringCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
                     const obj = call[0] as { msg?: string, isMention?: boolean };
                     return obj.msg?.includes('Filtering:') && obj.isMention === true;
-                }) as LogCall | undefined;
+                });
 
                 expect(filteringCall).toBeDefined();
                 const logObj = filteringCall![0] as {
@@ -453,10 +449,10 @@ describe('Discord Event Handlers', () => {
 
                 // Find the filtering call from our captured calls
                 type LogCall = [Record<string, unknown>];
-                const filteringCall = find(mockLogger.debug.mock.calls as LogCall[], (call) => {
+                const filteringCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
                     const obj = call[0] as { msg?: string, isDM?: boolean };
                     return obj.msg?.includes('Filtering:') && obj.isDM === true;
-                }) as LogCall | undefined;
+                });
 
                 expect(filteringCall).toBeDefined();
                 const logObj = filteringCall![0] as {
@@ -874,9 +870,9 @@ describe('Discord Event Handlers', () => {
                         return await operation();
                     } catch (error) {
                         // Check if it's a transient network error
-                        if(isObject(error) && 'code' in error) {
+                        if(typeof error === 'object' && error !== null && 'code' in error) {
                             const code = (error as { code: string }).code;
-                            if(includes(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'], code)) {
+                            if(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'].includes(code)) {
                                 // Retry immediately without delay
                                 return operation();
                             }
@@ -1308,7 +1304,7 @@ describe('Discord Event Handlers', () => {
 
                 const mockBotState = createMockBotStateManager();
                 // Override to return 'perching' mode
-                assign(mockBotState, { getMode: mock(() => 'perching' as const) });
+                Object.assign(mockBotState, { getMode: mock(() => 'perching' as const) });
 
                 const handler = createMessageHandler({
                     botUserId:          '999999999999999999' as UserId,

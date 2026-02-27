@@ -1,9 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
-import _find from 'lodash/find';
-import _map from 'lodash/map';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
 
@@ -485,7 +483,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             // Should only increment for 'important' and 'core', NOT 'failed'
             expect(updateCalls).toHaveLength(2);
-            const incrementedTags = _map(updateCalls, call => call.args[0].input.Key?.PK as string);
+            const incrementedTags = updateCalls.map(call => call.args[0].input.Key?.PK as string);
             expect(incrementedTags).toContain('TAG#important');
             expect(incrementedTags).toContain('TAG#core');
             expect(incrementedTags).not.toContain('TAG#failed');
@@ -749,7 +747,7 @@ describe('MemoryToolBackendTagIndex', () => {
             const updateCalls = ddbMock.commandCalls(UpdateCommand);
             // Should only decrement for 'important' and 'core', NOT 'failed'
             expect(updateCalls).toHaveLength(2);
-            const decrementedTags = _map(updateCalls, call => call.args[0].input.Key?.PK as string);
+            const decrementedTags = updateCalls.map(call => call.args[0].input.Key?.PK as string);
             expect(decrementedTags).toContain('TAG#important');
             expect(decrementedTags).toContain('TAG#core');
             expect(decrementedTags).not.toContain('TAG#failed');
@@ -807,9 +805,8 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(batchCalls).toHaveLength(2);
             // Find the batch call containing DeleteRequest
 
-            const deleteRequests = _find(batchCalls, call =>
-                call.args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest
-            );
+            const deleteRequests = batchCalls.find(call =>
+                call.args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest);
             expect(deleteRequests).toBeDefined();
             expect((deleteRequests as unknown as { args: [{ input: { RequestItems?: Record<string, { DeleteRequest?: { Key?: Record<string, unknown> } }[]> } }] }).args[0].input.RequestItems?.TestTable?.[0]?.DeleteRequest?.Key?.PK).toBe('TAG#old');
         });

@@ -1,7 +1,3 @@
-import _map from 'lodash/map';
-import _split from 'lodash/split';
-import _startsWith from 'lodash/startsWith';
-import _toLower from 'lodash/toLower';
 import { DateTime } from 'luxon';
 import { type MemoryPath, extractLayerFromPath  } from './types';
 
@@ -41,7 +37,7 @@ export function normalizeTags(tags: Set<string> | undefined): Set<string> {
     if(!tags || tags.size === 0) {
         return new Set();
     }
-    return new Set(_map([...tags], tag => _toLower(tag)));
+    return new Set([...tags].map(tag => tag.toLowerCase()));
 }
 
 /**
@@ -77,7 +73,7 @@ export const MemoryToolKeyGenerator = {
         const layer = extractLayerFromPath(path);
         // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may return undefined despite string[] type
-        const layerStr = layer ?? _split(path, '/')[1] ?? 'unknown';
+        const layerStr = layer ?? path.split('/')[1] ?? 'unknown';
 
         return {
             PK:     `DIR#${parentPath}`,
@@ -102,10 +98,10 @@ export const MemoryToolKeyGenerator = {
    * ```
    */
     parsePath(pk: string, sk: string): string {
-        if(!_startsWith(pk, 'DIR#')) {
+        if(!pk.startsWith('DIR#')) {
             throw new Error(`Invalid PK format: expected DIR#..., got ${pk}`);
         }
-        if(!_startsWith(sk, 'FILE#')) {
+        if(!sk.startsWith('FILE#')) {
             throw new Error(`Invalid SK format: expected FILE#..., got ${sk}`);
         }
 
@@ -144,11 +140,11 @@ export const MemoryToolKeyGenerator = {
         path: MemoryPath,
         tags: Set<string>
     ): { PK: string, SK: string }[] {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - _map([]) returns [] anyway
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Optimization - [].map() returns [] anyway
         if(tags.size === 0) {
             return [];
         }
-        return _map([...tags], tag => ({
+        return [...tags].map(tag => ({
             PK: `TAG#${tag}`,
             SK: `PATH#${path}`,
         }));
@@ -168,7 +164,7 @@ export const MemoryToolKeyGenerator = {
    * ```
    */
     parseTagFromPK(pk: string): string {
-        if(!_startsWith(pk, 'TAG#')) {
+        if(!pk.startsWith('TAG#')) {
             throw new Error(`Invalid tag PK format: expected TAG#..., got ${pk}`);
         }
         return pk.slice(4);
@@ -188,7 +184,7 @@ export const MemoryToolKeyGenerator = {
    * ```
    */
     parsePathFromTagSK(sk: string): string {
-        if(!_startsWith(sk, 'PATH#')) {
+        if(!sk.startsWith('PATH#')) {
             throw new Error(`Invalid tag SK format: expected PATH#..., got ${sk}`);
         }
         return sk.slice(5);

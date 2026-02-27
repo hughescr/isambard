@@ -1,7 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '@hughescr/logger';
-import isError from 'lodash/isError';
 import { needsConversion, convert } from './converter';
 import {
     type AttachmentMetadata,
@@ -101,7 +100,7 @@ export async function fetchImage(
             },
         };
     } catch (error) {
-        const errorMessage = isError(error) ? error.message : String(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         // Stryker disable all: logging statement
         logger.error({
             filename:    metadata.filename,
@@ -127,7 +126,7 @@ export async function fetchImages(
     attachments: AttachmentMetadata[]
 ): Promise<FetchImagesResult> {
     const results = await Promise.all(
-        // eslint-disable-next-line lodash/prefer-lodash-method -- Native array methods preferred for simplicity
+
         attachments.map(attachment => fetchImage(attachment))
     );
 

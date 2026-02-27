@@ -1,8 +1,5 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, EmbedBuilder  } from 'discord.js';
-import isError from 'lodash/isError';
-import split from 'lodash/split';
-import values from 'lodash/values';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -42,7 +39,7 @@ export class ReviewHandler {
             return;
         }
 
-        const parts = split(interaction.customId, ':');
+        const parts = interaction.customId.split(':');
         const prefix    = parts[0];
         const uidStr    = parts[1];
         const folderStr = parts[2];
@@ -58,7 +55,7 @@ export class ReviewHandler {
             return;
         }
 
-        const validFolders = values(EmailFolder);
+        const validFolders = Object.values(EmailFolder);
         if(!folderStr || !validFolders.includes(folderStr as EmailFolder)) {
             await interaction.reply({
                 // Stryker disable next-line StringLiteral: Error message is UI configuration
@@ -187,7 +184,7 @@ export class ReviewHandler {
                 components: [],
             });
         } catch (error) {
-            const errMsg = isError(error) ? error.message : String(error);
+            const errMsg = error instanceof Error ? error.message : String(error);
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message is not behavior-affecting
             logger.warn({ error: errMsg, email: email.from.address, msg: 'Failed to add sender to allowlist after allow' });
             await interaction.editReply({

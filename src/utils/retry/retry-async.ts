@@ -1,4 +1,3 @@
-import noop from 'lodash/noop';
 import { defaultClassifier } from './classifier';
 import { calculateDelay } from './delay';
 import { type ErrorClassifier, type RetryDeps, type RetryPolicy, retryPolicySchema  } from './types';
@@ -14,9 +13,9 @@ const defaultDeps: RetryDeps = {
     sleep:  (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     now:    () => Date.now(),
     logger: {
-        warn:  noop,
-        error: noop,
-        debug: noop,
+        warn:  () => undefined,
+        error: () => undefined,
+        debug: () => undefined,
     },
 };
 // Stryker restore all

@@ -1,6 +1,4 @@
 import type { Client, Guild, GuildChannel } from 'discord.js';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
 import { createChannelId, createGuildId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import type { ChannelMetadata } from './types';
@@ -31,27 +29,24 @@ export async function discoverAllChannels(
     };
 
     // Create promises for discovering channels in each guild (parallel execution)
-    const guildPromises = map(
-        [...client.guilds.cache.entries()],
-        async ([guildId, guild]) => {
-            try {
-                const guildResult = await discoverGuildChannels(guild, manager);
-                return {
-                    discovered: guildResult.discovered,
-                    updated:    guildResult.updated,
-                    guildId,
-                };
-            } catch (error: unknown) {
-                // Log error but don't fail the whole discovery
-                return {
-                    discovered: 0,
-                    updated:    0,
-                    guildId,
-                    error:      isError(error) ? error.message : String(error),
-                };
-            }
+    const guildPromises = [...client.guilds.cache.entries()].map(async ([guildId, guild]) => {
+        try {
+            const guildResult = await discoverGuildChannels(guild, manager);
+            return {
+                discovered: guildResult.discovered,
+                updated:    guildResult.updated,
+                guildId,
+            };
+        } catch (error: unknown) {
+            // Log error but don't fail the whole discovery
+            return {
+                discovered: 0,
+                updated:    0,
+                guildId,
+                error:      error instanceof Error ? error.message : String(error),
+            };
         }
-    );
+    });
 
     // Execute all guild discoveries in parallel
     const results = await Promise.allSettled(guildPromises);

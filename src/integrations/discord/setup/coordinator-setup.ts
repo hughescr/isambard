@@ -1,8 +1,5 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import filter from 'lodash/filter';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
 import {
     fetchImages,
     saveNonImageAttachment,
@@ -50,7 +47,7 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
 
     if(allAttachments.length > 0) {
         // Fetch images
-        const imageAttachments = filter(allAttachments, att => isSupportedImageType(att.contentType));
+        const imageAttachments = allAttachments.filter(att => isSupportedImageType(att.contentType));
         if(imageAttachments.length > 0) {
             const result = await fetchImages(imageAttachments);
             images = result.images;
@@ -79,7 +76,7 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
         }
 
         // Save non-image attachments to scratch directory
-        const nonImageAttachments = filter(allAttachments, att => !isSupportedImageType(att.contentType));
+        const nonImageAttachments = allAttachments.filter(att => !isSupportedImageType(att.contentType));
         if(nonImageAttachments.length > 0) {
             const scratchDir = process.cwd();
             const messageId = contexts[0]?.messageId ?? 'unknown';
@@ -155,14 +152,14 @@ export function toMessageContext(context: DiscordMessageContext): MessageContext
  * Maps Discord message contexts to platform-agnostic message contexts for the agent.
  */
 export function toMessageContexts(contexts: DiscordMessageContext[]): MessageContext[] {
-    return map(contexts, toMessageContext);
+    return contexts.map(ctx => toMessageContext(ctx));
 }
 
 /**
  * Maps Discord fetched images to platform-agnostic image format for the agent.
  */
 export function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
-    return map(images, img => ({
+    return images.map(img => ({
         filename:     img.filename,
         mediaType:    img.mediaType,
         base64Data:   img.base64Data,
@@ -224,7 +221,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 logger.info({ msg: 'Resuming catch-up after suspension' });
                 // Resume catch-up (async, don't await)
                 void catchUpSessionRunner.resumeAfterSuspension().catch((error) => {
-                    const errorMsg = isError(error) ? error.message : String(error);
+                    const errorMsg = error instanceof Error ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after suspension' });
                     // Clear suspension state (error recovery)
                     catchUpSessionRunner.clearSuspension();
@@ -235,7 +232,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             if(botStateManager.getMode() === 'idle' && perchSessionRunner?.isSuspended()) {
                 logger.info({ msg: 'Resuming perch after suspension' });
                 void perchSessionRunner.resumeAfterSuspension().catch((error) => {
-                    const errorMsg = isError(error) ? error.message : String(error);
+                    const errorMsg = error instanceof Error ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume perch after suspension' });
                     perchSessionRunner.clearSuspension();
                 });
@@ -315,7 +312,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             const registry = params.channelRegistry;
             const client = params.readyClient;
             const unmutedChannels = await registry.getUnmutedChannels();
-            const channelList = map(unmutedChannels, (channel: ChannelMetadata) => {
+            const channelList = unmutedChannels.map((channel: ChannelMetadata) => {
                 // Get guild name for disambiguation
                 let guildName: string | undefined;
                 if(channel.guildId !== 'DM') {

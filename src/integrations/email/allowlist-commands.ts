@@ -1,7 +1,5 @@
 import { logger } from '@hughescr/logger';
 import { SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
-import _join from 'lodash/join';
-import _map from 'lodash/map';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 
 /**
@@ -104,7 +102,7 @@ export class AllowlistCommandHandler {
                 return;
             }
 
-            const lines = _map(entries, (entry) => {
+            const lines = entries.map((entry) => {
                 const parts = [`**${entry.email}**`];
                 if(entry.name) {
                     parts.push(`Name: ${entry.name}`);
@@ -113,10 +111,10 @@ export class AllowlistCommandHandler {
                     parts.push(`Notes: ${entry.notes}`);
                 }
                 parts.push(`Added: ${entry.addedAt}`);
-                return _join(parts, ' | ');
+                return parts.join(' | ');
             });
 
-            await interaction.editReply({ content: _join(lines, '\n') });
+            await interaction.editReply({ content: lines.join('\n') });
         } catch (err: unknown) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, msg: 'Failed to list allowlist entries' });

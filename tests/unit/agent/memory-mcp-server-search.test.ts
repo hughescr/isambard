@@ -1,6 +1,5 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import _repeat from 'lodash/repeat';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -98,7 +97,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             { length: 300, 'char': 'A', shouldTruncate: true, description: 'truncate content preview to 200 characters' },
             { length: 200, 'char': 'B', shouldTruncate: false, description: 'not truncate content exactly at 200 characters' },
         ])('should $description', async ({ length, char, shouldTruncate }) => {
-            const content = _repeat(char, length);
+            const content = char.repeat(length);
             mockBackend.searchByTags = mock(async () => ({
                 items: [
                     {
@@ -119,10 +118,10 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
             const result = await handler({ tags: ['tag1'] });
 
-            expect(textContent(result.content[0])).toContain(_repeat(char, 200));
+            expect(textContent(result.content[0])).toContain(char.repeat(200));
             if(shouldTruncate) {
                 expect(textContent(result.content[0])).toContain('...');
-                expect(textContent(result.content[0])).not.toContain(_repeat(char, 201));
+                expect(textContent(result.content[0])).not.toContain(char.repeat(201));
             } else {
                 expect(textContent(result.content[0])).not.toContain('...');
             }

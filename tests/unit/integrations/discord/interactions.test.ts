@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { ButtonInteraction, Message, User, InteractionResponse } from 'discord.js';
-import _constant from 'lodash/constant';
 import type { PendingQuestion } from '@/agent/question-registry';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
@@ -37,7 +36,7 @@ describe('createInteractionHandler', () => {
             message:   mockMessage,
             channelId: 'ch1',
             channel:   {
-                isThread: _constant(false),
+                isThread: () => false,
             },
             reply:  mock().mockResolvedValue({} as InteractionResponse),
             update: mock().mockResolvedValue({} as InteractionResponse),
@@ -272,7 +271,7 @@ describe('createInteractionHandler', () => {
             message:   mockMessage,
             channelId: 'thread-123', // Thread ID
             channel:   {
-                isThread: _constant(true),
+                isThread: () => true,
                 parentId: 'parent-ch', // Parent channel ID
             },
             reply:  mock().mockResolvedValue({} as InteractionResponse),

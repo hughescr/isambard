@@ -6,8 +6,6 @@
  */
 
 import { logger } from '@hughescr/logger';
-import replace from 'lodash/replace';
-import trim from 'lodash/trim';
 import { getToolDescription, type SynopsisContext, type CatchUpSynopsisContext  } from './types.js';
 import { generateText } from '@/agent';
 import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
@@ -203,13 +201,13 @@ function buildPrompt(
 
     // Build system prompt with identity
     let systemPart = SYSTEM_PROMPT;
-    systemPart = replace(systemPart, '{identityContext}', identityContext);
+    systemPart = systemPart.replace('{identityContext}', identityContext);
 
     // Get user prompt template for this phase
     let userPart = USER_PROMPTS[phase];
 
     // Replace common placeholders
-    userPart = replace(userPart, '{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
+    userPart = userPart.replace('{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
 
     // Replace phase-specific placeholders
     // Stryker disable next-line ConditionalExpression: Phase check for thinking content
@@ -219,20 +217,20 @@ function buildPrompt(
         const thinkingSection = thinkingContent
             ? `Your internal thoughts so far: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
             : '';
-        userPart = replace(userPart, '{thinkingSection}', thinkingSection);
+        userPart = userPart.replace('{thinkingSection}', thinkingSection);
     }
 
     // Stryker disable next-line ConditionalExpression: Equivalent mutant — using_tool template lacks {responseFragment} so respondingphase block is a no-op anyway; templates don't cross-contaminate
     if(phase === 'using_tool') {
         const description = toolDescription ?? getToolDescription(toolName) ?? toolName ?? 'unknown tool';
-        userPart = replace(userPart, '{toolDescription}', description);
-        userPart = replace(userPart, '{toolInputSummary}', formatToolInputSummary(toolInput));
-        userPart = replace(userPart, '{accumulatedText}', (accumulatedText ?? '').slice(0, MAX_ACCUMULATED_TEXT_LENGTH));
+        userPart = userPart.replace('{toolDescription}', description);
+        userPart = userPart.replace('{toolInputSummary}', formatToolInputSummary(toolInput));
+        userPart = userPart.replace('{accumulatedText}', (accumulatedText ?? '').slice(0, MAX_ACCUMULATED_TEXT_LENGTH));
     }
 
     // Stryker disable next-line ConditionalExpression: Equivalent mutant — responding template lacks {toolDescription}/{toolInputSummary}/{accumulatedText} so using_tool block is a no-op anyway; templates don't cross-contaminate
     if(phase === 'responding') {
-        userPart = replace(userPart, '{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
+        userPart = userPart.replace('{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
     }
 
     // Combine system and user prompts
@@ -300,7 +298,7 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
-                const statusText = truncateToWordBoundary(trim(text), HARD_MAX_STATUS_LENGTH);
+                const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
 
                 // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
                 if(!statusText) {
@@ -348,17 +346,17 @@ export function createDynamicStatusGenerator(
             try {
                 // Build the prompt with context values
                 let prompt = SYSTEM_PROMPT;
-                prompt = replace(prompt, '{identityContext}', identityContext);
+                prompt = prompt.replace('{identityContext}', identityContext);
                 prompt = `${prompt}\n\n---\n\n${CATCH_UP_PROMPT}`;
 
                 // Replace placeholders with context values
-                prompt = replace(prompt, '{totalUnread}', String(context.totalUnread));
-                prompt = replace(prompt, '{channelCount}', String(context.channelCount));
-                prompt = replace(prompt, '{channelNames}', context.channelNames.join(', '));
-                prompt = replace(prompt, '{topAuthors}', context.topAuthors.join(', '));
-                prompt = replace(prompt, '{timeSinceLastActive}', context.timeSinceLastActive);
-                prompt = replace(prompt, '{timeOfDay}', context.timeOfDay);
-                prompt = replace(prompt, '{dayOfWeek}', context.dayOfWeek);
+                prompt = prompt.replace('{totalUnread}', String(context.totalUnread));
+                prompt = prompt.replace('{channelCount}', String(context.channelCount));
+                prompt = prompt.replace('{channelNames}', context.channelNames.join(', '));
+                prompt = prompt.replace('{topAuthors}', context.topAuthors.join(', '));
+                prompt = prompt.replace('{timeSinceLastActive}', context.timeSinceLastActive);
+                prompt = prompt.replace('{timeOfDay}', context.timeOfDay);
+                prompt = prompt.replace('{dayOfWeek}', context.dayOfWeek);
 
                 logger.debug({
                     totalUnread:  context.totalUnread,
@@ -368,7 +366,7 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
-                const statusText = truncateToWordBoundary(trim(text), HARD_MAX_STATUS_LENGTH);
+                const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
 
                 // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
                 if(!statusText) {

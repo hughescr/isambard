@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import isString from 'lodash/isString';
-import noop from 'lodash/noop';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
 import * as textGenerator from '@/agent/text-generator';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
@@ -50,7 +48,7 @@ describe('createInboxMCPServer', () => {
     // Helper function to extract text content from CallToolResult
     const getTextContent = (result: CallToolResult): string | undefined => {
         const content = result.content[0];
-        if(content && 'text' in content && isString(content.text)) {
+        if(content && 'text' in content && typeof content.text === 'string') {
             return content.text;
         }
         return undefined;
@@ -630,7 +628,7 @@ describe('createInboxMCPServer', () => {
             spies.push(spy);
 
             const mockStateManager: BotStateManager = {
-                markChannelViewed: mock(noop),
+                markChannelViewed: mock(() => undefined),
             } as unknown as BotStateManager;
 
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
@@ -684,7 +682,7 @@ describe('createInboxMCPServer', () => {
             mockInboxManager.getMessage = mock(() => message);
 
             const mockStateManager: BotStateManager = {
-                markChannelViewed: mock(noop),
+                markChannelViewed: mock(() => undefined),
             } as unknown as BotStateManager;
 
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);

@@ -21,9 +21,6 @@
 
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
-import filter from 'lodash/filter';
-import map from 'lodash/map';
-import noop from 'lodash/noop';
 import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
 
@@ -157,13 +154,13 @@ export class MessageCoordinator {
         });
 
         // Send initial typing indicator
-        // Stryker disable next-line ArrowFunction: Equivalent mutant - () => noop() and () => undefined both return undefined, suppressing the caught error
-        void state.typingChannel.sendTyping().catch(() => noop());
+        // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
+        void state.typingChannel.sendTyping().catch(() => undefined);
 
         // Set up refresh interval (Discord typing lasts ~10 seconds, refresh every 8s)
         state.typingInterval = setInterval(() => {
-            // Stryker disable next-line ArrowFunction: Equivalent mutant - () => noop() and () => undefined both return undefined, suppressing the caught error
-            void state.typingChannel?.sendTyping().catch(() => noop());
+            // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
+            void state.typingChannel?.sendTyping().catch(() => undefined);
         }, 8000);
     }
 
@@ -267,13 +264,13 @@ export class MessageCoordinator {
         state.pendingMessages = [];
 
         // Separate original messages (discordMessage === null) from new ones
-        const originalMessages = filter(pendingMessages, ['discordMessage', null]);
-        const newMessages = filter(pendingMessages, msg => msg.discordMessage !== null);
+        const originalMessages = pendingMessages.filter(msg => msg.discordMessage === null);
+        const newMessages = pendingMessages.filter(msg => msg.discordMessage !== null);
 
         // Build contexts array: original + new
         const allContexts = [
-            ...map(originalMessages, 'context'),
-            ...map(newMessages, 'context'),
+            ...originalMessages.map(msg => msg.context),
+            ...newMessages.map(msg => msg.context),
         ];
 
         // Get the first Discord message for this batch
@@ -286,7 +283,7 @@ export class MessageCoordinator {
         const partialResumeContext = state.partialWork
             ? {
                 partialWork: state.partialWork,
-                newMessages: map(newMessages, 'context'),
+                newMessages: newMessages.map(msg => msg.context),
             }
             : null;
 
@@ -403,7 +400,7 @@ export class MessageCoordinator {
                     state.interruptedFirstMessage ??= state.activeQuery.firstDiscordMessage;
 
                     // Re-queue original messages (with null discordMessage)
-                    const reQueuedOriginals = map(state.activeQuery.originalContexts, ctx => ({
+                    const reQueuedOriginals = state.activeQuery.originalContexts.map(ctx => ({
                         context:        ctx,
                         discordMessage: null,
                     }));

@@ -1,9 +1,6 @@
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import _filter from 'lodash/filter';
-import _map from 'lodash/map';
-import _replace from 'lodash/replace';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runReconciliation, delay, retryWithBackoff, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '@/storage/memory-tool/types';
@@ -173,7 +170,7 @@ describe('runReconciliation', () => {
         // Group items by tag
         const byTag = new Map<string, TagIndexItem[]>();
         for(const item of items) {
-            const tag = _replace(item.PK, 'TAG#', '');
+            const tag = item.PK.replace('TAG#', '');
             if(!byTag.has(tag)) {
                 byTag.set(tag, []);
             }
@@ -181,7 +178,7 @@ describe('runReconciliation', () => {
         }
 
         // Mock GSI2 query returning tag names
-        const tagCountItems = _map([...byTag.keys()], tag => ({
+        const tagCountItems = [...byTag.keys()].map(tag => ({
             PK:     `TAG#${tag}`,
             SK:     'META_COUNT',
             GSI2PK: 'TAG_COUNTS',
@@ -243,10 +240,9 @@ describe('runReconciliation', () => {
             await runReconciliation(deps, options);
 
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            const gsi1Calls = _filter(queryCalls, call =>
+            const gsi1Calls = queryCalls.filter(call =>
                 call.args[0].input.IndexName === 'GSI1'
-                && ['LAYER#identity', 'LAYER#state', 'LAYER#events'].includes(call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] as string)
-            );
+                && ['LAYER#identity', 'LAYER#state', 'LAYER#events'].includes(call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] as string));
 
             expect(gsi1Calls).toHaveLength(3);
         });
@@ -1357,10 +1353,9 @@ describe('runReconciliation', () => {
             // Verify GSI2 TAG_COUNTS was NOT queried for checkOldPathIndicesClean
             // (it IS queried for Phase B and Phase C, but not for Phase A's checkOldPathIndicesClean)
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            const gsi2CheckCalls = _filter(queryCalls, call =>
+            const gsi2CheckCalls = queryCalls.filter(call =>
                 call.args[0].input.IndexName === 'GSI2'
-                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS'
-            );
+                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS');
             // Phase B + Phase C each make one GSI2 call, but NOT Phase A's checkOldPathIndicesClean
             const getItemCalls = ddbMock.commandCalls(GetCommand);
             expect(getItemCalls.length).toBeGreaterThanOrEqual(2);
@@ -1516,10 +1511,9 @@ describe('runReconciliation', () => {
             expect(result.phaseA.metadataCleaned).toBe(1);
             // GSI2 TAG_COUNTS was queried (fallback path for Phase A) + Phase B
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            const gsi2Calls = _filter(queryCalls, call =>
+            const gsi2Calls = queryCalls.filter(call =>
                 call.args[0].input.IndexName === 'GSI2'
-                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS'
-            );
+                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS');
             // Phase A fallback + Phase B = 2 GSI2 calls
             expect(gsi2Calls.length).toBeGreaterThanOrEqual(2);
         });
@@ -1592,10 +1586,9 @@ describe('runReconciliation', () => {
 
             // Phase B should query GSI2 with TAG_COUNTS partition key
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            const gsi2Calls = _filter(queryCalls, call =>
+            const gsi2Calls = queryCalls.filter(call =>
                 call.args[0].input.IndexName === 'GSI2'
-                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS'
-            );
+                && call.args[0].input.ExpressionAttributeValues?.[':gsi2pk'] === 'TAG_COUNTS');
             expect(gsi2Calls.length).toBeGreaterThanOrEqual(1);
         });
 
@@ -1896,10 +1889,9 @@ describe('runReconciliation', () => {
 
             // Verify Phase B queries use begins_with(SK, 'PATH#') to exclude META_COUNT naturally
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            const phaseBTagQueryCalls = _filter(queryCalls, call =>
+            const phaseBTagQueryCalls = queryCalls.filter(call =>
                 call.args[0].input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)'
-                && call.args[0].input.ExpressionAttributeValues?.[':skPrefix'] === 'PATH#'
-            );
+                && call.args[0].input.ExpressionAttributeValues?.[':skPrefix'] === 'PATH#');
             expect(phaseBTagQueryCalls.length).toBeGreaterThanOrEqual(1);
         });
     });
@@ -2074,7 +2066,7 @@ describe('runReconciliation', () => {
 
             // Verify Query was called with correct parameters
             const queryCalls = ddbMock.commandCalls(QueryCommand);
-            const countQueryCalls = _filter(queryCalls, ['args.0.input.KeyConditionExpression', 'PK = :pk AND begins_with(SK, :skPrefix)']);
+            const countQueryCalls = queryCalls.filter(call => call.args[0].input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)');
 
             expect(countQueryCalls).toHaveLength(1);
             const queryInput = countQueryCalls[0].args[0].input;

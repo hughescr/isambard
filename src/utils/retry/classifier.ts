@@ -1,6 +1,3 @@
-import isError from 'lodash/isError';
-import isObject from 'lodash/isObject';
-import isString from 'lodash/isString';
 import type { ErrorClassification, ErrorClassifier } from './types';
 
 /**
@@ -10,9 +7,9 @@ import type { ErrorClassification, ErrorClassifier } from './types';
 export const defaultClassifier: ErrorClassifier = (error: unknown): ErrorClassification => {
     let message = 'Unknown error';
 
-    if(isError(error) && error.message) {
+    if(error instanceof Error && error.message) {
         message = error.message;
-    } else if(isString(error) && error) {
+    } else if(typeof error === 'string' && error) {
         message = error;
     }
 
@@ -30,7 +27,7 @@ interface HttpStatusClassifierOptions {
  * Extract error message from HTTP error object
  */
 function getHttpErrorMessage(error: object & { message?: unknown }, status: number): string {
-    if('message' in error && isString(error.message) && error.message) {
+    if('message' in error && typeof error.message === 'string' && error.message) {
         return error.message;
     }
     return `HTTP ${status}`;
@@ -45,7 +42,7 @@ function getRetryAfter(error: object & { retryAfter?: unknown }): number | undef
         return undefined;
     }
 
-    const retryAfter = isString(error.retryAfter)
+    const retryAfter = typeof error.retryAfter === 'string'
         ? Number.parseInt(error.retryAfter, 10)
         : (error.retryAfter as number);
 
@@ -59,7 +56,7 @@ function classifyHttpStatus(
     error: object & { status: unknown, message?: unknown, retryAfter?: unknown },
     permanentStatuses: number[]
 ): ErrorClassification | undefined {
-    const status = isString(error.status)
+    const status = typeof error.status === 'string'
         ? Number.parseInt(error.status, 10)
         : (error.status as number);
 
@@ -105,8 +102,8 @@ function classifyNetworkError(error: object & { code?: unknown, message?: unknow
     // Stryker disable next-line StringLiteral: Network error code configuration — exact strings are protocol constants
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
 
-    if(isString(error.code) && networkErrorCodes.includes(error.code)) {
-        const message = 'message' in error && isString(error.message) && error.message
+    if(typeof error.code === 'string' && networkErrorCodes.includes(error.code)) {
+        const message = 'message' in error && typeof error.message === 'string' && error.message
             ? error.message
             : 'Unknown error';
 
@@ -128,7 +125,7 @@ export const createHttpStatusClassifier = (
     const { permanentStatuses = [] } = options;
 
     return (error: unknown): ErrorClassification => {
-        if(!isObject(error)) {
+        if(!(typeof error === 'object' && error !== null)) {
             return defaultClassifier(error);
         }
 

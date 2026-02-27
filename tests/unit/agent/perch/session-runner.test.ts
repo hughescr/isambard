@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
-import type { Logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import constant from 'lodash/constant';
+import type { Logger } from '@hughescr/logger';
 import type { ContextBuilder } from '@/agent/context-builder';
 import {
     createPerchSessionRunner,
@@ -28,14 +27,14 @@ function createMockLogger(): Logger {
 // Mock context builder
 function createMockContextBuilder(overrides?: Partial<ContextBuilder>): ContextBuilder {
     return {
-        loadCoreIdentity:       mock(constant(Promise.resolve(''))),
-        loadHotState:           mock(constant(Promise.resolve(''))),
-        loadUserMemories:       mock(constant(Promise.resolve(''))),
-        recordAccess:           mock(constant(Promise.resolve())),
+        loadCoreIdentity:       mock(() => Promise.resolve('')),
+        loadHotState:           mock(() => Promise.resolve('')),
+        loadUserMemories:       mock(() => Promise.resolve('')),
+        recordAccess:           mock(() => Promise.resolve()),
         loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
-        loadUserTimezone:       mock(constant(Promise.resolve(undefined))),
-        buildUserMessagePrefix: mock(constant(Promise.resolve(''))),
-        buildPerchContext:      mock(constant(Promise.resolve(''))),
+        loadUserTimezone:       mock(() => Promise.resolve(undefined)),
+        buildUserMessagePrefix: mock(() => Promise.resolve('')),
+        buildPerchContext:      mock(() => Promise.resolve('')),
         ...overrides,
     };
 }

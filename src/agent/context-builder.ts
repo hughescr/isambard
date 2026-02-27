@@ -6,10 +6,6 @@
  */
 
 import { logger } from '@hughescr/logger';
-import _isNumber from 'lodash/isNumber';
-import _isString from 'lodash/isString';
-import _map from 'lodash/map';
-import _sortBy from 'lodash/sortBy';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
@@ -171,7 +167,7 @@ function formatRejectedDraftLine(
     if(!metaData?.rejectedAt) {
         return undefined;
     }
-    const reason    = _isString(metaData.reason) ? metaData.reason : undefined;
+    const reason    = typeof metaData.reason === 'string' ? metaData.reason : undefined;
     // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive length check; to is always non-empty when the caller has verified it has addresses
     const firstTo   = to && to.length > 0 ? to[0] : undefined;
     const toAddress = firstTo?.address;
@@ -220,7 +216,7 @@ async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Prom
             continue;
         }
         // Stryker disable next-line ArrayDeclaration: defensive fallback for missing to field — equivalent to empty address list
-        const toStr  = _map(msg.to ?? [], 'address').join(', ');
+        const toStr  = (msg.to ?? []).map(addr => addr.address).join(', ');
         const subject = msg.subject ?? '(no subject)';
         // Stryker disable next-line StringLiteral: Cosmetic line format
         gaveUpLines.push(`- Drafts:${uid} to ${toStr} — "${subject}"`);
@@ -419,7 +415,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
 
             // Format and truncate if needed
-            const content = _map(result.items, 'content').join('\n\n');
+            const content = result.items.map(item => item.content).join('\n\n');
             if(content.length > maxIdentityChars) {
                 const truncated = `${content.slice(0, maxIdentityChars - 3)}...`;
                 const overflowNote = `\n\n...and ${result.items.length} total identity memories (use 'list /identity' to see all)`;
@@ -531,7 +527,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 // Get current access count from metadata
                 // Stryker disable next-line OptionalChaining: metadata always exists per schema, ?. is defensive
                 // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata is non-nullable per schema but accessed via generic DynamoDB record type
-                const currentAccessCount = _isNumber(item.metadata?.accessCount)
+                const currentAccessCount = typeof item.metadata?.accessCount === 'number'
                     ? item.metadata.accessCount
                     : 0;
 
@@ -570,7 +566,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             }
 
             // Ensure ascending order: searchByTimeRange returns ascending, but listByLayer fallback returns descending
-            result = _sortBy(result, ['updatedAt']);
+            result = result.toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt));
 
             logger.debug({ eventCount: result.length }, 'Recent events loaded');
             return { items: result, isFallback };

@@ -4,8 +4,6 @@
  * Builds a special "resume prompt" that tells the LLM what happened during an interruption
  * and provides context for continuing processing after new messages arrive.
  */
-
-import map from 'lodash/map';
 import type { StreamProgress } from './stream-tracker';
 import type { MessageContext } from './types';
 
@@ -67,12 +65,11 @@ export function buildResumePrompt(context: ResumeContext): string {
     }
 
     // 6. New Messages (always included)
-    const messageBlocks = map(context.newMessages, msg =>
+    const messageBlocks = context.newMessages.map(msg =>
         `Time: ${msg.timestamp}\n`
         + `Channel: #${msg.channelId}\n`
         + `User: @${msg.userId}\n`
-        + `Content: ${msg.content}`
-    );
+        + `Content: ${msg.content}`);
 
     sections.push(
         `[New message(s) received:]\n${

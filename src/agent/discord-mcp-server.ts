@@ -3,10 +3,6 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
-import isArray from 'lodash/isArray';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
-import startsWith from 'lodash/startsWith';
 import { z } from 'zod';
 // eslint-disable-next-line no-warning-comments, sonarjs/todo-tag -- tracked in roadmap, not forgotten
 // TODO: Decouple - Discord MCP server should expose platform-agnostic MCP tool interfaces wrapping messaging platform capabilities
@@ -501,7 +497,7 @@ export function createDiscordMCPServer(
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -543,7 +539,7 @@ export function createDiscordMCPServer(
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -569,7 +565,7 @@ export function createDiscordMCPServer(
                     try {
                         const channelId = resolveChannelId(args.channelId, channelRegistry);
                         // Handle array input
-                        if(isArray(args.messageId)) {
+                        if(Array.isArray(args.messageId)) {
                             const results = await searchService.getMessagesById(
                                 channelId,
                                 args.messageId
@@ -607,7 +603,7 @@ export function createDiscordMCPServer(
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -677,7 +673,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         let resolvedChannelId: typeof args.channelId;
 
                         // First, check for @username (DM resolution)
-                        if(startsWith(args.channelId, '@')) {
+                        if(args.channelId.startsWith('@')) {
                             const username = args.channelId.slice(1); // Remove @
                             const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
                             if(!dmChannelId) {
@@ -729,7 +725,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         const result = {
                             success:     true,
-                            messageIds:  map(sentMessages, 'id'),
+                            messageIds:  sentMessages.map(msg => msg.id),
                             chunksCount: chunks.length,
                             ...(threadId && { threadId }),
                             ...(validatedFiles && { filesAttached: validatedFiles.length }),
@@ -739,7 +735,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -844,7 +840,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         // 8. Format and return result
                         return formatQuestionResult(result, questionId, args.channelId, threadId);
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -897,7 +893,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         }
 
                         // Normalize emoji to array
-                        const emojis = isArray(args.emoji) ? args.emoji : [args.emoji];
+                        const emojis = Array.isArray(args.emoji) ? args.emoji : [args.emoji];
 
                         // Add reactions sequentially
                         const addedEmojis: string[] = [];
@@ -913,7 +909,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                                 );
                                 addedEmojis.push(emoji);
                             } catch (error) {
-                                const errorMessage = isError(error) ? error.message : String(error);
+                                const errorMessage = error instanceof Error ? error.message : String(error);
                                 failedEmojis.push({ emoji, error: errorMessage });
                             }
                         }
@@ -939,7 +935,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             ...(failedEmojis.length > 0 && { isError: true }),
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
                         return {
@@ -970,7 +966,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'muteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -1001,7 +997,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'unmuteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
                         return {
@@ -1031,7 +1027,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             : await channelRegistry.getUnmutedChannels();
 
                         // Format output
-                        const formatted = map(channels, ch => ({
+                        const formatted = channels.map(ch => ({
                             channelId:     ch.channelId,
                             channelName:   ch.channelName,
                             guildId:       ch.guildId,
@@ -1043,7 +1039,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             content: [{ type: 'text' as const, text: JSON.stringify({ channels: formatted, count: formatted.length }) }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'listChannels', error: message }, 'Discord tool returned error');
                         return {

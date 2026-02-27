@@ -5,13 +5,6 @@
  * Discord message search functionality. Handles text filtering,
  * pagination with overflow summaries, and time range queries.
  */
-
-import drop from 'lodash/drop';
-import filter from 'lodash/filter';
-import includes from 'lodash/includes';
-import sortBy from 'lodash/sortBy';
-import take from 'lodash/take';
-import toLower from 'lodash/toLower';
 import type { z } from 'zod';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
@@ -174,24 +167,23 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
         let allMessages: DiscordSearchResult[] = fetchResult.messages;
 
         // 4. Sort by timestamp (oldest first) - snowflakes sort chronologically
-        allMessages = sortBy(allMessages, 'id');
+        allMessages = allMessages.toSorted((a, b) => a.id.localeCompare(b.id));
 
         // 5. Filter by text query if provided
-        // Stryker disable next-line ConditionalExpression: if(true) is equivalent since includes(x, '') is always true
+        // Stryker disable next-line ConditionalExpression: if(true) is equivalent since x.includes('') is always true
         if(query) {
-            const lowerQuery = toLower(query);
-            allMessages = filter(allMessages, msg =>
-                includes(toLower(msg.content), lowerQuery)
-            );
+            const lowerQuery = query.toLowerCase();
+            allMessages = allMessages.filter(msg =>
+                msg.content.toLowerCase().includes(lowerQuery));
         }
 
         // 6. Apply limit and handle overflow
         const totalFound = allMessages.length;
-        const returnMessages = take(allMessages, limit);
+        const returnMessages = allMessages.slice(0, limit);
 
         let overflow: SearchResponse['overflow'] = undefined;
         if(allMessages.length > limit) {
-            const overflowMessages = drop(allMessages, limit);
+            const overflowMessages = allMessages.slice(limit);
 
             if(searchOptions?.summarizeOverflow === false) {
                 // Count-only overflow (no Haiku calls)
@@ -202,7 +194,7 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
                 };
             } else {
                 // Batch summarization (Fix 3): cap at 100, batch into groups of 10
-                const cappedOverflow = take(overflowMessages, MAX_OVERFLOW_FOR_SUMMARY);
+                const cappedOverflow = overflowMessages.slice(0, MAX_OVERFLOW_FOR_SUMMARY);
                 const batchSummaries = await summarizer.summarizeMessageBatch(cappedOverflow);
                 overflow = {
                     count: overflowMessages.length,

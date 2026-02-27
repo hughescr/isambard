@@ -1,10 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
-import { logger } from '@hughescr/logger';
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
-import filter from 'lodash/filter';
-import find from 'lodash/find';
-import map from 'lodash/map';
 import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
 import type { ResumeContext } from '@/agent/resume-prompt-builder';
 import { StreamTracker } from '@/agent/stream-tracker';
@@ -1920,7 +1917,7 @@ describe('MessageCoordinator', () => {
             // After interruption and resume, all three messages should be batched
             expect(receivedContexts.length).toBeGreaterThanOrEqual(3);
             // Verify all message IDs are present
-            const messageIds = map(receivedContexts, 'messageId');
+            const messageIds = receivedContexts.map(ctx => ctx.messageId);
             expect(messageIds).toContain('msg-001'); // Original
             expect(messageIds).toContain('msg-002'); // New
             expect(messageIds).toContain('msg-003'); // New
@@ -3612,7 +3609,7 @@ describe('MessageCoordinator', () => {
 
             // Verify the exact values by checking the calls
             const calls = loggerDebugSpy.mock.calls;
-            const debugCall = find(calls, (call) => {
+            const debugCall = calls.find((call) => {
                 const arg = call[0] as { channelId?: string, msg?: string, hasExisting?: boolean };
                 return arg.msg === 'startTypingIndicator called';
             });
@@ -3649,7 +3646,7 @@ describe('MessageCoordinator', () => {
             jest.advanceTimersByTime(10);
 
             // Verify hasExisting is logged for first call (should be false)
-            const debugCalls = filter(loggerDebugSpy.mock.calls, (call) => {
+            const debugCalls = loggerDebugSpy.mock.calls.filter((call) => {
                 const arg = call[0] as { msg?: string };
                 return arg.msg === 'startTypingIndicator called';
             });

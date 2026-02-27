@@ -1,5 +1,4 @@
 import heicConvert from 'heic-convert';
-import isError from 'lodash/isError';
 import { isConvertibleImageType } from './types';
 
 export interface ConversionResult {
@@ -31,7 +30,7 @@ export async function convert(buffer: Buffer, contentType: string): Promise<Conv
             mediaType: 'image/png',
         };
     } catch (error) {
-        const message = isError(error) ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         throw new Error(`HEIC conversion failed: ${message}`, { cause: error });
     }
 }

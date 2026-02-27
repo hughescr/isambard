@@ -1,8 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import _constant from 'lodash/constant';
-import isArray from 'lodash/isArray';
-import _repeat from 'lodash/repeat';
 import { mockGenerateText, mockLogger } from '../../../../setup';
 import {
     createDynamicStatusGenerator,
@@ -420,7 +417,7 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                const longMessage = _repeat('A', 300);
+                const longMessage = 'A'.repeat(300);
                 const context: SynopsisContext = {
                     phase:       'thinking',
                     userMessage: longMessage,
@@ -429,8 +426,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain(_repeat('A', 200));
-                expect(prompt).not.toContain(_repeat('A', 201));
+                expect(prompt).toContain('A'.repeat(200));
+                expect(prompt).not.toContain('A'.repeat(201));
             });
 
             it('should include thinking content when provided', async () => {
@@ -513,7 +510,7 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                const longThinking = _repeat('T', 600);
+                const longThinking = 'T'.repeat(600);
                 const context: SynopsisContext = {
                     phase:           'thinking',
                     userMessage:     'Test',
@@ -523,8 +520,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain(_repeat('T', 500));
-                expect(prompt).not.toContain(_repeat('T', 501));
+                expect(prompt).toContain('T'.repeat(500));
+                expect(prompt).not.toContain('T'.repeat(501));
             });
         });
 
@@ -621,7 +618,7 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                const longInput = { data: _repeat('x', 300) };
+                const longInput = { data: 'x'.repeat(300) };
                 const context: SynopsisContext = {
                     phase:       'using_tool',
                     userMessage: 'Test',
@@ -700,7 +697,7 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                const longText = _repeat('Y', 200);
+                const longText = 'Y'.repeat(200);
                 const context: SynopsisContext = {
                     phase:           'using_tool',
                     userMessage:     'Test',
@@ -711,8 +708,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain(_repeat('Y', 150));
-                expect(prompt).not.toContain(_repeat('Y', 151));
+                expect(prompt).toContain('Y'.repeat(150));
+                expect(prompt).not.toContain('Y'.repeat(151));
             });
 
             it('should handle missing accumulated text gracefully', async () => {
@@ -759,7 +756,7 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                const longFragment = _repeat('Z', 150);
+                const longFragment = 'Z'.repeat(150);
                 const context: SynopsisContext = {
                     phase:            'responding',
                     userMessage:      'Test',
@@ -769,8 +766,8 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain(_repeat('Z', 100));
-                expect(prompt).not.toContain(_repeat('Z', 101));
+                expect(prompt).toContain('Z'.repeat(100));
+                expect(prompt).not.toContain('Z'.repeat(101));
             });
 
             it('should handle missing response fragment gracefully', async () => {
@@ -793,9 +790,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('output handling', () => {
             it('should truncate output to HARD_MAX_STATUS_LENGTH (80 characters)', async () => {
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('This is a very long status message that exceeds eighty characters and keeps going on and on and on')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('This is a very long status message that exceeds eighty characters and keeps going on and on and on'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -813,9 +808,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should trim whitespace from output', async () => {
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('  Pondering...  ')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('  Pondering...  '));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -894,7 +887,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should return null on empty response', async () => {
-                mockGenerateText.mockImplementation(_constant(Promise.resolve('')));
+                mockGenerateText.mockImplementation(() => Promise.resolve(''));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -911,7 +904,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should return null on whitespace-only response', async () => {
-                mockGenerateText.mockImplementation(_constant(Promise.resolve('   ')));
+                mockGenerateText.mockImplementation(() => Promise.resolve('   '));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -949,9 +942,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should use cached status when within cooldown', async () => {
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('First status')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('First status'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -966,9 +957,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(first).toBe('First status');
 
                 // Change the mock for second call (but it should use cache)
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('Second status')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('Second status'));
 
                 const second = await generator.generateSynopsis(context);
                 expect(second).toBe('First status'); // Should use cached value
@@ -1248,7 +1237,7 @@ describe('DynamicStatusGenerator', () => {
                     (fn as { mockClear: () => void }).mockClear();
                     // Also verify the mock has a .mock.calls array (meaning it's recording)
                     const mockCalls = (fn as { mock: { calls: unknown[] } }).mock?.calls;
-                    return isArray(mockCalls);
+                    return Array.isArray(mockCalls);
                 } catch{
                     return false;
                 }
@@ -1284,9 +1273,7 @@ describe('DynamicStatusGenerator', () => {
                     return;
                 }
 
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('Pondering code...')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('Pondering code...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1391,9 +1378,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('each phase type', () => {
             it('should handle thinking phase correctly', async () => {
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('Pondering the question...')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('Pondering the question...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1410,9 +1395,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should handle using_tool phase correctly', async () => {
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('Consulting memories...')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('Consulting memories...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1433,9 +1416,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should handle responding phase correctly', async () => {
-                mockGenerateText.mockImplementation(_constant(
-                    Promise.resolve('Crafting a response...')
-                ));
+                mockGenerateText.mockImplementation(() => Promise.resolve('Crafting a response...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1550,7 +1531,7 @@ describe('DynamicStatusGenerator', () => {
 
                 // Create an object whose JSON stringification is exactly 200 characters
                 // {"data":"..."} is 11 chars for the wrapper, so we need 189 x's
-                const exactInput = { data: _repeat('x', 189) };
+                const exactInput = { data: 'x'.repeat(189) };
                 const json = JSON.stringify(exactInput);
                 expect(json.length).toBe(200); // Verify our test setup is correct
 

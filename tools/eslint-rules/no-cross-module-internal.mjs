@@ -1,4 +1,4 @@
-/* eslint-disable lodash/prefer-lodash-method, complexity -- ESLint rules require sync file operations and native methods, complex logic unavoidable */
+/* eslint-disable complexity -- ESLint rules require sync file operations and native methods, complex logic unavoidable */
 /**
  * ESLint Rule: no-cross-module-internal
  *

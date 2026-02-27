@@ -3,9 +3,6 @@
  *
  * Defines the agent's identity, capabilities, and behavioral guidelines.
  */
-
-import map from 'lodash/map';
-import replace from 'lodash/replace';
 import type { ContextBuilder } from '../context-builder.js';
 
 /**
@@ -322,8 +319,8 @@ export async function buildSystemPrompt(
 
     // Add Discord Channel Context if channelList is provided and non-empty
     if(channelList && channelList.length > 0) {
-        const formattedChannels = map(channelList, (channel: string) => `#${channel}`).join(', ');
-        const discordContext = replace(DISCORD_CHANNEL_CONTEXT, '{CHANNEL_LIST}', formattedChannels);
+        const formattedChannels = channelList.map((channel: string) => `#${channel}`).join(', ');
+        const discordContext = DISCORD_CHANNEL_CONTEXT.replace('{CHANNEL_LIST}', formattedChannels);
         systemPrompt += `\n\n${discordContext}`;
     }
 

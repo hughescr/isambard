@@ -1,8 +1,5 @@
 import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
-import filter from 'lodash/filter';
-import map from 'lodash/map';
-import values from 'lodash/values';
 import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
 import { type EmailMetadata, type EmailAddress, type EmailHeaders, EmailFolder  } from '@/integrations/email/types';
 
@@ -279,8 +276,8 @@ export class WildDuckClient {
         await this.authenticate();
         await this.loadMailboxes();
         // Create any missing required folders
-        // eslint-disable-next-line lodash/chaining -- two-step: values() + filter(); chain has single method, direct composition preferred for readability
-        const missingFolders = filter(values(EmailFolder), folder => !this.reverseMailboxMap.has(folder));
+
+        const missingFolders = Object.values(EmailFolder).filter(folder => !this.reverseMailboxMap.has(folder));
         if(missingFolders.length > 0) {
             for(const folder of missingFolders) {
                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited WildDuck API per folder
@@ -338,13 +335,13 @@ export class WildDuckClient {
             query:     { keyword },
             mailboxes: [mailboxPath],
         });
-        const uids = map(results, (result) => {
+        const uids = results.map((result) => {
             const colonIdx = result.message.lastIndexOf(':');
             // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator,ArithmeticOperator: guard against missing colon in search result; message is always 'folder:uid' format so colonIdx===-1 is defensive; UnaryOperator(-1→+1) is equivalent since message always has a colon
             return colonIdx === -1 ? 0 : Number.parseInt(result.message.slice(colonIdx + 1), 10);
         });
         // Stryker disable next-line EqualityOperator: filter uids > 0 removes sentinel zeros for bad results
-        return filter(uids, uid => uid > 0);
+        return uids.filter(uid => uid > 0);
     }
 
     /**
@@ -716,7 +713,7 @@ export class WildDuckClient {
         const url = `/users/me/search?${searchParams.toString()}`;
         const response = await this.makeRequest<SearchResponse>(url, { method: 'GET' });
 
-        return map(response.results, result => this.mapSearchResult(result));
+        return response.results.map(result => this.mapSearchResult(result));
     }
 
     private mapSearchResult(result: SearchResultEntry): WildDuckSearchResult {
@@ -728,7 +725,7 @@ export class WildDuckClient {
             ? `${result.from.name} <${result.from.address ?? ''}>`
             : (result.from.address ?? '');
 
-        const to = map(result.to, addr => (
+        const to = result.to.map(addr => (
             addr.name ? `${addr.name} <${addr.address ?? ''}>` : (addr.address ?? '')
         ));
         // Stryker restore StringLiteral
@@ -910,14 +907,14 @@ export class WildDuckClient {
 
         // Map addresses
         const from = response.from ? mapAddress(response.from) : { address: '' };
-        const to   = map(response.to ?? [], mapAddress);
-        const cc   = map(response.cc ?? [], mapAddress);
+        const to   = (response.to ?? []).map(addr => mapAddress(addr));
+        const cc   = (response.cc ?? []).map(addr => mapAddress(addr));
 
         // Map headers
         const headers = this.mapHeaders(response.headers ?? {}, response.replyTo);
 
         // Map attachment metadata for lazy fetching (data not fetched here)
-        const attachmentMeta: WildDuckAttachmentMeta[] = map(response.attachments ?? [], att => ({
+        const attachmentMeta: WildDuckAttachmentMeta[] = (response.attachments ?? []).map(att => ({
             id:          att.id,
             filename:    att.filename,
             contentType: att.contentType,

@@ -4,8 +4,8 @@
  * The skill-agent loader syncs agents and skills from a source directory
  * to the scratch/.claude/ directory structure for Claude Agent SDK.
  */
-import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import path from 'node:path';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 import { syncAgentsAndSkills } from '@/agent/skill-agent-loader';
 

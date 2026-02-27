@@ -1,6 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import constant from 'lodash/constant';
-import noop from 'lodash/noop';
 import { withDynamoTimeout, DynamoTimeoutError } from '@/storage/dynamo-retry';
 import type { RetryLogger } from '@/utils/retry/types';
 
@@ -42,7 +40,7 @@ describe('withDynamoTimeout', () => {
 
     describe('successful operations', () => {
         it('should return result when operation completes before timeout', async () => {
-            const operation = mock(constant(Promise.resolve('success')));
+            const operation = mock(() => Promise.resolve('success'));
 
             const result = await withDynamoTimeout(operation, {
                 timeoutMs: 5000,
@@ -56,7 +54,7 @@ describe('withDynamoTimeout', () => {
         });
 
         it('should work without logger', async () => {
-            const operation = mock(constant(Promise.resolve(42)));
+            const operation = mock(() => Promise.resolve(42));
 
             const result = await withDynamoTimeout(operation, {
                 timeoutMs: 5000,
@@ -87,7 +85,7 @@ describe('withDynamoTimeout', () => {
         it('should throw DynamoTimeoutError when operation exceeds timeout', async () => {
             const operation = mock(async () => {
                 // Never resolves
-                return new Promise(noop);
+                return new Promise(() => {});
             });
 
             const resultPromise = withDynamoTimeout(operation, {
@@ -105,7 +103,7 @@ describe('withDynamoTimeout', () => {
 
         it('should log error when timeout occurs', async () => {
             const operation = mock(async () => {
-                return new Promise(noop); // Never resolves
+                return new Promise(() => {}); // Never resolves
             });
 
             const resultPromise = withDynamoTimeout(operation, {
@@ -127,7 +125,7 @@ describe('withDynamoTimeout', () => {
 
         it('should include operation name and timeout in thrown error', async () => {
             const operation = mock(async () => {
-                return new Promise(noop);
+                return new Promise(() => {});
             });
 
             const resultPromise = withDynamoTimeout(operation, {
@@ -152,7 +150,7 @@ describe('withDynamoTimeout', () => {
 
         it('should not log error when timeout occurs but no logger provided', async () => {
             const operation = mock(async () => {
-                return new Promise(noop);
+                return new Promise(() => {});
             });
 
             const resultPromise = withDynamoTimeout(operation, {
@@ -171,7 +169,7 @@ describe('withDynamoTimeout', () => {
 
     describe('boundary conditions', () => {
         it('should succeed when operation completes exactly at timeout', async () => {
-            const operation = mock(constant(Promise.resolve('boundary-success')));
+            const operation = mock(() => Promise.resolve('boundary-success'));
 
             const result = await withDynamoTimeout(operation, {
                 timeoutMs: 2000,
@@ -185,7 +183,7 @@ describe('withDynamoTimeout', () => {
 
         it('should timeout when operation takes timeout + 1ms', async () => {
             const operation = mock(async () => {
-                return new Promise(noop); // Never completes
+                return new Promise(() => {}); // Never completes
             });
 
             const resultPromise = withDynamoTimeout(operation, {
@@ -204,7 +202,7 @@ describe('withDynamoTimeout', () => {
         it('should handle multiple concurrent operations independently', async () => {
             const fastOp = mock(() => Promise.resolve('fast'));
 
-            const slowOp = mock(() => new Promise(noop)); // Never completes
+            const slowOp = mock(() => new Promise(() => {})); // Never completes
 
             const fast = withDynamoTimeout(fastOp, {
                 timeoutMs: 2000,

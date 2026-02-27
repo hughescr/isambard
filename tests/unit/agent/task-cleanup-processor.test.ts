@@ -7,12 +7,10 @@
  * - Age (retention period, default 14 days)
  * - Dependencies (tasks that block active tasks must be retained)
  */
+import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { type logger } from '@hughescr/logger';
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import constant from 'lodash/constant';
-import filter from 'lodash/filter';
 import { mockLogger } from '../../setup';
 import { createTaskCleanupProcessor, getTaskDirectoryPath, type TaskCleanupDeps } from '@/agent/task-cleanup-processor';
 import type { SessionId } from '@/storage/task-session/types';
@@ -21,7 +19,7 @@ import type { SessionId } from '@/storage/task-session/types';
 const mockReaddir = mock((_path: string) => Promise.resolve([] as string[]));
 const mockReadFile = mock((_path: string, _encoding?: string) => Promise.resolve(''));
 const mockWriteFile = mock((_path: string, _content: string) => Promise.resolve());
-const mockStat = mock((_path: string) => Promise.resolve({ mtime: new Date(), isDirectory: constant(false), isFile: constant(true) }));
+const mockStat = mock((_path: string) => Promise.resolve({ mtime: new Date(), isDirectory: () => false, isFile: () => true }));
 const mockMkdir = mock((_path: string, _options?: object) => Promise.resolve());
 
 // Create a deps object that can be used in tests with proper type cast
@@ -682,15 +680,15 @@ describe('processTaskDirectory', () => {
             });
 
             const fileStats = {
-                isDirectory: constant(false),
-                isFile:      constant(true),
+                isDirectory: () => false,
+                isFile:      () => true,
                 mtime:       new Date(FIFTEEN_DAYS_AGO),
             };
 
             // Setup mocks
             mockReaddir.mockResolvedValue(['1.json']);
             mockReadFile.mockResolvedValue(JSON.stringify(task1));
-            mockStat.mockResolvedValue(fileStats);
+            mockStat.mockResolvedValue(fileStats as { mtime: Date, isDirectory: () => false, isFile: () => true });
             mockMkdir.mockResolvedValue(undefined);
             mockWriteFile.mockResolvedValue(undefined);
 
@@ -1160,7 +1158,7 @@ describe('processTaskDirectory', () => {
             // Without memoization, D would be evaluated twice (via B and C)
             // We can verify this by checking debug logs
             const debugCalls = mockLogger.debug.mock.calls;
-            const taskDCalls = filter(debugCalls, (call: unknown[]) => {
+            const taskDCalls = debugCalls.filter((call: unknown[]) => {
                 const arg = call[0] as { taskId?: string };
                 return arg.taskId === 'D';
             });

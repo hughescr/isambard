@@ -1,12 +1,9 @@
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import _forEach from 'lodash/forEach';
-import _map from 'lodash/map';
-import _padStart from 'lodash/padStart';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, LayerName } from '@/storage/memory-tool/types';
 
@@ -216,9 +213,9 @@ describe('MemoryToolBackend - Date Filtering', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(3); // 3 layers
             // Per-layer limit should be ceil(30/3) = 10
-            _forEach(calls, (call) => {
+            for(const call of calls) {
                 expect(call.args[0].input.Limit).toBe(10);
-            });
+            }
         });
 
         test('should calculate per-layer limit using ceil division', async () => {
@@ -235,9 +232,9 @@ describe('MemoryToolBackend - Date Filtering', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(3); // 3 layers
             // Per-layer limit should be ceil(25/3) = 9
-            _forEach(calls, (call) => {
+            for(const call of calls) {
                 expect(call.args[0].input.Limit).toBe(9);
-            });
+            }
         });
 
         test('should not set Limit when options.limit is undefined', async () => {
@@ -415,7 +412,7 @@ describe('MemoryToolBackend - Date Filtering', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(3);
 
-            const layers = _map(calls, (call) => {
+            const layers = calls.map((call) => {
                 return call.args[0].input.ExpressionAttributeValues?.[':pk'] as string | undefined;
             });
             expect(layers).toContain('LAYER#identity');
@@ -952,13 +949,13 @@ describe('MemoryToolBackend - Date Filtering', () => {
                 PK:          'DIR#/state',
                 SK:          `FILE#item${i}.md`,
                 GSI1PK:      'LAYER#state',
-                GSI1SK:      `UPDATED#2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                GSI1SK:      `UPDATED#2024-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
                 path:        `/state/item${i}.md` as MemoryPath,
                 content:     `Item ${i}`,
                 contentType: 'text/markdown',
                 metadata:    { accessCount: i },
-                createdAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
-                updatedAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                createdAt:   `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
+                updatedAt:   `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
             }));
 
             ddbMock.on(QueryCommand).resolves({ Items: stateItems });
@@ -974,13 +971,13 @@ describe('MemoryToolBackend - Date Filtering', () => {
                 PK:          'DIR#/state',
                 SK:          `FILE#item${i}.md`,
                 GSI1PK:      'LAYER#state',
-                GSI1SK:      `UPDATED#2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                GSI1SK:      `UPDATED#2024-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
                 path:        `/state/item${i}.md` as MemoryPath,
                 content:     `Item ${i}`,
                 contentType: 'text/markdown',
                 metadata:    { accessCount: i },
-                createdAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
-                updatedAt:   `2024-01-${_padStart(String(i + 1), 2, '0')}T00:00:00.000Z`,
+                createdAt:   `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
+                updatedAt:   `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
             }));
 
             ddbMock.on(QueryCommand).resolves({ Items: stateItems });

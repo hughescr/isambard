@@ -1,12 +1,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
-import orderBy from 'lodash/orderBy';
-import replace from 'lodash/replace';
-import startsWith from 'lodash/startsWith';
-import trimEnd from 'lodash/trimEnd';
 import { z } from 'zod';
 import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '@/storage';
 
@@ -49,7 +43,7 @@ export function createMemoryMCPServer(
                         }
                         // Fire-and-forget: record access for state-layer memories (scoring)
                         // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
-                        if(startsWith(args.path, '/state/') && options?.recordAccess) {
+                        if(args.path.startsWith('/state/') && options?.recordAccess) {
                             // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
                             options.recordAccess([memoryPath]).catch((error: unknown) => {
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
@@ -59,7 +53,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: result.content }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error viewing memory: ${message}` }],
                             isError: true,
@@ -99,7 +93,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Memory stored at ${path}` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error storing self memory: ${message}` }],
                             isError: true,
@@ -139,7 +133,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `User memory stored at ${path}` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error storing user memory: ${message}` }],
                             isError: true,
@@ -165,7 +159,7 @@ export function createMemoryMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const timestamp = replace(new Date().toISOString(), /[:.]/g, '-');
+                        const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
                         const path = createMemoryPath(`/events/${args.eventType}/${timestamp}`);
                         const content = args.details
                             ? `${args.summary}\n\n${args.details}`
@@ -180,7 +174,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Event logged at ${path}` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error logging event: ${message}` }],
                             isError: true,
@@ -224,7 +218,7 @@ export function createMemoryMCPServer(
                                 content: [{ type: 'text' as const, text: 'No memories found matching tags' }],
                             };
                         }
-                        let formatted = map(results.items, (r) => {
+                        let formatted = results.items.map((r) => {
                             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: contentPreview may be absent at runtime despite types
                             const preview = r.contentPreview ?? 'No content';
                             return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
@@ -236,7 +230,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error searching memories: ${message}` }],
                             isError: true,
@@ -269,8 +263,11 @@ export function createMemoryMCPServer(
                         // Stryker disable next-line StringLiteral: Default path for root directory
                         const rawPath = args.path ?? '/';
                         // Normalize: strip trailing slash (except for root)
-                        // Stryker disable next-line StringLiteral: trimEnd('') is equivalent - paths work via prefix-based list query
-                        const dirPath = rawPath === '/' ? '/' : trimEnd(rawPath, '/');
+                        // Stryker disable next-line StringLiteral: ''.trimEnd() is equivalent - paths work via prefix-based list query
+                        let dirPath = rawPath;
+                        while(dirPath !== '/' && dirPath.endsWith('/')) {
+                            dirPath = dirPath.slice(0, -1);
+                        }
 
                         // Build queryOptions object only if filter params provided
                         const queryOptions = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
@@ -297,7 +294,7 @@ export function createMemoryMCPServer(
                                 content: [{ type: 'text' as const, text: 'Directory is empty' }],
                             };
                         }
-                        let formatted = map(results.items, 'path').join('\n');
+                        let formatted = results.items.map(item => item.path).join('\n');
                         if(results.nextCursor) {
                             formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
                         }
@@ -305,7 +302,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error listing directory: ${message}` }],
                             isError: true,
@@ -331,13 +328,13 @@ export function createMemoryMCPServer(
                             };
                         }
                         // Sort by count descending
-                        const sortedCounts = orderBy(tagCounts, ['count'], ['desc']);
-                        const formatted = map(sortedCounts, ({ tag, count }) => `${tag}: ${count}`).join('\n');
+                        const sortedCounts = tagCounts.toSorted((a, b) => b.count - a.count);
+                        const formatted = sortedCounts.map(({ tag, count }) => `${tag}: ${count}`).join('\n');
                         return {
                             content: [{ type: 'text' as const, text: formatted }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error listing tags: ${message}` }],
                             isError: true,
@@ -371,7 +368,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error deleting memory: ${message}` }],
                             isError: true,
@@ -431,7 +428,7 @@ export function createMemoryMCPServer(
                             content: [{ type: 'text' as const, text: `Updated tags on ${args.path}\nBefore: ${beforeStr}\nAfter: ${afterStr}` }],
                         };
                     } catch (error) {
-                        const message = isError(error) ? error.message : String(error);
+                        const message = error instanceof Error ? error.message : String(error);
                         return {
                             content: [{ type: 'text' as const, text: `Error updating tags: ${message}` }],
                             isError: true,

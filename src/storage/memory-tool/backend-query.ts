@@ -1,10 +1,4 @@
 import { type DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import map from 'lodash/map';
-import orderBy from 'lodash/orderBy';
-import sortBy from 'lodash/sortBy';
-import take from 'lodash/take';
 import { type MemoryToolBackendTagIndex } from './backend-tag-index';
 import { sigmoidScore } from './sigmoid';
 import {
@@ -106,10 +100,10 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        let items = map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
+        let items = ((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item));
 
         // Sort by createdAt ascending (oldest first, newest last)
-        items = sortBy(items, ['createdAt']);
+        items = items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
 
@@ -171,7 +165,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        const items = map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item));
+        const items = ((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item));
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
 
         return { items, nextCursor };
@@ -214,15 +208,15 @@ export class MemoryToolBackendQuery {
                 TableName: this.tableName,
                 ...queryParams,
             }));
-            allItems.push(...map((result.Items ?? []) as MemoryToolItem[], item => this.stripKeys(item)));
+            allItems.push(...((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item)));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
-        let items = orderBy(allItems, ['updatedAt'], ['desc']);
+        let items = allItems.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
         // Apply limit - keep newest N items
         if(options?.limit) {
-            items = take(items, options.limit);
+            items = items.slice(0, options.limit);
         }
 
         // Reverse to ascending order (oldest first, newest last) for the caller
@@ -238,14 +232,14 @@ export class MemoryToolBackendQuery {
 
         // Get identity items (all items from /identity layer)
         const identityResult = await this.listByLayer(createLayerName('identity'), { limit: maxIdentityItems });
-        const identityItems = take(identityResult.items, maxIdentityItems);
+        const identityItems = identityResult.items.slice(0, maxIdentityItems);
 
         // Get state items (all items from /state layer)
         const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxStateItems });
         let stateItems = stateResult.items;
 
         // Score state items using sigmoid function for frequency × recency
-        const scoredItems = map(stateItems, (item) => {
+        const scoredItems = stateItems.map((item) => {
             // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
             const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
             // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
@@ -254,7 +248,7 @@ export class MemoryToolBackendQuery {
             return { item, score: sigmoidScore(accessCount, timeSinceLastAccessMs) };
         });
 
-        stateItems = _(scoredItems).orderBy(['score'], ['desc']).take(maxStateItems).map(({ item }) => item).value();
+        stateItems = scoredItems.toSorted((a, b) => b.score - a.score).slice(0, maxStateItems).map(({ item }) => item);
 
         return [...identityItems, ...stateItems];
     }
@@ -272,7 +266,7 @@ export class MemoryToolBackendQuery {
         const stateItems = stateResult.items;
 
         // Score items using sigmoid function for frequency × recency
-        const scoredItems = map(stateItems, (item) => {
+        const scoredItems = stateItems.map((item) => {
             // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
             const accessCount = (item.metadata.accessCount as number | undefined) ?? 0;
             // Stryker disable next-line LogicalOperator: ?? operator is correct, && would give wrong result
@@ -282,6 +276,6 @@ export class MemoryToolBackendQuery {
         });
 
         // Sort by score descending and take top N
-        return _(scoredItems).orderBy(['score'], ['desc']).take(maxItems).value();
+        return scoredItems.toSorted((a, b) => b.score - a.score).slice(0, maxItems);
     }
 }

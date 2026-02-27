@@ -1,10 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import flatMap from 'lodash/flatMap';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
+import { chain } from 'lodash-es';
 import {
     createCatchUpSessionRunner,
     type CatchUpSessionRunner,
@@ -40,11 +36,8 @@ async function buildCatchUpContext(
     }
 ): Promise<CatchUpSynopsisContext> {
     const overview = inboxManager.getUnreadOverview();
-    const allMessages = flatMap(
-        overview.channels,
-        ch => inboxManager.getChannelMessages(ch.channelId)
-    );
-    const topAuthors = _(allMessages).map('author').countBy().toPairs().orderBy([1], ['desc']).take(3).map(([author]) => author).value();
+    const allMessages = overview.channels.flatMap(ch => inboxManager.getChannelMessages(ch.channelId));
+    const topAuthors = chain(allMessages).map('author').countBy().toPairs().orderBy([1], ['desc']).take(3).map(([author]) => author).value();
 
     // Get time since last active from completion signal
     const completionSignal = await memoryBackend.loadCompletionSignal();
@@ -55,7 +48,7 @@ async function buildCatchUpContext(
     return {
         totalUnread:         overview.totalUnread,
         channelCount:        overview.channels.length,
-        channelNames:        map(overview.channels, 'channelName'),
+        channelNames:        overview.channels.map(ch => ch.channelName),
         topAuthors,
         timeSinceLastActive: formatTimeSince(lastActiveTime),
         timeOfDay:           getTimeOfDay(new Date()),
@@ -261,14 +254,14 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
             }
             // If triggerOnStartup is enabled, perch scheduler handles presence - no action needed here
         } catch (error) {
-            const errorMsg = isError(error) ? error.message : String(error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
             logger.warn({
                 error: errorMsg,
                 msg:   'Failed to load inbox on startup',
             });
         }
     })().catch((error) => {
-        const errorMsg = isError(error) ? error.message : String(error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error({
             error: errorMsg,
             msg:   'Unhandled error in inbox initialization',

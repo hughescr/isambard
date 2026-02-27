@@ -1,5 +1,5 @@
-import type { Logger } from '@hughescr/logger';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Logger } from '@hughescr/logger';
 import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';
 import { createTaskPersistenceCoordinator } from '@/agent/task-persistence-coordinator';
 import type { TaskSessionBackend } from '@/storage/task-session/backend';

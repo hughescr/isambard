@@ -1,8 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client, TextChannel } from 'discord.js';
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import isError from 'lodash/isError';
+import { chain } from 'lodash-es';
 import type { CatchUpSessionRunner } from '../catchup';
 import {
     type ChannelRegistryManager,
@@ -55,7 +53,7 @@ async function sendRegistryErrorNotification(
             }
         }
     } catch (notificationError) {
-        const notificationErrorMsg = isError(notificationError) ? notificationError.message : String(notificationError);
+        const notificationErrorMsg = notificationError instanceof Error ? notificationError.message : String(notificationError);
         logger.error({
             error: notificationErrorMsg,
             msg:   'Failed to send channel registry error notification to owner',
@@ -97,7 +95,7 @@ export async function initializeChannelRegistry(
         // Set up event handlers for channel changes
         setupChannelEventHandlers(client, channelRegistry);
     } catch (error) {
-        const errorMsg = isError(error) ? error.message : String(error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error({
             error: errorMsg,
             msg:   'Failed to initialize channel registry on startup',
@@ -204,7 +202,7 @@ export function setupChannelCleanupHandlers(params: {
         const guildId = createGuildId(guild.id);
         // Get all channel IDs for this guild from the channel registry
         const allChannels = channelRegistry.getAllChannels();
-        const guildChannelIds = _(allChannels).filter(['guildId', guildId]).map('channelId').value();
+        const guildChannelIds = chain(allChannels).filter(['guildId', guildId]).map('channelId').value();
 
         coordinator.removeGuildChannels(guildChannelIds);
     }, logger, 'guildDelete handler'));

@@ -1,10 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import compact from 'lodash/compact';
-import repeat from 'lodash/repeat';
-import split from 'lodash/split';
-import startsWith from 'lodash/startsWith';
-import times from 'lodash/times';
-import trim from 'lodash/trim';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -63,7 +57,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 12);
 
                 for(const chunk of result) {
-                    expect(chunk).toBe(trim(chunk));
+                    expect(chunk).toBe(chunk.trim());
                 }
             });
 
@@ -72,7 +66,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 10);
 
                 for(const chunk of result) {
-                    expect(chunk).toBe(trim(chunk));
+                    expect(chunk).toBe(chunk.trim());
                 }
             });
 
@@ -83,7 +77,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should use default max length when not specified', () => {
                 // Use explicit maxLength to avoid processing 1900+ chars
-                const message = repeat('a', 150);
+                const message = 'a'.repeat(150);
                 const result = splitMessage(message, 100);
 
                 expect(result.length).toBe(2);
@@ -106,12 +100,12 @@ describe.concurrent('Discord Message Splitting', () => {
 
             test('should split message with emoji correctly', () => {
                 const emoji = '🎉';
-                const message = `${emoji}${repeat('a', 50)}`;
+                const message = `${emoji}${'a'.repeat(50)}`;
                 const result = splitMessage(message, 30);
 
                 expect(result.length).toBeGreaterThan(1);
                 // First chunk should start with emoji
-                expect(startsWith(result[0], emoji)).toBe(true);
+                expect(result[0].startsWith(emoji)).toBe(true);
             });
 
             test('should handle non-ASCII characters', () => {
@@ -129,7 +123,7 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should split long text with mixed unicode', () => {
-                const text = repeat('日', 100);
+                const text = '日'.repeat(100);
                 const result = splitMessage(text, 50);
 
                 expect(result.length).toBe(2);
@@ -153,14 +147,14 @@ describe.concurrent('Discord Message Splitting', () => {
                 const messages = [
                     'Hello world',
                     'Test\n\nParagraph',
-                    `Long ${repeat('word ', 100)}`,
-                    repeat('a', 500),
+                    `Long ${'word '.repeat(100)}`,
+                    'a'.repeat(500),
                 ];
 
                 for(const msg of messages) {
                     const result = splitMessage(msg, 100);
                     for(const chunk of result) {
-                        if(trim(msg) === '') {
+                        if(msg.trim() === '') {
                             expect(chunk).toBe('');
                         } else {
                             expect(chunk.length).toBeGreaterThan(0);
@@ -170,7 +164,7 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should always return at least one chunk', () => {
-                const messages = ['', '   ', 'a', repeat('a', 1000)];
+                const messages = ['', '   ', 'a', 'a'.repeat(1000)];
 
                 for(const msg of messages) {
                     const result = splitMessage(msg);
@@ -181,10 +175,10 @@ describe.concurrent('Discord Message Splitting', () => {
             test('should never exceed max length in any chunk', () => {
                 const maxLength = 100;
                 const messages = [
-                    repeat('a', 500),
-                    times(50, () => repeat('b', 20)).join(' '),
-                    times(20, () => repeat('c', 30)).join('\n\n'),
-                    times(10, () => `${repeat('d', 25)}.`).join(' '),
+                    'a'.repeat(500),
+                    Array.from({ length: 50 }, () => 'b'.repeat(20)).join(' '),
+                    Array.from({ length: 20 }, () => 'c'.repeat(30)).join('\n\n'),
+                    Array.from({ length: 10 }, () => `${'d'.repeat(25)}.`).join(' '),
                 ];
 
                 for(const msg of messages) {
@@ -201,14 +195,14 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 // Joining chunks should recreate content (with whitespace normalization)
                 const rejoined = result.join(' ');
-                // eslint-disable-next-line lodash/prefer-lodash-method -- regex split not supported by lodash
+
                 const normalizedOriginal = message.split(/\s+/).join(' ');
-                // eslint-disable-next-line lodash/prefer-lodash-method -- regex split not supported by lodash
+
                 const normalizedRejoined = rejoined.split(/\s+/).join(' ');
 
                 // Content should be preserved (words should match)
-                const originalWords = compact(split(normalizedOriginal, ' '));
-                const rejoinedWords = compact(split(normalizedRejoined, ' '));
+                const originalWords = normalizedOriginal.split(' ').filter(Boolean);
+                const rejoinedWords = normalizedRejoined.split(' ').filter(Boolean);
 
                 expect(rejoinedWords).toEqual(originalWords);
             });
@@ -229,7 +223,7 @@ Finally, the third concept ties everything together. Mastery comes with time and
                 expect(result.length).toBeGreaterThan(1);
                 for(const chunk of result) {
                     expect(chunk.length).toBeLessThanOrEqual(200);
-                    expect(trim(chunk)).toBe(chunk);
+                    expect(chunk.trim()).toBe(chunk);
                 }
             });
 

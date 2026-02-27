@@ -1,5 +1,3 @@
-import endsWith from 'lodash/endsWith';
-import startsWith from 'lodash/startsWith';
 import { z } from 'zod';
 
 /**
@@ -12,13 +10,13 @@ import { z } from 'zod';
 export const memoryPathSchema = z
     .string()
     .min(1, 'Path cannot be empty')
-    .refine(path => startsWith(path, '/'), {
+    .refine(path => path.startsWith('/'), {
         message: 'Path must start with /',
     })
     .refine(path => !path.includes('//'), {
         message: 'Path cannot contain double slashes (//)',
     })
-    .refine(path => path === '/' || !endsWith(path, '/'), {
+    .refine(path => path === '/' || !path.endsWith('/'), {
         message: 'Path cannot end with / (except root)',
     })
     .brand<'MemoryPath'>();

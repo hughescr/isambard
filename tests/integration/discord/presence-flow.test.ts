@@ -7,7 +7,6 @@
 
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { ActivityType, type Client, type TextChannel  } from 'discord.js';
-import _constant from 'lodash/constant';
 import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageContext, AgentStreamEvent } from '@/agent/types';
@@ -27,9 +26,9 @@ describe('Discord Presence Flow (Integration)', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         mockGenerateText.mockReset();
-        mockGenerateText.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
+        mockGenerateText.mockImplementation(() => Promise.resolve('Contemplating digital dreams'));
         mockGenerateTextWithSystemPrompt.mockReset();
-        mockGenerateTextWithSystemPrompt.mockImplementation(_constant(Promise.resolve('Contemplating digital dreams')));
+        mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Contemplating digital dreams'));
 
         // Mock Discord client
         mockDiscordClient = {
@@ -43,8 +42,8 @@ describe('Discord Presence Flow (Integration)', () => {
             id:         'channel-id',
             channelId:  'channel-id',
             sendTyping: mock(async () => undefined),
-            isDMBased:  mock(_constant(false)),
-            isThread:   mock(_constant(false)),
+            isDMBased:  mock(() => false),
+            isThread:   mock(() => false),
         } as unknown as TextChannel;
     });
 
@@ -70,7 +69,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const idleStatusGenerator = createIdleStatusGenerator({
             logger,
             activityType:    ActivityType.Custom,
-            identityContext: _constant(Promise.resolve('Test Bot')),
+            identityContext: () => Promise.resolve('Test Bot'),
         });
 
         // Create presence manager
@@ -97,10 +96,10 @@ describe('Discord Presence Flow (Integration)', () => {
 
         // Create mock bot state manager
         const mockBotStateManager = {
-            shouldUpdatePresence:   mock(_constant(true)),
+            shouldUpdatePresence:   mock(() => true),
             updateActivityPhase:    mock(() => undefined),
             clearActivityPhase:     mock(() => undefined),
-            getMode:                mock(_constant('idle' as const)),
+            getMode:                mock(() => 'idle' as const),
             goIdle:                 mock(() => undefined),
             startProcessingMessage: mock(() => undefined),
         } as unknown as BotStateManager;
@@ -153,7 +152,7 @@ describe('Discord Presence Flow (Integration)', () => {
         const idleStatusGenerator = createIdleStatusGenerator({
             logger,
             activityType:    ActivityType.Custom,
-            identityContext: _constant(Promise.resolve('Test Bot')),
+            identityContext: () => Promise.resolve('Test Bot'),
         });
 
         // Create presence manager with SHORT idle timeout for testing

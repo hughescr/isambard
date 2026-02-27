@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -9,10 +9,6 @@ import {
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import _filter from 'lodash/filter';
-import _repeat from 'lodash/repeat';
-import _startsWith from 'lodash/startsWith';
 import { ItemNotFoundError, ValidationError } from '@/errors';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
@@ -367,13 +363,13 @@ describe('MemoryToolBackend', () => {
             }
             ddbMock.on(PutCommand).resolves({});
 
-            const longContent = _repeat(char, contentLength);
+            const longContent = char.repeat(contentLength);
 
             if(operation === 'update') {
                 await backend.update('/state/preview-test' as MemoryPath, { content: longContent });
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 const mainItem = putCalls[0].args[0].input.Item;
-                expect(mainItem?.contentPreview).toBe(_repeat(char, expectedLength));
+                expect(mainItem?.contentPreview).toBe(char.repeat(expectedLength));
                 expect((mainItem?.contentPreview as string).length).toBe(expectedLength);
             } else {
                 const item = await backend.create({
@@ -381,7 +377,7 @@ describe('MemoryToolBackend', () => {
                     content:     longContent,
                     contentType: 'text/plain',
                 });
-                expect(item.contentPreview).toBe(_repeat(char, expectedLength));
+                expect(item.contentPreview).toBe(char.repeat(expectedLength));
             }
         });
 
@@ -432,7 +428,7 @@ describe('MemoryToolBackend', () => {
 
                 // Verify structure of tag index items in BatchWriteCommand
                 const batchWrite = batchWriteCalls[0].args[0].input;
-                const putRequests = _filter(batchWrite.RequestItems?.TestTable, 'PutRequest');
+                const putRequests = batchWrite.RequestItems?.TestTable.filter(item => item.PutRequest);
                 expect(putRequests?.length).toBe(2); // One for each tag
             });
 
@@ -446,9 +442,8 @@ describe('MemoryToolBackend', () => {
                 });
 
                 const putCalls = ddbMock.commandCalls(PutCommand);
-                const tagIndexCalls = _filter(putCalls, call =>
-                    _startsWith(call.args[0].input.Item?.PK as string, 'TAG#')
-                );
+                const tagIndexCalls = putCalls.filter(call =>
+                    (call.args[0].input.Item?.PK as string).startsWith('TAG#'));
                 expect(tagIndexCalls).toHaveLength(0);
             });
 
@@ -538,7 +533,7 @@ describe('MemoryToolBackend', () => {
 
                 // Verify the tag index item was refreshed with new content preview
                 const batchWrite = batchWriteCalls[0].args[0].input;
-                const putRequests = _filter(batchWrite.RequestItems?.TestTable, 'PutRequest');
+                const putRequests = batchWrite.RequestItems?.TestTable.filter(item => item.PutRequest);
                 expect(putRequests?.length).toBeGreaterThanOrEqual(1);
             });
 
@@ -636,9 +631,8 @@ describe('MemoryToolBackend', () => {
                 await backend.delete(testPath);
 
                 const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-                const tagDeletes = _filter(deleteCalls, call =>
-                    _startsWith(call.args[0].input.Key?.PK as string, 'TAG#')
-                );
+                const tagDeletes = deleteCalls.filter(call =>
+                    (call.args[0].input.Key?.PK as string).startsWith('TAG#'));
                 expect(tagDeletes).toHaveLength(0);
             });
 

@@ -37,13 +37,6 @@
  */
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import _constant from 'lodash/constant';
-import _endsWith from 'lodash/endsWith';
-import _filter from 'lodash/filter';
-import _find from 'lodash/find';
-import _repeat from 'lodash/repeat';
-import _some from 'lodash/some';
-import _startsWith from 'lodash/startsWith';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import type { AgentStreamEvent, MessageContext } from '@/agent/types';
@@ -62,7 +55,7 @@ const flushPromises = (): Promise<void> => new Promise((resolve) => { queueMicro
 describe('shouldGenerateSynopsis', () => {
     test('should return false when dynamicStatusGenerator is undefined even if shouldUpdatePresence returns true', () => {
         const mockBotStateManager = {
-            shouldUpdatePresence: mock(_constant(true)),
+            shouldUpdatePresence: mock(() => true),
         } as unknown as BotStateManager;
 
         const result = shouldGenerateSynopsis(undefined, mockBotStateManager);
@@ -74,11 +67,11 @@ describe('shouldGenerateSynopsis', () => {
 
     test('should return false when shouldUpdatePresence returns false even if dynamicStatusGenerator exists', () => {
         const mockDynamicStatusGenerator = {
-            generateSynopsis: mock(_constant(Promise.resolve('test'))),
+            generateSynopsis: mock(() => Promise.resolve('test')),
         } as unknown as DynamicStatusGenerator;
 
         const mockBotStateManager = {
-            shouldUpdatePresence: mock(_constant(false)),
+            shouldUpdatePresence: mock(() => false),
         } as unknown as BotStateManager;
 
         const result = shouldGenerateSynopsis(mockDynamicStatusGenerator, mockBotStateManager);
@@ -89,7 +82,7 @@ describe('shouldGenerateSynopsis', () => {
 
     test('should return false when botStateManager is undefined even if dynamicStatusGenerator exists', () => {
         const mockDynamicStatusGenerator = {
-            generateSynopsis: mock(_constant(Promise.resolve('test'))),
+            generateSynopsis: mock(() => Promise.resolve('test')),
         } as unknown as DynamicStatusGenerator;
 
         const result = shouldGenerateSynopsis(mockDynamicStatusGenerator, undefined);
@@ -99,11 +92,11 @@ describe('shouldGenerateSynopsis', () => {
 
     test('should return true ONLY when BOTH dynamicStatusGenerator exists AND shouldUpdatePresence returns true', () => {
         const mockDynamicStatusGenerator = {
-            generateSynopsis: mock(_constant(Promise.resolve('test'))),
+            generateSynopsis: mock(() => Promise.resolve('test')),
         } as unknown as DynamicStatusGenerator;
 
         const mockBotStateManager = {
-            shouldUpdatePresence: mock(_constant(true)),
+            shouldUpdatePresence: mock(() => true),
         } as unknown as BotStateManager;
 
         const result = shouldGenerateSynopsis(mockDynamicStatusGenerator, mockBotStateManager);
@@ -135,7 +128,7 @@ describe('StatusMiddleware', () => {
         } as unknown as PresenceManager;
 
         mockAgent = {
-            handleInput: mock(_constant(Promise.resolve({ response: 'Test response', wasInterrupted: false, streamTracker: {} }))),
+            handleInput: mock(() => Promise.resolve({ response: 'Test response', wasInterrupted: false, streamTracker: {} })),
         } as unknown as ClaudeAgent;
 
         mockLogger = {
@@ -145,11 +138,11 @@ describe('StatusMiddleware', () => {
         };
 
         mockBotStateManager = {
-            shouldUpdatePresence: mock(_constant(true)),
+            shouldUpdatePresence: mock(() => true),
             updateActivityPhase:  mock(() => undefined),
             clearActivityPhase:   mock(() => undefined),
             recordPresenceUpdate: mock(() => undefined),
-            getMode:              mock(_constant('idle' as const)),
+            getMode:              mock(() => 'idle' as const),
             goIdle:               mock(() => undefined),
         } as unknown as BotStateManager;
 
@@ -357,13 +350,13 @@ describe('StatusMiddleware', () => {
 
             // Bot state manager that throws on updateActivityPhase
             const errorBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock(() => {
                     throw new Error('Bot state update failed');
                 }),
                 clearActivityPhase:   mock(() => undefined),
                 recordPresenceUpdate: mock(() => undefined),
-                getMode:              mock(_constant('idle' as const)),
+                getMode:              mock(() => 'idle' as const),
                 goIdle:               mock(() => undefined),
             };
 
@@ -467,7 +460,7 @@ describe('StatusMiddleware', () => {
         test('should work with agents that do not support stream callbacks', async () => {
             // Agent that doesn't accept onEvent parameter
             const legacyAgent = {
-                handleInput: mock(_constant(Promise.resolve({ response: 'Response', wasInterrupted: false, streamTracker: {} }))),
+                handleInput: mock(() => Promise.resolve({ response: 'Response', wasInterrupted: false, streamTracker: {} })),
             };
 
             const middleware = createStatusMiddleware({
@@ -498,14 +491,14 @@ describe('StatusMiddleware', () => {
             };
 
             const capturingBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock((phase: ActivityPhase) => {
                     if(phase.type === 'using_tool') {
                         toolNames.push(phase.toolName);
                     }
                 }),
                 clearActivityPhase: mock(() => undefined),
-                getMode:            mock(_constant('idle' as const)),
+                getMode:            mock(() => 'idle' as const),
                 goIdle:             mock(() => undefined),
             };
 
@@ -595,12 +588,12 @@ describe('StatusMiddleware', () => {
             };
 
             const capturingBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock((phase: ActivityPhase) => {
                     phases.push(phase);
                 }),
                 clearActivityPhase: mock(() => undefined),
-                getMode:            mock(_constant('idle' as const)),
+                getMode:            mock(() => 'idle' as const),
                 goIdle:             mock(() => undefined),
             };
 
@@ -622,20 +615,20 @@ describe('StatusMiddleware', () => {
             await middleware(messageContext); // No channel
 
             // Should still update activity phases
-            expect(_some(phases, ['type', 'responding'])).toBe(true);
+            expect(phases.some(p => p.type === 'responding')).toBe(true);
         });
     });
 
     describe('idle transition lifecycle', () => {
         test.each([
-            { scenario: 'after successful completion', agent: { handleInput: mock(_constant(Promise.resolve({ response: 'Response', wasInterrupted: false, streamTracker: {} }))) } },
+            { scenario: 'after successful completion', agent: { handleInput: mock(() => Promise.resolve({ response: 'Response', wasInterrupted: false, streamTracker: {} })) } },
             { scenario: 'after error', agent: { handleInput: mock(async () => { throw new Error('Test error'); }) } },
         ])('should transition to idle with Date $scenario', async ({ agent }) => {
             const capturingBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock(() => undefined),
                 clearActivityPhase:   mock(() => undefined),
-                getMode:              mock(_constant('idle' as const)),
+                getMode:              mock(() => 'idle' as const),
                 goIdle:               mock(() => undefined),
             };
 
@@ -699,14 +692,14 @@ describe('StatusMiddleware', () => {
             };
 
             const errorBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock(() => {
                     callCount++;
                     throw new Error(`Bot state error ${callCount}`);
                 }),
                 clearActivityPhase:   mock(() => undefined),
                 recordPresenceUpdate: mock(() => undefined),
-                getMode:              mock(_constant('idle' as const)),
+                getMode:              mock(() => 'idle' as const),
                 goIdle:               mock(() => undefined),
             };
 
@@ -750,12 +743,12 @@ describe('StatusMiddleware', () => {
             };
 
             const capturingBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock((phase: ActivityPhase) => {
                     phases.push(phase);
                 }),
                 clearActivityPhase: mock(() => undefined),
-                getMode:            mock(_constant('idle' as const)),
+                getMode:            mock(() => 'idle' as const),
                 goIdle:             mock(() => undefined),
             };
 
@@ -779,7 +772,7 @@ describe('StatusMiddleware', () => {
 
             expect(result).toBe(null);
             // Should have responding phase from before error
-            expect(_some(phases, ['type', 'responding'])).toBe(true);
+            expect(phases.some(p => p.type === 'responding')).toBe(true);
             // Should clear activity phase from error recovery
             expect(capturingBotStateManager.clearActivityPhase).toHaveBeenCalled();
         });
@@ -861,7 +854,7 @@ describe('StatusMiddleware', () => {
             await flushPromises(); // Extra flush for nested async synopsis generation
 
             // Verify thinking content accumulation
-            const thinkingContexts = _filter(capturedContexts, ['phase', 'thinking']);
+            const thinkingContexts = capturedContexts.filter(ctx => ctx.phase === 'thinking');
             expect(thinkingContexts.length).toBeGreaterThan(0);
             const lastThinkingContext = thinkingContexts[thinkingContexts.length - 1];
             expect(lastThinkingContext?.thinkingContent).toBe('First thoughtSecond thought');
@@ -874,7 +867,7 @@ describe('StatusMiddleware', () => {
             expect(lastThinkingContext?.recentToolCalls).not.toEqual(['Stryker was here']);
 
             // Verify second tool call has both tools in history
-            const grepContext = _find(capturedContexts, { phase: 'using_tool', toolName: 'Grep' });
+            const grepContext = capturedContexts.find(ctx => ctx.phase === 'using_tool' && ctx.toolName === 'Grep');
             expect(grepContext?.recentToolCalls).toBeDefined();
             expect(grepContext?.recentToolCalls).toEqual(['Read']);
         });
@@ -910,7 +903,7 @@ describe('StatusMiddleware', () => {
             await flushPromises();
             await flushPromises(); // Extra flush for nested async synopsis generation
 
-            const thinkingContext = _find(capturedContexts, ['phase', 'thinking']);
+            const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
             expect(thinkingContext?.thinkingContent).toBeUndefined();
             // recentToolCalls should be empty array initially (not ["Stryker was here"])
             expect(thinkingContext?.recentToolCalls).toBeUndefined();
@@ -940,7 +933,7 @@ describe('StatusMiddleware', () => {
 
             // Kill StringLiteral mutant on line 124 col 64 - verify second arg is the specific string
             const debugCalls = (localMockLogger.debug as ReturnType<typeof mock>).mock.calls;
-            const typingStartCall = _find(debugCalls, ['1', 'Started typing indicator']) as unknown[] | undefined;
+            const typingStartCall = debugCalls.find(call => call[1] === 'Started typing indicator');
 
             expect(typingStartCall).toBeDefined();
             if(typingStartCall) {
@@ -970,12 +963,12 @@ describe('StatusMiddleware', () => {
             };
 
             const capturingBotStateManager = {
-                shouldUpdatePresence: mock(_constant(true)),
+                shouldUpdatePresence: mock(() => true),
                 updateActivityPhase:  mock((phase: ActivityPhase) => {
                     phases.push(phase);
                 }),
                 clearActivityPhase: mock(() => undefined),
-                getMode:            mock(_constant('idle' as const)),
+                getMode:            mock(() => 'idle' as const),
                 goIdle:             mock(() => undefined),
             };
 
@@ -998,9 +991,9 @@ describe('StatusMiddleware', () => {
             await flushPromises();
 
             // Verify each phase type appears the expected number of times
-            const thinkingPhases = _filter(phases, ['type', 'thinking']);
-            const respondingPhases = _filter(phases, ['type', 'responding']);
-            const toolPhases = _filter(phases, ['type', 'using_tool']);
+            const thinkingPhases = phases.filter(p => p.type === 'thinking');
+            const respondingPhases = phases.filter(p => p.type === 'responding');
+            const toolPhases = phases.filter(p => p.type === 'using_tool');
 
             expect(thinkingPhases.length).toBe(1);
             expect(respondingPhases.length).toBe(1);
@@ -1046,8 +1039,8 @@ describe('StatusMiddleware', () => {
 
         beforeEach(() => {
             mockDynamicStatusGenerator = {
-                generateSynopsis:        mock(_constant(Promise.resolve('Generated status...'))),
-                generateCatchUpSynopsis: mock(_constant(Promise.resolve('Catch-up status'))),
+                generateSynopsis:        mock(() => Promise.resolve('Generated status...')),
+                generateCatchUpSynopsis: mock(() => Promise.resolve('Catch-up status')),
             };
         });
 
@@ -1116,7 +1109,7 @@ describe('StatusMiddleware', () => {
             ])('should pass generatedStatus to updatePhase for $phaseType phase', async ({ phaseType, event, generatedStatus }) => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
-                    _constant(Promise.resolve(generatedStatus))
+                    () => Promise.resolve(generatedStatus)
                 );
 
                 const wrappedAgent = {
@@ -1138,12 +1131,12 @@ describe('StatusMiddleware', () => {
 
                 // Capture phases from botStateManager instead
                 const capturingBotStateManager = {
-                    shouldUpdatePresence: mock(_constant(true)),
+                    shouldUpdatePresence: mock(() => true),
                     updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
-                    getMode:            mock(_constant('idle' as const)),
+                    getMode:            mock(() => 'idle' as const),
                     goIdle:             mock(() => undefined),
                 };
 
@@ -1159,7 +1152,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
-                const targetPhase = _find(phases, ['type', phaseType]);
+                const targetPhase = phases.find(p => p.type === phaseType);
                 expect(targetPhase).toBeDefined();
                 expect(targetPhase && 'generatedStatus' in targetPhase ? targetPhase.generatedStatus : undefined).toBe(generatedStatus);
             });
@@ -1169,7 +1162,7 @@ describe('StatusMiddleware', () => {
             test('should handle empty string return from generateSynopsis gracefully', async () => {
                 const phases: PresencePhase[] = [];
                 (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
-                    _constant(Promise.resolve(''))
+                    () => Promise.resolve('')
                 );
 
                 const wrappedAgent = {
@@ -1182,12 +1175,12 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingBotStateManager = {
-                    shouldUpdatePresence: mock(_constant(true)),
+                    shouldUpdatePresence: mock(() => true),
                     updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
-                    getMode:            mock(_constant('idle' as const)),
+                    getMode:            mock(() => 'idle' as const),
                     goIdle:             mock(() => undefined),
                 };
 
@@ -1205,7 +1198,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
                 // Should have thinking phase with empty generatedStatus
-                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                const thinkingPhase = phases.find(p => p.type === 'thinking');
                 expect(thinkingPhase).toBeDefined();
                 if(thinkingPhase?.type === 'thinking') {
                     expect(thinkingPhase.generatedStatus).toBe('');
@@ -1222,9 +1215,9 @@ describe('StatusMiddleware', () => {
 
             test('should handle very long string (1000+ chars) return from generateSynopsis gracefully', async () => {
                 const phases: PresencePhase[] = [];
-                const veryLongStatus = _repeat('A', 1500);
+                const veryLongStatus = 'A'.repeat(1500);
                 (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mockImplementation(
-                    _constant(Promise.resolve(veryLongStatus))
+                    () => Promise.resolve(veryLongStatus)
                 );
 
                 const wrappedAgent = {
@@ -1237,12 +1230,12 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingBotStateManager = {
-                    shouldUpdatePresence: mock(_constant(true)),
+                    shouldUpdatePresence: mock(() => true),
                     updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
-                    getMode:            mock(_constant('idle' as const)),
+                    getMode:            mock(() => 'idle' as const),
                     goIdle:             mock(() => undefined),
                 };
 
@@ -1260,7 +1253,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
                 // Should have responding phase with very long generatedStatus
-                const respondingPhase = _find(phases, ['type', 'responding']);
+                const respondingPhase = phases.find(p => p.type === 'responding');
                 expect(respondingPhase).toBeDefined();
                 if(respondingPhase?.type === 'responding') {
                     expect(respondingPhase.generatedStatus).toBe(veryLongStatus);
@@ -1303,12 +1296,12 @@ describe('StatusMiddleware', () => {
 
                 // Capture phases from botStateManager instead
                 const capturingBotStateManager = {
-                    shouldUpdatePresence: mock(_constant(true)),
+                    shouldUpdatePresence: mock(() => true),
                     updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
-                    getMode:            mock(_constant('idle' as const)),
+                    getMode:            mock(() => 'idle' as const),
                     goIdle:             mock(() => undefined),
                 };
 
@@ -1324,7 +1317,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
 
                 // Verify fallback phase has exact type 'using_tool', not empty string
-                const toolPhase = _find(phases, ['type', 'using_tool']);
+                const toolPhase = phases.find(p => p.type === 'using_tool');
                 expect(toolPhase).toBeDefined();
                 expect(toolPhase!.type).toBe('using_tool');
                 expect(toolPhase!.type).not.toBe('');
@@ -1347,12 +1340,12 @@ describe('StatusMiddleware', () => {
                 };
 
                 const capturingBotStateManager = {
-                    shouldUpdatePresence: mock(_constant(true)),
+                    shouldUpdatePresence: mock(() => true),
                     updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
-                    getMode:            mock(_constant('idle' as const)),
+                    getMode:            mock(() => 'idle' as const),
                     goIdle:             mock(() => undefined),
                 };
 
@@ -1376,7 +1369,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
 
                 // Should still work and update phases
-                const thinkingPhase = _find(phases, ['type', 'thinking']);
+                const thinkingPhase = phases.find(p => p.type === 'thinking');
                 expect(thinkingPhase).toBeDefined();
                 // generatedStatus should be undefined when no generator is provided
                 if(thinkingPhase?.type === 'thinking') {
@@ -1409,12 +1402,12 @@ describe('StatusMiddleware', () => {
 
                 // Capture phases from botStateManager instead
                 const capturingBotStateManager = {
-                    shouldUpdatePresence: mock(_constant(true)),
+                    shouldUpdatePresence: mock(() => true),
                     updateActivityPhase:  mock((phase: ActivityPhase) => {
                         phases.push(phase);
                     }),
                     clearActivityPhase: mock(() => undefined),
-                    getMode:            mock(_constant('idle' as const)),
+                    getMode:            mock(() => 'idle' as const),
                     goIdle:             mock(() => undefined),
                 };
 
@@ -1430,7 +1423,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
 
                 // Should still have responding phase (fallback without generatedStatus)
-                const respondingPhase = _find(phases, ['type', 'responding']);
+                const respondingPhase = phases.find(p => p.type === 'responding');
                 expect(respondingPhase).toBeDefined();
                 // generatedStatus should be undefined on error
                 if(respondingPhase?.type === 'responding') {
@@ -1488,12 +1481,12 @@ describe('StatusMiddleware', () => {
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
                 // Verify responding phase has accumulatedText (captured at first text delta)
-                const respondingContext = _find(capturedContexts, ['phase', 'responding']);
+                const respondingContext = capturedContexts.find(ctx => ctx.phase === 'responding');
                 expect(respondingContext).toBeDefined();
                 expect(respondingContext!.accumulatedText).toBe('Hello ');
 
                 // Verify using_tool phase has all context fields (accumulated text by this point)
-                const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+                const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
                 expect(toolContext).toBeDefined();
                 expect(toolContext!.toolInput).toEqual({ file_path: '/test.txt' });
                 expect(toolContext!.toolDescription).toBe('Reading a file');
@@ -1546,7 +1539,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
-                const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+                const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
                 expect(toolContext).toBeDefined();
                 const toolInput = toolContext!.toolInput as Record<string, unknown>;
                 expect(toolInput.url).toBe('https://api.example.com');
@@ -1563,8 +1556,8 @@ describe('StatusMiddleware', () => {
                 };
 
                 // Create strings that together exceed 200 chars
-                const longText1 = _repeat('X', 150);
-                const longText2 = _repeat('Y', 60);
+                const longText1 = 'X'.repeat(150);
+                const longText2 = 'Y'.repeat(60);
 
                 const wrappedAgent = {
                     handleInput: mock(async (_contexts: MessageContext[], options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
@@ -1591,14 +1584,14 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
-                const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+                const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
                 expect(toolContext).toBeDefined();
                 // Should be exactly 200 chars, with older text truncated
                 expect(toolContext!.accumulatedText!.length).toBe(200);
                 // Should end with the most recent text (all Y's)
-                expect(_endsWith(toolContext!.accumulatedText, _repeat('Y', 60))).toBe(true);
+                expect(toolContext!.accumulatedText!.endsWith('Y'.repeat(60))).toBe(true);
                 // Should start with some X's (the tail of the first chunk)
-                expect(_startsWith(toolContext!.accumulatedText, _repeat('X', 140))).toBe(true);
+                expect(toolContext!.accumulatedText!.startsWith('X'.repeat(140))).toBe(true);
             });
 
             test('should handle missing or undefined context fields appropriately', async () => {
@@ -1632,7 +1625,7 @@ describe('StatusMiddleware', () => {
                 await flushPromises();
                 await flushPromises(); // Extra flush for nested async synopsis generation
 
-                const toolContext = _find(capturedContexts, ['phase', 'using_tool']);
+                const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
                 expect(toolContext).toBeDefined();
                 // Unknown tool should have undefined description, input, and accumulatedText
                 expect(toolContext!.toolDescription).toBeUndefined();

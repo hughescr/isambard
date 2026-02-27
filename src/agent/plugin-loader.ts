@@ -3,14 +3,6 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
-import constant from 'lodash/constant';
-import filter from 'lodash/filter';
-import isError from 'lodash/isError';
-import last from 'lodash/last';
-import map from 'lodash/map';
-import partition from 'lodash/partition';
-import sortBy from 'lodash/sortBy';
-import startsWith from 'lodash/startsWith';
 import semver from 'semver';
 import { z } from 'zod';
 
@@ -32,7 +24,7 @@ export type PluginsConfig = z.infer<typeof PluginsConfigSchema>;
  * @returns Absolute path with ~ expanded
  */
 export function resolveExternalPath(inputPath: string): string {
-    if(startsWith(inputPath, '~/')) {
+    if(inputPath.startsWith('~/')) {
         return path.join(homedir(), inputPath.slice(2));
     }
     if(inputPath === '~') {
@@ -78,7 +70,7 @@ async function isDirectory(dirPath: string): Promise<boolean> {
 async function isValidPluginDirectory(dirPath: string): Promise<boolean> {
     const pluginManifestDir = path.join(dirPath, '.claude-plugin');
     // Stryker disable next-line BooleanLiteral,ArrowFunction: Error handler for pathExists rejection
-    return pathExists(pluginManifestDir).then(exists => exists && isDirectory(pluginManifestDir)).catch(constant(false));
+    return pathExists(pluginManifestDir).then(exists => exists && isDirectory(pluginManifestDir)).catch(() => false);
 }
 
 /**
@@ -98,35 +90,39 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 
     // Read version directories
     const entries = await readdir(pluginDir, { withFileTypes: true });
-    const versionDirs = filter(entries, e => e.isDirectory());
+    const versionDirs = entries.filter(e => e.isDirectory());
 
     // Filter to valid plugin directories with semver names
-    const withVersionInfo = map(versionDirs, dir => ({
+    const withVersionInfo = versionDirs.map(dir => ({
         name:    dir.name,
         path:    path.join(pluginDir, dir.name),
         version: semver.valid(dir.name),
     }));
 
-    const withSemver = filter(withVersionInfo, v => v.version !== null);
+    const withSemver = withVersionInfo.filter(v => v.version !== null);
 
     // Check each directory for validity in parallel
     const validityChecks = await Promise.all(
-        map(withSemver, async v => ({
+        withSemver.map(async v => ({
             ...v,
             isValid: await isValidPluginDirectory(v.path),
         }))
     );
 
-    const validVersions = filter(validityChecks, 'isValid');
+    const validVersions = validityChecks.filter(v => v.isValid);
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Early return when no valid plugin versions found is defensive coding
     if(validVersions.length === 0) {
         return undefined;
     }
 
-    // Sort by semver descending and return the first (latest)
-    const sorted = sortBy(validVersions, v => semver.parse(v.version));
-    const latest = last(sorted);
+    // Sort by semver ascending and return the last (latest)
+    const sorted = validVersions.toSorted((a, b) => {
+        const av = semver.parse(a.version);
+        const bv = semver.parse(b.version);
+        return av === null || bv === null ? 0 : semver.compare(av, bv);
+    });
+    const latest = sorted.at(-1);
 
     return latest?.path;
 }
@@ -143,22 +139,23 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
     }
 
     const entries = await readdir(pluginsDir, { withFileTypes: true });
-    const directories = filter(entries, e => e.isDirectory());
+    const directories = entries.filter(e => e.isDirectory());
 
-    const withPaths = map(directories, dir => ({
+    const withPaths = directories.map(dir => ({
         name: dir.name,
         path: path.join(pluginsDir, dir.name),
     }));
 
     // Check validity in parallel
     const validityChecks = await Promise.all(
-        map(withPaths, async d => ({
+        withPaths.map(async d => ({
             ...d,
             isValid: await isValidPluginDirectory(d.path),
         }))
     );
 
-    const [validDirs, invalidDirs] = partition(validityChecks, 'isValid');
+    const validDirs = validityChecks.filter(d => d.isValid);
+    const invalidDirs = validityChecks.filter(d => !d.isValid);
 
     // Warn about directories without .claude-plugin/ - likely misconfiguration
     for(const invalid of invalidDirs) {
@@ -169,7 +166,7 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
         });
     }
 
-    return map(validDirs, d => ({ type: 'local' as const, path: d.path }));
+    return validDirs.map(d => ({ type: 'local' as const, path: d.path }));
 }
 
 /**
@@ -204,7 +201,7 @@ async function loadPluginsConfig(pluginsDir: string): Promise<PluginsConfig> {
     } catch (error) {
         logger.warn({
             path:  configPath,
-            error: isError(error) ? error.message : String(error),
+            error: error instanceof Error ? error.message : String(error),
             msg:   'Failed to parse plugins.json, using defaults',
         });
         // Stryker disable next-line ArrayDeclaration,ObjectLiteral: Default config for parse errors, tested in lines 510-525
@@ -341,7 +338,7 @@ export async function loadPlugins(
     if(inRepoPlugins.length > 0) {
         logger.info({
             count:   inRepoPlugins.length,
-            plugins: map(inRepoPlugins, p => path.basename(p.path)),
+            plugins: inRepoPlugins.map(p => path.basename(p.path)),
             msg:     'Discovered in-repo plugins',
         });
     }
@@ -358,7 +355,7 @@ export async function loadPlugins(
     if(externalPlugins.length > 0) {
         logger.info({
             count:   externalPlugins.length,
-            plugins: map(externalPlugins, p => path.basename(p.path)),
+            plugins: externalPlugins.map(p => path.basename(p.path)),
             msg:     'Loaded external plugins',
         });
     }
@@ -372,7 +369,7 @@ export async function loadPlugins(
     if(marketplacePlugins.length > 0) {
         logger.info({
             count:   marketplacePlugins.length,
-            plugins: map(marketplacePlugins, p => path.basename(p.path)),
+            plugins: marketplacePlugins.map(p => path.basename(p.path)),
             msg:     'Loaded marketplace plugins',
         });
     }

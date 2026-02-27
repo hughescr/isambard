@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
-import noop from 'lodash/noop';
+// eslint-disable-next-line lodash-es/suggest-native-alternatives -- noop is used as a mock function, not a no-op return value
+import { noop } from 'lodash-es';
 import { DMTracker, formatDMChannelName, isDMChannelName } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
 import { createChannelId, createUserId } from '../../../../../src/integrations/discord/types';

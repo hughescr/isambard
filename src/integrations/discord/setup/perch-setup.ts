@@ -1,6 +1,5 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import isError from 'lodash/isError';
 import type { ResponseRouter } from '../channel-registry';
 import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
@@ -122,7 +121,7 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
         perchSessionRunner: runner,
         onPerchTrigger:     (slot) => {
             void runner.startPerch(slot).catch((error) => {
-                const errorMsg = isError(error) ? error.message : String(error);
+                const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error({ error: errorMsg, slot, msg: 'Failed to start perch session' });
             });
         },

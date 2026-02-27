@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import _repeat from 'lodash/repeat';
 import { MemoryToolKeyGenerator, generateContentPreview, normalizeTags } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
@@ -85,7 +84,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             expect(keys.GSI1SK).toMatch(/^UPDATED#\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
             // Extract timestamp from GSI1SK
-            // eslint-disable-next-line lodash/prefer-lodash-method -- String.replace is simpler for single replacement
+
             const timestamp = keys.GSI1SK.replace('UPDATED#', '');
             expect(timestamp >= beforeCall).toBe(true);
             expect(timestamp <= afterCall).toBe(true);
@@ -182,7 +181,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         });
 
         test('should return full content when exactly 100 characters (kills >= 100 mutation)', () => {
-            const content = _repeat('a', 100);
+            const content = 'a'.repeat(100);
             const preview = generateContentPreview(content);
             // CRITICAL: 100 chars should NOT be truncated (condition is > 100, not >= 100)
             expect(preview).toBe(content);
@@ -193,9 +192,9 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             { length: 101, 'char': 'a' },
             { length: 150, 'char': 'a' },
         ])('should truncate $length characters to exactly 100', ({ length, char }) => {
-            const content = _repeat(char, length);
+            const content = char.repeat(length);
             const preview = generateContentPreview(content);
-            expect(preview).toBe(_repeat(char, 100));
+            expect(preview).toBe(char.repeat(100));
             expect(preview).toHaveLength(100);
         });
 
@@ -206,7 +205,7 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
         });
 
         test('should truncate at character boundary, not word boundary', () => {
-            const content = _repeat('The quick brown fox jumps over the lazy dog. ', 3); // ~135 chars
+            const content = 'The quick brown fox jumps over the lazy dog. '.repeat(3); // ~135 chars
             const preview = generateContentPreview(content);
             expect(preview).toHaveLength(100);
         });

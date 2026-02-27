@@ -6,8 +6,6 @@
  */
 
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
-import replace from 'lodash/replace';
-import trim from 'lodash/trim';
 import { generateTextWithSystemPrompt } from '@/agent';
 import { truncateToWordBoundary } from '@/utils';
 
@@ -127,7 +125,7 @@ export function createIdleStatusGenerator(
                 const identity = await identityContext();
 
                 // Build system prompt
-                const systemPrompt = replace(SYSTEM_PROMPT_TEMPLATE, '{identityContext}', identity);
+                const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{identityContext}', identity);
 
                 // Get task context, recent context, and thinking content if callbacks are provided
                 const taskContext = await getTaskContext?.();
@@ -159,7 +157,7 @@ export function createIdleStatusGenerator(
                 // "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
                 const emojiPrefix = '💤 ';
                 const maxLength = 128 - emojiPrefix.length;
-                const statusText = truncateToWordBoundary(trim(text), maxLength);
+                const statusText = truncateToWordBoundary(text.trim(), maxLength);
 
                 // Add emoji prefix
                 const finalStatus = `${emojiPrefix}${statusText}`;

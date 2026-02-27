@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, mock, type Mock, afterEach } from 'bun:test';
 import type { Client, Guild, GuildChannel } from 'discord.js';
-import constant from 'lodash/constant';
-import find from 'lodash/find';
-import noop from 'lodash/noop';
+// eslint-disable-next-line lodash-es/suggest-native-alternatives -- noop is used as a mock function, not a no-op return value
+import { noop } from 'lodash-es';
 import {
     discoverAllChannels,
     setupChannelEventHandlers
@@ -20,7 +19,7 @@ describe('discovery', () => {
     beforeEach(() => {
         // Mock manager
         mockManager = {
-            getChannel:    mock(constant(Promise.resolve(null))),
+            getChannel:    mock(() => Promise.resolve(null)),
             upsertChannel: mock(noop),
             deleteChannel: mock(noop),
         } as unknown as ChannelRegistryManager;
@@ -317,7 +316,7 @@ describe('discovery', () => {
             it('should upsert new text channel', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
                 const mockChannel = {
                     id:    'channel-1',
@@ -338,7 +337,7 @@ describe('discovery', () => {
             it('should ignore channels without guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
                 const mockChannel = {
                     id:   'channel-1',
@@ -353,7 +352,7 @@ describe('discovery', () => {
             it('should ignore channels with null guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
                 const mockChannel = {
                     id:    'channel-1',
@@ -370,7 +369,7 @@ describe('discovery', () => {
             it('should ignore non-text channels', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelCreate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
                 const mockChannel = {
                     id:    'category-1',
@@ -389,7 +388,7 @@ describe('discovery', () => {
             it('should update existing channel name', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
                 const oldChannel = {
                     id:    'channel-1',
@@ -429,7 +428,7 @@ describe('discovery', () => {
             it('should ignore updates to non-existing channels', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
                 const oldChannel = {
                     id:    'channel-1',
@@ -455,7 +454,7 @@ describe('discovery', () => {
             it('should ignore channels without guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
                 const oldChannel = {
                     id:   'channel-1',
@@ -475,7 +474,7 @@ describe('discovery', () => {
             it('should ignore channels with null guild', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
                 const oldChannel = {
                     id:    'channel-1',
@@ -499,7 +498,7 @@ describe('discovery', () => {
             it('should ignore non-text channels', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelUpdate'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
                 const oldChannel = {
                     id:    'category-1',
@@ -525,7 +524,7 @@ describe('discovery', () => {
             it('should delete channel from registry', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelDelete'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelDelete')?.[1];
 
                 const mockChannel = {
                     id: 'channel-1',
@@ -540,7 +539,7 @@ describe('discovery', () => {
             it('should ignore channels without id', async () => {
                 setupChannelEventHandlers(mockClient, mockManager);
 
-                const handler = find((mockClient.on as ReturnType<typeof mock>).mock.calls, ['0', 'channelDelete'])?.[1];
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelDelete')?.[1];
 
                 const mockChannel = {} as unknown as GuildChannel;
 

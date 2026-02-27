@@ -1,4 +1,3 @@
-import _startsWith from 'lodash/startsWith';
 /**
  * DynamoDB key structure for Channel Registry items
  */
@@ -84,7 +83,7 @@ export const ChannelRegistryKeyGenerator = {
      * ```
      */
     parseChannelId(pk: string): string {
-        if(!_startsWith(pk, 'CHANNEL#')) {
+        if(!pk.startsWith('CHANNEL#')) {
             throw new Error(`Invalid PK format: expected CHANNEL#..., got ${pk}`);
         }
 
@@ -109,10 +108,10 @@ export const ChannelRegistryKeyGenerator = {
      * ```
      */
     parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelId: string } {
-        if(!_startsWith(gsi1pk, 'GUILD#')) {
+        if(!gsi1pk.startsWith('GUILD#')) {
             throw new Error(`Invalid GSI1PK format: expected GUILD#..., got ${gsi1pk}`);
         }
-        if(!_startsWith(gsi1sk, 'CHANNEL#')) {
+        if(!gsi1sk.startsWith('CHANNEL#')) {
             throw new Error(`Invalid GSI1SK format: expected CHANNEL#..., got ${gsi1sk}`);
         }
 

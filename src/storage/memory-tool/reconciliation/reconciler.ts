@@ -9,12 +9,6 @@
 
 import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import _isArray from 'lodash/isArray';
-import _isObject from 'lodash/isObject';
-import _isString from 'lodash/isString';
-import _map from 'lodash/map';
-import _some from 'lodash/some';
-import _startsWith from 'lodash/startsWith';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
@@ -125,7 +119,7 @@ export async function retryWithBackoff<T>(
             }
 
             // Stryker disable next-line LogicalOperator,ConditionalExpression: Error type guards for throttling detection
-            const isThrottled = error && _isObject(error) && 'name' in error
+            const isThrottled = typeof error === 'object' && error !== null && 'name' in error
               && (error.name === 'ProvisionedThroughputExceededException' || error.name === 'ThrottlingException');
 
             // Stryker disable next-line ConditionalExpression,EqualityOperator: Retry condition
@@ -303,7 +297,7 @@ async function getAllTagNames(
             // Stryker disable next-line StringLiteral: Key prefix parsing
             const gsi2sk = item.GSI2SK as string | undefined;
             // Stryker disable next-line ConditionalExpression,BlockStatement,StringLiteral: Guard clause for malformed items with TAG# prefix check
-            if(gsi2sk && _startsWith(gsi2sk, 'TAG#')) {
+            if(gsi2sk?.startsWith('TAG#')) {
                 allTags.push(gsi2sk.slice(4));
             }
         }
@@ -332,7 +326,7 @@ async function checkOldPathIndicesCleanByTags(
     }
 
     const results = await Promise.all(
-        _map(oldTags, tag =>
+        oldTags.map(tag =>
             retryWithBackoff(
                 async () => ctx.deps.docClient.send(new GetCommand({
                     TableName: ctx.deps.tableName,
@@ -346,12 +340,11 @@ async function checkOldPathIndicesCleanByTags(
                 /* Stryker disable next-line StringLiteral: Retry context string is observational */
                 `checkOldPathIndicesClean:${tag}:${oldPath}`,
                 ctx.options.signal
-            )
-        )
+            ))
     );
 
     // Stryker disable next-line ConditionalExpression,ArrayDeclaration: Any existing item means not clean
-    return !_some(results, result => result?.Item);
+    return !results.some(result => result?.Item);
 }
 
 /**
@@ -416,7 +409,7 @@ async function cleanPreviouslyKnownAs(
     const previousPath = memoryItem.metadata?.previouslyKnownAs;
 
     // Stryker disable next-line ConditionalExpression,BlockStatement: Guard clause
-    if(!previousPath || !_isString(previousPath)) {
+    if(!previousPath || typeof previousPath !== 'string') {
         return;
     }
 
@@ -425,7 +418,7 @@ async function cleanPreviouslyKnownAs(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata typed as non-nullable but may be absent in old DynamoDB records
     const previousTags = memoryItem.metadata?.previouslyKnownAsTags;
     // Stryker disable next-line ConditionalExpression: Pass array if present (new format), undefined for backward compat fallback
-    const oldTags = _isArray(previousTags) ? previousTags as string[] : undefined;
+    const oldTags = Array.isArray(previousTags) ? previousTags as string[] : undefined;
 
     try {
         const isClean = await checkOldPathIndicesClean(ctx, previousPath, oldTags);

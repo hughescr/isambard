@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on cast values for defensive access */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
-import constant from 'lodash/constant';
-import map from 'lodash/map';
 import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
 import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
@@ -81,7 +79,7 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
 
     const mockAllowlist: EmailAllowlist = {
         addEntry:  mock(async () => { /* intentionally empty */ }),
-        isAllowed: mock(constant(false)),
+        isAllowed: mock(() => false),
     } as unknown as EmailAllowlist;
 
     return {
@@ -268,7 +266,7 @@ describe('OutboundApprovalHandler', () => {
                 expect(menuOptions).toBeDefined();
                 // 'duplicate@example.com' should appear only once; 'other@example.com' once → total 2
                 expect(menuOptions).toHaveLength(2);
-                const values = map(menuOptions, 'data.value');
+                const values = menuOptions.map((o: { data: { value: string } }) => o.data.value);
                 expect(values).toContain('duplicate@example.com');
                 expect(values).toContain('other@example.com');
                 // No duplicates

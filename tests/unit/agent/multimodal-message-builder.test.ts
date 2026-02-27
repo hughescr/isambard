@@ -1,6 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import every from 'lodash/every';
-import filter from 'lodash/filter';
 import { buildMultimodalContent, hasImages } from '@/agent/multimodal-message-builder';
 import type { PlatformImage } from '@/agent/types';
 
@@ -13,7 +11,7 @@ describe.concurrent('multimodal-message-builder', () => {
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'text', text: 'Hello, world!' });
             // Verify no image blocks exist (kills ConditionalExpression mutant)
-            expect(filter(result, { type: 'image' })).toHaveLength(0);
+            expect(result.filter(item => item.type === 'image')).toHaveLength(0);
         });
 
         test('should return single text block when images array is empty', () => {
@@ -26,15 +24,15 @@ describe.concurrent('multimodal-message-builder', () => {
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({ type: 'text', text: 'Hello, world!' });
             // Verify no image blocks exist
-            expect(filter(result, { type: 'image' })).toHaveLength(0);
+            expect(result.filter(item => item.type === 'image')).toHaveLength(0);
             // Verify all blocks are text
-            expect(every(result, { type: 'text' })).toBe(true);
+            expect(result.every(item => item.type === 'text')).toBe(true);
         });
 
         test('should not add image blocks when images is undefined', () => {
             const result = buildMultimodalContent('test', undefined);
             expect(result).toHaveLength(1);
-            expect(every(result, { type: 'text' })).toBe(true);
+            expect(result.every(item => item.type === 'text')).toBe(true);
         });
 
         test('should skip image loop when images is undefined', () => {
@@ -45,7 +43,7 @@ describe.concurrent('multimodal-message-builder', () => {
             expect(result).toHaveLength(1);
             expect(result[0].type).toBe('text');
             // Verify no image blocks were added
-            const imageBlocks = filter(result, { type: 'image' });
+            const imageBlocks = result.filter(item => item.type === 'image');
             expect(imageBlocks).toHaveLength(0);
         });
 

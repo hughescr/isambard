@@ -2,7 +2,6 @@ import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
-import isError from 'lodash/isError';
 import { Resource } from 'sst';
 import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
@@ -83,7 +82,7 @@ export async function createApp(): Promise<App> {
             });
         } catch (err) {
             logger.error({
-                error: isError(err) ? err.message : String(err),
+                error: err instanceof Error ? err.message : String(err),
                 msg:   'Email integration setup failed, continuing without email',
             });
         }

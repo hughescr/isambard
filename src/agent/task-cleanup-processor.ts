@@ -14,10 +14,6 @@
 import { readdir, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '@hughescr/logger';
-import endsWith from 'lodash/endsWith';
-import filter from 'lodash/filter';
-import isError from 'lodash/isError';
-import isString from 'lodash/isString';
 import { getTaskDirectoryPath as getTaskDirectoryPathImpl } from './task-directory-copier';
 import type { SessionId } from '@/storage';
 
@@ -205,7 +201,7 @@ function getRetentionReason(
     }
 
     // Must be blocking an active task
-    const activeBlocked = filter(task.blocks, (id) => {
+    const activeBlocked = task.blocks.filter((id) => {
         const blockedTask = allTasks.get(id);
         return blockedTask && blockedTask.status !== 'completed';
     });
@@ -255,8 +251,8 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
             const files = await readdirFn(sourcePath);
 
             // Filter to only .json files (files can be string[] or Dirent[])
-            const jsonFiles = filter(files, (file): file is string =>
-                isString(file) && endsWith(file, '.json'));
+            const jsonFiles = files.filter((file): file is string =>
+                typeof file === 'string' && file.endsWith('.json'));
 
             // Load all tasks
             const allTasks = new Map<string, Task>();
@@ -282,7 +278,7 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
 
                     allTasks.set(task.id, task);
                 } catch (error) {
-                    const errorMsg = isError(error) ? error.message : String(error);
+                    const errorMsg = error instanceof Error ? error.message : String(error);
                     // Stryker disable next-line ObjectLiteral: Logger warn object for observability
                     logger.warn({
                         taskFile: file,
@@ -330,7 +326,7 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                             msg: 'Retaining task',
                         });
                     } catch (error) {
-                        const errorMsg = isError(error) ? error.message : String(error);
+                        const errorMsg = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral: Logger warn object for observability
                         logger.warn({
                             taskId,

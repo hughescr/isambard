@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import _map from 'lodash/map';
 import { sigmoidScore, DEFAULT_SIGMOID_PARAMS, type SigmoidParams  } from '@/storage/memory-tool';
 
 describe.concurrent('sigmoidScore', () => {
@@ -44,7 +43,7 @@ describe.concurrent('sigmoidScore', () => {
         test('monotonically increasing with count (same time)', () => {
             const time = 0;
             const counts = [0, 2, 4, 6, 8, 10, 15, 20];
-            const scores = _map(counts, count => sigmoidScore(count, time));
+            const scores = counts.map(count => sigmoidScore(count, time));
 
             for(let i = 1; i < scores.length; i++) {
                 expect(scores[i]).toBeGreaterThan(scores[i - 1]);
@@ -55,7 +54,7 @@ describe.concurrent('sigmoidScore', () => {
             const count = 5;
             const oneDayMs = 24 * 60 * 60 * 1000;
             const times = [0, oneDayMs, 2 * oneDayMs, 5 * oneDayMs, 10 * oneDayMs, 30 * oneDayMs];
-            const scores = _map(times, time => sigmoidScore(count, time));
+            const scores = times.map(time => sigmoidScore(count, time));
 
             for(let i = 1; i < scores.length; i++) {
                 expect(scores[i]).toBeLessThan(scores[i - 1]);

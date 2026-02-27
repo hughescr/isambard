@@ -1,8 +1,4 @@
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import compact from 'lodash/compact';
-import split from 'lodash/split';
-import trim from 'lodash/trim';
+import { chain } from 'lodash-es';
 /**
  * Maximum message length allowed by Discord API.
  */
@@ -27,7 +23,7 @@ export function exceedsLimit(length: number, maxLength: number): boolean {
 
 /**
  * Splits a word that exceeds maxLength into character-based chunks.
- * @param word The word to split (must be non-empty)
+ * @param word The word to must be non-empty.split()
  * @param maxLength Maximum length per chunk (must be positive)
  * @returns Array of character chunks (always non-empty for non-empty input)
  */
@@ -54,7 +50,7 @@ function splitWordByCharacters(word: string, maxLength: number): string[] {
 // eslint-disable-next-line sonarjs/cognitive-complexity -- chunk-accumulator pattern requires tracking multiple edge cases; extracting helpers would obscure the algorithm
 function splitByWords(text: string, maxLength: number): string[] {
     // Stryker disable next-line Regex: Equivalent - compact() filters empty strings from single \s split
-    const words = compact(split(text, /\s+/));
+    const words = text.split(/\s+/).filter(Boolean);
 
     // Pre-condition: callers guarantee non-empty trimmed text, so words is non-empty
     const chunks: string[] = [];
@@ -128,7 +124,7 @@ function extractSentences(text: string): string[] {
 
     // Stryker disable all: extractSentences has intentionally redundant logic for robustness
     while((match = sentencePattern.exec(text)) !== null) {
-        const trimmed = trim(match[0]);
+        const trimmed = match[0].trim();
         if(trimmed) {
             sentences.push(trimmed);
         }
@@ -137,7 +133,7 @@ function extractSentences(text: string): string[] {
 
     // Handle any remaining text after the last sentence
     if(lastIndex < text.length) {
-        const remaining = trim(text.slice(lastIndex));
+        const remaining = text.slice(lastIndex).trim();
         if(remaining) {
             sentences.push(remaining);
         }
@@ -228,7 +224,7 @@ function splitBySentences(text: string, maxLength: number): string[] {
 // eslint-disable-next-line sonarjs/cognitive-complexity -- chunk-accumulator pattern requires tracking multiple edge cases; extracting helpers would obscure the algorithm
 function splitByParagraphs(text: string, maxLength: number): string[] {
     // Split on paragraph breaks (two or more newlines)
-    const paragraphs = _(split(text, /\n{2,}/)).map(p => trim(p)).compact().value();
+    const paragraphs = chain(text.split(/\n{2,}/)).map(p => p.trim()).compact().value();
 
     // Pre-condition: caller guarantees non-empty trimmed text
     // The text will produce at least one paragraph (even without \n\n)
@@ -308,7 +304,7 @@ function splitByParagraphs(text: string, maxLength: number): string[] {
  */
 export function splitMessage(text: string, maxLength: number = DISCORD_SAFE_LENGTH): string[] {
     // Normalize input: trim whitespace
-    const normalized = trim(text);
+    const normalized = text.trim();
 
     // Handle empty or whitespace-only input
     // Stryker disable next-line all: Equivalent - early return optimization, full split handles edge cases

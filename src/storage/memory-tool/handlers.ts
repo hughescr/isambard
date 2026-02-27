@@ -5,13 +5,6 @@
  */
 
 import { logger } from '@hughescr/logger';
-import _endsWith from 'lodash/endsWith';
-import _groupBy from 'lodash/groupBy';
-import _includes from 'lodash/includes';
-import _isError from 'lodash/isError';
-import _map from 'lodash/map';
-import _replace from 'lodash/replace';
-import _split from 'lodash/split';
 import { ZodError } from 'zod';
 import type { MemoryToolBackend } from './backend';
 import {
@@ -42,7 +35,7 @@ export function validatePath(path: string): MemoryPath {
         return memoryPathSchema.parse(path);
     } catch (error) {
         if(error instanceof ZodError) {
-            const message = _map(error.issues, 'message').join(', ');
+            const message = error.issues.map(issue => issue.message).join(', ');
             throw new InvalidPathError(path, message);
         }
         throw error;
@@ -54,18 +47,18 @@ export function validatePath(path: string): MemoryPath {
  * @param content The content to format
  */
 export function formatLineNumbers(content: string): string {
-    const lines = _split(content, '\n');
-    return _map(lines, (line, index) => `${index + 1}:${line}`).join('\n');
+    const lines = content.split('\n');
+    return lines.map((line, index) => `${index + 1}:${line}`).join('\n');
 }
 
 /**
  * Detects content type from file path extension
  */
 export function detectContentType(path: string): ContentType {
-    if(_endsWith(path, '.md')) {
+    if(path.endsWith('.md')) {
         return 'text/markdown';
     }
-    if(_endsWith(path, '.json')) {
+    if(path.endsWith('.json')) {
         return 'application/json';
     }
     return 'text/plain';
@@ -110,7 +103,7 @@ export async function insert(
         throw new PathNotFoundError(params.path);
     }
 
-    const lines = _split(item.content, '\n');
+    const lines = item.content.split('\n');
 
     // Validate line number (0-indexed insertion, so valid range is 0 to lines.length)
     if(!Number.isInteger(params.insert_line) || params.insert_line < 0 || params.insert_line > lines.length) {
@@ -145,7 +138,7 @@ export async function str_replace(
     }
 
     // Count occurrences
-    const occurrences = _split(item.content, params.old_str).length - 1;
+    const occurrences = item.content.split(params.old_str).length - 1;
 
     if(occurrences === 0) {
         throw new TextNotFoundError(params.path, params.old_str);
@@ -156,7 +149,7 @@ export async function str_replace(
     }
 
     // Replace the text
-    const newContent = _replace(item.content, params.old_str, params.new_str);
+    const newContent = item.content.replace(params.old_str, params.new_str);
 
     await backend.update(memoryPath, { content: newContent });
 
@@ -203,7 +196,7 @@ export async function rename(
         await backend.delete(oldPath);
         return `Memory renamed from ${params.path} to ${params.new_path}`;
     } catch (error: unknown) {
-        const errorMessage = _isError(error) ? error.message : String(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         logger.warn({ path: params.path, error: errorMessage, msg: `Failed to delete original memory at ${params.path} after rename: ${errorMessage}` });
         return `Memory renamed from ${params.path} to ${params.new_path} (warning: original file at ${params.path} could not be deleted)`;
     }
@@ -234,7 +227,7 @@ export async function search(
             return 'No results found';
         }
 
-        const formatted = _map(result.items, (item) => {
+        const formatted = result.items.map((item) => {
             const preview = item.contentPreview.length > 100 ? `${item.contentPreview.slice(0, 100)}...` : item.contentPreview;
             const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
             return `${item.memoryPath} (${timestamp})\n  ${preview}`;
@@ -270,7 +263,7 @@ export async function search(
 
     // Format results with 100-char previews and compact timestamps
     // Use contentPreview with fallback for migration period
-    const formatted = _map(items, (item) => {
+    const formatted = items.map((item) => {
         const getPreviewFromContent = () => {
             if(!item.content) {
                 return '[no content]';
@@ -312,7 +305,7 @@ export async function recall(
     }
 
     // Group by layer
-    const grouped = _groupBy(items, (item): string => {
+    const grouped = Object.groupBy(items, (item): string => {
         const layer = extractLayerFromPath(item.path);
         return layer ?? 'other';
     });
@@ -327,17 +320,17 @@ export async function recall(
 
         // Skip empty layers
         // Stryker disable next-line ConditionalExpression: layerItems.length === 0 vs false produces equivalent behavior since both skip the layer
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Record indexing typed as always defined but may be undefined for missing keys
+
         if(!layerItems || layerItems.length === 0) {
             continue;
         }
 
         // Skip if not in include_layers filter
-        if(params.include_layers && layer !== 'other' && !_includes(params.include_layers, layer)) {
+        if(params.include_layers && layer !== 'other' && !params.include_layers.includes(layer as LayerName)) {
             continue;
         }
 
-        const formatted = _map(layerItems, (item) => {
+        const formatted = layerItems.map((item) => {
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: content may be absent at runtime despite types
             return `  ${item.path}\n    ${item.content ?? '[no content]'}`;
         });
@@ -365,7 +358,7 @@ export async function list_by_layer(
         return `No items found in layer: ${params.layer}`;
     }
 
-    const formatted = _map(result.items, (item) => {
+    const formatted = result.items.map((item) => {
         const timestamp = formatShortRelativeTime(new Date(item.updatedAt));
         const pathWithTimestamp = `${item.path} (${timestamp})`;
         if(params.include_content) {
@@ -392,7 +385,7 @@ export async function consolidate(
 ): Promise<string> {
     // Validate all paths
     const targetPath = validatePath(params.target_path);
-    const sourcePaths = _map(params.source_paths, path => validatePath(path));
+    const sourcePaths = params.source_paths.map(path => validatePath(path));
 
     // Check target doesn't exist
     const existing = await backend.get(targetPath);
@@ -417,7 +410,7 @@ export async function consolidate(
                 await backend.delete(sourcePath);
             } catch (error: unknown) {
                 failedDeletions.push(sourcePath);
-                const errorMessage = _isError(error) ? error.message : String(error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
                 logger.warn({ path: sourcePath, error: errorMessage, msg: `Failed to delete source ${sourcePath} during consolidation: ${errorMessage}` });
             }
         }

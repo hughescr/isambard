@@ -1,7 +1,4 @@
 import { describe, test, expect, afterEach } from 'bun:test';
-import find from 'lodash/find';
-import isError from 'lodash/isError';
-import replace from 'lodash/replace';
 import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
 import { resolveTimezone } from '@/utils/time';
 
@@ -157,7 +154,7 @@ describe.concurrent('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error: unknown) {
-                const errorMessage = isError(error) ? error.message : String(error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
                 expect(errorMessage).toContain(fieldPath);
             }
@@ -172,7 +169,7 @@ describe.concurrent('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error: unknown) {
-                const errorMessage = isError(error) ? error.message : String(error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
                 expect(errorMessage).toContain('[REDACTED]');
             }
         });
@@ -186,7 +183,7 @@ describe.concurrent('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error: unknown) {
-                const errorMessage = isError(error) ? error.message : String(error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
                 expect(errorMessage).not.toContain('[REDACTED]');
                 expect(errorMessage).toContain('app.port');
                 expect(errorMessage).toMatch(/Expected number|Invalid/i);
@@ -203,7 +200,7 @@ describe.concurrent('loadConfig', () => {
                 loadConfig(resources);
                 expect.unreachable('Should have thrown an error');
             } catch (error: unknown) {
-                const errorMessage = isError(error) ? error.message : String(error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
 
                 // Sensitive fields should be redacted
                 expect(errorMessage).toContain('[REDACTED]');
@@ -213,8 +210,8 @@ describe.concurrent('loadConfig', () => {
                 expect(errorMessage).toContain('app.port');
 
                 // Should have actual error messages for non-sensitive fields
-                const parsed = JSON.parse(replace(errorMessage, 'Config validation failed: ', ''));
-                const portError = find(parsed, { path: 'app.port' });
+                const parsed = JSON.parse(errorMessage.replace('Config validation failed: ', ''));
+                const portError = parsed.find((item: { path: string }) => item.path === 'app.port');
 
                 expect(portError?.message).not.toBe('[REDACTED]');
             }

@@ -1,9 +1,5 @@
-import type { Logger } from '@hughescr/logger';
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
-import find from 'lodash/find';
-import findLast from 'lodash/findLast';
-import isString from 'lodash/isString';
-import noop from 'lodash/noop';
+import type { Logger } from '@hughescr/logger';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
 import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { PerchConfig } from '@/agent/perch/types';
@@ -74,7 +70,7 @@ describe('PerchScheduler', () => {
 
         mockLogger = createMockLogger();
         mockStateManager = createMockStateManager() as BotStateManager & { _triggerStateChange: (change: StateChange) => void };
-        mockOnPerchTrigger = mock(noop);
+        mockOnPerchTrigger = mock(() => undefined);
         config = {
             enabled:              true,
             timezone:             'America/Los_Angeles',
@@ -221,7 +217,7 @@ describe('PerchScheduler', () => {
         });
 
         test('should unsubscribe from state changes', () => {
-            const unsubscribeMock = mock(noop);
+            const unsubscribeMock = mock(() => undefined);
             mockStateManager.subscribe = mock(() => unsubscribeMock);
 
             const deps: PerchSchedulerDeps = {
@@ -1411,10 +1407,9 @@ describe('PerchScheduler', () => {
 
             // Get the debug log call for scheduling
 
-            const debugCalls = (mockLogger.debug as unknown as Mock<typeof noop>).mock.calls;
-            const scheduleCall = find(debugCalls, call =>
-                isString(call[1]) && call[1].includes('Next perch trigger scheduled')
-            );
+            const debugCalls = (mockLogger.debug as unknown as Mock<(...args: unknown[]) => void>).mock.calls;
+            const scheduleCall = debugCalls.find(call =>
+                typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
 
             expect(scheduleCall).toBeDefined();
             const logData = scheduleCall?.[0] as { delaySeconds: number, nextTrigger: string } | undefined;
@@ -1462,10 +1457,9 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Collect the first scheduled trigger time
-            const debugCalls1 = (mockLogger.debug as unknown as Mock<typeof noop>).mock.calls;
-            const firstScheduleCall = findLast(debugCalls1, call =>
-                isString(call[1]) && call[1].includes('Next perch trigger scheduled')
-            );
+            const debugCalls1 = (mockLogger.debug as unknown as Mock<(...args: unknown[]) => void>).mock.calls;
+            const firstScheduleCall = debugCalls1.findLast(call =>
+                typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
             expect(firstScheduleCall).toBeDefined();
             const firstLog = firstScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
             const firstTriggerHour = new Date(firstLog.nextTrigger).getUTCHours();
@@ -1475,10 +1469,9 @@ describe('PerchScheduler', () => {
             jest.advanceTimersByTime(firstLog.delaySeconds * 1000 + 1);
 
             // Collect the second scheduled trigger time
-            const debugCalls2 = (mockLogger.debug as unknown as Mock<typeof noop>).mock.calls;
-            const secondScheduleCall = findLast(debugCalls2, call =>
-                isString(call[1]) && call[1].includes('Next perch trigger scheduled')
-            );
+            const debugCalls2 = (mockLogger.debug as unknown as Mock<(...args: unknown[]) => void>).mock.calls;
+            const secondScheduleCall = debugCalls2.findLast(call =>
+                typeof call[1] === 'string' && call[1].includes('Next perch trigger scheduled'));
             expect(secondScheduleCall).toBeDefined();
             const secondLog = secondScheduleCall![0] as { delaySeconds: number, nextTrigger: string };
             const secondTriggerHour = new Date(secondLog.nextTrigger).getUTCHours();

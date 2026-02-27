@@ -1,5 +1,4 @@
 import type { Client } from 'discord.js';
-import startsWith from 'lodash/startsWith';
 import { type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
 import type { ChannelRegistryManager } from './manager';
 
@@ -15,7 +14,7 @@ export function formatDMChannelName(username: string): string {
  * Checks if a channel name is a DM channel format.
  */
 export function isDMChannelName(channelName: string): boolean {
-    return startsWith(channelName, '@');
+    return channelName.startsWith('@');
 }
 
 /**
@@ -84,7 +83,7 @@ export class DMTracker {
 
             // Try exact match on username or full tag (username#discriminator)
             // Discord.js Collection is a Map subclass, so we must use its find method directly
-            // eslint-disable-next-line lodash/prefer-lodash-method -- Discord.js Collection.find not compatible with find
+
             const member = members.find(m =>
                 m.user.username === username
                 || m.user.tag === username

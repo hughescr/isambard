@@ -1,5 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import lodashKeys from 'lodash/keys';
 import {
     EmailFolder,
     ClassifierVerdictType,
@@ -21,7 +20,7 @@ describe.concurrent('EmailFolder', () => {
     });
 
     test('should have exactly the expected keys', () => {
-        const folderKeys = lodashKeys(EmailFolder);
+        const folderKeys = Object.keys(EmailFolder);
         expect(folderKeys).toContain('Inbox');
         expect(folderKeys).toContain('CleanInbox');
         expect(folderKeys).toContain('Quarantine');
@@ -44,7 +43,7 @@ describe.concurrent('ClassifierVerdictType', () => {
     });
 
     test('should have exactly the expected keys', () => {
-        const verdictKeys = lodashKeys(ClassifierVerdictType);
+        const verdictKeys = Object.keys(ClassifierVerdictType);
         expect(verdictKeys).toContain('Safe');
         expect(verdictKeys).toContain('Spam');
         expect(verdictKeys).toContain('Uncertain');
@@ -60,7 +59,7 @@ describe.concurrent('EmailIdentity', () => {
     });
 
     test('should have exactly the expected keys', () => {
-        const identityKeys = lodashKeys(EmailIdentity);
+        const identityKeys = Object.keys(EmailIdentity);
         expect(identityKeys).toContain('Formal');
         expect(identityKeys).toContain('Informal');
         expect(identityKeys).toHaveLength(2);

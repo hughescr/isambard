@@ -1,6 +1,5 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import join from 'lodash/join';
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
 import type { EmailMetadata, ClassifierVerdict, EmailFolder } from '@/integrations/email/types';
 
 export interface OutboundApprovalEmbedParams {
@@ -168,7 +167,7 @@ export function buildOutboundApprovalEmbed(params: OutboundApprovalEmbedParams):
     // Stryker disable BooleanLiteral: inline is a UI layout flag — not behavior-affecting
     // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: cc fields only added when non-empty
     const ccFields = params.cc && params.cc.length > 0
-        ? [{ name: 'Cc', value: join(params.cc, ', '), inline: true }]
+        ? [{ name: 'Cc', value: params.cc.join(', '), inline: true }]
         : [];
     // Stryker restore BooleanLiteral
 

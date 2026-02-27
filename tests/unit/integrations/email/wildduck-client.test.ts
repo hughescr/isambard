@@ -1,9 +1,4 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import constant from 'lodash/constant';
-import filter from 'lodash/filter';
-import find from 'lodash/find';
-import repeat from 'lodash/repeat';
-import toLower from 'lodash/toLower';
 import { mockLogger } from '../../../setup';
 import { WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
 
@@ -1925,7 +1920,7 @@ describe('WildDuckClient', () => {
         test('creates missing required folder via POST /users/me/mailboxes', async () => {
             const missingReview = {
                 success: true,
-                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
+                results: MAILBOX_RESPONSE.results.filter(m => m.path !== 'Review'),
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(missingReview));
@@ -1939,7 +1934,7 @@ describe('WildDuckClient', () => {
 
             // Verify the POST call was made to create the mailbox
             const calls = mockFetch.mock.calls as [string, RequestInit][];
-            const postCall = find(calls, ([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
+            const postCall = calls.find(([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
             expect(postCall).toBeDefined();
             const body = JSON.parse(postCall![1].body as string) as { path: string };
             expect(body.path).toBe('Review');
@@ -1948,7 +1943,7 @@ describe('WildDuckClient', () => {
         test('creates multiple missing folders when several are absent', async () => {
             const missingMany = {
                 success: true,
-                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review' && m.path !== 'Quarantine'),
+                results: MAILBOX_RESPONSE.results.filter(m => m.path !== 'Review' && m.path !== 'Quarantine'),
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(missingMany));
@@ -1963,7 +1958,7 @@ describe('WildDuckClient', () => {
             expect(client.init()).resolves.toBeUndefined();
 
             const calls = mockFetch.mock.calls as [string, RequestInit][];
-            const postCalls = filter(calls, ([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
+            const postCalls = calls.filter(([url, opts]) => url === 'https://wildduck-api.example.com/users/me/mailboxes' && opts.method === 'POST');
             expect(postCalls).toHaveLength(2);
         });
 
@@ -1981,7 +1976,7 @@ describe('WildDuckClient', () => {
         test('retries createMailbox on 401 by re-authenticating', async () => {
             const missingReview = {
                 success: true,
-                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
+                results: MAILBOX_RESPONSE.results.filter(m => m.path !== 'Review'),
             };
             // authenticate, loadMailboxes, POST (401), re-authenticate, POST (success), loadMailboxes
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
@@ -2000,7 +1995,7 @@ describe('WildDuckClient', () => {
         test('propagates non-auth error from createMailbox without retry', async () => {
             const missingReview = {
                 success: true,
-                results: filter(MAILBOX_RESPONSE.results, m => m.path !== 'Review'),
+                results: MAILBOX_RESPONSE.results.filter(m => m.path !== 'Review'),
             };
             // authenticate, loadMailboxes, POST (500 server error)
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
@@ -2438,8 +2433,8 @@ describe('WildDuckClient', () => {
             const result = await client.getFullMessage('CleanInbox', 42);
 
             // html-to-text should produce plain text from the HTML (h1 becomes uppercase)
-            expect(toLower(result?.bodyText)).toContain('hello');
-            expect(toLower(result?.bodyText)).toContain('world');
+            expect(result?.bodyText.toLowerCase()).toContain('hello');
+            expect(result?.bodyText.toLowerCase()).toContain('world');
         });
 
         test('truncates body at maxBodySizeBytes', async () => {
@@ -2449,7 +2444,7 @@ describe('WildDuckClient', () => {
             await client.init();
             mockFetch.mockClear();
 
-            const longBody = { ...FULL_MESSAGE_RESPONSE, text: repeat('A', 100) };
+            const longBody = { ...FULL_MESSAGE_RESPONSE, text: 'A'.repeat(100) };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(longBody));
 
             const result = await client.getFullMessage('CleanInbox', 42);
@@ -2761,7 +2756,7 @@ describe('WildDuckClient', () => {
                 ok:         false,
                 status:     500,
                 statusText: 'Error',
-                text:       constant('Internal Error'),
+                text:       () => 'Internal Error',
             } as unknown as Response);
 
             expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckError);

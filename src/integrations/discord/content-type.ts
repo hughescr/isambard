@@ -1,7 +1,3 @@
-import last from 'lodash/last';
-import split from 'lodash/split';
-import startsWith from 'lodash/startsWith';
-import toLower from 'lodash/toLower';
 /**
  * Infer content type from file extension for image types Discord doesn't recognize.
  * This is needed because Discord often returns null contentType for HEIC/HEIF files.
@@ -13,12 +9,12 @@ import toLower from 'lodash/toLower';
 export function inferImageContentType(filename: string, discordContentType: string | null): string {
     // If Discord provided a valid image content type, use it
     // Stryker disable next-line StringLiteral: Equivalent — any non-image string ('' or 'Stryker was here!') produces the same false from startsWith; the test uses null which goes through ?? to '' anyway
-    if(startsWith(discordContentType ?? '', 'image/')) {
+    if((discordContentType ?? '').startsWith('image/')) {
         return discordContentType!;
     }
 
     // Try to infer from file extension
-    const ext = last(split(toLower(filename), '.'));
+    const ext = filename.toLowerCase().split('.').at(-1);
     switch(ext) {
         case 'heic': {
             return 'image/heic';

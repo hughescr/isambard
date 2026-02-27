@@ -1,14 +1,7 @@
+import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import type { Client, MessageCreateOptions } from 'discord.js';
-import assign from 'lodash/assign';
-import _constant from 'lodash/constant';
-import _forEach from 'lodash/forEach';
-import _isArray from 'lodash/isArray';
-import _isString from 'lodash/isString';
-import _repeat from 'lodash/repeat';
-import _startsWith from 'lodash/startsWith';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
 import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
@@ -91,10 +84,10 @@ describe('createDiscordMCPServer', () => {
         // Clear conversation context before each test
         clearConversationContext();
         mockSearchService = {
-            searchMessages:    mock(_constant(Promise.resolve(createMockSearchResponse()))),
-            getRecentMessages: mock(_constant(Promise.resolve(createMockSearchResponse()))),
-            getMessageById:    mock(_constant(Promise.resolve(null))),
-            getMessagesById:   mock(_constant(Promise.resolve([]))),
+            searchMessages:    mock(() => Promise.resolve(createMockSearchResponse())),
+            getRecentMessages: mock(() => Promise.resolve(createMockSearchResponse())),
+            getMessageById:    mock(() => Promise.resolve(null)),
+            getMessagesById:   mock(() => Promise.resolve([])),
         };
 
         // Mock Discord client
@@ -107,30 +100,30 @@ describe('createDiscordMCPServer', () => {
                     id:          '123456789012345678',
                     send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
                     reply:       mock(async (_content: string) => ({ id: 'reply-message-id' })),
-                    isTextBased: _constant(true),
-                    isThread:    _constant(false),
-                    isDMBased:   _constant(false),
+                    isTextBased: () => true,
+                    isThread:    () => false,
+                    isDMBased:   () => false,
                 })),
             },
         };
 
         // Mock question registry
         mockQuestionRegistry = {
-            register: mock(_constant(Promise.resolve({
+            register: mock(() => Promise.resolve({
                 questionId: 'test-question-id',
                 answer:     null,
                 timedOut:   false,
                 channelId:  '123456789012345678',
-            }))),
+            })),
         };
 
         // Mock channel registry
         mockChannelRegistry = {
-            muteChannel:        mock(_constant(Promise.resolve())),
-            unmuteChannel:      mock(_constant(Promise.resolve())),
-            getAllChannels:     mock(_constant([])),
-            getUnmutedChannels: mock(_constant(Promise.resolve([]))),
-            getOrCreateDM:      mock(_constant(Promise.resolve('dm-channel-id' as ChannelId))),
+            muteChannel:        mock(() => Promise.resolve()),
+            unmuteChannel:      mock(() => Promise.resolve()),
+            getAllChannels:     mock(() => []),
+            getUnmutedChannels: mock(() => Promise.resolve([])),
+            getOrCreateDM:      mock(() => Promise.resolve('dm-channel-id' as ChannelId)),
         };
     });
 
@@ -184,9 +177,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             expect(tool.inputSchema).toBeDefined();
 
             expect(tool.inputSchema.shape).toBeDefined();
-            _forEach(expectedFields, (field) => {
+            for(const field of expectedFields) {
                 expect(tool.inputSchema.shape[field]).toBeDefined();
-            });
+            }
         });
 
         test.each([
@@ -572,7 +565,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         });
 
         test('should return "Message not found" when message does not exist', async () => {
-            mockSearchService.getMessageById = mock(_constant(Promise.resolve(null)));
+            mockSearchService.getMessageById = mock(() => Promise.resolve(null));
 
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'getMessageById');
@@ -723,7 +716,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
 
             const parsed = JSON.parse(textContent(result.content[0])) as DiscordSearchResult[];
-            expect(_isArray(parsed)).toBe(true);
+            expect(Array.isArray(parsed)).toBe(true);
             expect(parsed).toHaveLength(1);
         });
 
@@ -890,9 +883,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockChannel = {
                 id:          '123456789012345678',
                 send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -917,20 +910,20 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
         test('should resolve #channel-name to channel ID via registry', async () => {
             // Set up channel registry to have a channel named "test-channel"
-            mockChannelRegistry.getAllChannels = mock(_constant([
+            mockChannelRegistry.getAllChannels = mock(() => [
                 {
                     channelId:   '999888777666555444' as ChannelId,
                     channelName: 'test-channel',
                     isMuted:     false,
                 },
-            ]));
+            ]);
 
             const mockChannel = {
                 id:          '999888777666555444',
                 send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
             mockClient.channels.fetch = mock(async (channelId: string) => {
                 // Verify we're fetching the RESOLVED channel ID, not the literal #test-channel
@@ -959,15 +952,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should split and send long messages in multiple chunks', async () => {
             const sentMessages: { content: string, reference?: string }[] = [];
             const mockChannel = {
-                isTextBased: _constant(true),
+                isTextBased: () => true,
                 send:        mock(async (options: MessageCreateOptions | string) => {
                     const msg = {
                         id:      `msg-${sentMessages.length + 1}`,
-                        content: _isString(options) ? options : options.content,
+                        content: typeof options === 'string' ? options : options.content,
                     };
                     sentMessages.push({
                         content:   msg.content!,
-                        reference: !_isString(options) && options.reply ? String((options.reply as { messageReference: string }).messageReference) : undefined,
+                        reference: typeof options !== 'string' && options.reply ? String((options.reply as { messageReference: string }).messageReference) : undefined,
                     });
                     return msg;
                 }),
@@ -978,7 +971,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // Create content just over 2000 chars (will be split into 2 chunks)
-            const longContent = _repeat('a', 2001);
+            const longContent = 'a'.repeat(2001);
 
             const result = await handler({
                 channelId: '123456789012345678',
@@ -1016,14 +1009,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 }),
             };
             const mockChannel = {
-                isTextBased: _constant(true),
+                isTextBased: () => true,
                 messages:    {
                     fetch: mock(async () => mockMessage),
                 },
                 send: mock(async (options: MessageCreateOptions | string) => {
                     const msg = {
                         id:      `msg-${sentMessages.length + 1}`,
-                        content: _isString(options) ? options : options.content,
+                        content: typeof options === 'string' ? options : options.content,
                     };
                     sentMessages.push({
                         content:  msg.content!,
@@ -1037,7 +1030,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
-            const longContent = _repeat('a', 2001);
+            const longContent = 'a'.repeat(2001);
 
             await handler({
                 channelId:        '123456789012345678',
@@ -1053,7 +1046,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
         test('should return messageIds array even for single chunk', async () => {
             const mockChannel = {
-                isTextBased: _constant(true),
+                isTextBased: () => true,
                 send:        mock(async () => ({ id: 'msg-1' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1133,9 +1126,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockChannel = {
                 id:          '123456789012345678',
                 send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 threads:     {}, // Channel supports threads
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1164,9 +1157,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockChannel = {
                 id:          '123456789012345678',
                 send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 threads:     {}, // Channel supports threads
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1216,9 +1209,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 messages: {
                     fetch: mock(async () => mockMessage),
                 },
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
 
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1249,9 +1242,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockChannel = {
                 id:          '123456789012345678',
                 send:        mock(async (_content: string) => mockSentMessage),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 threads:     {}, // Channel supports threads
             };
 
@@ -1283,9 +1276,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 send: mock(async () => {
                     throw new Error('Discord API error');
                 }),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
 
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1320,9 +1313,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockDMChannel = {
                 id:          'dm-channel-id-123',
                 send:        mock(async (_content: string) => ({ id: 'sent-dm-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(true),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => true,
             };
 
             const mockUser = {
@@ -1391,7 +1384,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             // Mock guild with no matching members
             const mockMembers = new Map();
-            assign(mockMembers, { find: () => undefined });
+            Object.assign(mockMembers, { find: () => undefined });
 
             const mockGuild = {
                 members: {
@@ -1437,17 +1430,17 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                     send: mock(async (options: MessageCreateOptions) => {
                         // Verify files are included in options and are absolute paths
                         expect(options.files).toBeDefined();
-                        expect(_isArray(options.files)).toBe(true);
+                        expect(Array.isArray(options.files)).toBe(true);
                         expect((options.files as string[]).length).toBe(2);
                         // Files should be absolute paths after validation
-                        _forEach(options.files as string[], (file: string) => {
-                            expect(_startsWith(file, '/')).toBe(true);
-                        });
+                        for(const file of options.files as string[]) {
+                            expect(file.startsWith('/')).toBe(true);
+                        }
                         return { id: 'sent-message-id' };
                     }),
-                    isTextBased: _constant(true),
-                    isThread:    _constant(false),
-                    isDMBased:   _constant(false),
+                    isTextBased: () => true,
+                    isThread:    () => false,
+                    isDMBased:   () => false,
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -1476,9 +1469,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                         expect(options.files).toBeUndefined();
                         return { id: 'sent-message-id' };
                     }),
-                    isTextBased: _constant(true),
-                    isThread:    _constant(false),
-                    isDMBased:   _constant(false),
+                    isTextBased: () => true,
+                    isThread:    () => false,
+                    isDMBased:   () => false,
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -1505,9 +1498,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                         expect(options.files).toBeUndefined();
                         return { id: 'sent-message-id' };
                     }),
-                    isTextBased: _constant(true),
-                    isThread:    _constant(false),
-                    isDMBased:   _constant(false),
+                    isTextBased: () => true,
+                    isThread:    () => false,
+                    isDMBased:   () => false,
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -1531,9 +1524,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 const mockChannel = {
                     id:          '123456789012345678',
                     send:        mock(async (_options: MessageCreateOptions) => ({ id: 'should-not-be-called' })),
-                    isTextBased: _constant(true),
-                    isThread:    _constant(false),
-                    isDMBased:   _constant(false),
+                    isTextBased: () => true,
+                    isThread:    () => false,
+                    isDMBased:   () => false,
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -1584,9 +1577,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should send question to channel', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1607,9 +1600,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should create buttons when options provided', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1634,9 +1627,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should not create buttons when options is undefined', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1657,9 +1650,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should not create buttons when options is empty array', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1681,15 +1674,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockThread = {
                 id:          'thread-id',
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 threads:     {
                     create: mock(async (_options: unknown) => mockThread),
                 },
@@ -1715,9 +1708,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should register question in registry', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1739,9 +1732,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should use default timeout of 300 seconds when timeoutSeconds not provided', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1766,9 +1759,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should use provided timeoutSeconds for expiration calculation', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1794,9 +1787,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return answer when resolved', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1834,9 +1827,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return timeout when no answer', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1868,9 +1861,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return error when channel not text-based', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(false),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => false,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -1932,9 +1925,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should allow exactly 25 options without error', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1961,9 +1954,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should include @mention when targetUserId provided', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -1986,9 +1979,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should store targetUserId in question registry', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2010,9 +2003,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should not include @mention when targetUserId not provided', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2034,9 +2027,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return error when askUserQuestion encounters Error exception', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => {
                     throw new Error('Discord rate limit exceeded');
                 }),
@@ -2058,9 +2051,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return error when askUserQuestion encounters non-Error exception', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => {
                     throw { code: 50_013, message: 'Missing Permissions' };
                 }),
@@ -2085,15 +2078,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockThread: Record<string, unknown> = {
                 id:          'thread-id',
                 parentId:    'parent-channel-id',
-                isThread:    _constant(true),
-                isTextBased: _constant(true),
+                isThread:    () => true,
+                isTextBased: () => true,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             const mockParentChannel = {
                 id:          'parent-channel-id',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
             mockClient.channels.fetch = mock(async (channelId: string) => {
                 if(channelId === 'thread-id') {
@@ -2121,9 +2114,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return non-thread channel as-is', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2145,8 +2138,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockThread = {
                 id:          'thread-id',
                 parentId:    'parent-channel-id',
-                isThread:    _constant(true),
-                isTextBased: _constant(true),
+                isThread:    () => true,
+                isTextBased: () => true,
             };
             mockClient.channels.fetch = mock(async (channelId: string) => {
                 if(channelId === 'thread-id') {
@@ -2171,14 +2164,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return error when parent channel is not text-based', async () => {
             const mockNonTextChannel = {
                 id:          'parent-channel-id',
-                isTextBased: _constant(false),
-                isThread:    _constant(false),
+                isTextBased: () => false,
+                isThread:    () => false,
             };
             const mockThread = {
                 id:          'thread-id',
                 parentId:    'parent-channel-id',
-                isThread:    _constant(true),
-                isTextBased: _constant(true),
+                isThread:    () => true,
+                isTextBased: () => true,
             };
             mockClient.channels.fetch = mock(async (channelId: string) => {
                 if(channelId === 'thread-id') {
@@ -2204,15 +2197,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should use existing thread when available', async () => {
             const mockThread = {
                 id:          'existing-thread-id',
-                isThread:    _constant(true),
-                isTextBased: _constant(true),
+                isThread:    () => true,
+                isTextBased: () => true,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             const mockParentChannel = {
                 id:          'parent-channel-id',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
             };
             mockClient.channels.fetch = mock(async (channelId: string) => {
                 if(channelId === 'existing-thread-id') {
@@ -2237,14 +2230,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const mockThread = {
                 id:          'new-thread-id',
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
             };
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 threads:     {
                     create: mock(async (_options: unknown) => mockThread),
                 },
@@ -2268,9 +2261,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should fallback to original channel when thread creation fails gracefully', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
                 threads:     {
                     create: mock(async (_options: unknown) => {
@@ -2299,7 +2292,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should reject non-text-based channel', async () => {
             const mockVoiceChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(false),
+                isTextBased: () => false,
             };
             mockClient.channels.fetch = mock(async () => mockVoiceChannel);
 
@@ -2320,9 +2313,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return undefined for thread-incapable channels', async () => {
             const mockDMChannel = {
                 id:          'dm-channel-id',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(true),  // DM channels can't have threads
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => true,  // DM channels can't have threads
                 send:        mock(async (_content: unknown) => ({ id: 'sent-message-id', startThread: undefined })),
             };
             mockClient.channels.fetch = mock(async () => mockDMChannel);
@@ -2348,9 +2341,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should use currentUserId when available', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2375,9 +2368,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should fallback to clientUser.id when currentUserId not available', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2399,9 +2392,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should fallback to system when neither currentUserId nor clientUser available', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             const mockClientWithoutUser = {
@@ -2449,9 +2442,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should use conversation context userId for triggerUserId when set', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2478,9 +2471,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should fallback to bot ID for triggerUserId when context not set', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2504,9 +2497,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should fallback to "system" for triggerUserId when both context and clientUser are null', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
 
@@ -2537,9 +2530,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('clearConversationContext should reset context', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
-                isTextBased: _constant(true),
-                isThread:    _constant(false),
-                isDMBased:   _constant(false),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
                 send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
@@ -2797,7 +2790,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 messages: {
                     fetch: mock(async () => mockMessage),
                 },
-                isTextBased: _constant(true),
+                isTextBased: () => true,
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -2828,7 +2821,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 messages: {
                     fetch: mock(async () => mockMessage),
                 },
-                isTextBased: _constant(true),
+                isTextBased: () => true,
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -2863,7 +2856,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 messages: {
                     fetch: mock(async () => mockMessage),
                 },
-                isTextBased: _constant(true),
+                isTextBased: () => true,
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -2890,7 +2883,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 messages: {
                     fetch: mock(async () => null),
                 },
-                isTextBased: _constant(true),
+                isTextBased: () => true,
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
@@ -2949,7 +2942,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should mute channel by name with # prefix', async () => {
-            mockChannelRegistry.getAllChannels = mock(_constant([
+            mockChannelRegistry.getAllChannels = mock(() => [
                 {
                     channelId:   '1451694737026449581' as ChannelId,
                     channelName: 'general',
@@ -2960,7 +2953,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                     channelName: 'random',
                     isMuted:     false,
                 },
-            ]));
+            ]);
 
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'muteChannel');
@@ -2972,13 +2965,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when channel name not found', async () => {
-            mockChannelRegistry.getAllChannels = mock(_constant([
+            mockChannelRegistry.getAllChannels = mock(() => [
                 {
                     channelId:   '1451694737026449581' as ChannelId,
                     channelName: 'general',
                     isMuted:     false,
                 },
-            ]));
+            ]);
 
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'muteChannel');
@@ -3007,7 +3000,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should unmute channel by name with # prefix', async () => {
-            mockChannelRegistry.getAllChannels = mock(_constant([
+            mockChannelRegistry.getAllChannels = mock(() => [
                 {
                     channelId:   '1451694737026449581' as ChannelId,
                     channelName: 'general',
@@ -3018,7 +3011,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                     channelName: 'random',
                     isMuted:     false,
                 },
-            ]));
+            ]);
 
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'unmuteChannel');
@@ -3030,13 +3023,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when channel name not found', async () => {
-            mockChannelRegistry.getAllChannels = mock(_constant([
+            mockChannelRegistry.getAllChannels = mock(() => [
                 {
                     channelId:   '1451694737026449581' as ChannelId,
                     channelName: 'general',
                     isMuted:     true,
                 },
-            ]));
+            ]);
 
             const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
             const handler = getToolHandler(server, 'unmuteChannel');

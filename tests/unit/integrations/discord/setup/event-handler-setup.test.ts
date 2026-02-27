@@ -8,8 +8,6 @@
 
 import { describe, test, expect, mock } from 'bun:test';
 import type { Client } from 'discord.js';
-import filter from 'lodash/filter';
-import isObject from 'lodash/isObject';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import { setupChannelCleanupHandlers } from '@/integrations/discord/setup/event-handler-setup';
@@ -192,7 +190,7 @@ describe('setupChannelCleanupHandlers', () => {
             // Each entry should be the channelId string, not the full channel metadata object
             expect(calledWith).toHaveLength(1);
             expect(calledWith[0]).toBe(channelId);
-            expect(filter(calledWith, item => isObject(item))).toHaveLength(0);
+            expect(calledWith.filter(item => typeof item === 'object' && item !== null)).toHaveLength(0);
         });
     });
 });

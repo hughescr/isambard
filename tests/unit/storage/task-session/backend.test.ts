@@ -1,3 +1,4 @@
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -5,7 +6,6 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { TaskSessionBackend } from '@/storage/task-session/backend';
 import { createSessionId } from '@/storage/task-session/types';
 

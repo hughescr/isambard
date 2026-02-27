@@ -2,23 +2,6 @@
 /* eslint-disable import-x/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { mock, type Mock } from 'bun:test';
-import assign from 'lodash/assign';
-import compact from 'lodash/compact';
-import constant from 'lodash/constant';
-import filter from 'lodash/filter';
-import forEach from 'lodash/forEach';
-import includes from 'lodash/includes';
-import isArray from 'lodash/isArray';
-import isDate from 'lodash/isDate';
-import join from 'lodash/join';
-import last from 'lodash/last';
-import map from 'lodash/map';
-import noop from 'lodash/noop';
-import padStart from 'lodash/padStart';
-import replace from 'lodash/replace';
-import slice from 'lodash/slice';
-import split from 'lodash/split';
-import startsWith from 'lodash/startsWith';
 
 type ContentItem = CallToolResult['content'][number];
 
@@ -95,7 +78,7 @@ class MockDynamoDBClient {
 
         // Mock middleware stack for timing middleware
         this.middlewareStack = {
-            add: noop,
+            add: () => undefined,
         };
     }
 }
@@ -116,7 +99,7 @@ class MockDynamoDBDocumentClient {
 }
 // Add sinon-compatible properties for aws-sdk-client-mock
 // eslint-disable-next-line @typescript-eslint/unbound-method -- intentionally accessing prototype method for augmentation, not invocation
-assign(MockDynamoDBDocumentClient.prototype.send, {
+Object.assign(MockDynamoDBDocumentClient.prototype.send, {
     isSinonProxy: false,
     restore:      undefined,
 });
@@ -235,12 +218,12 @@ mockLogger.child = mock(() => mockLogger);
 // Mock helpers for Discord handlers
 export function createMockBotStateManager() {
     return {
-        shouldUpdatePresence:   mock(constant(true)),
-        updateActivityPhase:    mock(constant(undefined)),
-        clearActivityPhase:     mock(constant(undefined)),
-        getMode:                mock(constant('idle' as const)),
-        goIdle:                 mock(constant(undefined)),
-        startProcessingMessage: mock(constant(undefined)),
+        shouldUpdatePresence:   mock(() => true),
+        updateActivityPhase:    mock(() => undefined),
+        clearActivityPhase:     mock(() => undefined),
+        getMode:                mock(() => 'idle' as const),
+        goIdle:                 mock(() => undefined),
+        startProcessingMessage: mock(() => undefined),
         getSessionType:         mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
     };
 }
@@ -340,7 +323,7 @@ const originalStatImpl = async (path: string) => {
     return {
         isDirectory:    () => entry.type === 'dir',
         isFile:         () => entry.type === 'file',
-        isSymbolicLink: constant(false),
+        isSymbolicLink: () => false,
     };
 };
 
@@ -368,25 +351,25 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
 
     // Normalize path by removing trailing slashes
     // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- test-only regex; path strings are short and well-controlled, no DoS risk
-    const normalizedPath = replace(path, /\/+$/, '');
+    const normalizedPath = path.replace(/\/+$/, '');
 
     // Find all direct children of this directory
     const entries = [...mockFs.entries()];
-    const directChildren = filter(entries, ([childPath]: [string, MockFsEntry]) => {
+    const directChildren = entries.filter(([childPath]: [string, MockFsEntry]) => {
         // Must start with parent path
-        if(!startsWith(childPath, `${normalizedPath}/`)) {
+        if(!childPath.startsWith(`${normalizedPath}/`)) {
             return false;
         }
         // Get the relative path after the parent
-        const relative = slice(childPath, normalizedPath.length + 1);
+        const relative = childPath.slice(normalizedPath.length + 1);
         // Only include direct children (no nested slashes)
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: slice() may return '' for edge cases even though startsWith guard above makes it unlikely
-        return relative && !includes(relative, '/');
+
+        return relative.length > 0 && !relative.includes('/');
     });
     // eslint-disable-next-line sonarjs/function-return-type -- callback returns string or Dirent-like object depending on withFileTypes option; matches node:fs readdir signature
-    return map(directChildren, ([childPath, childEntry]: [string, MockFsEntry]): string | { name: string, isDirectory: () => boolean, isFile: () => boolean, isSymbolicLink: () => boolean } => {
-        const parts = split(childPath, '/');
-        const name = last(parts) ?? '';
+    return directChildren.map(([childPath, childEntry]: [string, MockFsEntry]): string | { name: string, isDirectory: () => boolean, isFile: () => boolean, isSymbolicLink: () => boolean } => {
+        const parts = childPath.split('/');
+        const name = parts.at(-1) ?? '';
         if(options?.withFileTypes) {
             return {
                 name,
@@ -416,14 +399,14 @@ const originalWriteFileImpl = async (path: string, content: string) => {
 const originalMkdirImpl = async (path: string, options?: { recursive?: boolean }) => {
     if(options?.recursive) {
         // Create all parent directories
-        const parts = compact(split(path, '/'));
-        const isAbsolute = startsWith(path, '/');
+        const parts = path.split('/').filter(Boolean);
+        const isAbsolute = path.startsWith('/');
 
         for(let i = 0; i < parts.length; i++) {
-            const pathParts = slice(parts, 0, i + 1);
+            const pathParts = parts.slice(0, i + 1);
             const currentPath = isAbsolute
-                ? `/${join(pathParts, '/')}`
-                : join(pathParts, '/');
+                ? `/${pathParts.join('/')}`
+                : pathParts.join('/');
 
             if(!mockFs.has(currentPath)) {
                 mockFs.set(currentPath, { type: 'dir' });
@@ -437,8 +420,10 @@ const originalMkdirImpl = async (path: string, options?: { recursive?: boolean }
 const originalRmImpl = async (_path: string, _options?: { recursive?: boolean, force?: boolean }) => {
     // Clear all entries starting with this path
     const keys = [...mockFs.keys()];
-    const toDelete = filter(keys, (key: string) => key === _path || startsWith(key, `${_path}/`));
-    forEach(toDelete, (key: string) => mockFs.delete(key));
+    const toDelete = keys.filter((key: string) => key === _path || key.startsWith(`${_path}/`));
+    for(const key of toDelete) {
+        mockFs.delete(key);
+    }
 };
 
 const originalUnlinkImpl = async (path: string) => {
@@ -505,7 +490,7 @@ export function resetMockFs(): void {
 // Reset only paths matching a prefix - for test isolation
 export function resetMockFsPrefix(prefix: string): void {
     for(const key of mockFs.keys()) {
-        if(startsWith(key, prefix)) {
+        if(key.startsWith(prefix)) {
             mockFs.delete(key);
         }
     }
@@ -581,11 +566,11 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
 
         // Handle hour-only formatting
         if(this.options.hour && !this.options.minute && !this.options.second) {
-            return padStart(String(d.getUTCHours()), 2, '0');
+            return String(d.getUTCHours()).padStart(2, '0');
         }
 
         // Default to ISO-like format without Z
-        return replace(d.toISOString(), 'Z', '');
+        return d.toISOString().replace('Z', '');
     }
 
     formatToParts(date?: Date | number): Intl.DateTimeFormatPart[] {
@@ -602,7 +587,7 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         // Handle hour-only formatting
         if(this.options.hour && !this.options.minute && !this.options.second) {
             return [
-                { type: 'hour', value: padStart(String(d.getUTCHours()), 2, '0') },
+                { type: 'hour', value: String(d.getUTCHours()).padStart(2, '0') },
             ];
         }
 
@@ -610,20 +595,20 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         return [
             { type: 'year', value: String(d.getUTCFullYear()) },
             { type: 'literal', value: '-' },
-            { type: 'month', value: padStart(String(d.getUTCMonth() + 1), 2, '0') },
+            { type: 'month', value: String(d.getUTCMonth() + 1).padStart(2, '0') },
             { type: 'literal', value: '-' },
-            { type: 'day', value: padStart(String(d.getUTCDate()), 2, '0') },
+            { type: 'day', value: String(d.getUTCDate()).padStart(2, '0') },
             { type: 'literal', value: ', ' },
-            { type: 'hour', value: padStart(String(d.getUTCHours()), 2, '0') },
+            { type: 'hour', value: String(d.getUTCHours()).padStart(2, '0') },
             { type: 'literal', value: ':' },
-            { type: 'minute', value: padStart(String(d.getUTCMinutes()), 2, '0') },
+            { type: 'minute', value: String(d.getUTCMinutes()).padStart(2, '0') },
             { type: 'literal', value: ':' },
-            { type: 'second', value: padStart(String(d.getUTCSeconds()), 2, '0') },
+            { type: 'second', value: String(d.getUTCSeconds()).padStart(2, '0') },
         ];
     }
 
     private applyOffset(date?: Date | number): Date {
-        const d = isDate(date) ? new Date(date) : new Date(date ?? Date.now());
+        const d = date instanceof Date ? new Date(date) : new Date(date ?? Date.now());
         d.setUTCHours(d.getUTCHours() + this.tzOffset);
         return d;
     }
@@ -638,6 +623,6 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
     }
 
     static supportedLocalesOf(locales: string | string[]): string[] {
-        return isArray(locales) ? locales : [locales];
+        return Array.isArray(locales) ? locales : [locales];
     }
 };

@@ -17,9 +17,6 @@
  * - Tests covered by other tests (ID preservation covered by single message test)
  */
 import { describe, test, expect, beforeEach } from 'bun:test';
-import padStart from 'lodash/padStart';
-import repeat from 'lodash/repeat';
-import times from 'lodash/times';
 import { mockGenerateText } from '../../../../setup';
 import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
@@ -175,9 +172,8 @@ describe('createMessageSummarizer', () => {
     describe('concurrency limiting', () => {
         test('should default to maxConcurrent of 10', async () => {
             // Create 15 messages to test default concurrency
-            const messages = times(15, i =>
-                createMockSearchResult({ id: `10000000000000000${i}` })
-            );
+            const messages = Array.from({ length: 15 }, (_, i) =>
+                createMockSearchResult({ id: `10000000000000000${i}` }));
 
             // Use a deferred pattern to control when each task completes
             const deferreds: ((value: string) => void)[] = [];
@@ -224,9 +220,8 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should respect custom maxConcurrent setting', async () => {
-            const messages = times(10, i =>
-                createMockSearchResult({ id: `10000000000000000${i}` })
-            );
+            const messages = Array.from({ length: 10 }, (_, i) =>
+                createMockSearchResult({ id: `10000000000000000${i}` }));
 
             const deferreds: ((value: string) => void)[] = [];
             let maxConcurrent = 0;
@@ -317,7 +312,7 @@ describe('createMessageSummarizer', () => {
 
         test('should handle message with very long content', async () => {
             const message = createMockSearchResult({
-                content: repeat('Long content. ', 1000),
+                content: 'Long content. '.repeat(1000),
             });
 
             const summarizer = createMessageSummarizer({});
@@ -368,14 +363,13 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should batch messages into groups and return batch summaries', async () => {
-            const messages = times(25, i =>
+            const messages = Array.from({ length: 25 }, (_, i) =>
                 createMockSearchResult({
                     id:             `10000000000000000${i}`,
                     content:        `Message ${i}`,
                     authorUsername: i % 2 === 0 ? 'alice' : 'bob',
-                    timestamp:      `2025-01-15T${padStart(String(10 + Math.floor(i / 60)), 2, '0')}:${padStart(String(i % 60), 2, '0')}:00.000Z`,
-                })
-            );
+                    timestamp:      `2025-01-15T${String(10 + Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00.000Z`,
+                }));
 
             let callCount = 0;
             mockGenerateText.mockImplementation(async () => {
@@ -432,12 +426,11 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should use default batch size of 10', async () => {
-            const messages = times(25, i =>
+            const messages = Array.from({ length: 25 }, (_, i) =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
-                })
-            );
+                }));
 
             mockGenerateText.mockResolvedValue('Summary');
 
@@ -520,12 +513,11 @@ describe('createMessageSummarizer', () => {
         });
 
         test('should respect maxConcurrent for batch processing', async () => {
-            const messages = times(30, i =>
+            const messages = Array.from({ length: 30 }, (_, i) =>
                 createMockSearchResult({
                     id:      `10000000000000000${i}`,
                     content: `Message ${i}`,
-                })
-            );
+                }));
 
             const deferreds: ((value: string) => void)[] = [];
             let maxConcurrent = 0;

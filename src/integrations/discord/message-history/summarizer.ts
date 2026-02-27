@@ -7,16 +7,7 @@
  * Key design principle: Message IDs are maintained by our code, NOT passed through Haiku.
  * This prevents any possibility of ID hallucination or mangling.
  */
-
-// eslint-disable-next-line lodash/import-scope -- Allow full lodash import for chaining only
-import _ from 'lodash';
-import chunk from 'lodash/chunk';
-import head from 'lodash/head';
-import isEmpty from 'lodash/isEmpty';
-import last from 'lodash/last';
-import map from 'lodash/map';
-import replace from 'lodash/replace';
-import sortBy from 'lodash/sortBy';
+import { chain, isEmpty } from 'lodash-es';
 import pLimit from 'p-limit';
 import type { DiscordSearchResult, OverflowSummary, BatchOverflowSummary } from './types';
 import { generateText } from '@/agent';
@@ -91,7 +82,7 @@ Messages:
  */
 async function summarizeContent(content: string): Promise<string> {
     // Stryker disable next-line StringLiteral: Template placeholder for content substitution
-    const prompt = replace(SUMMARIZATION_PROMPT, '{content}', content);
+    const prompt = SUMMARIZATION_PROMPT.replace('{content}', content);
     return generateText(prompt);
 }
 
@@ -99,9 +90,8 @@ async function summarizeContent(content: string): Promise<string> {
  * Format messages for batch prompt.
  */
 function formatMessagesForBatch(messages: DiscordSearchResult[]): string {
-    return map(messages, msg =>
-        `[${msg.author.username}] ${msg.content}`
-    ).join('\n');
+    return messages.map(msg =>
+        `[${msg.author.username}] ${msg.content}`).join('\n');
 }
 
 /**
@@ -110,15 +100,15 @@ function formatMessagesForBatch(messages: DiscordSearchResult[]): string {
 async function summarizeBatch(messages: DiscordSearchResult[]): Promise<BatchOverflowSummary> {
     const formatted = formatMessagesForBatch(messages);
     // Stryker disable next-line StringLiteral: Template placeholder for content substitution
-    const prompt = replace(BATCH_SUMMARIZATION_PROMPT, '{messages}', formatted);
+    const prompt = BATCH_SUMMARIZATION_PROMPT.replace('{messages}', formatted);
     const synopsis = await generateText(prompt);
 
-    const sorted = sortBy(messages, 'timestamp');
+    const sorted = messages.toSorted((a, b) => a.timestamp.localeCompare(b.timestamp));
     return {
-        startTimestamp: head(sorted)!.timestamp,
-        endTimestamp:   last(sorted)!.timestamp,
+        startTimestamp: sorted.at(0)!.timestamp,
+        endTimestamp:   sorted.at(-1)!.timestamp,
         messageCount:   messages.length,
-        authors:        _(messages).map('author.username').uniq().value() as string[],
+        authors:        chain(messages).map('author.username').uniq().value() as string[],
         synopsis,
     };
 }
@@ -128,7 +118,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
 
     return {
         async summarizeMessages(messages: DiscordSearchResult[]): Promise<OverflowSummary[]> {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - map([]) returns [] so early return is redundant; prevents unnecessary pLimit setup
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - [].map() returns [] so early return is redundant; prevents unnecessary pLimit setup
             if(isEmpty(messages)) {
                 return [];
             }
@@ -136,7 +126,7 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
             const limit = pLimit(maxConcurrent);
 
             // Process all messages in parallel with concurrency limiting
-            const summaryPromises = map(messages, message =>
+            const summaryPromises = messages.map(message =>
                 limit(async (): Promise<OverflowSummary> => {
                     const synopsis = await summarizeContent(message.content);
                     return {
@@ -145,24 +135,22 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
                         author:    message.author.username,
                         synopsis,
                     };
-                })
-            );
+                }));
 
             return Promise.all(summaryPromises);
         },
 
         async summarizeMessageBatch(messages: DiscordSearchResult[], batchSize = 10): Promise<BatchOverflowSummary[]> {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - chunk([], n) produces [] batches so early return is redundant; prevents unnecessary pLimit setup
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - Array.from({length: Math.ceil([].length / n)}, (_, i) => [].slice(i * n, (i + 1) * n)) produces [] batches so early return is redundant; prevents unnecessary pLimit setup
             if(isEmpty(messages)) {
                 return [];
             }
 
-            const batches = chunk(messages, batchSize);
+            const batches = Array.from({ length: Math.ceil(messages.length / batchSize) }, (_, i) => messages.slice(i * batchSize, (i + 1) * batchSize));
             const limit = pLimit(maxConcurrent);
 
-            const batchPromises = map(batches, batch =>
-                limit(() => summarizeBatch(batch))
-            );
+            const batchPromises = batches.map(batch =>
+                limit(() => summarizeBatch(batch)));
 
             return Promise.all(batchPromises);
         },

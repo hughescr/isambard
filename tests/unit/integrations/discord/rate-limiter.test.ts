@@ -11,9 +11,6 @@
 
 import { describe, expect, test, mock } from 'bun:test';
 import type { TextChannel, Message } from 'discord.js';
-import filter from 'lodash/filter';
-import map from 'lodash/map';
-import repeat from 'lodash/repeat';
 import { DiscordRateLimiter, type LimitFunction } from '@/integrations/discord/rate-limiter';
 
 // Synchronous mock limit function that just executes immediately (no p-limit overhead)
@@ -117,7 +114,7 @@ describe('new DiscordRateLimiter', () => {
 
         // Send to all 3 channels concurrently
         await Promise.all(
-            map(channels, ch => limiter.sendToChannel(ch, 'test'))
+            channels.map(ch => limiter.sendToChannel(ch, 'test'))
         );
 
         // All 3 should have been called
@@ -224,7 +221,7 @@ describe('new DiscordRateLimiter', () => {
 
         // Send to all 6 channels concurrently
         await Promise.all(
-            map(channels, ch => limiter.sendToChannel(ch, 'test'))
+            channels.map(ch => limiter.sendToChannel(ch, 'test'))
         );
 
         // All 6 should have been called
@@ -257,7 +254,7 @@ describe('new DiscordRateLimiter', () => {
 
         // Verify debug was called with error recovery message
         const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
-        const errorRecoveryCalls = filter(debugCalls, ['0.msg', 'Previous send in queue failed, continuing queue']);
+        const errorRecoveryCalls = debugCalls.filter(call => call[0].msg === 'Previous send in queue failed, continuing queue');
         expect(errorRecoveryCalls).toHaveLength(1);
         expect(errorRecoveryCalls[0][0].channelId).toBe('channel-1');
 
@@ -282,9 +279,9 @@ describe('new DiscordRateLimiter', () => {
         const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
 
         // Should have: queueing, executing, and sending
-        const queueingCalls = filter(debugCalls, ['0.msg', 'Queueing send to channel']);
-        const executingCalls = filter(debugCalls, ['0.msg', 'Executing queued operation']);
-        const sendingCalls = filter(debugCalls, ['0.msg', 'Sending to channel']);
+        const queueingCalls = debugCalls.filter(call => call[0].msg === 'Queueing send to channel');
+        const executingCalls = debugCalls.filter(call => call[0].msg === 'Executing queued operation');
+        const sendingCalls = debugCalls.filter(call => call[0].msg === 'Sending to channel');
 
         expect(queueingCalls).toHaveLength(1);
         expect(queueingCalls[0][0].channelId).toBe('channel-1');
@@ -369,7 +366,7 @@ describe('new DiscordRateLimiter', () => {
     });
 
     test('handles very long message content', async () => {
-        const longMessage = repeat('x', 10_000);
+        const longMessage = 'x'.repeat(10_000);
 
         const mockChannel = {
             id:   'channel-1',
@@ -421,7 +418,7 @@ describe('new DiscordRateLimiter', () => {
         limiter.stop();
 
         const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
-        const stopCalls = filter(debugCalls, ['0.msg', 'Stopping rate limiter']);
+        const stopCalls = debugCalls.filter(call => call[0].msg === 'Stopping rate limiter');
 
         expect(stopCalls).toHaveLength(1);
         expect(stopCalls[0][0]).toHaveProperty('pendingQueueCount');
@@ -443,8 +440,8 @@ describe('new DiscordRateLimiter', () => {
         await limiter.replyToMessage(mockMessage, 'Reply text');
 
         const debugCalls = mockLogger.debug.mock.calls as [Record<string, unknown>][];
-        const queueingCalls = filter(debugCalls, ['0.msg', 'Queueing reply to message']);
-        const replyingCalls = filter(debugCalls, ['0.msg', 'Replying to message']);
+        const queueingCalls = debugCalls.filter(call => call[0].msg === 'Queueing reply to message');
+        const replyingCalls = debugCalls.filter(call => call[0].msg === 'Replying to message');
 
         expect(queueingCalls).toHaveLength(1);
         expect(queueingCalls[0][0].messageId).toBe('msg-original');

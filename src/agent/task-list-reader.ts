@@ -7,10 +7,6 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import endsWith from 'lodash/endsWith';
-import filter from 'lodash/filter';
-import isString from 'lodash/isString';
-import map from 'lodash/map';
 import { getTaskDirectoryPath } from './task-directory-copier';
 
 /**
@@ -66,9 +62,9 @@ function parseTaskFile(content: string): Task | undefined {
         // Validate task shape - check parsed is non-null and has required fields
         // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
-        if(!parsed || !isString(parsed.id)
+        if(!parsed || typeof parsed.id !== 'string'
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
-          || !isString(parsed.subject)
+          || typeof parsed.subject !== 'string'
           // eslint-disable-next-line @typescript-eslint/no-unsafe-argument,@typescript-eslint/no-unsafe-member-access -- Validated with includes check
           || !['pending', 'in_progress', 'completed'].includes(parsed.status)) {
             return undefined;
@@ -86,14 +82,14 @@ function parseTaskFile(content: string): Task | undefined {
  */
 function buildSummarySections(cappedTasks: Task[]): string[] {
     // Stryker disable StringLiteral,ObjectLiteral: Summary text building is cosmetic formatting
-    const inProgressTasks = filter(cappedTasks, { status: 'in_progress' });
-    const pendingTasks = filter(cappedTasks, { status: 'pending' });
-    const completedTasks = filter(cappedTasks, { status: 'completed' });
+    const inProgressTasks = cappedTasks.filter(task => task.status === 'in_progress');
+    const pendingTasks = cappedTasks.filter(task => task.status === 'pending');
+    const completedTasks = cappedTasks.filter(task => task.status === 'completed');
 
     const sections: string[] = [];
 
     if(inProgressTasks.length > 0) {
-        const subjects = map(inProgressTasks, task => truncateSubject(task.subject));
+        const subjects = inProgressTasks.map(task => truncateSubject(task.subject));
         sections.push(`Working on: ${subjects.join(', ')}`);
     }
 
@@ -102,7 +98,7 @@ function buildSummarySections(cappedTasks: Task[]): string[] {
     }
 
     if(completedTasks.length > 0) {
-        const subjects = map(completedTasks, task => truncateSubject(task.subject));
+        const subjects = completedTasks.map(task => truncateSubject(task.subject));
         sections.push(`Recently done: ${subjects.join(', ')}`);
     }
     // Stryker restore StringLiteral,ObjectLiteral
@@ -143,7 +139,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 }
 
                 // Filter for JSON files only
-                const jsonFiles = filter(files, file => file.isFile() && endsWith(file.name, '.json'));
+                const jsonFiles = files.filter(file => file.isFile() && file.name.endsWith('.json'));
                 // Stryker disable next-line ConditionalExpression: Defensive early return — covered by tasks.length check
                 if(jsonFiles.length === 0) {
                     return undefined;
@@ -177,7 +173,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 // Stryker disable next-line ArithmeticOperator: TTL constant for recently completed tasks
                 const twoHoursMs = 2 * 60 * 60 * 1000;
 
-                const relevantTasks = filter(tasks, (task) => {
+                const relevantTasks = tasks.filter((task) => {
                     if(task.status !== 'completed') {
                         return true;
                     }

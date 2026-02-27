@@ -1,6 +1,5 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message, TextChannel } from 'discord.js';
-import map from 'lodash/map';
 import type { AttachmentMetadata } from './attachments/types';
 import type { CatchUpSessionRunner } from './catchup';
 import type { ChannelRegistryManager, DMTracker } from './channel-registry';
@@ -26,7 +25,7 @@ export function extractAttachmentMetadata(message: Message): AttachmentMetadata[
         return [];
     }
 
-    return map([...message.attachments.values()], attachment => ({
+    return [...message.attachments.values()].map(attachment => ({
         url:         attachment.url,
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: attachment.name typed as string but may be null at runtime
         filename:    attachment.name ?? 'unknown',

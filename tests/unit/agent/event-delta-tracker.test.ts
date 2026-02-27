@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import padStart from 'lodash/padStart';
 import { type ContextBuilder, type RecentEventsResult  } from '../../../src/agent/context-builder';
 import { EventDeltaTracker } from '../../../src/agent/event-delta-tracker';
 import { createMemoryPath, type MemoryToolItemData  } from '../../../src/storage/memory-tool/types';
@@ -207,7 +206,7 @@ describe.concurrent('EventDeltaTracker', () => {
         test('should handle limit of 50 events in loadRecentEvents', async () => {
             // Generate 48 initial events
             const initialItems = Array.from({ length: 48 }, (_elem, i) =>
-                createMockEventItem(`/events/2025-01-15/event${i}`, `2025-01-15T${padStart(String(i), 2, '0')}:00:00.000Z`, `Event ${i}`)
+                createMockEventItem(`/events/2025-01-15/event${i}`, `2025-01-15T${String(i).padStart(2, '0')}:00:00.000Z`, `Event ${i}`)
             );
             mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
 
@@ -216,7 +215,7 @@ describe.concurrent('EventDeltaTracker', () => {
 
             // Add 5 more events (total 53, but limit is 50 so oldest 3 are dropped)
             const newItems = Array.from({ length: 50 }, (_elem, i) =>
-                createMockEventItem(`/events/2025-01-15/event${i + 3}`, `2025-01-15T${padStart(String(i + 3), 2, '0')}:00:00.000Z`, `Event ${i + 3}`)
+                createMockEventItem(`/events/2025-01-15/event${i + 3}`, `2025-01-15T${String(i + 3).padStart(2, '0')}:00:00.000Z`, `Event ${i + 3}`)
             );
             // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
             mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(newItems));

@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import constant from 'lodash/constant';
 import { mockLogger } from '../../../setup';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
 import type { EmailMetadata } from '@/integrations/email/types';
@@ -61,14 +60,14 @@ function makeWildDuckClient(overrides: Partial<{
     getAuthToken:          ReturnType<typeof mock>
     getApiUrl:             ReturnType<typeof mock>
 } {
-    const listMessages          = overrides.listMessages          ?? mock(constant(Promise.resolve([])));
-    const getFullMessage        = overrides.getFullMessage        ?? mock(constant(Promise.resolve(null)));
-    const getMessage            = overrides.getMessage            ?? mock(constant(Promise.resolve(null)));
-    const search                = overrides.search                ?? mock(constant(Promise.resolve([])));
-    const updateMessageMetadata = overrides.updateMessageMetadata ?? mock(constant(Promise.resolve(undefined)));
-    const updateMessageFlags    = overrides.updateMessageFlags    ?? mock(constant(Promise.resolve(undefined)));
-    const getAuthToken          = overrides.getAuthToken          ?? mock(constant('test-token'));
-    const getApiUrl             = overrides.getApiUrl             ?? mock(constant('https://wildduck.example.com'));
+    const listMessages          = overrides.listMessages          ?? mock(() => Promise.resolve([]));
+    const getFullMessage        = overrides.getFullMessage        ?? mock(() => Promise.resolve(null));
+    const getMessage            = overrides.getMessage            ?? mock(() => Promise.resolve(null));
+    const search                = overrides.search                ?? mock(() => Promise.resolve([]));
+    const updateMessageMetadata = overrides.updateMessageMetadata ?? mock(() => Promise.resolve(undefined));
+    const updateMessageFlags    = overrides.updateMessageFlags    ?? mock(() => Promise.resolve(undefined));
+    const getAuthToken          = overrides.getAuthToken          ?? mock(() => 'test-token');
+    const getApiUrl             = overrides.getApiUrl             ?? mock(() => 'https://wildduck.example.com');
 
     return {
         client: { listMessages, getFullMessage, getMessage, search, updateMessageMetadata, updateMessageFlags, getAuthToken, getApiUrl } as unknown as WildDuckClient,
@@ -400,7 +399,7 @@ describe('WildDuckListener', () => {
         test('skips email when getFullMessage returns null', async () => {
             const { client } = makeWildDuckClient({
                 listMessages:   mock(async () => [makeSummary(1)]),
-                getFullMessage: mock(constant(Promise.resolve(null))),
+                getFullMessage: mock(() => Promise.resolve(null)),
             });
             const { processor, processEmail } = makeProcessor();
 
@@ -808,7 +807,7 @@ describe('WildDuckListener', () => {
             const uid = 55;
             const { client, getMessage, updateMessageMetadata } = makeWildDuckClient({
                 search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(constant(Promise.resolve(null))),
+                getMessage: mock(() => Promise.resolve(null)),
             });
             const { processor }         = makeProcessor();
             const onSendApprovalRequest = mock(async () => undefined);

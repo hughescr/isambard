@@ -6,10 +6,6 @@ import {
     UpdateCommand,
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
-import filter from 'lodash/filter';
-import isObject from 'lodash/isObject';
-import map from 'lodash/map';
-import replace from 'lodash/replace';
 import { createChannelId, type ChannelId, type GuildId } from '../types';
 import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 import {
@@ -145,7 +141,7 @@ export class ChannelRegistryBackend {
             }
         );
 
-        return map(result.Items ?? [], item => stripDynamoKeys(item) as ChannelStorageRecord);
+        return (result.Items ?? []).map(item => stripDynamoKeys(item) as ChannelStorageRecord);
     }
 
     /**
@@ -183,7 +179,7 @@ export class ChannelRegistryBackend {
 
         // Step 2: Extract channelId from PK and fetch full record
         const pk = result.Items[0].PK as string;
-        const channelId = createChannelId(replace(pk, 'CHANNEL#', ''));
+        const channelId = createChannelId(pk.replace('CHANNEL#', ''));
 
         return this.getChannel(channelId);
     }
@@ -197,9 +193,9 @@ export class ChannelRegistryBackend {
      */
     async getAllWellKnownChannels(): Promise<ChannelStorageRecord[]> {
         const results = await Promise.all(
-            map(WELL_KNOWN_CHANNELS, type => this.getWellKnownChannel(type))
+            WELL_KNOWN_CHANNELS.map(type => this.getWellKnownChannel(type))
         );
-        return filter(results, (item): item is ChannelStorageRecord => item !== null);
+        return results.filter((item): item is ChannelStorageRecord => item !== null);
     }
 
     /**
@@ -234,7 +230,7 @@ export class ChannelRegistryBackend {
                 }
             );
         } catch (error) {
-            if(isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException') {
+            if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
                 throw new ItemNotFoundError(channelId);
             }
             throw error;
@@ -273,7 +269,7 @@ export class ChannelRegistryBackend {
                 }
             );
         } catch (error) {
-            if(isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException') {
+            if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
                 throw new ItemNotFoundError(channelId);
             }
             throw error;
@@ -317,7 +313,7 @@ export class ChannelRegistryBackend {
                 }
             );
         } catch (error) {
-            if(isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException') {
+            if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
                 throw new ItemNotFoundError(channelId);
             }
             throw error;
@@ -356,7 +352,7 @@ export class ChannelRegistryBackend {
                 }
             );
         } catch (error) {
-            if(isObject(error) && 'name' in error && error.name === 'ConditionalCheckFailedException') {
+            if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
                 throw new ItemNotFoundError(channelId);
             }
             throw error;

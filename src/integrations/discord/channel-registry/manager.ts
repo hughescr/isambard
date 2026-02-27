@@ -1,7 +1,5 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Channel } from 'discord.js';
-import isError from 'lodash/isError';
-import startsWith from 'lodash/startsWith';
 import { createGuildId, type ChannelId, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
@@ -132,7 +130,7 @@ export class ChannelRegistryManager {
             return metadata;
         } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
-            const errorMsg = isError(error) ? error.message : String(error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
             // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId, error: errorMsg, msg: 'Failed to fetch channel from Discord API' });
             return null;
@@ -292,7 +290,7 @@ export class ChannelRegistryManager {
             return metadata;
         } catch (error) {
             // Discord API failure - channel might be deleted or inaccessible
-            const errorMsg = isError(error) ? error.message : String(error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
             // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId: storedRecord.channelId, wellKnownType: type, error: errorMsg, msg: 'Failed to fetch well-known channel from Discord API' });
             return null;
@@ -451,9 +449,9 @@ export class ChannelRegistryManager {
                 channelName = `@${discordChannel.recipient.username}`;
             } else if('name' in discordChannel && discordChannel.name) {
                 // Fallback: if already in "DM - username" format, convert to @username
-                if(startsWith(discordChannel.name, 'DM - ')) {
+                if(discordChannel.name.startsWith('DM - ')) {
                     channelName = `@${discordChannel.name.slice(5)}`;
-                } else if(startsWith(discordChannel.name, '@')) {
+                } else if(discordChannel.name.startsWith('@')) {
                     // Already in @username format
                     channelName = discordChannel.name;
                 } else {
@@ -522,7 +520,7 @@ export class ChannelRegistryManager {
             this.addToCache(metadata);
             return metadata;
         } catch (error) {
-            const errorMsg = isError(error) ? error.message : String(error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
             // Stryker disable next-line all: Logging for observability
             logger.warn({ channelId: record.channelId, error: errorMsg, msg: 'Skipping channel: Discord API error' });
             return null;

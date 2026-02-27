@@ -1,7 +1,4 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
-import _every from 'lodash/every';
-import _padStart from 'lodash/padStart';
-import _repeat from 'lodash/repeat';
 import { summarizeEventBatches } from '../../../src/agent/event-summarizer';
 import { type MemoryToolItemData, createMemoryPath  } from '../../../src/storage/memory-tool/types';
 import { mockGenerateText } from '../../setup';
@@ -64,7 +61,7 @@ describe('event-summarizer', () => {
     describe.concurrent('batching logic', () => {
         it('creates correct number of batches for evenly divisible events', async () => {
             const events = Array.from({ length: 10 }, (_, i) =>
-                createMockEvent(`/events/e${i}`, `2025-01-15T${_padStart(String(11 + i), 2, '0')}:00:00Z`, `Event ${i}`)
+                createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)
             );
 
             const result = await summarizeEventBatches(events, 5, now);
@@ -75,7 +72,7 @@ describe('event-summarizer', () => {
 
         it('handles events not evenly divisible by batchSize', async () => {
             const events = Array.from({ length: 7 }, (_, i) =>
-                createMockEvent(`/events/e${i}`, `2025-01-15T${_padStart(String(11 + i), 2, '0')}:00:00Z`, `Event ${i}`)
+                createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)
             );
 
             const result = await summarizeEventBatches(events, 3, now);
@@ -113,7 +110,7 @@ describe('event-summarizer', () => {
 
         it('each batch has correct count', async () => {
             const events = Array.from({ length: 8 }, (_, i) =>
-                createMockEvent(`/events/e${i}`, `2025-01-15T${_padStart(String(11 + i), 2, '0')}:00:00Z`, `Event ${i}`)
+                createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)
             );
 
             const result = await summarizeEventBatches(events, 3, now);
@@ -128,7 +125,7 @@ describe('event-summarizer', () => {
     describe.concurrent('generateText integration', () => {
         it('calls generateText for each batch', async () => {
             const events = Array.from({ length: 6 }, (_, i) =>
-                createMockEvent(`/events/e${i}`, `2025-01-15T${_padStart(String(11 + i), 2, '0')}:00:00Z`, `Event ${i}`)
+                createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)
             );
 
             await summarizeEventBatches(events, 3, now);
@@ -158,7 +155,7 @@ describe('event-summarizer', () => {
         });
 
         it('truncates long content to 200 chars in prompt', async () => {
-            const longContent = _repeat('A', 300);
+            const longContent = 'A'.repeat(300);
             const events = [
                 createMockEvent('/events/long', '2025-01-15T11:00:00Z', longContent),
             ];
@@ -177,7 +174,7 @@ describe('event-summarizer', () => {
         it('uses p-limit for concurrency control', async () => {
             // Create enough batches to test concurrency
             const events = Array.from({ length: 20 }, (_, i) =>
-                createMockEvent(`/events/e${i}`, `2025-01-15T${_padStart(String(11 + Math.floor(i / 60)), 2, '0')}:${_padStart(String(i % 60), 2, '0')}:00Z`, `Event ${i}`)
+                createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00Z`, `Event ${i}`)
             );
 
             mockGenerateText.mockImplementation(async () => {
@@ -194,7 +191,7 @@ describe('event-summarizer', () => {
             expect(result).toHaveLength(7);
             expect(mockGenerateText).toHaveBeenCalledTimes(7);
             // All batches should have summaries
-            expect(_every(result, { summary: 'Mock summary' })).toBe(true);
+            expect(result.every(item => item.summary === 'Mock summary')).toBe(true);
         });
     });
 

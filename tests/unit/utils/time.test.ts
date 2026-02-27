@@ -1,9 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use typeof guards on string results for defensive checking; always truthy but clarifies intent */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import _isString from 'lodash/isString';
-import _some from 'lodash/some';
-import _split from 'lodash/split';
-import _startsWith from 'lodash/startsWith';
 import { mockLogger } from '../../setup';
 import {
     timeContextSchema,
@@ -105,13 +101,13 @@ describe('relative time formatting boundary conditions', () => {
             expectedShort: '1y ago'
         }
     ])('should format $desc', ({ date, now, expectedLong, expectedShort }) => {
-        if(_isString(expectedLong)) {
+        if(typeof expectedLong === 'string') {
             expect(formatRelativeTime(date, now)).toBe(expectedLong);
         } else {
             expect(formatRelativeTime(date, now)).toMatch(expectedLong);
         }
 
-        if(_isString(expectedShort)) {
+        if(typeof expectedShort === 'string') {
             expect(formatShortRelativeTime(date, now)).toBe(expectedShort);
         } else {
             expect(formatShortRelativeTime(date, now)).toMatch(expectedShort);
@@ -310,7 +306,7 @@ describe('formatTimeHeader', () => {
 
     test('should include header and UTC+Izzy lines when no user timezone', () => {
         const result = formatTimeHeader();
-        const lines = _split(result, '\n');
+        const lines = result.split('\n');
 
         expect(lines[0]).toBe('## Current Time');
         expect(lines[1]).toStartWith('- UTC: 2026-02-09T22:30:00.000Z (');
@@ -322,10 +318,10 @@ describe('formatTimeHeader', () => {
     test('should omit User line when userTimezone equals server timezone', () => {
         const serverTz = resolveTimezone();
         const result = formatTimeHeader(serverTz);
-        const lines = _split(result, '\n');
+        const lines = result.split('\n');
 
         expect(lines).toHaveLength(3);
-        expect(_some(lines, l => _startsWith(l, '- User:'))).toBe(false);
+        expect(lines.some(l => l.startsWith('- User:'))).toBe(false);
     });
 
     test('should include User line when userTimezone differs from server timezone', () => {
@@ -333,7 +329,7 @@ describe('formatTimeHeader', () => {
         // Pick a timezone that's definitely different from the server
         const differentTz = serverTz === 'America/New_York' ? 'America/Los_Angeles' : 'America/New_York';
         const result = formatTimeHeader(differentTz);
-        const lines = _split(result, '\n');
+        const lines = result.split('\n');
 
         expect(lines).toHaveLength(4);
         expect(lines[3]).toStartWith('- User: ');
@@ -348,7 +344,7 @@ describe('formatTimeHeader', () => {
 
     test('should format Izzy line with local time, timezone, day of week, and time of day', () => {
         const result = formatTimeHeader();
-        const lines = _split(result, '\n');
+        const lines = result.split('\n');
         const izzyLine = lines[2];
 
         expect(izzyLine).toStartWith('- Izzy: ');
@@ -361,7 +357,7 @@ describe('formatTimeHeader', () => {
         const serverTz = resolveTimezone();
         const differentTz = serverTz === 'Europe/London' ? 'America/New_York' : 'Europe/London';
         const result = formatTimeHeader(differentTz);
-        const lines = _split(result, '\n');
+        const lines = result.split('\n');
         const userLine = lines[3];
 
         expect(userLine).toStartWith('- User: ');

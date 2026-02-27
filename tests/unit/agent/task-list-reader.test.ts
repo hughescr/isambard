@@ -4,11 +4,9 @@
  * The task list reader reads Claude Agent SDK task JSON files from a session
  * directory and builds a compact summary for idle status generation.
  */
+import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { Dirent } from 'node:fs';
 import { type logger } from '@hughescr/logger';
-import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
-import _constant from 'lodash/constant';
-import _replace from 'lodash/replace';
 import { mockLogger } from '../../setup';
 import { createTaskListReader } from '@/agent/task-list-reader';
 
@@ -18,9 +16,9 @@ describe('createTaskListReader', () => {
     let mockGetCurrentSessionId: ReturnType<typeof mock>;
 
     beforeEach(() => {
-        mockReaddir = mock(_constant(Promise.resolve([])));
-        mockReadFile = mock(_constant(Promise.resolve('{}')));
-        mockGetCurrentSessionId = mock(_constant('test-session-id'));
+        mockReaddir = mock(() => Promise.resolve([]));
+        mockReadFile = mock(() => Promise.resolve('{}'));
+        mockGetCurrentSessionId = mock(() => 'test-session-id');
 
         mockLogger.debug.mockClear();
     });
@@ -30,7 +28,7 @@ describe('createTaskListReader', () => {
     });
 
     test('should return undefined when no session ID', async () => {
-        mockGetCurrentSessionId = mock(_constant(undefined));
+        mockGetCurrentSessionId = mock(() => undefined);
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
             logger:              mockLogger as unknown as typeof logger,
@@ -47,7 +45,7 @@ describe('createTaskListReader', () => {
     test('should return undefined when directory does not exist (ENOENT)', async () => {
         const enoentError = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
         enoentError.code = 'ENOENT';
-        mockReaddir = mock(_constant(Promise.reject(enoentError)));
+        mockReaddir = mock(() => Promise.reject(enoentError));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -63,7 +61,7 @@ describe('createTaskListReader', () => {
     });
 
     test('should return undefined when directory is empty', async () => {
-        mockReaddir = mock(_constant(Promise.resolve([])));
+        mockReaddir = mock(() => Promise.resolve([]));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -79,10 +77,10 @@ describe('createTaskListReader', () => {
 
     test('should return undefined when directory has no JSON files', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'not-json.txt', isFile: _constant(true) } as Dirent,
-            { name: 'README.md', isFile: _constant(true) } as Dirent,
+            { name: 'not-json.txt', isFile: () => true } as Dirent,
+            { name: 'README.md', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -98,17 +96,17 @@ describe('createTaskListReader', () => {
 
     test('should filter out non-JSON files and directories', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'not-json.txt', isFile: _constant(true) } as Dirent,
-            { name: 'subdir', isFile: _constant(false) } as Dirent,
-            { name: 'README.md', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'not-json.txt', isFile: () => true } as Dirent,
+            { name: 'subdir', isFile: () => false } as Dirent,
+            { name: 'README.md', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task1',
             subject: 'Valid task',
             status:  'pending',
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -126,11 +124,11 @@ describe('createTaskListReader', () => {
 
     test('should return undefined when all JSON files fail to parse', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'task2.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'task2.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve('invalid JSON {{{')));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve('invalid JSON {{{'));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -150,15 +148,15 @@ describe('createTaskListReader', () => {
         const exactlyTwoHoursAgo = new Date(frozenNow.getTime() - 2 * 60 * 60 * 1000);
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:       'task1',
             subject:  'Completed at boundary',
             status:   'completed',
             metadata: { completedAt: exactlyTwoHoursAgo.toISOString() },
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -180,10 +178,10 @@ describe('createTaskListReader', () => {
         const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000);
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'task2.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'task2.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
         mockReadFile = mock((path: string) => {
             if(path.includes('task1.json')) {
                 return Promise.resolve(JSON.stringify({
@@ -215,14 +213,14 @@ describe('createTaskListReader', () => {
 
     test('should return summary with in_progress tasks', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task1',
             subject: 'Fix the bug',
             status:  'in_progress',
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -238,10 +236,10 @@ describe('createTaskListReader', () => {
 
     test('should return summary with pending tasks count', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'task2.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'task2.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
         mockReadFile = mock((path: string) => {
             if(path.includes('task1.json')) {
                 return Promise.resolve(JSON.stringify({
@@ -274,15 +272,15 @@ describe('createTaskListReader', () => {
         const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:       'task1',
             subject:  'Completed task',
             status:   'completed',
             metadata: { completedAt: oneHourAgo.toISOString() },
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -301,11 +299,11 @@ describe('createTaskListReader', () => {
         const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'task2.json', isFile: _constant(true) } as Dirent,
-            { name: 'task3.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'task2.json', isFile: () => true } as Dirent,
+            { name: 'task3.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
         mockReadFile = mock((path: string) => {
             if(path.includes('task1.json')) {
                 return Promise.resolve(JSON.stringify({
@@ -346,15 +344,15 @@ describe('createTaskListReader', () => {
         const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:       'task1',
             subject:  'Old completed task',
             status:   'completed',
             metadata: { completedAt: threeHoursAgo.toISOString() },
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -370,15 +368,15 @@ describe('createTaskListReader', () => {
 
     test('should filter out completed tasks without completedAt metadata', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task1',
             subject: 'Completed task without timestamp',
             status:  'completed',
             // No metadata field
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -395,10 +393,10 @@ describe('createTaskListReader', () => {
 
     test('should skip unparseable JSON files', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'task2.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'task2.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
         mockReadFile = mock((path: string) => {
             if(path.includes('task1.json')) {
                 return Promise.resolve('invalid JSON {{{');
@@ -424,11 +422,11 @@ describe('createTaskListReader', () => {
 
     test('should skip files with valid JSON but wrong shape', async () => {
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
-            { name: 'task2.json', isFile: _constant(true) } as Dirent,
-            { name: 'task3.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
+            { name: 'task2.json', isFile: () => true } as Dirent,
+            { name: 'task3.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
         mockReadFile = mock((path: string) => {
             if(path.includes('task1.json')) {
                 // Wrong shape - missing required fields
@@ -465,14 +463,14 @@ describe('createTaskListReader', () => {
     test('should limit to top 10 tasks', async () => {
         const mockFiles: Dirent[] = Array.from({ length: 15 }, (_, i) => ({
             name:   `task${i}.json`,
-            isFile: _constant(true),
+            isFile: () => true,
         } as Dirent));
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task',
             subject: 'Task',
             status:  'pending',
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -491,14 +489,14 @@ describe('createTaskListReader', () => {
         const longSubject = 'This is a very long task subject that should be truncated because it is way too long for display in a status message and would make the status unreadable';
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task1',
             subject: longSubject,
             status:  'in_progress',
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -518,14 +516,14 @@ describe('createTaskListReader', () => {
         const exactlyFiftyChars = '12345678901234567890123456789012345678901234567890'; // exactly 50 chars
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task1',
             subject: exactlyFiftyChars,
             status:  'in_progress',
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -545,14 +543,14 @@ describe('createTaskListReader', () => {
         const fiftyOneChars = '123456789012345678901234567890123456789012345678901'; // exactly 51 chars
 
         const mockFiles: Dirent[] = [
-            { name: 'task1.json', isFile: _constant(true) } as Dirent,
+            { name: 'task1.json', isFile: () => true } as Dirent,
         ];
-        mockReaddir = mock(_constant(Promise.resolve(mockFiles)));
-        mockReadFile = mock(_constant(Promise.resolve(JSON.stringify({
+        mockReaddir = mock(() => Promise.resolve(mockFiles));
+        mockReadFile = mock(() => Promise.resolve(JSON.stringify({
             id:      'task1',
             subject: fiftyOneChars,
             status:  'in_progress',
-        }))));
+        })));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,
@@ -565,13 +563,13 @@ describe('createTaskListReader', () => {
 
         // Should truncate to 47 + '...' = 50 chars total
         expect(result).toContain('...');
-        const truncatedSubject = _replace(result!, 'Working on: ', '');
+        const truncatedSubject = result!.replace('Working on: ', '');
         expect(truncatedSubject).toBe('12345678901234567890123456789012345678901234567...');
         expect(truncatedSubject.length).toBe(50);
     });
 
     test('should return undefined on error', async () => {
-        mockReaddir = mock(_constant(Promise.reject(new Error('Unexpected error'))));
+        mockReaddir = mock(() => Promise.reject(new Error('Unexpected error')));
 
         const reader = createTaskListReader({
             getCurrentSessionId: mockGetCurrentSessionId,

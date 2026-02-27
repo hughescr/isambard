@@ -32,11 +32,6 @@ import { unlink, access, rm, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { logger } from '@hughescr/logger';
-import endsWith from 'lodash/endsWith';
-import filter from 'lodash/filter';
-import isObject from 'lodash/isObject';
-import replace from 'lodash/replace';
-import split from 'lodash/split';
 import type { SystemEvent } from './types';
 
 /**
@@ -47,7 +42,7 @@ import type { SystemEvent } from './types';
 const getProjectPath = (): string => {
     const cwd = process.cwd();
     // SDK converts path to dash-separated format: /Users/foo/bar -> -Users-foo-bar
-    return replace(cwd, /\//g, '-');
+    return cwd.replaceAll('/', '-');
 };
 
 /**
@@ -71,7 +66,7 @@ export const getSessionFilePath = (sessionId: string): string => {
  * @returns Session ID if found, undefined otherwise
  */
 export const extractSessionId = (event: unknown): string | undefined => {
-    if(!isObject(event)) {
+    if(!(typeof event === 'object' && event !== null)) {
         return undefined;
     }
 
@@ -164,7 +159,7 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
 
         // Filter for agent-*.jsonl files
         // Stryker disable next-line Regex: Regex pattern for agent file matching is correct, mutations would break file detection
-        const agentFiles = filter(files, file => /^agent-[^.]+\.jsonl$/.test(file));
+        const agentFiles = files.filter(file => /^agent-[^.]+\.jsonl$/.test(file));
 
         // Check each agent file to see if it belongs to this session
         for(const agentFile of agentFiles) {
@@ -174,7 +169,7 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
                 // Read the first line of the file to check for parentUuid
                 // eslint-disable-next-line no-await-in-loop -- sequential: per-file I/O with conditional delete
                 const content = await readFile(agentFilePath, 'utf8');
-                const firstLine = split(content, '\n', 1)[0];
+                const firstLine = content.split('\n', 1)[0];
 
                 // Stryker disable next-line ConditionalExpression,BlockStatement: Empty firstLine check is defensive coding for malformed files
                 if(!firstLine) {
@@ -249,7 +244,7 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
 
         // List all .jsonl files
         const files = await readdir(projectsDir);
-        const sessionFiles = filter(files, file => endsWith(file, '.jsonl'));
+        const sessionFiles = files.filter(file => file.endsWith('.jsonl'));
 
         // Delete each file
         for(const file of sessionFiles) {

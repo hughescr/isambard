@@ -4,8 +4,6 @@
  * Defines time slots and provides lookup functions for determining
  * which slot corresponds to a given hour.
  */
-
-import find from 'lodash/find';
 import { type PerchSlot, type PerchSlotConfig } from './types';
 
 // ============================================================================
@@ -204,5 +202,5 @@ export function getSlotConfig(slot: PerchSlot): PerchSlotConfig | undefined {
         return undefined;
     }
 
-    return find(SLOT_CONFIGS, { slot });
+    return SLOT_CONFIGS.find(config => config.slot === slot);
 }

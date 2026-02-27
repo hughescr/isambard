@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import constant from 'lodash/constant';
 import { defaultClassifier, createHttpStatusClassifier } from '../../../../src/utils/retry/classifier';
 import type { ErrorCategory } from '../../../../src/utils/retry/types';
 
@@ -389,7 +388,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
 
         it('should not classify error when code is object', () => {
-            const error = { code: { toString: constant('ETIMEDOUT') }, message: 'Fake timeout' };
+            const error = { code: { toString: () => 'ETIMEDOUT' }, message: 'Fake timeout' };
             const classifier = createHttpStatusClassifier();
             const result = classifier(error);
 

@@ -84,7 +84,6 @@ describe.concurrent('retryConfigSchema', () => {
             }
         );
 
-        // eslint-disable-next-line lodash/prefer-lodash-method -- Native filter is more readable for simple predicate
         test.each(boundedFields.filter(f => f[5]))(
             '%s.%s should reject non-integer values',
             (section, field, _min, _max, validValue, _requiresInteger) => {
@@ -106,14 +105,14 @@ describe('loadRetryConfig', () => {
 
     afterEach(() => {
         // Delete keys added during test
-        // eslint-disable-next-line lodash/prefer-lodash-method -- Native methods used to avoid TypeScript UMD global errors
+
         for(const key of Object.keys(process.env)) {
             if(!(key in originalEnv)) {
                 delete process.env[key];
             }
         }
         // Restore original values
-        // eslint-disable-next-line lodash/prefer-lodash-method -- Native methods used to avoid TypeScript UMD global errors
+
         Object.assign(process.env, originalEnv);
     });
 

@@ -13,7 +13,6 @@
  */
 
 import type { Logger } from '@hughescr/logger';
-import isError from 'lodash/isError';
 import type { TaskDirectoryCopier } from './task-directory-copier';
 import { type TaskSessionBackend, createSessionId  } from '@/storage';
 
@@ -96,7 +95,7 @@ export function createTaskPersistenceCoordinator(
                 return copied;
             } catch (error) {
                 // Task persistence is optional - log and continue
-                const errorMsg = isError(error) ? error.message : String(error);
+                const errorMsg = error instanceof Error ? error.message : String(error);
                 /* istanbul ignore next - logging only */ // Stryker disable next-line all
                 logger.warn({
                     newSessionId,

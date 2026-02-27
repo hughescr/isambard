@@ -1,6 +1,4 @@
 import { describe, test, expect } from 'bun:test';
-import repeat from 'lodash/repeat';
-import times from 'lodash/times';
 import {
     splitMessage
 } from '@/integrations/discord/messages';
@@ -9,7 +7,7 @@ describe.concurrent('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('word splitting', () => {
             test('should split long sentence at words when sentence too long', () => {
-                const words = times(20, n => `word${n}`).join(' ');
+                const words = Array.from({ length: 20 }, (_, i) => `word${i}`).join(' ');
                 const result = splitMessage(words, 50);
 
                 expect(result.length).toBeGreaterThan(1);
@@ -49,7 +47,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
         describe('character splitting', () => {
             test('should split very long word at characters when word too long', () => {
-                const longWord = repeat('a', 200);
+                const longWord = 'a'.repeat(200);
                 const result = splitMessage(longWord, 50);
 
                 expect(result.length).toBe(4);
@@ -64,14 +62,14 @@ describe.concurrent('Discord Message Splitting', () => {
             });
 
             test('should split word exactly at max length boundary', () => {
-                const longWord = repeat('x', 100);
+                const longWord = 'x'.repeat(100);
                 const result = splitMessage(longWord, 50);
 
-                expect(result).toEqual([repeat('x', 50), repeat('x', 50)]);
+                expect(result).toEqual(['x'.repeat(50), 'x'.repeat(50)]);
             });
 
             test('should handle word with length not divisible by max', () => {
-                const longWord = repeat('z', 75);
+                const longWord = 'z'.repeat(75);
                 const result = splitMessage(longWord, 50);
 
                 expect(result.length).toBe(2);
@@ -104,7 +102,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // word of length 10 with maxLength 5: indices 0, 5, 10
                 // i < length (correct): chunks at 0-5, 5-10 = 2 chunks
                 // i <= length (wrong): would try index 10, produce empty chunk
-                const word = repeat('x', 10);
+                const word = 'x'.repeat(10);
                 const result = splitMessage(word, 5);
                 expect(result).toEqual(['xxxxx', 'xxxxx']);
                 expect(result.length).toBe(2);

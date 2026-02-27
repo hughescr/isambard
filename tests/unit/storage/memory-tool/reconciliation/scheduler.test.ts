@@ -2,8 +2,8 @@
  * Tests for Tag Index Reconciliation Scheduler
  */
 
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { ReconcilerDeps, ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import {

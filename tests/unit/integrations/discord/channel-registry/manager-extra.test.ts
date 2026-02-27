@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Client, Channel } from 'discord.js';
-import find from 'lodash/find';
-import map from 'lodash/map';
 import type { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { ChannelMetadata } from '@/integrations/discord/channel-registry/types';
@@ -39,8 +37,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
     // Helper to set up Discord client mock for specific channels
     const mockDiscordChannels = (channels: ChannelMetadata[]) => {
         client.channels.fetch = mock((channelId: string) => {
-            // eslint-disable-next-line lodash/matches-prop-shorthand -- Branded types require explicit comparison
-            const channel = find(channels, (ch: ChannelMetadata) => ch.channelId === channelId);
+            const channel = channels.find((ch: ChannelMetadata) => ch.channelId === channelId);
             if(channel) {
                 return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);
             }
@@ -298,7 +295,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 const results = await manager.getUnmutedChannels();
 
                 expect(results).toHaveLength(1);
-                expect(map(results, 'channelId')).toContain(unmuted1.channelId);
+                expect(results.map(r => r.channelId)).toContain(unmuted1.channelId);
                 // Backend should NOT be called (proves cache block executed)
                 expect(backend.getChannelsByGuild).not.toHaveBeenCalled();
             });

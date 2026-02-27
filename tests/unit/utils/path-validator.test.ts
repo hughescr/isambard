@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import path from 'node:path';
 import { mockFsPromises, resetMockFs } from '../../setup';
 import { validateFilePath, validateFilePaths, PathSecurityError } from '@/utils/path-validator';
 

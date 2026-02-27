@@ -10,9 +10,6 @@
  */
 
 import type { Logger } from '@hughescr/logger';
-import filter from 'lodash/filter';
-import isError from 'lodash/isError';
-import map from 'lodash/map';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import { type PerchSlot, type PerchConfig } from './types';
 import type { ContextBuilder } from '@/agent/context-builder';
@@ -308,7 +305,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         } catch (error) {
             // Check if this is a suspension abort (mode is idle because suspend() called goIdle())
             // Stryker disable all: Suspension abort path — tested via suspension behavior tests
-            if(isError(error) && error.name === 'AbortError' && suspendedState !== null) {
+            if(error instanceof Error && error.name === 'AbortError' && suspendedState !== null) {
                 logger.debug({ slot: options.slot }, 'Perch session aborted by suspension');
                 return;
             }
@@ -316,14 +313,14 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
             // Check if this is a timeout abort (not a message interrupt)
             // Stryker disable next-line all: Timeout handling tested via behavior in timeout tests
-            if(isError(error) && error.name === 'AbortError' && isTimingOut) {
+            if(error instanceof Error && error.name === 'AbortError' && isTimingOut) {
                 // Run wrap-up using shared helper
                 await runTimeoutWrapUp(currentSlot ?? 'unscheduled');
                 return;
             }
 
             // AbortError without interrupt flag or timeout - external abort
-            if(isError(error) && error.name === 'AbortError') {
+            if(error instanceof Error && error.name === 'AbortError') {
                 logger.debug({ slot: options.slot }, 'Perch session aborted');
                 // Clear timeout for all AbortError cases to prevent orphaned timers
                 // Stryker disable next-line BlockStatement: Defensive cleanup tested via timer count assertions
@@ -516,13 +513,11 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 const eventsResult = await contextBuilder.loadRecentEvents(5);
                 // Filter to events updated after suspension
                 // Stryker disable all: Event filtering and formatting — tested via post-suspension event inclusion tests
-                const newEvents = filter(eventsResult.items, item =>
-                    new Date(item.updatedAt) > savedState.suspendedAt
-                );
+                const newEvents = eventsResult.items.filter(item =>
+                    new Date(item.updatedAt) > savedState.suspendedAt);
                 if(newEvents.length > 0) {
-                    newEventsSummary = map(newEvents, item =>
-                        `- ${item.path}: ${item.contentPreview ?? '(no preview)'}`
-                    ).join('\n');
+                    newEventsSummary = newEvents.map(item =>
+                        `- ${item.path}: ${item.contentPreview ?? '(no preview)'}`).join('\n');
                 }
                 // Stryker restore all
             }
