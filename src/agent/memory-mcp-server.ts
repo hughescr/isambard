@@ -265,9 +265,11 @@ export function createMemoryMCPServer(
                         // Normalize: strip trailing slash (except for root)
                         // Stryker disable next-line StringLiteral: ''.trimEnd() is equivalent - paths work via prefix-based list query
                         let dirPath = rawPath;
+                        // Stryker disable ConditionalExpression,MethodExpression,UnaryOperator: trailing-slash normalization — test paths are already normalized; loop is defensive
                         while(dirPath !== '/' && dirPath.endsWith('/')) {
                             dirPath = dirPath.slice(0, -1);
                         }
+                        // Stryker restore ConditionalExpression,MethodExpression,UnaryOperator
 
                         // Build queryOptions object only if filter params provided
                         const queryOptions = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)

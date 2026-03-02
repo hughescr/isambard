@@ -49,7 +49,7 @@ function splitWordByCharacters(word: string, maxLength: number): string[] {
  */
 // eslint-disable-next-line sonarjs/cognitive-complexity -- chunk-accumulator pattern requires tracking multiple edge cases; extracting helpers would obscure the algorithm
 function splitByWords(text: string, maxLength: number): string[] {
-    // Stryker disable next-line Regex: Equivalent - compact() filters empty strings from single \s split
+    // Stryker disable next-line Regex,MethodExpression: Equivalent — compact()/filter(Boolean) is defensive for trimmed input; \s+ vs \s both produce same split on pre-trimmed text
     const words = text.split(/\s+/).filter(Boolean);
 
     // Pre-condition: callers guarantee non-empty trimmed text, so words is non-empty

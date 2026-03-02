@@ -13,7 +13,7 @@ function extractDomain(emailOrDomain: string): string {
         return '';
     }
     // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
-    // Stryker disable next-line Regex: anchor mutations produce equivalent results — exact domain comparison treats malformed inputs as non-alignable regardless
+    // Stryker disable next-line Regex,MethodExpression: anchor mutations produce equivalent results; trim() is defensive — email header values don't have surrounding whitespace in practice
     const cleaned = emailOrDomain.trim().replaceAll(/^<|>$/g, '');
     const atIdx = cleaned.indexOf('@');
     // Stryker disable next-line ConditionalExpression,EqualityOperator,UnaryOperator,MethodExpression,ArithmeticOperator: atIdx boundary distinguishes address from bare domain; slice(atIdx+1) extracts domain after @; UnaryOperator(-1→+1) is equivalent since atIdx is never 1 for valid domains
@@ -81,6 +81,7 @@ export function checkAuthentication(authenticationResults: string | undefined, f
     let dkimPass = false;
 
     for(const part of parts) {
+        // Stryker disable next-line MethodExpression: trim() normalizes semicolon-split segments — regex patterns downstream tolerate surrounding whitespace
         const normalized = part.trim();
         if(checkSpfAlignment(normalized, normalizedFromDomain)) {
             spfPass = true;

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
@@ -184,14 +185,41 @@ export async function createApp(): Promise<App> {
 // Application entry point - only run if this is the main module
 // Stryker disable all: Entry point code - not unit testable
 
+/**
+ * Resolve the real repository root, following git worktree links.
+ * In a worktree, `.git` is a file containing `gitdir: <path>` pointing to the
+ * main repo's `.git/worktrees/<name>` directory. We follow that link to find
+ * the actual repo root so shared directories like `scratch/` resolve correctly.
+ */
+function resolveRepoRoot(apparentRoot: string): string {
+    const gitPath = path.join(apparentRoot, '.git');
+    try {
+        // eslint-disable-next-line n/no-sync -- sync read required; function runs before any async context
+        const content = readFileSync(gitPath, 'utf8');
+        // .git file in worktree contains: gitdir: /path/to/main/.git/worktrees/<name>
+        // Use \S to anchor captured group and prevent super-linear backtracking
+        const match = /^gitdir: *(\S[^\n]*)$/m.exec(content);
+        if(match?.[1]) {
+            // gitdir points to .git/worktrees/<name>, go up 3 levels to get repo root
+            return path.resolve(path.dirname(gitPath), match[1].trimEnd(), '..', '..', '..');
+        }
+    } catch{
+        // .git is a directory (normal repo), not a file (worktree)
+    }
+    return apparentRoot;
+}
+
 if(import.meta.main) {
     // Change to scratch directory for containment
     // Use absolute path based on project root to prevent nesting on hot reload
-    // import.meta.dir is src/, so go up one level to project root
+    // import.meta.dir is src/, so go up one level to project root, then resolve
+    // the real repo root in case we are running from a git worktree (e.g. running/)
+    const apparentRoot = path.resolve(import.meta.dir, '..');
+    const repoRoot = resolveRepoRoot(apparentRoot);
     const scratchDirFromEnv = env.get('SCRATCH_DIR').asString();
     const scratchDir = scratchDirFromEnv
         ? path.resolve(process.cwd(), scratchDirFromEnv)
-        : path.resolve(import.meta.dir, '..', 'scratch');
+        : path.resolve(repoRoot, 'scratch');
     try {
         await stat(scratchDir);
     } catch{

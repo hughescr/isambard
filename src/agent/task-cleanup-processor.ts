@@ -251,8 +251,10 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
             const files = await readdirFn(sourcePath);
 
             // Filter to only .json files (files can be string[] or Dirent[])
+            // Stryker disable ConditionalExpression: typeof guard is defensive — readdirFn always returns string[] in practice
             const jsonFiles = files.filter((file): file is string =>
                 typeof file === 'string' && file.endsWith('.json'));
+            // Stryker restore ConditionalExpression
 
             // Load all tasks
             const allTasks = new Map<string, Task>();

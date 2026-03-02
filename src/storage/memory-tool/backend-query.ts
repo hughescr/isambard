@@ -232,6 +232,7 @@ export class MemoryToolBackendQuery {
 
         // Get identity items (all items from /identity layer)
         const identityResult = await this.listByLayer(createLayerName('identity'), { limit: maxIdentityItems });
+        // Stryker disable next-line MethodExpression: slice is defensive — listByLayer already limits results via { limit: maxIdentityItems }
         const identityItems = identityResult.items.slice(0, maxIdentityItems);
 
         // Get state items (all items from /state layer)

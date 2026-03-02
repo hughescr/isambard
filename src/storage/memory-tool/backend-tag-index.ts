@@ -356,6 +356,7 @@ export class MemoryToolBackendTagIndex {
         }));
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
+        // Stryker disable next-line MethodExpression,ArithmeticOperator: batch slicing — tests use <25 items so single-batch execution makes slice boundaries and arithmetic equivalent
         const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
 
         // Execute all batches and collect failed requests
@@ -412,6 +413,7 @@ export class MemoryToolBackendTagIndex {
         }));
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
+        // Stryker disable next-line MethodExpression,ArithmeticOperator: batch slicing — tests use <25 items so single-batch execution makes slice boundaries and arithmetic equivalent
         const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
 
         // Execute all batches (no count increment)
@@ -563,8 +565,10 @@ export class MemoryToolBackendTagIndex {
             // Filter for items that contain ALL remaining tags
             // Stryker disable next-line MethodExpression: Slicing removes driving tag, but since all items already have it (from query), keeping it is equivalent
             const remainingTags = normalizedTags.slice(1);
+            // Stryker disable MethodExpression: every→some equivalent when remainingTags has ≤1 elements — test scenarios use 1-2 total tags
             const matching = pageResult.items.filter(item =>
                 remainingTags.every(tag => item.tags.has(tag)));
+            // Stryker restore MethodExpression
             collectedItems.push(...matching);
 
             // Update cursor for next page

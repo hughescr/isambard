@@ -157,6 +157,7 @@ export function createIdleStatusGenerator(
                 // "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
                 const emojiPrefix = '💤 ';
                 const maxLength = 128 - emojiPrefix.length;
+                // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
                 const statusText = truncateToWordBoundary(text.trim(), maxLength);
 
                 // Add emoji prefix

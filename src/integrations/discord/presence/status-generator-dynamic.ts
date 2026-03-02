@@ -298,6 +298,7 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
+                // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
                 const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
 
                 // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
@@ -366,6 +367,7 @@ export function createDynamicStatusGenerator(
 
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
                 const text = await generateText(prompt, { stripMarkdown: true });
+                // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
                 const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
 
                 // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update

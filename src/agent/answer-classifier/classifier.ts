@@ -32,6 +32,7 @@ export class AnswerClassifier {
         }
 
         // Layer 2: Heuristics
+        // Stryker disable next-line MethodExpression: trim() is defensive — Discord content rarely has leading/trailing whitespace; toLowerCase() is redundant with /i flag on patterns but kept for consistency
         const text = message.content.trim().toLowerCase();
 
         // Answer patterns - short affirmative/negative responses, direct answers

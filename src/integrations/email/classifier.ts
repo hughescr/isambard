@@ -104,6 +104,7 @@ export class EmailClassifier {
      * The model is instructed to return only JSON, but may include surrounding whitespace.
      */
     private extractJson(text: string): unknown {
+        // Stryker disable next-line MethodExpression: trim() is defensive — LLM response text is already trimmed by caller
         const trimmed = text.trim();
         // Stryker disable BlockStatement — JSON parse with regex fallback; nested try/catch gracefully degrades malformed LLM responses to null
         try {

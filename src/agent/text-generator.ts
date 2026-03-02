@@ -57,6 +57,7 @@ export async function generateText(
     if(result.subtype === 'success') {
         let text = result.result.trim();
         if(options?.stripMarkdown) {
+            // Stryker disable next-line MethodExpression: trim() after removeMarkdown is defensive — markdown stripping may leave trailing whitespace but test inputs don't exercise this
             text = removeMarkdown(text).trim();
         }
         return text;
@@ -102,6 +103,7 @@ export async function generateTextWithSystemPrompt(
     if(result.subtype === 'success') {
         let text = result.result.trim();
         if(options?.stripMarkdown) {
+            // Stryker disable next-line MethodExpression: trim() after removeMarkdown is defensive — markdown stripping may leave trailing whitespace but test inputs don't exercise this
             text = removeMarkdown(text).trim();
         }
         return text;

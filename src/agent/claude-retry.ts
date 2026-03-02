@@ -21,6 +21,7 @@ function extractRetryAfter(error: object): number | undefined {
     }
 
     // Check headers (in seconds, needs conversion to ms)
+    // Stryker disable next-line ConditionalExpression: type-narrowing guards — typeof/null checks are defensive; headers is always an object when 'headers' in error passes
     if('headers' in error && typeof error.headers === 'object' && error.headers !== null) {
         const headers = error.headers as Record<string, unknown>;
         if('retry-after' in headers && typeof headers['retry-after'] === 'string') {

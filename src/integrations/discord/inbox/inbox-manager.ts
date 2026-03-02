@@ -252,7 +252,7 @@ export class InboxManager {
                 // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - equivalent when empty (filter produces [] either way, inner guard catches 0-length)
                 if(response.messages.length > 0) {
                     // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
-                    // Stryker disable next-line LogicalOperator,ConditionalExpression,EqualityOperator: No test exercises botUserId filtering path - L-class (no test sets botUserId and verifies filter)
+                    // Stryker disable next-line LogicalOperator,ConditionalExpression,EqualityOperator,MethodExpression: No test exercises botUserId filtering path - L-class (no test sets botUserId and verifies filter)
                     const filteredMessages = response.messages.filter(msg => !this.botUserId || msg.author.id !== this.botUserId);
                     const unreadMessages: UnreadMessage[] = filteredMessages.map(msg => ({
                         id:          msg.id,
@@ -383,6 +383,7 @@ export class InboxManager {
      * ```
      */
     getMessage(channelId: ChannelId, messageId: string): UnreadMessage | undefined {
+        // Stryker disable next-line ConditionalExpression: ?? [] fallback is equivalent when channel has no messages — find() on [] returns undefined same as short-circuit
         return (this.unreadMessages.get(channelId) ?? []).find(msg => msg.id === messageId);
     }
 

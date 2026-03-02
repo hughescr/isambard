@@ -448,9 +448,11 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         ]).filter(line => line !== undefined);
                         // Stryker disable next-line Regex,StringLiteral: /^\n/ and '' are defensive no-ops — the text always starts with 'From:' so the regex never matches; .trim() on the next line also covers any edge case
                         const text = lines.join('\n').replace(/^\n/, '');
+                        // Stryker disable MethodExpression: trim() is defensive — lines.join() produces clean text starting with 'From:' header
                         return {
                             content: [{ type: 'text' as const, text: text.trim() }],
                         };
+                        // Stryker restore MethodExpression
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting

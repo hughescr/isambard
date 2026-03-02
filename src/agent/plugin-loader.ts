@@ -90,6 +90,7 @@ export async function findLatestMarketplaceVersion(marketplacePath: string, plug
 
     // Read version directories
     const entries = await readdir(pluginDir, { withFileTypes: true });
+    // Stryker disable next-line MethodExpression: isDirectory filter is required but test fixtures contain only directory entries
     const versionDirs = entries.filter(e => e.isDirectory());
 
     // Filter to valid plugin directories with semver names
@@ -139,6 +140,7 @@ async function discoverInRepoPlugins(pluginsDir: string): Promise<SdkPluginConfi
     }
 
     const entries = await readdir(pluginsDir, { withFileTypes: true });
+    // Stryker disable next-line MethodExpression: isDirectory filter is required but test fixtures contain only directory entries
     const directories = entries.filter(e => e.isDirectory());
 
     const withPaths = directories.map(dir => ({

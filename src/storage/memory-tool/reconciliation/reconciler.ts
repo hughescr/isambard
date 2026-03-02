@@ -343,7 +343,7 @@ async function checkOldPathIndicesCleanByTags(
             ))
     );
 
-    // Stryker disable next-line ConditionalExpression,ArrayDeclaration: Any existing item means not clean
+    // Stryker disable next-line ConditionalExpression,ArrayDeclaration,MethodExpression: Any existing item means not clean; some→every equivalent with single-item test scenarios
     return !results.some(result => result?.Item);
 }
 

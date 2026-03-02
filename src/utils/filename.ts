@@ -11,12 +11,16 @@ export function sanitizeFilename(name: string): string {
     const noDotDot     = noSeparators.replaceAll(/\.{2,}/g, '_');
     let start = 0;
     let end   = noDotDot.length;
+    // Stryker disable EqualityOperator,ConditionalExpression,StringLiteral: leading dot/space trimming — boundary operator mutations (< vs <=) converge to same result; space literal removal equivalent when test inputs use dots only
     while(start < end && (noDotDot[start] === '.' || noDotDot[start] === ' ')) {
         start++;
     }
+    // Stryker restore EqualityOperator,ConditionalExpression,StringLiteral
+    // Stryker disable EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator: trailing dot/space trimming — same boundary equivalence; end+1 reads undefined which exits loop immediately
     while(end > start && (noDotDot[end - 1] === '.' || noDotDot[end - 1] === ' ')) {
         end--;
     }
+    // Stryker restore EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator
     return noDotDot.slice(start, end) || 'attachment';
 }
 

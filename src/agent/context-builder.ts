@@ -167,6 +167,7 @@ function formatRejectedDraftLine(
     if(!metaData?.rejectedAt) {
         return undefined;
     }
+    // Stryker disable next-line ConditionalExpression: defensive type guard — reason is always string when present in rejection metadata
     const reason    = typeof metaData.reason === 'string' ? metaData.reason : undefined;
     // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive length check; to is always non-empty when the caller has verified it has addresses
     const firstTo   = to && to.length > 0 ? to[0] : undefined;

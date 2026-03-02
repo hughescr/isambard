@@ -60,7 +60,7 @@ function parseTaskFile(content: string): Task | undefined {
         const parsed = JSON.parse(content);
 
         // Validate task shape - check parsed is non-null and has required fields
-        // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
+        // Stryker disable OptionalChaining,ConditionalExpression,LogicalOperator: Shape validation tested via wrong-shape test case
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
         if(!parsed || typeof parsed.id !== 'string'
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- Validated with isString guards
@@ -69,6 +69,7 @@ function parseTaskFile(content: string): Task | undefined {
           || !['pending', 'in_progress', 'completed'].includes(parsed.status)) {
             return undefined;
         }
+        // Stryker restore OptionalChaining,ConditionalExpression,LogicalOperator
 
         return parsed as Task;
     } catch{
