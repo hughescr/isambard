@@ -878,13 +878,13 @@ function buildQueryOptions(
         mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
         plugins:        plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode: 'acceptEdits' as const,
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
+        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
         sandbox:        {
             enabled:                  true,
             autoAllowBashIfSandboxed: true,
             excludedCommands:         ['git'],
         },
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayLiteral
+        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
         allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
         maxThinkingTokens: 10_000,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
