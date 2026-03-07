@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { type ButtonInteraction, EmbedBuilder  } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, EmbedBuilder  } from 'discord.js';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -33,8 +33,8 @@ export class ReviewHandler {
         if(interaction.user.id !== this.adminDiscordUserId) {
             await interaction.reply({
                 // Stryker disable next-line StringLiteral: Error message is UI configuration
-                content:   'Only the admin can review emails.',
-                ephemeral: true,
+                content: 'Only the admin can review emails.',
+                flags:   MessageFlags.Ephemeral,
             });
             return;
         }
@@ -59,8 +59,8 @@ export class ReviewHandler {
         if(!folderStr || !validFolders.includes(folderStr as EmailFolder)) {
             await interaction.reply({
                 // Stryker disable next-line StringLiteral: Error message is UI configuration
-                content:   'Invalid folder in button interaction.',
-                ephemeral: true,
+                content: 'Invalid folder in button interaction.',
+                flags:   MessageFlags.Ephemeral,
             });
             return;
         }

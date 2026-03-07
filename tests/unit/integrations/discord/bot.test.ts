@@ -1,7 +1,7 @@
 import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
-import type { Client } from 'discord.js';
+import { MessageFlags, type Client } from 'discord.js';
 import type { ClaudeAgent } from '@/agent';
 import type { DiscordConfig } from '@/config/schemas';
 import { createDiscordBot } from '@/integrations/discord/bot';
@@ -2507,7 +2507,7 @@ describe('createDiscordBot', () => {
 
             expect(replyMock).toHaveBeenCalledTimes(1);
             expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             }));
         });
 
@@ -3034,7 +3034,7 @@ describe('createDiscordBot', () => {
             // Should reply ephemerally with unavailable message
             expect(replyMock).toHaveBeenCalledTimes(1);
             expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             }));
         });
 

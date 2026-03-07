@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import type { ButtonInteraction } from 'discord.js';
+import { MessageFlags, type ButtonInteraction } from 'discord.js';
 import { createUserId, createChannelId } from './types';
 import type { QuestionRegistry, QuestionAnswer } from '@/agent';
 
@@ -47,8 +47,8 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
         // If question not found or expired
         if(!question) {
             await interaction.reply({
-                content:   'This question has expired or is no longer valid.',
-                ephemeral: true,
+                content: 'This question has expired or is no longer valid.',
+                flags:   MessageFlags.Ephemeral,
             });
             return;
         }
@@ -56,8 +56,8 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
         // Check if question is still waiting (not already answered/cancelled/timed out)
         if(question.state !== 'waiting') {
             await interaction.reply({
-                content:   'This question has expired or is no longer valid.',
-                ephemeral: true,
+                content: 'This question has expired or is no longer valid.',
+                flags:   MessageFlags.Ephemeral,
             });
             return;
         }
@@ -66,8 +66,8 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
         const now = Date.now();
         if(question.expiresAt < now) {
             await interaction.reply({
-                content:   'This question has expired or is no longer valid.',
-                ephemeral: true,
+                content: 'This question has expired or is no longer valid.',
+                flags:   MessageFlags.Ephemeral,
             });
             return;
         }

@@ -1,5 +1,5 @@
 import { type Mock, describe, test, expect, beforeEach, mock  } from 'bun:test';
-import type { ChatInputCommandInteraction } from 'discord.js';
+import { MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/email/allowlist-commands';
 import type { AllowlistEntry } from '@/integrations/email/types';
@@ -136,8 +136,8 @@ describe('AllowlistCommandHandler - permission check', () => {
         await handler.handle(asChatInput);
 
         expect(reply).toHaveBeenCalledWith({
-            content:   'Only the admin can manage the allowlist.',
-            ephemeral: true,
+            content: 'Only the admin can manage the allowlist.',
+            flags:   MessageFlags.Ephemeral,
         });
         expect(mockAllowlist.list).not.toHaveBeenCalled();
     });
@@ -160,7 +160,7 @@ describe('AllowlistCommandHandler - permission check', () => {
         await handler.handle(asChatInput);
 
         expect(reply).not.toHaveBeenCalled();
-        expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+        expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
     });
 
     test('allows custom adminDiscordUserId and rejects a different user', async () => {
@@ -173,7 +173,7 @@ describe('AllowlistCommandHandler - permission check', () => {
             = createMockInteraction(customUserId, 'list');
         await handler.handle(customUserInteraction);
         expect(customReply).not.toHaveBeenCalled();
-        expect(customDeferReply).toHaveBeenCalledWith({ ephemeral: true });
+        expect(customDeferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
     });
 
     test('rejects a different user when custom adminDiscordUserId is configured', async () => {
@@ -186,8 +186,8 @@ describe('AllowlistCommandHandler - permission check', () => {
             = createMockInteraction(ADMIN_USER_ID, 'list');
         await handler.handle(otherInteraction);
         expect(otherReply).toHaveBeenCalledWith({
-            content:   'Only the admin can manage the allowlist.',
-            ephemeral: true,
+            content: 'Only the admin can manage the allowlist.',
+            flags:   MessageFlags.Ephemeral,
         });
         expect(mockAllowlist.list).not.toHaveBeenCalled();
     });
@@ -301,7 +301,7 @@ describe('AllowlistCommandHandler - /allowlist list', () => {
         const { asChatInput, deferReply } = createMockInteraction(ADMIN_USER_ID, 'list');
         await handler.handle(asChatInput);
 
-        expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+        expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
     });
 
     test('handles list error gracefully', async () => {
@@ -378,7 +378,7 @@ describe('AllowlistCommandHandler - /allowlist add', () => {
         const { asChatInput, deferReply } = createMockInteraction(ADMIN_USER_ID, 'add', { email: 'alice@example.com' });
         await handler.handle(asChatInput);
 
-        expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+        expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
     });
 });
 
@@ -424,6 +424,6 @@ describe('AllowlistCommandHandler - /allowlist remove', () => {
         const { asChatInput, deferReply } = createMockInteraction(ADMIN_USER_ID, 'remove', { email: 'alice@example.com' });
         await handler.handle(asChatInput);
 
-        expect(deferReply).toHaveBeenCalledWith({ ephemeral: true });
+        expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
     });
 });

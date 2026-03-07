@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import type { ButtonInteraction, InteractionUpdateOptions } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, type InteractionUpdateOptions } from 'discord.js';
 import { mockLogger } from '../../../setup';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { ReviewHandler } from '@/integrations/email/review-handler';
@@ -105,9 +105,9 @@ describe('ReviewHandler.handleButton()', () => {
             await handler.handleButton(interaction);
 
             expect(reply).toHaveBeenCalledTimes(1);
-            const replyArg = reply.mock.calls[0]?.[0] as { content: string, ephemeral: boolean };
+            const replyArg = reply.mock.calls[0]?.[0] as { content: string, flags: MessageFlags };
             expect(replyArg.content).toBe('Only the admin can review emails.');
-            expect(replyArg.ephemeral).toBe(true);
+            expect(replyArg.flags).toBe(MessageFlags.Ephemeral);
             expect(wildDuck.moveMessage).not.toHaveBeenCalled();
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(editReply).not.toHaveBeenCalled();
@@ -435,9 +435,9 @@ describe('ReviewHandler.handleButton()', () => {
             await handler.handleButton(interaction);
 
             expect(reply).toHaveBeenCalledTimes(1);
-            const replyArg = reply.mock.calls[0]?.[0] as { content: string, ephemeral: boolean };
+            const replyArg = reply.mock.calls[0]?.[0] as { content: string, flags: MessageFlags };
             expect(replyArg.content).toBe('Invalid folder in button interaction.');
-            expect(replyArg.ephemeral).toBe(true);
+            expect(replyArg.flags).toBe(MessageFlags.Ephemeral);
             expect(wildDuck.moveMessage).not.toHaveBeenCalled();
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(editReply).not.toHaveBeenCalled();
@@ -452,9 +452,9 @@ describe('ReviewHandler.handleButton()', () => {
             await handler.handleButton(interaction);
 
             expect(reply).toHaveBeenCalledTimes(1);
-            const replyArg = reply.mock.calls[0]?.[0] as { content: string, ephemeral: boolean };
+            const replyArg = reply.mock.calls[0]?.[0] as { content: string, flags: MessageFlags };
             expect(replyArg.content).toBe('Invalid folder in button interaction.');
-            expect(replyArg.ephemeral).toBe(true);
+            expect(replyArg.flags).toBe(MessageFlags.Ephemeral);
             expect(wildDuck.moveMessage).not.toHaveBeenCalled();
             expect(deferUpdate).not.toHaveBeenCalled();
             expect(editReply).not.toHaveBeenCalled();

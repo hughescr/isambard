@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 
 /**
@@ -73,15 +73,15 @@ export class AllowlistCommandHandler {
         // Permission check — only the admin may manage the allowlist
         if(interaction.user.id !== this.adminDiscordUserId) {
             await interaction.reply({
-                content:   'Only the admin can manage the allowlist.',
-                ephemeral: true,
+                content: 'Only the admin can manage the allowlist.',
+                flags:   MessageFlags.Ephemeral,
             });
             return;
         }
 
         const subcommand = interaction.options.getSubcommand();
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         if(subcommand === 'list') {
             await this.handleList(interaction);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import type { ButtonInteraction, Message, User, InteractionResponse } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, type Message, type User, type InteractionResponse } from 'discord.js';
 import type { PendingQuestion } from '@/agent/question-registry';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
@@ -69,8 +69,8 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         expect(interaction.reply).toHaveBeenCalledWith({
-            content:   'This question has expired or is no longer valid.',
-            ephemeral: true,
+            content: 'This question has expired or is no longer valid.',
+            flags:   MessageFlags.Ephemeral,
         });
     });
 
@@ -107,8 +107,8 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         expect(interaction.reply).toHaveBeenCalledWith({
-            content:   'This question has expired or is no longer valid.',
-            ephemeral: true,
+            content: 'This question has expired or is no longer valid.',
+            flags:   MessageFlags.Ephemeral,
         });
     });
 
@@ -144,8 +144,8 @@ describe('createInteractionHandler', () => {
         registry.cancel('q-expired');
 
         expect(interaction.reply).toHaveBeenCalledWith({
-            content:   'This question has expired or is no longer valid.',
-            ephemeral: true,
+            content: 'This question has expired or is no longer valid.',
+            flags:   MessageFlags.Ephemeral,
         });
     });
 

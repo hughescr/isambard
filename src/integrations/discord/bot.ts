@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import type { Client } from 'discord.js';
+import { MessageFlags, type Client } from 'discord.js';
 import {
     type CatchUpSessionRunner,
     type CatchUpCompletionSignal,
@@ -347,10 +347,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 }
             } else if(interaction.isStringSelectMenu() && interaction.customId.startsWith('email-allowlist-select:')) {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true }));
+                await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (emailSetup ? emailSetup.allowlistHandler.handle(interaction) : interaction.reply({ content: 'Email integration is not currently available.', ephemeral: true }));
+                await (emailSetup ? emailSetup.allowlistHandler.handle(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
             }
         });
 
