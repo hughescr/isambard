@@ -35,10 +35,10 @@ const DRAFTS_UID_REGEX = /^Drafts:\d+$/;
 const ACCESSIBLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
 /**
- * Mailboxes readable by getEmailContent (superset of ACCESSIBLE_MAILBOXES: also includes Drafts).
+ * Mailboxes readable by getEmailContent (superset of ACCESSIBLE_MAILBOXES: also includes Drafts and Sent Mail).
  */
 // Stryker disable next-line ArrayDeclaration: Readable mailboxes are configuration
-const READABLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts]);
+const READABLE_MAILBOXES: ReadonlySet<string> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent]);
 
 /**
  * Parse a Mailbox:UID string into its mailbox name and numeric UID.
@@ -397,7 +397,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     try {
                         const { mailboxName, uid } = parseMailboxUid(args.message);
 
-                        // Access control: CleanInbox, Archive, and Drafts are directly readable
+                        // Access control: CleanInbox, Archive, Drafts, and Sent Mail are directly readable
                         if(!READABLE_MAILBOXES.has(mailboxName)) {
                             // Send admin notification (fire-and-forget)
                             if(sendAdminNotification) {
