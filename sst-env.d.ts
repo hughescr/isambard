@@ -14,6 +14,14 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "BskyAppPassword": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
+    "BskyHandle": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "ClaudeCodeOAuthToken": {
       "type": "sst.sst.Secret"
       "value": string

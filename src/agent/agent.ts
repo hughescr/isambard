@@ -245,6 +245,8 @@ export interface ClaudeAgentOptions {
     inboxMcpServer?:             McpServerConfig
     /** Email MCP server instance for email inbox access */
     emailMcpServer?:             McpServerConfig
+    /** Bluesky MCP server instance for AT Protocol feed reading and interaction */
+    bskyMcpServer?:              McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
     plugins?:                    SdkPluginConfig[]
     /** Task persistence coordinator for maintaining tasks across sessions */
@@ -317,8 +319,8 @@ export interface ClaudeAgent {
 /**
  * Builds the mcpServers configuration object based on provided servers.
  */
-function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
-    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer) {
+function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
+    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer && !bskyMcpServer) {
         return undefined;
     }
 
@@ -335,13 +337,16 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
     if(emailMcpServer) {
         servers.email = emailMcpServer;
     }
+    if(bskyMcpServer) {
+        servers.bsky = bskyMcpServer;
+    }
     return servers;
 }
 
 /**
  * Builds the allowedTools list based on which MCP servers are configured.
  */
-function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
+function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
     const baseTools = [
         // Memory MCP tools (auto-approved)
         'mcp__memory__*',
@@ -384,6 +389,10 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
 
     if(emailMcpServer) {
         tools.push('mcp__email__*');
+    }
+
+    if(bskyMcpServer) {
+        tools.push('mcp__bsky__*');
     }
 
     return tools;
@@ -856,6 +865,7 @@ async function processStreamEvents(
  * @param discordMcpServer Discord MCP server configuration
  * @param inboxMcpServer Inbox MCP server configuration
  * @param emailMcpServer Email MCP server configuration
+ * @param bskyMcpServer Bluesky MCP server configuration
  * @param plugins Plugin configurations
  * @param options Optional batch processing options
  * @returns Query options object for Agent SDK
@@ -867,6 +877,7 @@ function buildQueryOptions(
     discordMcpServer: McpServerConfig | undefined,
     inboxMcpServer: McpServerConfig | undefined,
     emailMcpServer: McpServerConfig | undefined,
+    bskyMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options?: HandleInputOptions
 ) {
@@ -875,7 +886,7 @@ function buildQueryOptions(
         systemPrompt,
         tools:          EXPLICIT_TOOLS,
         agents:         EXPLICIT_AGENTS,
-        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
+        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, options?.specialMode),
         plugins:        plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode: 'acceptEdits' as const,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
@@ -885,7 +896,7 @@ function buildQueryOptions(
             excludedCommands:         ['git'],
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
-        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, options?.specialMode),
+        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, options?.specialMode),
         maxThinkingTokens: 10_000,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
         compactionControl: {
@@ -1121,6 +1132,7 @@ async function attemptAutoResume(
  * @param discordMcpServer - Discord MCP server configuration
  * @param inboxMcpServer - Inbox MCP server configuration
  * @param emailMcpServer - Email MCP server configuration
+ * @param bskyMcpServer - Bluesky MCP server configuration
  * @param plugins - Plugin configurations
  * @param options - HandleInput options (including abort controller)
  * @param taskPersistenceCoordinator - Task persistence coordinator if available
@@ -1138,6 +1150,7 @@ async function collectBackgroundTasks(
     discordMcpServer: McpServerConfig | undefined,
     inboxMcpServer: McpServerConfig | undefined,
     emailMcpServer: McpServerConfig | undefined,
+    bskyMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options: HandleInputOptions | undefined,
     taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
@@ -1153,7 +1166,7 @@ async function collectBackgroundTasks(
     while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, options);
+        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, plugins, options);
         // eslint-disable-next-line no-await-in-loop -- sequential: each resume attempt depends on prior result
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
@@ -1171,7 +1184,7 @@ async function collectBackgroundTasks(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
     const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
@@ -1229,7 +1242,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, handleOptions),
+                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, plugins, handleOptions),
                 });
 
                 // 7. Process stream events and track progress
@@ -1241,7 +1254,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, sessionRef.capturedSessionId, wasInterrupted,
-                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, plugins, handleOptions, taskPersistenceCoordinator
+                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, plugins, handleOptions, taskPersistenceCoordinator
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 sessionRef.capturedSessionId = resumeCollected.capturedSessionId;

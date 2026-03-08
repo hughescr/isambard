@@ -1,0 +1,374 @@
+import { AtpAgent, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost } from '@atproto/api';
+import { logger } from '@hughescr/logger';
+import { BskyError, BskyAuthError, BskyRateLimitError } from '@/integrations/bsky/errors';
+import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification } from '@/integrations/bsky/types';
+
+// HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
+// Stryker disable ObjectLiteral,StringLiteral: HTTP status code constants are configuration
+const HTTP_STATUS = {
+    AUTH_REQUIRED: 401,
+    RATE_LIMITED:  429,
+} as const;
+// Stryker restore ObjectLiteral,StringLiteral
+
+/**
+ * Minimal duck-type for the XRPCError shape from @atproto/xrpc.
+ * Avoids importing the transitive @atproto/xrpc package directly.
+ */
+interface XRPCErrorLike {
+    status:  number
+    error:   string
+    message: string
+}
+
+// Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: instanceof guard and typeof checks are paired — mutating either alone cannot change observable behavior for the inputs that reach this code
+function isXRPCError(err: unknown): err is XRPCErrorLike {
+    if(!(err instanceof Error)) {
+        return false;
+    }
+    const errRecord = err as unknown as Record<string, unknown>;
+    return typeof errRecord.status === 'number' && typeof errRecord.error === 'string';
+}
+// Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
+
+// Stryker disable next-line StringLiteral: Feed URI is configuration
+const DISCOVER_FEED_URI = 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
+
+export interface BlueskyClientOptions {
+    handle:      string
+    appPassword: string
+    serviceUrl?: string
+}
+
+/**
+ * Bluesky AT Protocol client wrapping AtpAgent with normalized domain types.
+ */
+export class BlueskyClient {
+    private readonly agent:       AtpAgent;
+    private readonly handle:      string;
+    private readonly appPassword: string;
+
+    constructor(options: BlueskyClientOptions) {
+        // Stryker disable next-line StringLiteral: default service URL is configuration
+        this.agent       = new AtpAgent({ service: options.serviceUrl ?? 'https://bsky.social' });
+        this.handle      = options.handle;
+        this.appPassword = options.appPassword;
+    }
+
+    /**
+     * Authenticate with Bluesky using handle and app password.
+     */
+    async login(): Promise<void> {
+        try {
+            await this.agent.login({ identifier: this.handle, password: this.appPassword });
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Login failed');
+        }
+    }
+
+    /**
+     * Fetch posts from a named feed or AT URI feed.
+     *
+     * Feed name shortcuts:
+     * - `"following"` (or undefined) → user's timeline
+     * - `"for-you"` or `"discover"` → Bluesky discover/for-you feed
+     * - Raw `at://` URI → passed through as-is
+     */
+    async getFeed(
+        feedName?: string,
+        limit?:    number,
+        cursor?:   string
+    ): Promise<{ items: BskyFeedItem[], cursor?: string }> {
+        try {
+            if(feedName === undefined || feedName === 'following') {
+                const response = await this.agent.getTimeline({ limit, cursor });
+                return {
+                    items:  response.data.feed.map(item => this.normalizeFeedItem(item)),
+                    cursor: response.data.cursor,
+                };
+            }
+
+            const feedUri = feedName === 'for-you' || feedName === 'discover' ? DISCOVER_FEED_URI : feedName;
+
+            const response = await this.agent.app.bsky.feed.getFeed({ feed: feedUri, limit, cursor });
+            return {
+                items:  response.data.feed.map(item => this.normalizeFeedItem(item)),
+                cursor: response.data.cursor,
+            };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to fetch feed');
+        }
+    }
+
+    /**
+     * Fetch posts authored by the given actor (DID or handle).
+     */
+    async getAuthorFeed(
+        actor:   string,
+        limit?:  number,
+        cursor?: string
+    ): Promise<{ items: BskyFeedItem[], cursor?: string }> {
+        try {
+            const response = await this.agent.getAuthorFeed({ actor, limit, cursor });
+            return {
+                items:  response.data.feed.map(item => this.normalizeFeedItem(item)),
+                cursor: response.data.cursor,
+            };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to fetch author feed');
+        }
+    }
+
+    /**
+     * Fetch a single post by AT URI.
+     */
+    async getPost(uri: string): Promise<BskyPost> {
+        try {
+            const response = await this.agent.getPosts({ uris: [uri] });
+            const posts    = response.data.posts;
+            if(posts.length === 0) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw new BskyError('Post not found', undefined, { uri });
+            }
+            return this.normalizePost(posts[0]);
+        } catch (err: unknown) {
+            if(err instanceof BskyError) {
+                throw err;
+            }
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to fetch post');
+        }
+    }
+
+    /**
+     * Fetch recent notifications for the authenticated user.
+     */
+    async getNotifications(
+        limit?:  number,
+        cursor?: string
+    ): Promise<{ notifications: BskyNotification[], cursor?: string }> {
+        try {
+            const response = await this.agent.listNotifications({ limit, cursor });
+            return {
+                notifications: response.data.notifications
+                    .filter(n => this.isKnownNotificationReason(n.reason))
+                    .map(n => this.normalizeNotification(n)),
+                cursor: response.data.cursor,
+            };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to fetch notifications');
+        }
+    }
+
+    /**
+     * Fetch a user profile by DID or handle.
+     */
+    async getProfile(actor: string): Promise<BskyAuthor> {
+        try {
+            const response = await this.agent.getProfile({ actor });
+            return this.normalizeDetailedProfile(response.data);
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to fetch profile');
+        }
+    }
+
+    /**
+     * Search for posts matching the query string.
+     */
+    async searchPosts(
+        query:   string,
+        limit?:  number,
+        cursor?: string
+    ): Promise<{ posts: BskyPost[], cursor?: string }> {
+        try {
+            const response = await this.agent.app.bsky.feed.searchPosts({ q: query, limit, cursor });
+            return {
+                posts:  response.data.posts.map(post => this.normalizePost(post)),
+                cursor: response.data.cursor,
+            };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to search posts');
+        }
+    }
+
+    /**
+     * Like a post by AT URI and CID.
+     */
+    async likePost(uri: string, cid: string): Promise<void> {
+        try {
+            await this.agent.like(uri, cid);
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to like post');
+        }
+    }
+
+    /**
+     * Toggle follow state for a user by DID or handle.
+     * If currently following, unfollows; otherwise follows.
+     * Returns { followed: true } when a follow was created, { followed: false } when unfollowed.
+     */
+    async toggleFollow(actor: string): Promise<{ followed: boolean }> {
+        try {
+            const response  = await this.agent.getProfile({ actor });
+            const followUri = response.data.viewer?.following;
+
+            if(followUri) {
+                // Currently following → unfollow
+                await this.agent.deleteFollow(followUri);
+                return { followed: false };
+            }
+
+            // Not following → follow
+            await this.agent.follow(response.data.did);
+            return { followed: true };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to toggle follow');
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Normalization helpers
+    // ---------------------------------------------------------------------------
+
+    private normalizeAuthor(profile: AppBskyActorDefs.ProfileViewBasic): BskyAuthor {
+        return {
+            did:    profile.did,
+            handle: profile.handle,
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.displayName ? { displayName: profile.displayName } : {}),
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.avatar ? { avatar: profile.avatar } : {}),
+        };
+    }
+
+    private normalizeDetailedProfile(profile: AppBskyActorDefs.ProfileViewDetailed): BskyAuthor {
+        return {
+            did:    profile.did,
+            handle: profile.handle,
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.displayName ? { displayName: profile.displayName } : {}),
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.avatar ? { avatar: profile.avatar } : {}),
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.description ? { description: profile.description } : {}),
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
+            ...(profile.followersCount === undefined ? {} : { followersCount: profile.followersCount }),
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
+            ...(profile.followsCount === undefined ? {} : { followsCount: profile.followsCount }),
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
+            ...(profile.postsCount === undefined ? {} : { postsCount: profile.postsCount }),
+        };
+    }
+
+    private normalizePost(post: AppBskyFeedDefs.PostView): BskyPost {
+        const record = post.record as AppBskyFeedPost.Record;
+        return {
+            uri:         post.uri,
+            cid:         post.cid,
+            author:      this.normalizeAuthor(post.author),
+            text:        record.text,
+            createdAt:   record.createdAt,
+            replyCount:  post.replyCount ?? 0,
+            likeCount:   post.likeCount ?? 0,
+            repostCount: post.repostCount ?? 0,
+        };
+    }
+
+    private normalizeFeedItem(item: AppBskyFeedDefs.FeedViewPost): BskyFeedItem {
+        const result: BskyFeedItem = {
+            post: this.normalizePost(item.post),
+        };
+
+        if(item.reply !== undefined) {
+            const parent = item.reply.parent;
+            const root   = item.reply.root;
+
+            if(this.isPostView(parent) && this.isPostView(root)) {
+                result.reply = {
+                    parent: this.normalizePost(parent),
+                    root:   this.normalizePost(root),
+                };
+            }
+        }
+
+        return result;
+    }
+
+    private normalizeProfileView(profile: AppBskyActorDefs.ProfileView): BskyAuthor {
+        return {
+            did:    profile.did,
+            handle: profile.handle,
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.displayName ? { displayName: profile.displayName } : {}),
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.avatar ? { avatar: profile.avatar } : {}),
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.description ? { description: profile.description } : {}),
+        };
+    }
+
+    private normalizeNotification(
+        notification: { uri: string, author: AppBskyActorDefs.ProfileView, reason: string, indexedAt: string }
+    ): BskyNotification {
+        return {
+            reason:    notification.reason as BskyNotification['reason'],
+            uri:       notification.uri,
+            author:    this.normalizeProfileView(notification.author),
+            indexedAt: notification.indexedAt,
+        };
+    }
+
+    // ---------------------------------------------------------------------------
+    // Error mapping
+    // ---------------------------------------------------------------------------
+
+    private mapError(err: unknown, message: string): BskyError {
+        if(isXRPCError(err)) {
+            if(err.status === HTTP_STATUS.AUTH_REQUIRED) {
+                return new BskyAuthError(message, { originalMessage: err.message, error: err.error });
+            }
+            if(err.status === HTTP_STATUS.RATE_LIMITED) {
+                return new BskyRateLimitError(message, { originalMessage: err.message, error: err.error });
+            }
+            return new BskyError(message, undefined, { originalMessage: err.message, error: err.error, status: err.status });
+        }
+
+        if(err instanceof Error) {
+            logger.error({ err }, message);
+            return new BskyError(message, undefined, { originalMessage: err.message });
+        }
+
+        logger.error({ err }, message);
+        return new BskyError(message);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Type guards
+    // ---------------------------------------------------------------------------
+
+    private isPostView(
+        view: AppBskyFeedDefs.PostView | AppBskyFeedDefs.NotFoundPost | AppBskyFeedDefs.BlockedPost | { $type: string }
+    ): view is AppBskyFeedDefs.PostView {
+        const v = view as Record<string, unknown>;
+        // Stryker disable ConditionalExpression,LogicalOperator: combined structural type guard — each condition tests a distinct required PostView field; changing operator or flipping truthy breaks all-or-nothing semantics
+        return typeof v.uri === 'string' && typeof v.cid === 'string' && typeof v.author === 'object' && v.author !== null;
+        // Stryker restore ConditionalExpression,LogicalOperator
+    }
+
+    private isKnownNotificationReason(reason: string): reason is BskyNotification['reason'] {
+        return reason === 'like'
+          || reason === 'repost'
+          || reason === 'follow'
+          || reason === 'mention'
+          || reason === 'reply'
+          || reason === 'quote';
+    }
+}

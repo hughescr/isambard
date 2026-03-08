@@ -590,6 +590,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.email).toEqual(mockEmailServer);
         });
+
+        test('should configure bsky MCP server when provided', async () => {
+            const mockBskyServer = { command: 'node', args: ['bsky-server.js'] };
+            const agent = createClaudeAgent({ bskyMcpServer: mockBskyServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.bsky).toEqual(mockBskyServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -702,6 +712,44 @@ describe('createClaudeAgent', () => {
                 'Bash(bun typecheck)',
                 'Bash(ls:*)',
                 'mcp__email__*',
+            ]);
+        });
+
+        test('should include bsky tools when bsky MCP server provided', async () => {
+            const mockBskyServer = { command: 'node', args: ['bsky-server.js'] };
+            const agent = createClaudeAgent({ bskyMcpServer: mockBskyServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify exact array contents with bsky tools included
+            expect(allowedTools).toEqual([
+                'mcp__memory__*',
+                'Read',
+                'Glob',
+                'Grep',
+                'WebFetch',
+                'WebSearch',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
+                'EnterPlanMode',
+                'ExitPlanMode',
+                'Task',
+                'TaskOutput',
+                'TaskStop',
+                // Skills
+                'Skill',
+                // Bash commands (specific safe commands only)
+                'Bash(git:*)',
+                'Bash(bun run:*)',
+                'Bash(bun test:*)',
+                'Bash(bun lint:*)',
+                'Bash(bun typecheck)',
+                'Bash(ls:*)',
+                'mcp__bsky__*',
             ]);
         });
     });

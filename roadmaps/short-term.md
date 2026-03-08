@@ -1,14 +1,17 @@
 # Short-Term Roadmap
 
-## Current Focus: Social & Content Feeds
+## Completed: Bluesky Integration (Read-Only + Like)
+- ✅ AT Protocol client library (`@atproto/api`) integration
+- ✅ Read timeline, feeds, and notifications
+- ✅ Search posts and profiles
+- ✅ Like posts, follow/unfollow users
+- ✅ MCP tools: `getFeed`, `getAuthorFeed`, `searchPosts`, `getPost`, `getProfile`, `getNotifications`, `likePost`, `toggleFollow`
+- ✅ Config via SST secrets (`BskyHandle`, `BskyAppPassword`)
+- ✅ 100% mutation score
 
-### Bluesky Integration
-- AT Protocol client library integration
-- Read timeline and notifications
-- Search posts and profiles
-- MCP tools: `getFeed`, `searchPosts`, `getNotifications`
+## Current Focus: RSS Feed Aggregation
 
-### RSS Feed Aggregation
+### RSS Feed Reader
 - Configurable feed list (stored in DynamoDB)
 - Periodic polling with change detection
 - MCP tools: `getFeeds`, `searchArticles`

@@ -24,6 +24,9 @@ function createMockResources(
         AdminDiscordUserId:    { value: undefined },
         AdminDiscordChannelId: { value: undefined },
         WildDuckApiUrl:        { value: undefined },
+        // Bluesky secrets default to undefined (bsky config is optional)
+        BskyHandle:            { value: undefined },
+        BskyAppPassword:       { value: undefined },
         // Planned integrations (not yet implemented):
         // CaldavUrl:          { value: 'https://caldav.example.com' },
         // CaldavUsername:     { value: 'user' },
@@ -42,6 +45,15 @@ function emailResources(extra?: Partial<Record<keyof ResourceProvider, { value: 
         AdminDiscordUserId:    { value: '111111111111111111' },
         AdminDiscordChannelId: { value: '987654321098765432' },
         WildDuckApiUrl:        { value: 'https://wildduck.example.com' },
+        ...extra,
+    });
+}
+
+/** Minimal bsky resource overrides for full bsky config */
+function bskyResources(extra?: Partial<Record<keyof ResourceProvider, { value: string | undefined }>>) {
+    return createMockResources({
+        BskyHandle:      { value: 'user.bsky.social' },
+        BskyAppPassword: { value: 'xxxx-xxxx-xxxx-xxxx' },
         ...extra,
     });
 }
@@ -462,6 +474,38 @@ describe('loadConfig - Perch Config', () => {
         const config = loadConfig(resources);
         expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
         expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+    });
+});
+
+describe.concurrent('loadConfig - Bsky Config', () => {
+    test('should return bsky = undefined when BskyHandle is not set', () => {
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.bsky).toBeUndefined();
+    });
+
+    test('should load bsky config when BskyHandle and BskyAppPassword are set', () => {
+        const config = loadConfig(bskyResources());
+
+        expect(config.bsky).toBeDefined();
+        expect(config.bsky?.handle).toBe('user.bsky.social');
+        expect(config.bsky?.appPassword).toBe('xxxx-xxxx-xxxx-xxxx');
+    });
+
+    test('should apply default serviceUrl when no serviceUrl is provided', () => {
+        const config = loadConfig(bskyResources());
+
+        expect(config.bsky?.serviceUrl).toBe('https://bsky.social');
+    });
+
+    test('should not set bsky config when only BskyHandle is provided (missing BskyAppPassword)', () => {
+        const resources = createMockResources({
+            BskyHandle: { value: 'izzy.rungie.com' },
+            // BskyAppPassword remains undefined
+        });
+        const config = loadConfig(resources);
+        expect(config.bsky).toBeUndefined();
     });
 });
 

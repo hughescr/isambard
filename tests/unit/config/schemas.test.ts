@@ -6,6 +6,7 @@ import {
     emailConfigSchema,
     discordConfigSchema,
     boxConfigSchema,
+    bskyConfigSchema,
     dynamoDBConfigSchema,
     configSchema,
     perchConfigSchema,
@@ -762,6 +763,52 @@ describe('reconciliationConfigSchema', () => {
     test('should reject zero intervalMs', () => {
         const result = reconciliationConfigSchema.safeParse({
             intervalMs: 0,
+        });
+        expect(result.success).toBe(false);
+    });
+});
+
+describe.concurrent('bskyConfigSchema', () => {
+    const validBskyBase = {
+        handle:      'user.bsky.social',
+        appPassword: 'xxxx-xxxx-xxxx-xxxx',
+    };
+
+    test('should accept valid config with all fields', () => {
+        const config = {
+            ...validBskyBase,
+            serviceUrl: 'https://custom.bsky.app',
+        };
+
+        const result = bskyConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.handle).toBe('user.bsky.social');
+            expect(result.data.appPassword).toBe('xxxx-xxxx-xxxx-xxxx');
+            expect(result.data.serviceUrl).toBe('https://custom.bsky.app');
+        }
+    });
+
+    test('should apply default serviceUrl when not provided', () => {
+        const result = bskyConfigSchema.safeParse(validBskyBase);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.serviceUrl).toBe('https://bsky.social');
+        }
+    });
+
+    test('should reject empty handle', () => {
+        const result = bskyConfigSchema.safeParse({
+            ...validBskyBase,
+            handle: '',
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject empty appPassword', () => {
+        const result = bskyConfigSchema.safeParse({
+            ...validBskyBase,
+            appPassword: '',
         });
         expect(result.success).toBe(false);
     });

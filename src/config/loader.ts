@@ -61,9 +61,9 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
             // These values balance responsiveness with API rate limit compliance.
             // Stryker disable next-line ObjectLiteral: Default config values tested via integration
             presence:      {
-                updateDebounceMs:      2000,        // Debounce rapid phase changes to avoid flickering
-                idleTimeoutMs:         60_000,       // Transition to idle after 1 minute of inactivity
-                idleRefreshIntervalMs: 300_000,      // Refresh idle status every 5 minutes to maintain visibility
+                updateThrottleMs:      12_000,       // Throttle Discord API calls to avoid rate limiting (12s cooldown)
+                idleTimeoutMs:         60_000,        // Transition to idle after 1 minute of inactivity
+                idleRefreshIntervalMs: 300_000,       // Refresh idle status every 5 minutes to maintain visibility
             },
         },
         perch: env.get('PERCH_ENABLED').default('true').asBool()
@@ -88,6 +88,12 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                 adminDiscordUserId:    resources.AdminDiscordUserId.value,
                 adminDiscordChannelId: resources.AdminDiscordChannelId.value,
                 wildDuckApiUrl:        resources.WildDuckApiUrl.value,
+            }
+            : undefined,
+        bsky: resources.BskyHandle.value && resources.BskyAppPassword.value
+            ? {
+                handle:      resources.BskyHandle.value,
+                appPassword: resources.BskyAppPassword.value,
             }
             : undefined,
         // Planned integrations (commented out until implemented):

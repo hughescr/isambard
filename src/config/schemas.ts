@@ -109,6 +109,14 @@ export const boxConfigSchema = z.object({
     clientSecret: z.string().min(1),
 });
 
+// Bluesky config
+export const bskyConfigSchema = z.object({
+    handle:      z.string().min(1),
+    appPassword: z.string().min(1),
+    // Stryker disable next-line StringLiteral: Default URL is configuration
+    serviceUrl:  z.url().default('https://bsky.social'),
+});
+
 // DynamoDB config
 export const dynamoDBConfigSchema = z.object({
     tableName: z.string().min(1),
@@ -205,6 +213,7 @@ export const configSchema = z.object({
     caldav:         caldavConfigSchema.optional(),
     email:          emailConfigSchema.optional(),
     box:            boxConfigSchema.optional(),
+    bsky:           bskyConfigSchema.optional(),
 });
 
 // Type exports
@@ -215,6 +224,7 @@ export type CaldavConfig = z.infer<typeof caldavConfigSchema>;
 export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type BoxConfig = z.infer<typeof boxConfigSchema>;
+export type BskyConfig = z.infer<typeof bskyConfigSchema>;
 export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
 export type PerchConfigInput = z.infer<typeof perchConfigSchema>;
 export type Config = z.infer<typeof configSchema>;

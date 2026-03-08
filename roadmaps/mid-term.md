@@ -8,8 +8,8 @@
 
 ## Write Capabilities
 After read-only integrations are stable:
+- Bluesky posting, reposting, and replying (AT Protocol — read-only + like already done)
 - Calendar event creation (CalDAV write)
-- Bluesky posting (AT Protocol)
 - Box Documents (box-node-sdk)
 
 ## Knowledge & Context

@@ -28,6 +28,10 @@ export const adminDiscordUserId = new sst.Secret('AdminDiscordUserId');
 export const adminDiscordChannelId = new sst.Secret('AdminDiscordChannelId');
 export const wildDuckApiUrl = new sst.Secret('WildDuckApiUrl');
 
+// Bluesky (AT Protocol)
+export const bskyHandle = new sst.Secret('BskyHandle');
+export const bskyAppPassword = new sst.Secret('BskyAppPassword');
+
 // // Box
 // export const boxClientId = new sst.Secret('BoxClientId');
 // export const boxClientSecret = new sst.Secret('BoxClientSecret');

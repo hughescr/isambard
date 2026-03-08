@@ -7,6 +7,7 @@ import { Resource } from 'sst';
 import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
+import { BlueskyClient } from '@/integrations/bsky';
 import { createDiscordBot, setupEmail, type DiscordBot, type EmailSetupResult } from '@/integrations/discord';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
@@ -90,6 +91,27 @@ export async function createApp(): Promise<App> {
         // Stryker enable BlockStatement
     }
 
+    // Set up Bluesky integration if bsky config is present (conditional — non-fatal)
+    let bskyClient: BlueskyClient | undefined;
+    if(config.bsky) {
+        // Stryker disable BlockStatement: try-catch wraps bsky setup - error handling
+        try {
+            bskyClient = new BlueskyClient({
+                handle:      config.bsky.handle,
+                appPassword: config.bsky.appPassword,
+                serviceUrl:  config.bsky.serviceUrl,
+            });
+            await bskyClient.login();
+        } catch (err) {
+            logger.error({
+                error: err instanceof Error ? err.message : String(err),
+                msg:   'Bluesky integration setup failed, continuing without Bluesky',
+            });
+            bskyClient = undefined;
+        }
+        // Stryker enable BlockStatement
+    }
+
     // Build email service from emailSetup components (if available)
     const emailService = emailSetup
         ? { wildDuckClient: emailSetup.wildDuckClient }
@@ -106,6 +128,7 @@ export async function createApp(): Promise<App> {
         botStateManager:      discordInfra.botStateManager,
         timezone:             resolveTimezone(),
         recordAccess:         contextLayer.contextBuilder.recordAccess,
+        bskyClient,
     });
 
     // Load plugins and create agent
@@ -116,6 +139,7 @@ export async function createApp(): Promise<App> {
         discordMcpServer:           mcpServers.discordMcpServer,
         inboxMcpServer:             mcpServers.inboxMcpServer,
         emailMcpServer:             emailSetup?.emailMcpServer,
+        bskyMcpServer:              mcpServers.bskyMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,

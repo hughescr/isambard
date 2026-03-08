@@ -1,6 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, type QuestionRegistry  } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, type QuestionRegistry  } from '@/agent';
+import type { BlueskyClient } from '@/integrations/bsky';
 import type { MessageSearchService, ChannelRegistryManager, InboxManager, BotStateManager } from '@/integrations/discord';
 import type { MemoryToolBackend, MemoryPath } from '@/storage';
 
@@ -55,6 +56,11 @@ export interface MCPServersOptions {
      * Optional callback to record memory access for scoring.
      */
     recordAccess?: (paths: MemoryPath[]) => Promise<void>
+
+    /**
+     * Optional Bluesky client for AT Protocol integration.
+     */
+    bskyClient?: BlueskyClient
 }
 
 /**
@@ -75,18 +81,24 @@ export interface MCPServers {
      * Inbox MCP server for unread message management.
      */
     inboxMcpServer: McpServerConfig
+
+    /**
+     * Bluesky MCP server for AT Protocol feed reading and interaction.
+     */
+    bskyMcpServer?: McpServerConfig
 }
 
 /**
  * Creates all MCP servers for the Claude agent.
  *
- * This factory consolidates the creation of three MCP servers:
+ * This factory consolidates the creation of four MCP servers:
  * 1. Memory MCP server - for deep memory access (view, store, search)
  * 2. Discord MCP server - for message history and sending messages
  * 3. Inbox MCP server - for unread message management
+ * 4. Bluesky MCP server - for AT Protocol feed reading and interaction (optional)
  *
  * @param options - Options containing all required dependencies
- * @returns Object containing all three MCP server configurations
+ * @returns Object containing all MCP server configurations
  */
 export function createMCPServers(options: MCPServersOptions): MCPServers {
     const memoryMcpServer = createMemoryMCPServer(options.memoryBackend, {
@@ -107,9 +119,14 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         options.botStateManager
     );
 
+    const bskyMcpServer = options.bskyClient
+        ? createBskyMCPServer(options.bskyClient)
+        : undefined;
+
     return {
         memoryMcpServer,
         discordMcpServer,
         inboxMcpServer,
+        bskyMcpServer,
     };
 }

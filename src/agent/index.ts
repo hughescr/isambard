@@ -47,6 +47,9 @@ export { createEmailMCPServer, type EmailMCPServerOptions, type RestrictedMailbo
 // Inbox MCP Server
 export { createInboxMCPServer } from './inbox-mcp-server';
 
+// Bsky MCP Server
+export { createBskyMCPServer } from './bsky-mcp-server';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 

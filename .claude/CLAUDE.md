@@ -47,7 +47,7 @@ Isambard can propose improvements to its own code:
 ### Directory Structure
 - `src/agent/` - Claude Agent SDK integration
 - `src/storage/` - DynamoDB models, repositories, and storage backends
-- `src/integrations/` - External services (Discord, Email)
+- `src/integrations/` - External services (Discord, Email, Bluesky)
 - `src/config/` - Configuration with Zod validation
 - `src/app/` - Application composition root (composition layer for createApp decomposition)
 - `src/errors/` - Centralized error hierarchy (IsambardError base with StorageError, DiscordError subtrees)
@@ -86,6 +86,7 @@ The agent subsystem connects Discord to Claude with persistent memory:
   - `types.ts` - Question types (PendingQuestion, QuestionAnswer, QuestionOption, QuestionState)
   - `index.ts` - Public exports
 - `src/agent/email-mcp-server.ts` - MCP server for email operations (checkInbox, getEmailContent, archiveEmail, searchEmail, sendEmail, replyToEmail, deleteDraft, amendAndResubmitDraft)
+- `src/agent/bsky-mcp-server.ts` - MCP server for Bluesky operations (getFeed, getNotifications, searchPosts, getPost, getProfile, getAuthorFeed, likePost, toggleFollow)
 - `src/agent/inbox-mcp-server.ts` - MCP server for Discord inbox operations (getUnreadOverview, getChannelSummary, fetchMessages, markAsRead, markChannelRead)
 - `src/agent/event-summarizer.ts` - LLM-based event summarization for context compression
 - `src/agent/multimodal-message-builder.ts` - Builds multimodal messages with image support
@@ -214,6 +215,13 @@ WildDuck HTTP API for inbox reading with SSE push notifications, outbound sendin
 - `src/integrations/email/review-handler.ts` - Handles admin approval/rejection responses
 - `src/integrations/email/index.ts` - Public exports
 
+### Bluesky Integration
+AT Protocol client for read-only feed access and liking:
+- `src/integrations/bsky/types.ts` - Domain types (BskyAuthor, BskyPost, BskyFeedItem, BskyNotification)
+- `src/integrations/bsky/errors.ts` - Error hierarchy (BskyError, BskyAuthError, BskyRateLimitError)
+- `src/integrations/bsky/client.ts` - `BlueskyClient` class wrapping `AtpAgent` from `@atproto/api`
+- `src/integrations/bsky/index.ts` - Public exports
+
 ### Memory Tool Subsystem
 Custom memory tool implementation with DynamoDB backend and three-layer architecture:
 - `src/storage/memory-tool/` - Complete memory tool implementation
@@ -265,7 +273,7 @@ Factory functions that wire together all subsystem components:
 ### Error Hierarchy
 Centralized error classes for all Isambard operations:
 - `src/errors/base.ts` - `IsambardError` base class with `code: ErrorCode` and typed `context` bag
-- `src/errors/codes.ts` - `ErrorCode` enum with all error codes (storage, memory tool, reconciliation, Discord, channel registry, presence, state, utility, email)
+- `src/errors/codes.ts` - `ErrorCode` enum with all error codes (storage, memory tool, reconciliation, Discord, channel registry, presence, state, utility, email, bsky)
 - `src/errors/storage.ts` - `StorageError` subtree (ItemNotFoundError, ValidationError, DynamoTimeoutError, MemoryToolError and subclasses, ReconciliationError)
 - `src/errors/discord.ts` - `DiscordError` subtree (InvalidTokenError, PermissionError, ChannelNotFoundByIdError, RateLimitError, MessageFetchError, InvalidSnowflakeError, ChannelRegistryError subclasses, PresenceError, TransitionError)
 - `src/errors/utils.ts` - `PathSecurityError` for file path security validation failures
@@ -274,7 +282,7 @@ Centralized error classes for all Isambard operations:
 
 ### Configuration Subsystem
 Zod-validated configuration loading with env-var for type-safe environment variable parsing:
-- `src/config/schemas.ts` - Zod schemas for configuration validation
+- `src/config/schemas.ts` - Zod schemas for configuration validation (includes Bluesky config: `BSKY_HANDLE`, `BSKY_APP_PASSWORD`, `BSKY_SERVICE_URL`)
 - `src/config/loader.ts` - Configuration loader with environment variable support
 - `src/config/retry-config.ts` - Retry configuration constants
 - `src/config/index.ts` - Public exports

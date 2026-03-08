@@ -4,6 +4,7 @@ import { mockLogger } from '../../setup';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { MCPServersOptions } from '@/app/mcp-servers';
+import type { BlueskyClient } from '@/integrations/bsky';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
@@ -244,5 +245,50 @@ describe('createMCPServers', () => {
         // Import and verify createMCPServers throws
         const { createMCPServers } = await import('@/app/mcp-servers');
         expect(() => createMCPServers(mockOptions)).toThrow('Inbox MCP server creation failed');
+    });
+
+    test('should not create bskyMcpServer when bskyClient is not provided', async () => {
+        const memoryMcpModule = await import('@/agent/memory-mcp-server');
+        spies.push(spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const discordMcpModule = await import('@/agent/discord-mcp-server');
+        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const inboxMcpModule = await import('@/agent/inbox-mcp-server');
+        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const bskyMcpModule = await import('@/agent/bsky-mcp-server');
+        const createBskyMcpServerSpy = spyOn(bskyMcpModule, 'createBskyMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+        spies.push(createBskyMcpServerSpy);
+
+        const { createMCPServers } = await import('@/app/mcp-servers');
+        const result = createMCPServers(mockOptions);
+
+        expect(result.bskyMcpServer).toBeUndefined();
+        expect(createBskyMcpServerSpy).not.toHaveBeenCalled();
+    });
+
+    test('should create bskyMcpServer when bskyClient is provided', async () => {
+        const memoryMcpModule = await import('@/agent/memory-mcp-server');
+        spies.push(spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const discordMcpModule = await import('@/agent/discord-mcp-server');
+        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const inboxMcpModule = await import('@/agent/inbox-mcp-server');
+        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const mockBskyMcpServer = { name: 'bsky', version: '1.0.0' } as unknown as McpServerInstance;
+        const bskyMcpModule = await import('@/agent/bsky-mcp-server');
+        const createBskyMcpServerSpy = spyOn(bskyMcpModule, 'createBskyMCPServer').mockReturnValue(mockBskyMcpServer);
+        spies.push(createBskyMcpServerSpy);
+
+        const mockBskyClient = {} as unknown as BlueskyClient;
+        const { createMCPServers } = await import('@/app/mcp-servers');
+        const result = createMCPServers({ ...mockOptions, bskyClient: mockBskyClient });
+
+        expect(result.bskyMcpServer).toBe(mockBskyMcpServer);
+        expect(createBskyMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(createBskyMcpServerSpy).toHaveBeenCalledWith(mockBskyClient);
     });
 });

@@ -26,6 +26,7 @@ export const boundaryElements = [
     { type: 'agent',   pattern: 'src/agent/**' },
     { type: 'discord', pattern: 'src/integrations/discord/**' },
     { type: 'email',   pattern: 'src/integrations/email/**' },
+    { type: 'bsky',    pattern: 'src/integrations/bsky/**' },
     { type: 'app',     pattern: ['src/index.ts', 'src/app/**'] },
 ];
 
@@ -55,17 +56,18 @@ export const boundariesConfig = {
                 { from: 'errors',  allow: ['utils'] },
                 { from: 'config',  allow: ['utils'] },
                 { from: 'storage', allow: ['utils', 'errors', 'config'] },
-                { from: 'agent',   allow: ['utils', 'errors', 'config', 'storage', 'email'] },
+                { from: 'agent',   allow: ['utils', 'errors', 'config', 'storage', 'email', 'bsky'] },
                 { from: 'email',   allow: ['utils', 'errors', 'config', 'storage', 'agent'] },
-                { from: 'discord', allow: ['utils', 'errors', 'config', 'storage', 'agent', 'email'] },
-                { from: 'app',     allow: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email'] },
+                { from: 'bsky',    allow: ['utils', 'errors', 'config'] },
+                { from: 'discord', allow: ['utils', 'errors', 'config', 'storage', 'agent', 'email', 'bsky'] },
+                { from: 'app',     allow: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky'] },
             ]
         }],
         'boundaries/entry-point': ['error', {
             'default': 'disallow',
             rules:     [
                 {
-                    target: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'app'],
+                    target: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky', 'app'],
                     allow:  'index.ts'
                 }
             ]
