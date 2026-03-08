@@ -21,6 +21,7 @@ const PRE_DAWN: PerchSlotConfig = {
     level:     'strongly_suggestive',
     hint:      `Craig wakes around 7am. This is a good window for preparing a morning digest:
 - Overnight news/weather relevant to Portland
+- Bluesky notifications and anything interesting in the feed
 - Any open threads from yesterday worth surfacing
 - Items from your [For Craig] task queue
 Or pick up something from TaskList that caught your interest.`,
@@ -55,6 +56,7 @@ const WIKIPEDIA: PerchSlotConfig = {
     level:     'moderate',
     hint:      `Lunchtime breadth exploration. Start somewhere unexpected:
 - Fetch https://en.wikipedia.org/wiki/Special:Random and read what you land on
+- Browse Bluesky for perspectives you wouldn't seek out yourself
 - Follow whatever thread catches your interest — connections, rabbit holes, questions it raises
 - The goal isn't productivity, it's range
 - If something sparks curiosity, note it — the afternoon exploration slot follows this one

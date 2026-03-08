@@ -34,6 +34,7 @@ Internal work (memory review, research, reflection) is just as valuable as user-
 - Consolidate or review memories for coherence
 - Draft responses, develop architecture ideas, or explore questions
 - Check email, write to someone, or start a conversation
+- Check Bluesky notifications, browse the feed if something catches your eye
 
 ## Working Through Blocked States
 If you feel stuck on a topic, don't stop — pivot:
