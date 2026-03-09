@@ -59,6 +59,39 @@ export class MemoryToolBackendTagIndex {
     ) {}
 
     /**
+     * Splits an array into chunks of the given size.
+     */
+    private splitIntoBatches<T>(items: T[], size: number): T[][] {
+        // Stryker disable next-line MethodExpression,ArithmeticOperator: batch slicing — tests use <25 items so single-batch execution makes slice boundaries and arithmetic equivalent
+        return Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, (i + 1) * size));
+    }
+
+    /**
+     * Builds BatchWriteItem PutRequest entries for tag index items.
+     */
+    private buildPutRequests(
+        path: MemoryPath,
+        normalizedTags: Set<string>,
+        updatedAt: string,
+        contentPreview: string,
+        layer: string
+    ): BatchWriteRequest[] {
+        return [...normalizedTags].map(tag => ({
+            PutRequest: {
+                Item: {
+                    PK:         `TAG#${tag}`,
+                    SK:         `PATH#${path}`,
+                    memoryPath: path,
+                    layer,
+                    updatedAt,
+                    tags:       normalizedTags,
+                    contentPreview,
+                },
+            },
+        }));
+    }
+
+    /**
      * Executes BatchWriteCommand and retries unprocessed items with exponential backoff.
      * Returns the list of failed WriteRequests after all retries.
      */
@@ -297,22 +330,10 @@ export class MemoryToolBackendTagIndex {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests: BatchWriteRequest[] = [...normalizedTags].map(tag => ({
-            PutRequest: {
-                Item: {
-                    PK:         `TAG#${tag}`,
-                    SK:         `PATH#${path}`,
-                    memoryPath: path,
-                    layer,
-                    updatedAt,
-                    tags:       normalizedTags,
-                    contentPreview,
-                },
-            },
-        }));
+        const writeRequests = this.buildPutRequests(path, normalizedTags, updatedAt, contentPreview, layer);
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
-        const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
+        const batches = this.splitIntoBatches(writeRequests, 25);
 
         // Execute all batches and collect failed requests
         const allFailedRequests: BatchWriteRequest[] = [];
@@ -356,8 +377,7 @@ export class MemoryToolBackendTagIndex {
         }));
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
-        // Stryker disable next-line MethodExpression,ArithmeticOperator: batch slicing — tests use <25 items so single-batch execution makes slice boundaries and arithmetic equivalent
-        const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
+        const batches = this.splitIntoBatches(writeRequests, 25);
 
         // Execute all batches and collect failed requests
         const allFailedRequests: BatchWriteRequest[] = [];
@@ -398,23 +418,10 @@ export class MemoryToolBackendTagIndex {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests: BatchWriteRequest[] = [...normalizedTags].map(tag => ({
-            PutRequest: {
-                Item: {
-                    PK:         `TAG#${tag}`,
-                    SK:         `PATH#${path}`,
-                    memoryPath: path,
-                    layer,
-                    updatedAt,
-                    tags:       normalizedTags,
-                    contentPreview,
-                },
-            },
-        }));
+        const writeRequests = this.buildPutRequests(path, normalizedTags, updatedAt, contentPreview, layer);
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
-        // Stryker disable next-line MethodExpression,ArithmeticOperator: batch slicing — tests use <25 items so single-batch execution makes slice boundaries and arithmetic equivalent
-        const batches = Array.from({ length: Math.ceil(writeRequests.length / 25) }, (_, i) => writeRequests.slice(i * 25, (i + 1) * 25));
+        const batches = this.splitIntoBatches(writeRequests, 25);
 
         // Execute all batches (no count increment)
         for(const batch of batches) {

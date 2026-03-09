@@ -239,6 +239,83 @@ function buildPrompt(
 }
 
 /**
+ * Per-log-site shapes for executeWithCooldown.
+ * Each entry is the exact object passed to the logger at that point.
+ * The `msg` field is required; all other fields are caller-defined.
+ */
+interface CooldownLogContext {
+    /** Logged (debug) when a Haiku call is already in-flight */
+    inFlight:   Record<string, unknown> & { msg: string }
+    /** Logged (debug) when returning the cached status during cooldown */
+    cooldown:   Record<string, unknown> & { msg: string }
+    /** Logged (debug) just before the generateText call */
+    generating: Record<string, unknown> & { msg: string }
+    /** Logged (info) on successful status generation (statusText is added by the helper) */
+    success:    Record<string, unknown> & { msg: string }
+    /** Logged (error) on failure (error is added by the helper) */
+    failure:    Record<string, unknown> & { msg: string }
+}
+
+/**
+ * Executes a Haiku call with mutex, cooldown, caching, truncation, and error handling.
+ *
+ * @param promptBuilder - Function that builds the prompt string
+ * @param logContext - Per-site log objects; each carries its own fields and `msg`
+ * @returns Promise resolving to a status string, or null if in-flight, cooldown-cached returned, or error
+ */
+async function executeWithCooldown(
+    promptBuilder: () => string,
+    logContext: CooldownLogContext
+): Promise<string | null> {
+    // Mutex: if a Haiku call is already in-flight, return null so caller skips update
+    if(haikuInFlight) {
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for in-flight diagnostics
+        logger.debug({ haikuInFlight, ...logContext.inFlight });
+        return null;
+    }
+
+    // Rate limiting - check if we're within cooldown window (measured from last call completion)
+    const now = Date.now();
+    // Stryker disable next-line EqualityOperator: < vs <= boundary at exact cooldown time is equivalent
+    if(now - lastHaikuCall < HAIKU_COOLDOWN_MS && cachedStatus) {
+        logger.debug(logContext.cooldown);
+        return cachedStatus;
+    }
+    // No cache — fall through to make real call
+
+    haikuInFlight = true;
+    try {
+        const prompt = promptBuilder();
+
+        logger.debug(logContext.generating);
+
+        // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
+        const text = await generateText(prompt, { stripMarkdown: true });
+        // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
+        const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
+
+        // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
+        if(!statusText) {
+            return null;
+        }
+
+        // eslint-disable-next-line require-atomic-updates -- single-threaded: haikuInFlight mutex guards this, no concurrent writers
+        cachedStatus = statusText;
+        logger.info({ statusText, ...logContext.success });
+        return statusText;
+    } catch (error) {
+        logger.error({ error, ...logContext.failure });
+        return null;
+    } finally {
+        // Record timestamp for cooldown AFTER call completion (not before)
+        // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
+        lastHaikuCall = Date.now();
+        // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
+        haikuInFlight = false;
+    }
+}
+
+/**
  * Creates a dynamic status generator that uses Claude Haiku to generate
  * contextual status messages.
  *
@@ -269,129 +346,46 @@ export function createDynamicStatusGenerator(
     return {
         async generateSynopsis(context: SynopsisContext): Promise<string | null> {
             const { phase } = context;
-
-            // Mutex: if a Haiku call is already in-flight, return null so caller skips update
-            if(haikuInFlight) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for in-flight diagnostics
-                logger.debug({ phase, haikuInFlight, msg: 'Haiku call in-flight, skipping synopsis' });
-                return null;
-            }
-
-            // Rate limiting - check if we're within cooldown window (measured from last call completion)
-            const now = Date.now();
-            // Stryker disable next-line EqualityOperator: < vs <= boundary at exact cooldown time is equivalent
-            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS && cachedStatus) {
-                logger.debug({ phase, msg: 'Haiku call within cooldown, using cached status' });
-                return cachedStatus;
-            }
-            // No cache — fall through to make real call
-
-            haikuInFlight = true;
-            try {
-                const prompt = buildPrompt(identityContext, context);
-
-                logger.debug({
-                    phase,
-                    userMessageLength: context.userMessage.length,
-                    msg:               'Generating synopsis with Haiku',
-                });
-
-                // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
-                const text = await generateText(prompt, { stripMarkdown: true });
-                // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
-                const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
-
-                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
-                if(!statusText) {
-                    return null;
+            return executeWithCooldown(
+                () => buildPrompt(identityContext, context),
+                {
+                    // Stryker disable next-line StringLiteral: log message configuration
+                    inFlight:   { phase, msg: 'Haiku call in-flight, skipping synopsis' },
+                    cooldown:   { phase, msg: 'Haiku call within cooldown, using cached status' },
+                    generating: { phase, userMessageLength: context.userMessage.length, msg: 'Generating synopsis with Haiku' },
+                    success:    { phase, msg: 'Generated dynamic status' },
+                    failure:    { phase, msg: 'Failed to generate synopsis' },
                 }
-
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: haikuInFlight mutex guards this, no concurrent writers
-                cachedStatus = statusText;
-                logger.info({ phase, statusText, msg: 'Generated dynamic status' });
-                return statusText;
-            } catch (error) {
-                logger.error({
-                    error,
-                    phase,
-                    msg: 'Failed to generate synopsis',
-                });
-                return null;
-            } finally {
-                // Record timestamp for cooldown AFTER call completion (not before)
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
-                lastHaikuCall = Date.now();
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
-                haikuInFlight = false;
-            }
+            );
         },
 
         // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
         async generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string | null> {
-            // Mutex: if a Haiku call is already in-flight, return null so caller skips update
-            if(haikuInFlight) {
-                logger.debug({ haikuInFlight, msg: 'Haiku call in-flight for catch-up, skipping synopsis' });
-                return null;
-            }
+            return executeWithCooldown(
+                () => {
+                    // Build the prompt with context values
+                    let prompt = SYSTEM_PROMPT;
+                    prompt = prompt.replace('{identityContext}', identityContext);
+                    prompt = `${prompt}\n\n---\n\n${CATCH_UP_PROMPT}`;
 
-            // Rate limiting - check if we're within cooldown window (measured from last call completion)
-            const now = Date.now();
-            // Stryker disable next-line ArithmeticOperator,EqualityOperator: Time arithmetic boundary
-            if(now - lastHaikuCall < HAIKU_COOLDOWN_MS && cachedStatus) {
-                logger.debug({ msg: 'Haiku call within cooldown for catch-up, using cached status' });
-                return cachedStatus;
-            }
-            // No cache — fall through to make real call
-
-            haikuInFlight = true;
-            try {
-                // Build the prompt with context values
-                let prompt = SYSTEM_PROMPT;
-                prompt = prompt.replace('{identityContext}', identityContext);
-                prompt = `${prompt}\n\n---\n\n${CATCH_UP_PROMPT}`;
-
-                // Replace placeholders with context values
-                prompt = prompt.replace('{totalUnread}', String(context.totalUnread));
-                prompt = prompt.replace('{channelCount}', String(context.channelCount));
-                prompt = prompt.replace('{channelNames}', context.channelNames.join(', '));
-                prompt = prompt.replace('{topAuthors}', context.topAuthors.join(', '));
-                prompt = prompt.replace('{timeSinceLastActive}', context.timeSinceLastActive);
-                prompt = prompt.replace('{timeOfDay}', context.timeOfDay);
-                prompt = prompt.replace('{dayOfWeek}', context.dayOfWeek);
-
-                logger.debug({
-                    totalUnread:  context.totalUnread,
-                    channelCount: context.channelCount,
-                    msg:          'Generating catch-up synopsis with Haiku',
-                });
-
-                // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
-                const text = await generateText(prompt, { stripMarkdown: true });
-                // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
-                const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
-
-                // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
-                if(!statusText) {
-                    return null;
+                    // Replace placeholders with context values
+                    prompt = prompt.replace('{totalUnread}', String(context.totalUnread));
+                    prompt = prompt.replace('{channelCount}', String(context.channelCount));
+                    prompt = prompt.replace('{channelNames}', context.channelNames.join(', '));
+                    prompt = prompt.replace('{topAuthors}', context.topAuthors.join(', '));
+                    prompt = prompt.replace('{timeSinceLastActive}', context.timeSinceLastActive);
+                    prompt = prompt.replace('{timeOfDay}', context.timeOfDay);
+                    prompt = prompt.replace('{dayOfWeek}', context.dayOfWeek);
+                    return prompt;
+                },
+                {
+                    inFlight:   { msg: 'Haiku call in-flight for catch-up, skipping synopsis' },
+                    cooldown:   { msg: 'Haiku call within cooldown for catch-up, using cached status' },
+                    generating: { totalUnread: context.totalUnread, channelCount: context.channelCount, msg: 'Generating catch-up synopsis with Haiku' },
+                    success:    { msg: 'Generated catch-up status' },
+                    failure:    { msg: 'Failed to generate catch-up synopsis' },
                 }
-
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: haikuInFlight mutex guards this, no concurrent writers
-                cachedStatus = statusText;
-                logger.info({ statusText, msg: 'Generated catch-up status' });
-                return statusText;
-            } catch (error) {
-                logger.error({
-                    error,
-                    msg: 'Failed to generate catch-up synopsis',
-                });
-                return null;
-            } finally {
-                // Record timestamp for cooldown AFTER call completion (not before)
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
-                lastHaikuCall = Date.now();
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
-                haikuInFlight = false;
-            }
+            );
         },
         // Stryker restore StringLiteral,ObjectLiteral
     };

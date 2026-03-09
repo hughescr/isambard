@@ -2,7 +2,40 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { mcpTextResult } from './mcp-helpers';
 import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '@/storage';
+
+/**
+ * Upserts a memory at the given path: updates if it exists, creates if it does not.
+ * Returns the memory path string for use in success messages.
+ */
+async function upsertMemory(
+    backend: MemoryToolBackend,
+    path: MemoryPath,
+    content: string,
+    tags: string[] | undefined
+): Promise<MemoryPath> {
+    const existing = await backend.get(path);
+    await (existing
+        ? backend.update(path, { content, tags: tags ? new Set(tags) : undefined })
+        : backend.create({
+            path,
+            content,
+            contentType: createContentType('text/plain'),
+            tags:        tags ? new Set(tags) : undefined,
+        }));
+    return path;
+}
+
+/**
+ * Appends cursor pagination info to a formatted results string when a next page exists.
+ */
+function appendCursorInfo(formatted: string, nextCursor: string | undefined): string {
+    if(nextCursor) {
+        return `${formatted}\n\n---\nMore results available. Use cursor: ${nextCursor}`;
+    }
+    return formatted;
+}
 
 /**
  * Creates an MCP server for memory operations.
@@ -49,9 +82,7 @@ export function createMemoryMCPServer(
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
                             });
                         }
-                        return {
-                            content: [{ type: 'text' as const, text: result.content }],
-                        };
+                        return mcpTextResult(result.content);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -80,18 +111,8 @@ export function createMemoryMCPServer(
                 async (args): Promise<CallToolResult> => {
                     try {
                         const path = createMemoryPath(`/${args.layer}/${args.name}`);
-                        const existing = await backend.get(path);
-                        await (existing
-                            ? backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined })
-                            : backend.create({
-                                path,
-                                content:     args.content,
-                                contentType: createContentType('text/plain'),
-                                tags:        args.tags ? new Set(args.tags) : undefined,
-                            }));
-                        return {
-                            content: [{ type: 'text' as const, text: `Memory stored at ${path}` }],
-                        };
+                        await upsertMemory(backend, path, args.content, args.tags);
+                        return mcpTextResult(`Memory stored at ${path}`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -120,18 +141,8 @@ export function createMemoryMCPServer(
                 async (args): Promise<CallToolResult> => {
                     try {
                         const path = createMemoryPath(`/users/${args.userId}/${args.name}`);
-                        const existing = await backend.get(path);
-                        await (existing
-                            ? backend.update(path, { content: args.content, tags: args.tags ? new Set(args.tags) : undefined })
-                            : backend.create({
-                                path,
-                                content:     args.content,
-                                contentType: createContentType('text/plain'),
-                                tags:        args.tags ? new Set(args.tags) : undefined,
-                            }));
-                        return {
-                            content: [{ type: 'text' as const, text: `User memory stored at ${path}` }],
-                        };
+                        await upsertMemory(backend, path, args.content, args.tags);
+                        return mcpTextResult(`User memory stored at ${path}`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -170,9 +181,7 @@ export function createMemoryMCPServer(
                             contentType: createContentType('text/plain'),
                             tags:        args.tags ? new Set(args.tags) : undefined,
                         });
-                        return {
-                            content: [{ type: 'text' as const, text: `Event logged at ${path}` }],
-                        };
+                        return mcpTextResult(`Event logged at ${path}`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -214,21 +223,14 @@ export function createMemoryMCPServer(
                             queryOptions
                         );
                         if(results.items.length === 0) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'No memories found matching tags' }],
-                            };
+                            return mcpTextResult('No memories found matching tags');
                         }
-                        let formatted = results.items.map((r) => {
+                        const formatted = results.items.map((r) => {
                             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: contentPreview may be absent at runtime despite types
                             const preview = r.contentPreview ?? 'No content';
                             return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
-                        if(results.nextCursor) {
-                            formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
-                        }
-                        return {
-                            content: [{ type: 'text' as const, text: formatted }],
-                        };
+                        return mcpTextResult(appendCursorInfo(formatted, results.nextCursor));
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -292,17 +294,10 @@ export function createMemoryMCPServer(
                         // Stryker restore ObjectLiteral,StringLiteral
 
                         if(results.items.length === 0) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'Directory is empty' }],
-                            };
+                            return mcpTextResult('Directory is empty');
                         }
-                        let formatted = results.items.map(item => item.path).join('\n');
-                        if(results.nextCursor) {
-                            formatted += `\n\n---\nMore results available. Use cursor: ${results.nextCursor}`;
-                        }
-                        return {
-                            content: [{ type: 'text' as const, text: formatted }],
-                        };
+                        const formatted = results.items.map(item => item.path).join('\n');
+                        return mcpTextResult(appendCursorInfo(formatted, results.nextCursor));
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -325,16 +320,12 @@ export function createMemoryMCPServer(
                     try {
                         const tagCounts = await backend.listTagCounts();
                         if(tagCounts.length === 0) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'No tags found' }],
-                            };
+                            return mcpTextResult('No tags found');
                         }
                         // Sort by count descending
                         const sortedCounts = tagCounts.toSorted((a, b) => b.count - a.count);
                         const formatted = sortedCounts.map(({ tag, count }) => `${tag}: ${count}`).join('\n');
-                        return {
-                            content: [{ type: 'text' as const, text: formatted }],
-                        };
+                        return mcpTextResult(formatted);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -366,9 +357,7 @@ export function createMemoryMCPServer(
                             };
                         }
                         const tags = result.tags && result.tags.size > 0 ? [...result.tags].join(', ') : 'none';
-                        return {
-                            content: [{ type: 'text' as const, text: `Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}` }],
-                        };
+                        return mcpTextResult(`Deleted memory at ${result.path}\nTags: ${tags}\nLast updated: ${result.updatedAt}\n\n${result.content}`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {
@@ -426,9 +415,7 @@ export function createMemoryMCPServer(
 
                         const beforeStr = beforeTags.size > 0 ? [...beforeTags].toSorted((a, b) => a.localeCompare(b)).join(', ') : '(none)';
                         const afterStr = newTags.size > 0 ? [...newTags].toSorted((a, b) => a.localeCompare(b)).join(', ') : '(none)';
-                        return {
-                            content: [{ type: 'text' as const, text: `Updated tags on ${args.path}\nBefore: ${beforeStr}\nAfter: ${afterStr}` }],
-                        };
+                        return mcpTextResult(`Updated tags on ${args.path}\nBefore: ${beforeStr}\nAfter: ${afterStr}`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         return {

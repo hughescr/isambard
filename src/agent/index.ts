@@ -50,6 +50,9 @@ export { createInboxMCPServer } from './inbox-mcp-server';
 // Bsky MCP Server
 export { createBskyMCPServer } from './bsky-mcp-server';
 
+// MCP Helpers
+export { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 

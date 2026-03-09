@@ -47,13 +47,9 @@ export class BskyCheckpointManager {
     }
 
     /**
-     * Loads the checkpoint for a feed.
-     *
-     * @param feedName - Feed name or AT URI
-     * @returns The checkpoint data, or undefined if not found or invalid
+     * Generic helper: loads a checkpoint from a memory path and parses it with the given schema.
      */
-    async loadFeedCheckpoint(feedName: string): Promise<BskyFeedCheckpoint | undefined> {
-        const path = this.getFeedCheckpointPath(feedName);
+    private async loadCheckpoint<T>(path: MemoryPath, schema: { parse: (data: unknown) => T }): Promise<T | undefined> {
         const item = await this.backend.get(path);
 
         if(!item) {
@@ -63,11 +59,37 @@ export class BskyCheckpointManager {
         // Stryker disable BlockStatement: Error handling for corrupted/invalid data
         try {
             const parsed: unknown = JSON.parse(item.content);
-            return bskyFeedCheckpointSchema.parse(parsed);
+            return schema.parse(parsed);
         } catch{
             return undefined;
         }
         // Stryker restore BlockStatement
+    }
+
+    /**
+     * Generic helper: saves a checkpoint to a memory path, creating or updating as needed.
+     */
+    private async saveCheckpoint(path: MemoryPath, checkpoint: { processedUris: string[] }, exists: boolean): Promise<void> {
+        const content = JSON.stringify(checkpoint);
+
+        await (exists
+            ? this.backend.update(path, { content })
+            : this.backend.create({
+                path,
+                content,
+                // Stryker disable next-line StringLiteral: content type is configuration
+                contentType: 'application/json',
+            }));
+    }
+
+    /**
+     * Loads the checkpoint for a feed.
+     *
+     * @param feedName - Feed name or AT URI
+     * @returns The checkpoint data, or undefined if not found or invalid
+     */
+    async loadFeedCheckpoint(feedName: string): Promise<BskyFeedCheckpoint | undefined> {
+        return this.loadCheckpoint(this.getFeedCheckpointPath(feedName), bskyFeedCheckpointSchema);
     }
 
     /**
@@ -87,16 +109,7 @@ export class BskyCheckpointManager {
             ? { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) }
             : checkpoint;
 
-        const content = JSON.stringify(bounded);
-
-        await (exists
-            ? this.backend.update(path, { content })
-            : this.backend.create({
-                path,
-                content,
-                // Stryker disable next-line StringLiteral: content type is configuration
-                contentType: 'application/json',
-            }));
+        await this.saveCheckpoint(path, bounded, exists);
     }
 
     /**
@@ -105,21 +118,7 @@ export class BskyCheckpointManager {
      * @returns The checkpoint data, or undefined if not found or invalid
      */
     async loadNotificationCheckpoint(): Promise<BskyNotificationCheckpoint | undefined> {
-        const path = this.getNotificationCheckpointPath();
-        const item = await this.backend.get(path);
-
-        if(!item) {
-            return undefined;
-        }
-
-        // Stryker disable BlockStatement: Error handling for corrupted/invalid data
-        try {
-            const parsed: unknown = JSON.parse(item.content);
-            return bskyNotificationCheckpointSchema.parse(parsed);
-        } catch{
-            return undefined;
-        }
-        // Stryker restore BlockStatement
+        return this.loadCheckpoint(this.getNotificationCheckpointPath(), bskyNotificationCheckpointSchema);
     }
 
     /**
@@ -139,16 +138,7 @@ export class BskyCheckpointManager {
             ? { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) }
             : checkpoint;
 
-        const content = JSON.stringify(bounded);
-
-        await (exists
-            ? this.backend.update(path, { content })
-            : this.backend.create({
-                path,
-                content,
-                // Stryker disable next-line StringLiteral: content type is configuration
-                contentType: 'application/json',
-            }));
+        await this.saveCheckpoint(path, bounded, exists);
     }
 
     /**

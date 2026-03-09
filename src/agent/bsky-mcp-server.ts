@@ -1,7 +1,23 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { BskyCheckpointManager, BlueskyClient } from '@/integrations/bsky';
+import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
+import type { BskyCheckpointManager, BlueskyClient, BskyFeedItem } from '@/integrations/bsky';
+
+/** Shared pagination schema fields for feed tools that support checkpointing. */
+const FEED_PAGINATION_SCHEMA = {
+    // Stryker disable next-line StringLiteral: describe() is documentation only
+    limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
+    // Stryker disable next-line StringLiteral: describe() is documentation only
+    cursor:           z.string().optional().describe('Pagination cursor from previous response'),
+    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
+    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
+} as const;
+
+/** Builds the checkpointed feed response shape shared by getFeed and getAuthorFeed. */
+function buildCheckpointedResponse(newItems: BskyFeedItem[], cursor: string | undefined, totalFetched: number) {
+    return { items: newItems, cursor, newCount: newItems.length, totalFetched };
+}
 
 /**
  * Creates an MCP server for Bluesky operations.
@@ -31,13 +47,8 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 'Read a Bluesky feed',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    feedName:         z.string().optional().describe("Feed name: 'for-you' (default), 'following', 'discover', or a raw at:// URI"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    cursor:           z.string().optional().describe('Pagination cursor from previous response'),
-                    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
-                    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
+                    feedName: z.string().optional().describe("Feed name: 'for-you' (default), 'following', 'discover', or a raw at:// URI"),
+                    ...FEED_PAGINATION_SCHEMA,
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
@@ -45,27 +56,14 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                         const result   = await client.getFeed(feedName, args.limit, args.cursor);
 
                         if(!checkpointManager || args.includeProcessed) {
-                            return {
-                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                            };
+                            return mcpJsonResult(result);
                         }
 
                         const { newItems, totalFetched } = await checkpointManager.processFeedItems(feedName, result.items);
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({
-                                items:    newItems,
-                                cursor:   result.cursor,
-                                newCount: newItems.length,
-                                totalFetched,
-                            }, null, 2) }],
-                        };
+                        return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -88,9 +86,7 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                         const result = await client.getNotifications(args.limit, args.cursor);
 
                         if(!checkpointManager || args.includeProcessed) {
-                            return {
-                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                            };
+                            return mcpJsonResult(result);
                         }
 
                         const { newNotifications, totalFetched, lastSeenAt, hadExistingCheckpoint } = await checkpointManager.processNotifications(result.notifications);
@@ -107,20 +103,14 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                             await client.updateNotificationsSeen(seenAt);
                         }
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({
-                                notifications: newNotifications,
-                                cursor:        result.cursor,
-                                newCount:      newNotifications.length,
-                                totalFetched,
-                            }, null, 2) }],
-                        };
+                        return mcpJsonResult({
+                            notifications: newNotifications,
+                            cursor:        result.cursor,
+                            newCount:      newNotifications.length,
+                            totalFetched,
+                        });
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -141,15 +131,9 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 async (args): Promise<CallToolResult> => {
                     try {
                         const result = await client.searchPosts(args.query, args.limit, args.cursor);
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
+                        return mcpJsonResult(result);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -166,15 +150,9 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 async (args): Promise<CallToolResult> => {
                     try {
                         const result = await client.getPost(args.uri);
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
+                        return mcpJsonResult(result);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -191,15 +169,9 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 async (args): Promise<CallToolResult> => {
                     try {
                         const result = await client.getProfile(args.actor);
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
+                        return mcpJsonResult(result);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -211,22 +183,15 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 "Read a user's recent posts on Bluesky",
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    actor:            z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    cursor:           z.string().optional().describe('Pagination cursor from previous response'),
-                    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
-                    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
+                    actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
+                    ...FEED_PAGINATION_SCHEMA,
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
                         const result = await client.getAuthorFeed(args.actor, args.limit, args.cursor);
 
                         if(!checkpointManager || args.includeProcessed) {
-                            return {
-                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                            };
+                            return mcpJsonResult(result);
                         }
 
                         // Resolve actor to canonical DID for consistent checkpoint keying
@@ -235,20 +200,9 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
 
                         const { newItems, totalFetched } = await checkpointManager.processFeedItems(actorDid, result.items);
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({
-                                items:    newItems,
-                                cursor:   result.cursor,
-                                newCount: newItems.length,
-                                totalFetched,
-                            }, null, 2) }],
-                        };
+                        return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -268,20 +222,12 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                     try {
                         const post = await client.getPost(args.uri);
                         if(post.viewer?.like) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'Post already liked' }],
-                            };
+                            return mcpTextResult('Post already liked');
                         }
                         await client.likePost(args.uri, args.cid);
-                        return {
-                            content: [{ type: 'text' as const, text: 'Post liked successfully' }],
-                        };
+                        return mcpTextResult('Post liked successfully');
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -299,15 +245,9 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                     try {
                         const result = await client.toggleFollow(args.actor);
                         const action = result.followed ? 'Followed' : 'Unfollowed';
-                        return {
-                            content: [{ type: 'text' as const, text: `${action} ${args.actor} successfully` }],
-                        };
+                        return mcpTextResult(`${action} ${args.actor} successfully`);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration

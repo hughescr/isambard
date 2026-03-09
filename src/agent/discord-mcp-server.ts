@@ -18,6 +18,7 @@ import { splitMessage } from '../integrations/discord/messages';
 import { withDiscordRetry } from '../integrations/discord/retry';
 // eslint-disable-next-line boundaries/element-types, boundaries/entry-point -- Discord MCP server imports Discord types; decouple per roadmap
 import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
+import { mcpErrorResult } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
 import { validateFilePaths, PathSecurityError, formatLocalDateTime } from '@/utils';
 
@@ -500,10 +501,7 @@ export function createDiscordMCPServer(
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -542,10 +540,7 @@ export function createDiscordMCPServer(
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -606,10 +601,7 @@ export function createDiscordMCPServer(
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -738,10 +730,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -843,10 +832,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -938,10 +924,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -969,10 +952,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'muteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -1000,10 +980,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'unmuteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -1042,10 +1019,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line all: Logging for observability
                         logger.warn({ tool: 'listChannels', error: message }, 'Discord tool returned error');
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration

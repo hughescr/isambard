@@ -6,6 +6,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
+import { mcpErrorResult, mcpTextResult } from './mcp-helpers';
 import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter, type EmailAllowlist  } from '@/integrations/email';
 import { sanitizeFilename, deduplicateFilename } from '@/utils';
 /**
@@ -282,6 +283,38 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     }
 
     /**
+     * Load addresses and resolve the from address for the given identity.
+     * Returns `{ ok: true, from }` on success, or `{ ok: false, error }` if no address is configured.
+     */
+    async function resolveFromAddress(identity: 'formal' | 'informal'): Promise<{ ok: true, from: { address: string, name?: string } } | { ok: false, error: CallToolResult }> {
+        await loadAddresses();
+        const from = identity === 'informal' ? informalAddress : formalAddress;
+        if(!from) {
+            return {
+                ok:    false,
+                error: {
+                    content: [{ type: 'text' as const, text: 'Cannot send email: no sender address configured on this account. Please configure an email address in WildDuck.' }],
+                    isError: true,
+                },
+            };
+        }
+        return { ok: true, from };
+    }
+
+    /**
+     * Build a rate limit warning string when the limiter is at its limit.
+     * Returns an empty string when not at limit or when no limiter is configured.
+     */
+    function buildRateLimitWarning(): string {
+        if(!rateLimiter?.isAtLimit()) {
+            // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
+            return '';
+        }
+        // Stryker disable next-line StringLiteral: Warning message is configuration
+        return ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
+    }
+
+    /**
      * Check allowlist, submit draft immediately if allowed, or request admin approval.
      * When cc is provided (replyAll mode), always routes to approval regardless of allowlist.
      * The optional isAllowedOverride parameter allows callers to pre-compute allowlist status
@@ -372,10 +405,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, msg: 'Failed to check inbox' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -449,18 +479,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Stryker disable next-line Regex,StringLiteral: /^\n/ and '' are defensive no-ops — the text always starts with 'From:' so the regex never matches; .trim() on the next line also covers any edge case
                         const text = lines.join('\n').replace(/^\n/, '');
                         // Stryker disable MethodExpression: trim() is defensive — lines.join() produces clean text starting with 'From:' header
-                        return {
-                            content: [{ type: 'text' as const, text: text.trim() }],
-                        };
+                        return mcpTextResult(text.trim());
                         // Stryker restore MethodExpression
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to fetch email content' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -492,17 +517,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Stryker disable next-line StringLiteral: EmailFolder values are configuration constants
                         await wildDuckClient.moveMessage(mailboxName, uid, EmailFolder.Archive);
-                        return {
-                            content: [{ type: 'text' as const, text: `Email UID ${uid} archived successfully.` }],
-                        };
+                        return mcpTextResult(`Email UID ${uid} archived successfully.`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to archive email' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -583,18 +603,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             }),
                         ];
 
-                        return {
-                            // Stryker disable next-line StringLiteral: 'text' is an MCP content type constant
-                            content: [{ type: 'text' as const, text: lines.join('\n') }],
-                        };
+                        return mcpTextResult(lines.join('\n'));
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, msg: 'Failed to search emails' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
@@ -624,19 +638,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 async (args): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps send operations - error handling
                     try {
-                        // Ensure addresses are loaded
-                        await loadAddresses();
-
-                        // Resolve from address based on identity
-                        const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
-                        const from = fromAddress;
-
-                        if(!from) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'Cannot send email: no sender address configured on this account. Please configure an email address in WildDuck.' }],
-                                isError: true,
-                            };
+                        // Resolve from address based on identity (loads addresses lazily)
+                        const fromResult = await resolveFromAddress(args.identity);
+                        if(!fromResult.ok) {
+                            return fromResult.error;
                         }
+                        const from = fromResult.from;
 
                         // Normalize to to an array of address objects
                         const toArr = Array.isArray(args.to) ? args.to : [args.to];
@@ -648,12 +655,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         });
 
                         // Check rate limit — warn but don't block
-                        // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
-                        let rateLimitWarning = '';
-                        if(rateLimiter?.isAtLimit()) {
-                            // Stryker disable next-line StringLiteral: Warning message is configuration
-                            rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
-                        }
+                        const rateLimitWarning = buildRateLimitWarning();
 
                         // Build attachments from file paths (Stryker disabled — disk I/O)
                         const attachments = await buildAttachments(args.attachments ?? []);
@@ -674,17 +676,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed(addr.address) ?? false);
                         const toStr        = toAddresses.map(addr => addr.address).join(', ');
                         const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
-                        return {
-                            content: [{ type: 'text' as const, text }],
-                        };
+                        return mcpTextResult(text);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, to: args.to, msg: 'Failed to send email' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -712,19 +709,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 async (args): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps reply operations - error handling
                     try {
-                        // Ensure addresses are loaded
-                        await loadAddresses();
-
-                        // Resolve from address based on identity
-                        const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
-                        const from = fromAddress;
-
-                        if(!from) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'Cannot send email: no sender address configured on this account. Please configure an email address in WildDuck.' }],
-                                isError: true,
-                            };
+                        // Resolve from address based on identity (loads addresses lazily)
+                        const fromResult = await resolveFromAddress(args.identity);
+                        if(!fromResult.ok) {
+                            return fromResult.error;
                         }
+                        const from = fromResult.from;
 
                         const { mailboxName, uid: originalUid } = parseMailboxUid(args.message);
 
@@ -753,12 +743,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const primaryTo = original.replyTo?.address ?? original.from?.address ?? '';
 
                         // Check rate limit — warn but don't block
-                        // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
-                        let rateLimitWarning = '';
-                        if(rateLimiter?.isAtLimit()) {
-                            // Stryker disable next-line StringLiteral: Warning message is configuration
-                            rateLimitWarning = ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
-                        }
+                        const rateLimitWarning = buildRateLimitWarning();
 
                         // Resolve WildDuck mailbox ID for the reference object
                         const mailboxWildDuckId = wildDuckClient.getMailboxId(mailboxName);
@@ -798,17 +783,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             : undefined;
                         // Stryker disable next-line StringLiteral,LogicalOperator: Result message is configuration; ?? '' is defensive fallback when subject absent
                         const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, ccAddresses, isAllowedOverride);
-                        return {
-                            content: [{ type: 'text' as const, text }],
-                        };
+                        return mcpTextResult(text);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to reply to email' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -829,18 +809,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     try {
                         const { uid } = parseMailboxUid(args.message);
                         await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
-                        return {
-                            // Stryker disable next-line StringLiteral: Result message is configuration
-                            content: [{ type: 'text' as const, text: `Draft ${args.message} deleted.` }],
-                        };
+                        // Stryker disable next-line StringLiteral: Result message is configuration
+                        return mcpTextResult(`Draft ${args.message} deleted.`);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to delete draft' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -868,8 +843,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 async (args): Promise<CallToolResult> => {
                     // Stryker disable BlockStatement: try-catch wraps amend operations - error handling
                     try {
-                        // Ensure addresses are loaded
-                        await loadAddresses();
+                        // Resolve from address based on identity (loads addresses lazily)
+                        const fromResult = await resolveFromAddress(args.identity ?? 'formal');
+                        if(!fromResult.ok) {
+                            return fromResult.error;
+                        }
+                        const from = fromResult.from;
 
                         // Parse UID from 'Drafts:42'
                         const { uid } = parseMailboxUid(args.message);
@@ -900,17 +879,6 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             : undefined;
                         const toAddresses    = argToAddresses ?? (original.to ?? []);
 
-                        // Resolve from address
-                        const fromAddress = args.identity === 'informal' ? informalAddress : formalAddress;
-                        const from = fromAddress;
-
-                        if(!from) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'Cannot send email: no sender address configured on this account. Please configure an email address in WildDuck.' }],
-                                isError: true,
-                            };
-                        }
-
                         // Re-upload with replacePrevious to atomically replace the old draft
                         const newUid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
                             from,
@@ -935,17 +903,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             undefined, // cc not available for amend-resubmit
                             false      // isAllowedOverride=false → always approval path
                         );
-                        return {
-                            content: [{ type: 'text' as const, text: amendResult }],
-                        };
+                        return mcpTextResult(amendResult);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                         logger.warn({ error: message, message: args.message, msg: 'Failed to amend and resubmit draft' });
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration

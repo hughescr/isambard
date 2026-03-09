@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { type Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes  } from 'discord.js';
+import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes  } from 'discord.js';
 import { createEmailMCPServer } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
@@ -96,47 +96,30 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         { allowlist, classifier, wildDuckClient },
         {
             onSafe: async (email, _verdict) => {
-                try {
-                    const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
-                    if(channel && 'send' in channel) {
-                        await channel.send({
-                            content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nUse \`/allowlist add ${email.from.address}\` to add to allowlist.`,
-                        });
-                    }
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Failed to send safe-but-not-allowlisted notification to admin channel',
-                    });
-                }
+                await sendToAdminChannel(
+                    client,
+                    emailConfig.adminDiscordChannelId,
+                    { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nUse \`/allowlist add ${email.from.address}\` to add to allowlist.` },
+                    'Failed to send safe-but-not-allowlisted notification to admin channel'
+                );
             },
             onReview: async (email, _verdict) => {
-                try {
-                    const { embed, actionRow } = buildReviewEmbed(email, EmailFolder.Review);
-                    const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
-                    if(channel && 'send' in channel) {
-                        await channel.send({ embeds: [embed], components: [actionRow] });
-                    }
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Failed to send email review embed to admin channel',
-                    });
-                }
+                const { embed, actionRow } = buildReviewEmbed(email, EmailFolder.Review);
+                await sendToAdminChannel(
+                    client,
+                    emailConfig.adminDiscordChannelId,
+                    { embeds: [embed], components: [actionRow] },
+                    'Failed to send email review embed to admin channel'
+                );
             },
             onUnsafe: async (email, verdict) => {
-                try {
-                    const { embed, actionRow } = buildUnsafeAlert(email, verdict, EmailFolder.Quarantine);
-                    const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
-                    if(channel && 'send' in channel) {
-                        await channel.send({ embeds: [embed], components: [actionRow] });
-                    }
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        msg:   'Failed to send unsafe alert to admin channel',
-                    });
-                }
+                const { embed, actionRow } = buildUnsafeAlert(email, verdict, EmailFolder.Quarantine);
+                await sendToAdminChannel(
+                    client,
+                    emailConfig.adminDiscordChannelId,
+                    { embeds: [embed], components: [actionRow] },
+                    'Failed to send unsafe alert to admin channel'
+                );
             },
         }
     );
@@ -219,18 +202,13 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration: MCP server options and admin notification callback are integration wiring - not unit testable
     const emailMcpServer = createEmailMCPServer({
         sendAdminNotification: async ({ mailboxName, uid, reference }) => {
-            try {
-                const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
-                const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
-                if(channel && 'send' in channel) {
-                    await channel.send({ embeds: [embed], components: [actionRow] });
-                }
-            } catch (err) {
-                logger.error({
-                    error: err instanceof Error ? err.message : String(err),
-                    msg:   'Failed to send restricted mailbox notification to admin channel',
-                });
-            }
+            const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
+            await sendToAdminChannel(
+                client,
+                emailConfig.adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                'Failed to send restricted mailbox notification to admin channel'
+            );
         },
         wildDuckClient,
         rateLimiter,
@@ -260,6 +238,31 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Fetch the admin Discord channel and send a message payload to it.
+ * Errors are non-fatal — logs the provided error message and returns.
+ */
+// Stryker disable all: sendToAdminChannel is integration-only wiring — not unit testable
+async function sendToAdminChannel(
+    client:    Client,
+    channelId: string,
+    payload:   MessageCreateOptions,
+    errorMsg:  string
+): Promise<void> {
+    try {
+        const channel = await client.channels.fetch(channelId);
+        if(channel && 'send' in channel) {
+            await channel.send(payload);
+        }
+    } catch (err) {
+        logger.error({
+            error: err instanceof Error ? err.message : String(err),
+            msg:   errorMsg,
+        });
+    }
+}
+// Stryker restore all
 
 /**
  * Register the /allowlist slash command with Discord via REST API.

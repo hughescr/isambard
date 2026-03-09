@@ -3,6 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
+import { mcpErrorResult, mcpJsonResult } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
 // eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap (tracked in roadmap comment below)
 import { createChannelId, resolveChannelId, type InboxManager, type ChannelSummaryResponse, type MessageMetadata, type BotStateManager, type ChannelRegistryManager } from '@/integrations/discord';
@@ -21,20 +22,6 @@ Create a concise summary (2-4 sentences) that captures:
 - Any action items or requests directed at the assistant
 
 Keep it factual and actionable. The assistant will decide whether to read full messages based on this summary.`;
-
-/**
- * Creates a text response for MCP tool results.
- *
- * @param text - The text content to return
- * @param isError - Whether this is an error response
- * @returns CallToolResult with properly typed text content
- */
-function textResult(text: string, isErrorResult = false): CallToolResult {
-    return {
-        content: [{ type: 'text' as const, text }],
-        ...(isErrorResult && { isError: true }),
-    };
-}
 
 /**
  * Creates an MCP server for inbox operations.
@@ -82,10 +69,9 @@ export function createInboxMCPServer(
                         });
                         // Stryker restore ObjectLiteral,StringLiteral
 
-                        return textResult(JSON.stringify(overview, null, 2));
+                        return mcpJsonResult(overview);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return textResult(`Error: ${message}`, true);
+                        return mcpErrorResult(error);
                     }
                 }
             ),
@@ -108,7 +94,7 @@ export function createInboxMCPServer(
                         }
 
                         if(messages.length === 0) {
-                            return textResult(JSON.stringify({
+                            return mcpJsonResult({
                                 channelId:    args.channelId,
                                 channelName:  args.channelId,
                                 messageCount: 0,
@@ -116,7 +102,7 @@ export function createInboxMCPServer(
                                 authors:      [],
                                 timeRange:    { start: '', end: '' },
                                 messages:     [],
-                            }));
+                            });
                         }
 
                         // Build message content for summarization
@@ -170,10 +156,9 @@ export function createInboxMCPServer(
                         });
                         // Stryker restore ObjectLiteral,StringLiteral
 
-                        return textResult(JSON.stringify(response, null, 2));
+                        return mcpJsonResult(response);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return textResult(`Error: ${message}`, true);
+                        return mcpErrorResult(error);
                     }
                 }
             ),
@@ -219,10 +204,9 @@ export function createInboxMCPServer(
                         });
                         // Stryker restore ObjectLiteral,StringLiteral
 
-                        return textResult(JSON.stringify({ messages: fetchedMessages }, null, 2));
+                        return mcpJsonResult({ messages: fetchedMessages });
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return textResult(`Error: ${message}`, true);
+                        return mcpErrorResult(error);
                     }
                 }
             ),
@@ -249,10 +233,9 @@ export function createInboxMCPServer(
                         });
                         // Stryker restore ObjectLiteral,StringLiteral
 
-                        return textResult(JSON.stringify({ success: true, markedCount: args.messageIds.length }));
+                        return mcpJsonResult({ success: true, markedCount: args.messageIds.length });
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return textResult(`Error: ${message}`, true);
+                        return mcpErrorResult(error);
                     }
                 }
             ),
@@ -276,10 +259,9 @@ export function createInboxMCPServer(
                         });
                         // Stryker restore ObjectLiteral,StringLiteral
 
-                        return textResult(JSON.stringify({ success: true }));
+                        return mcpJsonResult({ success: true });
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return textResult(`Error: ${message}`, true);
+                        return mcpErrorResult(error);
                     }
                 }
             ),

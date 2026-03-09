@@ -176,6 +176,36 @@ export class MessageCoordinator {
     }
 
     /**
+     * Shared post-processing logic for both startProcessing and processWithResume.
+     * Handles interrupted vs completed result, captures partial work, and invokes onResponse.
+     * Returns the onResponse Promise when there is work to await, or void otherwise.
+     * This avoids extra microtask hops in the interrupted/no-callback paths.
+     * Callers are responsible for cleanup (stopTypingIndicator, activeQuery) in their own finally blocks.
+     */
+    private handleProcessingResult(
+        result: ProcessResult,
+        state: ChannelState,
+        firstDiscordMessage: Message | null
+    ): Promise<void> | void {
+        // If interrupted, capture partial work AND sessionId for resume
+        if(result.wasInterrupted) {
+            if(result.streamTracker.hasMeaningfulProgress()) {
+                state.partialWork = result.streamTracker.getProgress();
+                if(result.sessionId) {
+                    state.sessionId = result.sessionId;
+                }
+            }
+            // No meaningful progress → next batch starts fresh; return void (no extra tick)
+            return;
+        }
+        // Completed - clear sessionId (session was cleaned up), invoke callback
+        state.sessionId = undefined;
+        // Return the onResponse Promise directly so callers can await it without an extra tick,
+        // or void if there is no callback (no extra tick needed)
+        return this.onResponse?.(result, firstDiscordMessage);
+    }
+
+    /**
      * Start processing messages immediately.
      */
     private startProcessing(
@@ -211,24 +241,13 @@ export class MessageCoordinator {
                     abortController.signal
                 );
 
-                // If interrupted, capture partial work AND sessionId for resume
-                if(result.wasInterrupted) {
-                    if(result.streamTracker.hasMeaningfulProgress()) {
-                        // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
-                        state.partialWork = result.streamTracker.getProgress();
-                        if(result.sessionId) {
-                            // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
-                            state.sessionId = result.sessionId;
-                        }
-                    }
-                    // No meaningful progress → next batch starts fresh
-                } else {
-                    // Completed - clear sessionId (session was cleaned up), invoke callback
-                    // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
-                    state.sessionId = undefined;
-                    if(this.onResponse) {
-                        await this.onResponse(result, firstDiscordMessage);
-                    }
+                // Conditionally await: handleProcessingResult returns a Promise only when onResponse
+                // is invoked (completed path). For interrupted/no-callback paths it returns void,
+                // avoiding an extra microtask hop that would delay state.activeQuery cleanup.
+                const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage);
+                // Stryker disable next-line ConditionalExpression,BlockStatement: conditional await — if void, skip await to avoid extra microtask
+                if(postProcess) {
+                    await postProcess;
                 }
             } finally {
                 // Stop typing indicator
@@ -318,24 +337,13 @@ export class MessageCoordinator {
                     abortController.signal
                 );
 
-                // If interrupted, capture partial work AND sessionId for resume
-                if(result.wasInterrupted) {
-                    if(result.streamTracker.hasMeaningfulProgress()) {
-                        // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
-                        state.partialWork = result.streamTracker.getProgress();
-                        if(result.sessionId) {
-                            // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
-                            state.sessionId = result.sessionId;
-                        }
-                    }
-                    // No meaningful progress → next batch starts fresh
-                } else {
-                    // Completed - clear sessionId (session was cleaned up), invoke callback
-                    // eslint-disable-next-line require-atomic-updates -- single-threaded: state owned by this channel's processing promise, no concurrent writers
-                    state.sessionId = undefined;
-                    if(this.onResponse) {
-                        await this.onResponse(result, firstDiscordMessage);
-                    }
+                // Conditionally await: handleProcessingResult returns a Promise only when onResponse
+                // is invoked (completed path). For interrupted/no-callback paths it returns void,
+                // avoiding an extra microtask hop that would delay state.activeQuery cleanup.
+                const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage);
+                // Stryker disable next-line ConditionalExpression,BlockStatement: conditional await — if void, skip await to avoid extra microtask
+                if(postProcess) {
+                    await postProcess;
                 }
             } finally {
                 // Stop typing indicator

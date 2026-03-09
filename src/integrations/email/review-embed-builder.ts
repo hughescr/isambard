@@ -21,13 +21,52 @@ const YELLOW             = 0xFF_CC_00;
 const BODY_TRUNCATE_LENGTH = 500;
 
 /**
+ * Format the "from" display value as "Name <address>" or just "address" if no name.
+ */
+function formatFromValue(email: EmailMetadata): string {
+    return email.from.name
+        ? `${email.from.name} <${email.from.address}>`
+        : email.from.address;
+}
+
+/**
+ * Build the 4-button inbox action row (Trash, Junk, Allow, Allow + Allowlist).
+ */
+function buildInboxActionRow(uid: number, folder: string): ActionRowBuilder<ButtonBuilder> {
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`email-trash:${uid}:${folder}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Trash')
+            .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`email-junk:${uid}:${folder}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Junk')
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`email-allow:${uid}:${folder}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Allow')
+            .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`email-allowlist:${uid}:${folder}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Allow + Allowlist')
+            .setStyle(ButtonStyle.Primary)
+    );
+}
+
+/**
  * Build a review embed for emails classified as 'uncertain'.
  * Returns an orange embed with email metadata and 4 action buttons.
  */
 export function buildReviewEmbed(email: EmailMetadata, folder: EmailFolder): ReviewEmbedResult {
-    const fromValue = email.from.name
-        ? `${email.from.name} <${email.from.address}>`
-        : email.from.address;
+    const fromValue = formatFromValue(email);
 
     const embed = new EmbedBuilder()
         // Stryker disable next-line StringLiteral: UI label is configuration
@@ -43,32 +82,7 @@ export function buildReviewEmbed(email: EmailMetadata, folder: EmailFolder): Rev
         )
         .setDescription(truncate(email.bodyText, { length: BODY_TRUNCATE_LENGTH }));
 
-    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-trash:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Trash')
-            .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-junk:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Junk')
-            .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-allow:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Allow')
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-allowlist:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Allow + Allowlist')
-            .setStyle(ButtonStyle.Primary)
-    );
+    const actionRow = buildInboxActionRow(email.uid, folder);
 
     return { embed, actionRow };
 }
@@ -78,9 +92,7 @@ export function buildReviewEmbed(email: EmailMetadata, folder: EmailFolder): Rev
  * Returns a red embed with email metadata, verdict reason, and 4 action buttons.
  */
 export function buildUnsafeAlert(email: EmailMetadata, verdict: ClassifierVerdict, folder: EmailFolder): ReviewEmbedResult {
-    const fromValue = email.from.name
-        ? `${email.from.name} <${email.from.address}>`
-        : email.from.address;
+    const fromValue = formatFromValue(email);
 
     const description = `**Reason:** ${verdict.reason}\n\n${truncate(email.bodyText, { length: BODY_TRUNCATE_LENGTH })}`;
 
@@ -98,32 +110,7 @@ export function buildUnsafeAlert(email: EmailMetadata, verdict: ClassifierVerdic
         )
         .setDescription(description);
 
-    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-trash:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Trash')
-            .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-junk:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Junk')
-            .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-allow:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Allow')
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            // Stryker disable next-line StringLiteral: Button customId is UI configuration
-            .setCustomId(`email-allowlist:${email.uid}:${folder}`)
-            // Stryker disable next-line StringLiteral: Button label is UI configuration
-            .setLabel('Allow + Allowlist')
-            .setStyle(ButtonStyle.Primary)
-    );
+    const actionRow = buildInboxActionRow(email.uid, folder);
 
     return { embed, actionRow };
 }
