@@ -15,7 +15,7 @@
     "dead-code": "knip",
     "dead-code:fix": "knip --fix",
     "deploy:running": "cd running && git fetch origin running && git reset --hard origin/running && bun install",
-    "dev:sst": "sst shell -- bun --hot src/index.ts",
+    "dev:sst": "sst shell -- bun --no-env-file --hot src/index.ts",
     "lint": "eslint --cache --format unix .",
     "lint:fix": "eslint --cache --fix --format overview .",
     "lint:overview": "eslint --cache --format overview .",
