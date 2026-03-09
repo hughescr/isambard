@@ -58,7 +58,7 @@ export const boundariesConfig = {
                 { from: 'storage', allow: ['utils', 'errors', 'config'] },
                 { from: 'agent',   allow: ['utils', 'errors', 'config', 'storage', 'email', 'bsky'] },
                 { from: 'email',   allow: ['utils', 'errors', 'config', 'storage', 'agent'] },
-                { from: 'bsky',    allow: ['utils', 'errors', 'config'] },
+                { from: 'bsky',    allow: ['utils', 'errors', 'config', 'storage'] },
                 { from: 'discord', allow: ['utils', 'errors', 'config', 'storage', 'agent', 'email', 'bsky'] },
                 { from: 'app',     allow: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky'] },
             ]

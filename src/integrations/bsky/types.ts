@@ -13,6 +13,20 @@ export interface BskyAuthor {
 }
 
 /**
+ * Viewer state reflecting the authenticated user's relationship with a post.
+ * Mirrors AT Protocol's ViewerState from AppBskyFeedDefs.
+ */
+export interface BskyViewerState {
+    like?:              string   // AT URI of your like record
+    repost?:            string   // AT URI of your repost record
+    bookmarked?:        boolean
+    threadMuted?:       boolean
+    replyDisabled?:     boolean
+    embeddingDisabled?: boolean
+    pinned?:            boolean
+}
+
+/**
  * Normalized Bluesky post.
  */
 export interface BskyPost {
@@ -24,6 +38,8 @@ export interface BskyPost {
     replyCount:  number
     likeCount:   number
     repostCount: number
+    indexedAt:   string
+    viewer?:     BskyViewerState
 }
 
 /**

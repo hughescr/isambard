@@ -4,7 +4,7 @@ import { mockLogger } from '../../setup';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { MCPServersOptions } from '@/app/mcp-servers';
-import type { BlueskyClient } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BlueskyClient } from '@/integrations/bsky';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
@@ -289,6 +289,6 @@ describe('createMCPServers', () => {
 
         expect(result.bskyMcpServer).toBe(mockBskyMcpServer);
         expect(createBskyMcpServerSpy).toHaveBeenCalledTimes(1);
-        expect(createBskyMcpServerSpy).toHaveBeenCalledWith(mockBskyClient);
+        expect(createBskyMcpServerSpy).toHaveBeenCalledWith(mockBskyClient, expect.any(BskyCheckpointManager));
     });
 });

@@ -1,7 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { BlueskyClient } from '@/integrations/bsky';
+import type { BskyCheckpointManager, BlueskyClient } from '@/integrations/bsky';
 
 /**
  * Creates an MCP server for Bluesky operations.
@@ -17,8 +17,11 @@ import type { BlueskyClient } from '@/integrations/bsky';
  * - Following or unfollowing users
  *
  * This server wraps the BlueskyClient for use with the Claude Agent SDK.
+ * When a checkpoint manager is provided, getFeed, getNotifications, and getAuthorFeed
+ * will automatically filter out already-processed items and persist checkpoints.
  */
-export function createBskyMCPServer(client: BlueskyClient) {
+
+export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: BskyCheckpointManager) {
     return createSdkMcpServer({
         name:    'bsky',
         version: '1.0.0',
@@ -28,17 +31,34 @@ export function createBskyMCPServer(client: BlueskyClient) {
                 'Read a Bluesky feed',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    feedName: z.string().optional().describe("Feed name: 'following' (default), 'for-you', 'discover', or a raw at:// URI"),
+                    feedName:         z.string().optional().describe("Feed name: 'for-you' (default), 'following', 'discover', or a raw at:// URI"),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    limit:    z.number().int().positive().optional().describe('Maximum number of items to return'),
+                    limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    cursor:   z.string().optional().describe('Pagination cursor from previous response'),
+                    cursor:           z.string().optional().describe('Pagination cursor from previous response'),
+                    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
+                    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const result = await client.getFeed(args.feedName, args.limit, args.cursor);
+                        const feedName = args.feedName ?? 'for-you';
+                        const result   = await client.getFeed(feedName, args.limit, args.cursor);
+
+                        if(!checkpointManager || args.includeProcessed) {
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            };
+                        }
+
+                        const { newItems, totalFetched } = await checkpointManager.processFeedItems(feedName, result.items);
+
                         return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            content: [{ type: 'text' as const, text: JSON.stringify({
+                                items:    newItems,
+                                cursor:   result.cursor,
+                                newCount: newItems.length,
+                                totalFetched,
+                            }, null, 2) }],
                         };
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
@@ -49,7 +69,7 @@ export function createBskyMCPServer(client: BlueskyClient) {
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Get Feed', readOnlyHint: true, idempotentHint: true } }
+                { annotations: { title: 'Get Feed', readOnlyHint: false, idempotentHint: false } }
             ),
 
             tool(
@@ -57,15 +77,43 @@ export function createBskyMCPServer(client: BlueskyClient) {
                 'Get recent Bluesky notifications',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    limit:  z.number().int().positive().optional().describe('Maximum number of notifications to return'),
+                    limit:            z.number().int().positive().optional().describe('Maximum number of notifications to return'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    cursor: z.string().optional().describe('Pagination cursor from previous response'),
+                    cursor:           z.string().optional().describe('Pagination cursor from previous response'),
+                    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
+                    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed notifications (default: false)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
                         const result = await client.getNotifications(args.limit, args.cursor);
+
+                        if(!checkpointManager || args.includeProcessed) {
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            };
+                        }
+
+                        const { newNotifications, totalFetched, lastSeenAt, hadExistingCheckpoint } = await checkpointManager.processNotifications(result.notifications);
+
+                        // Mark as seen when there are new notifications OR this is the first poll (no prior checkpoint).
+                        // On first poll, we always want to mark the current position as seen so subsequent polls
+                        // only surface truly new activity.
+                        // Stryker disable next-line ConditionalExpression: compound guard — mutations collapse to a single branch that causes either spurious or missed updateNotificationsSeen calls
+                        if(newNotifications.length > 0 || !hadExistingCheckpoint) {
+                            // Use max of lastSeenAt (if defined) and current time to guard against clock drift.
+                            // When lastSeenAt is undefined (empty first poll), fall back to current time directly.
+                            const latestMs = lastSeenAt === undefined ? 0 : new Date(lastSeenAt).getTime();
+                            const seenAt   = new Date(Math.max(latestMs, Date.now())).toISOString();
+                            await client.updateNotificationsSeen(seenAt);
+                        }
+
                         return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            content: [{ type: 'text' as const, text: JSON.stringify({
+                                notifications: newNotifications,
+                                cursor:        result.cursor,
+                                newCount:      newNotifications.length,
+                                totalFetched,
+                            }, null, 2) }],
                         };
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
@@ -76,7 +124,7 @@ export function createBskyMCPServer(client: BlueskyClient) {
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Get Notifications', readOnlyHint: true, idempotentHint: true } }
+                { annotations: { title: 'Get Notifications', readOnlyHint: false, idempotentHint: false } }
             ),
 
             tool(
@@ -163,17 +211,37 @@ export function createBskyMCPServer(client: BlueskyClient) {
                 "Read a user's recent posts on Bluesky",
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    actor:  z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
+                    actor:            z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    limit:  z.number().int().positive().optional().describe('Maximum number of items to return'),
+                    limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    cursor: z.string().optional().describe('Pagination cursor from previous response'),
+                    cursor:           z.string().optional().describe('Pagination cursor from previous response'),
+                    // Stryker disable next-line StringLiteral,BooleanLiteral: describe() is documentation only, default is configuration
+                    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
                         const result = await client.getAuthorFeed(args.actor, args.limit, args.cursor);
+
+                        if(!checkpointManager || args.includeProcessed) {
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            };
+                        }
+
+                        // Resolve actor to canonical DID for consistent checkpoint keying
+                        const profile  = await client.getProfile(args.actor);
+                        const actorDid = profile.did;
+
+                        const { newItems, totalFetched } = await checkpointManager.processFeedItems(actorDid, result.items);
+
                         return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            content: [{ type: 'text' as const, text: JSON.stringify({
+                                items:    newItems,
+                                cursor:   result.cursor,
+                                newCount: newItems.length,
+                                totalFetched,
+                            }, null, 2) }],
                         };
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
@@ -184,7 +252,7 @@ export function createBskyMCPServer(client: BlueskyClient) {
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Get Author Feed', readOnlyHint: true, idempotentHint: true } }
+                { annotations: { title: 'Get Author Feed', readOnlyHint: false, idempotentHint: false } }
             ),
 
             tool(
@@ -198,6 +266,12 @@ export function createBskyMCPServer(client: BlueskyClient) {
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
+                        const post = await client.getPost(args.uri);
+                        if(post.viewer?.like) {
+                            return {
+                                content: [{ type: 'text' as const, text: 'Post already liked' }],
+                            };
+                        }
                         await client.likePost(args.uri, args.cid);
                         return {
                             content: [{ type: 'text' as const, text: 'Post liked successfully' }],

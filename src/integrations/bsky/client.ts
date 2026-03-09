@@ -1,7 +1,7 @@
 import { AtpAgent, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost } from '@atproto/api';
 import { logger } from '@hughescr/logger';
 import { BskyError, BskyAuthError, BskyRateLimitError } from '@/integrations/bsky/errors';
-import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification } from '@/integrations/bsky/types';
+import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState } from '@/integrations/bsky/types';
 
 // HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
 // Stryker disable ObjectLiteral,StringLiteral: HTTP status code constants are configuration
@@ -33,6 +33,8 @@ function isXRPCError(err: unknown): err is XRPCErrorLike {
 
 // Stryker disable next-line StringLiteral: Feed URI is configuration
 const DISCOVER_FEED_URI = 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
+// Stryker disable next-line StringLiteral: Feed URI is configuration
+const FOR_YOU_FEED_URI  = 'at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you';
 
 export interface BlueskyClientOptions {
     handle:      string
@@ -72,7 +74,8 @@ export class BlueskyClient {
      *
      * Feed name shortcuts:
      * - `"following"` (or undefined) → user's timeline
-     * - `"for-you"` or `"discover"` → Bluesky discover/for-you feed
+     * - `"for-you"` → Bluesky personal For You feed
+     * - `"discover"` → Bluesky What's Hot discover feed
      * - Raw `at://` URI → passed through as-is
      */
     async getFeed(
@@ -89,7 +92,14 @@ export class BlueskyClient {
                 };
             }
 
-            const feedUri = feedName === 'for-you' || feedName === 'discover' ? DISCOVER_FEED_URI : feedName;
+            let feedUri: string;
+            if(feedName === 'for-you') {
+                feedUri = FOR_YOU_FEED_URI;
+            } else if(feedName === 'discover') {
+                feedUri = DISCOVER_FEED_URI;
+            } else {
+                feedUri = feedName;
+            }
 
             const response = await this.agent.app.bsky.feed.getFeed({ feed: feedUri, limit, cursor });
             return {
@@ -161,6 +171,19 @@ export class BlueskyClient {
         } catch (err: unknown) {
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to fetch notifications');
+        }
+    }
+
+    /**
+     * Mark notifications as seen up to a given timestamp.
+     * If no timestamp is provided, the current time is used.
+     */
+    async updateNotificationsSeen(seenAt?: string): Promise<void> {
+        try {
+            await this.agent.updateSeenNotifications(seenAt ?? new Date().toISOString());
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to update notifications seen');
         }
     }
 
@@ -279,6 +302,25 @@ export class BlueskyClient {
             replyCount:  post.replyCount ?? 0,
             likeCount:   post.likeCount ?? 0,
             repostCount: post.repostCount ?? 0,
+            indexedAt:   post.indexedAt,
+            // Stryker disable next-line ConditionalExpression: ternary guards optional viewer — truthy/falsy tests both branches
+            ...(post.viewer ? { viewer: this.normalizeViewer(post.viewer) } : {}),
+        };
+    }
+
+    private normalizeViewer(viewer: AppBskyFeedDefs.ViewerState): BskyViewerState {
+        return {
+            // Stryker disable ObjectLiteral: empty spread branches — falsy paths produce no properties
+            ...(viewer.like ? { like: viewer.like } : {}),
+            ...(viewer.repost ? { repost: viewer.repost } : {}),
+            ...(viewer.pinned ? { pinned: viewer.pinned } : {}),
+            // Stryker restore ObjectLiteral
+            // Stryker disable ObjectLiteral,EqualityOperator,ConditionalExpression: undefined checks for optional boolean fields
+            ...(viewer.bookmarked === undefined ? {} : { bookmarked: viewer.bookmarked }),
+            ...(viewer.threadMuted === undefined ? {} : { threadMuted: viewer.threadMuted }),
+            ...(viewer.replyDisabled === undefined ? {} : { replyDisabled: viewer.replyDisabled }),
+            ...(viewer.embeddingDisabled === undefined ? {} : { embeddingDisabled: viewer.embeddingDisabled }),
+            // Stryker restore ObjectLiteral,EqualityOperator,ConditionalExpression
         };
     }
 

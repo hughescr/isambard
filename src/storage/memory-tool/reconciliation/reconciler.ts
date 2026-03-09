@@ -113,10 +113,11 @@ export async function retryWithBackoff<T>(
             // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
         } catch (error) {
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Abort signal check
+            // Stryker disable ConditionalExpression,BlockStatement,ObjectLiteral: Abort signal check — cause property is informational
             if(signal?.aborted) {
                 throw new Error('Aborted', { cause: error });
             }
+            // Stryker restore ConditionalExpression,BlockStatement,ObjectLiteral
 
             // Stryker disable next-line LogicalOperator,ConditionalExpression: Error type guards for throttling detection
             const isThrottled = typeof error === 'object' && error !== null && 'name' in error

@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, type QuestionRegistry  } from '@/agent';
-import type { BlueskyClient } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BlueskyClient } from '@/integrations/bsky';
 import type { MessageSearchService, ChannelRegistryManager, InboxManager, BotStateManager } from '@/integrations/discord';
 import type { MemoryToolBackend, MemoryPath } from '@/storage';
 
@@ -120,7 +120,10 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
     );
 
     const bskyMcpServer = options.bskyClient
-        ? createBskyMCPServer(options.bskyClient)
+        ? createBskyMCPServer(
+            options.bskyClient,
+            new BskyCheckpointManager({ backend: options.memoryBackend })
+        )
         : undefined;
 
     return {

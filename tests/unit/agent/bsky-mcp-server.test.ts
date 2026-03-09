@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
+import type { BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
 import type { BskyAuthor, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import { textContent } from '../../setup';
@@ -30,6 +31,7 @@ const mockPost = (overrides: Partial<BskyPost> = {}): BskyPost => ({
     replyCount:  0,
     likeCount:   0,
     repostCount: 0,
+    indexedAt:   '2025-01-01T00:00:01.000Z',
     ...overrides,
 });
 
@@ -51,14 +53,15 @@ describe.concurrent('createBskyMCPServer', () => {
 
     beforeEach(() => {
         mockClient = {
-            getFeed:          mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'cursor-abc' })),
-            getNotifications: mock(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({ notifications: [mockNotification()], cursor: 'notif-cursor' })),
-            searchPosts:      mock(async (): Promise<{ posts: BskyPost[], cursor?: string }> => ({ posts: [mockPost()], cursor: 'search-cursor' })),
-            getPost:          mock(async (): Promise<BskyPost> => mockPost()),
-            getProfile:       mock(async (): Promise<BskyAuthor> => mockAuthor()),
-            getAuthorFeed:    mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'author-cursor' })),
-            likePost:         mock(async (): Promise<void> => { /* intentionally empty */ }),
-            toggleFollow:     mock(async (): Promise<{ followed: boolean }> => ({ followed: true })),
+            getFeed:                 mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'cursor-abc' })),
+            getNotifications:        mock(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({ notifications: [mockNotification()], cursor: 'notif-cursor' })),
+            searchPosts:             mock(async (): Promise<{ posts: BskyPost[], cursor?: string }> => ({ posts: [mockPost()], cursor: 'search-cursor' })),
+            getPost:                 mock(async (): Promise<BskyPost> => mockPost()),
+            getProfile:              mock(async (): Promise<BskyAuthor> => mockAuthor()),
+            getAuthorFeed:           mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'author-cursor' })),
+            likePost:                mock(async (): Promise<void> => { /* intentionally empty */ }),
+            toggleFollow:            mock(async (): Promise<{ followed: boolean }> => ({ followed: true })),
+            updateNotificationsSeen: mock(async (): Promise<void> => { /* intentionally empty */ }),
         } as unknown as BlueskyClient;
     });
 
@@ -95,12 +98,12 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test.each([
-            ['getFeed',          ['feedName', 'limit', 'cursor']],
-            ['getNotifications', ['limit', 'cursor']],
+            ['getFeed',          ['feedName', 'limit', 'cursor', 'includeProcessed']],
+            ['getNotifications', ['limit', 'cursor', 'includeProcessed']],
             ['searchPosts',      ['query', 'limit', 'cursor']],
             ['getPost',          ['uri']],
             ['getProfile',       ['actor']],
-            ['getAuthorFeed',    ['actor', 'limit', 'cursor']],
+            ['getAuthorFeed',    ['actor', 'limit', 'cursor', 'includeProcessed']],
             ['likePost',         ['uri', 'cid']],
             ['toggleFollow',     ['actor']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
@@ -137,13 +140,13 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(mockClient.getFeed).toHaveBeenCalledWith('for-you', 10, 'next-page');
         });
 
-        test('should pass undefined feedName when not provided', async () => {
+        test('should pass "for-you" as default feedName when not provided', async () => {
             const server  = createBskyMCPServer(mockClient);
             const handler = getToolHandler(server, 'getFeed');
 
             await handler({});
 
-            expect(mockClient.getFeed).toHaveBeenCalledWith(undefined, undefined, undefined);
+            expect(mockClient.getFeed).toHaveBeenCalledWith('for-you', undefined, undefined);
         });
 
         test('should return error result on client failure', async () => {
@@ -427,7 +430,10 @@ describe.concurrent('createBskyMCPServer', () => {
     });
 
     describe('likePost tool', () => {
-        test('should return success message', async () => {
+        test('should return success message when post is not yet liked', async () => {
+            // getPost returns post with no viewer.like
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => mockPost());
+
             const server  = createBskyMCPServer(mockClient);
             const handler = getToolHandler(server, 'likePost');
 
@@ -437,7 +443,9 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toBe('Post liked successfully');
         });
 
-        test('should pass uri and cid to client', async () => {
+        test('should pass uri and cid to client when not already liked', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => mockPost());
+
             const server  = createBskyMCPServer(mockClient);
             const handler = getToolHandler(server, 'likePost');
 
@@ -446,8 +454,35 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(mockClient.likePost).toHaveBeenCalledWith('at://did:plc:xyz/app.bsky.feed.post/abc', 'bafyreid123');
         });
 
-        test('should return error result on client failure', async () => {
-            (mockClient.likePost as ReturnType<typeof mock>).mockImplementation(async () => {
+        test('should return "Post already liked" when viewer.like is set', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> =>
+                mockPost({ viewer: { like: 'at://did:plc:abc123/app.bsky.feed.like/existinglike' } })
+            );
+
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'likePost');
+
+            const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Post already liked');
+        });
+
+        test('should not call likePost when post is already liked', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> =>
+                mockPost({ viewer: { like: 'at://like/uri' } })
+            );
+
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'likePost');
+
+            await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
+
+            expect(mockClient.likePost).not.toHaveBeenCalled();
+        });
+
+        test('should return error result on getPost failure', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Rate limited');
             });
             const server  = createBskyMCPServer(mockClient);
@@ -459,8 +494,22 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toBe('Error: Rate limited');
         });
 
-        test('should handle non-Error rejection', async () => {
+        test('should return error result on likePost failure', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => mockPost());
             (mockClient.likePost as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Like failed');
+            });
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'likePost');
+
+            const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Like failed');
+        });
+
+        test('should handle non-Error rejection', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'not allowed';
             });
             const server  = createBskyMCPServer(mockClient);
@@ -470,6 +519,353 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: not allowed');
+        });
+    });
+
+    // ---------------------------------------------------------------------------
+    // Checkpoint manager helpers
+    // ---------------------------------------------------------------------------
+
+    interface MockCheckpointManager {
+        loadFeedCheckpoint:         ReturnType<typeof mock>
+        saveFeedCheckpoint:         ReturnType<typeof mock>
+        loadNotificationCheckpoint: ReturnType<typeof mock>
+        saveNotificationCheckpoint: ReturnType<typeof mock>
+        processFeedItems:           ReturnType<typeof mock>
+        processNotifications:       ReturnType<typeof mock>
+    }
+
+    function createMockCheckpointManager(): MockCheckpointManager {
+        return {
+            loadFeedCheckpoint:         mock(async () => undefined),
+            saveFeedCheckpoint:         mock(async () => undefined),
+            loadNotificationCheckpoint: mock(async () => undefined),
+            saveNotificationCheckpoint: mock(async () => undefined),
+            processFeedItems:           mock(async (_feedName: string, items: BskyFeedItem[]) => ({ newItems: items, totalFetched: items.length })),
+            // Default: no prior checkpoint (first poll) — hadExistingCheckpoint=false triggers updateNotificationsSeen
+            processNotifications:       mock(async (notifications: BskyNotification[]) => ({ newNotifications: notifications, totalFetched: notifications.length, lastSeenAt: notifications[0]?.indexedAt, hadExistingCheckpoint: false })),
+        };
+    }
+
+    describe('getFeed tool with checkpoint manager', () => {
+        test('should filter out already-processed items', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const allItems = [
+                mockFeedItem({ post: mockPost({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' }) }),
+                mockFeedItem({ post: mockPost({ uri: 'at://did:plc:abc123/app.bsky.feed.post/new1' }) }),
+            ];
+            // processFeedItems returns only the new item
+            mockCheckpointManager.processFeedItems.mockImplementation(async () => ({
+                newItems:     [allItems[1]],
+                totalFetched: 2,
+            }));
+
+            (mockClient.getFeed as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({
+                items:  allItems,
+                cursor: 'cursor-abc',
+            }));
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getFeed');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { items: BskyFeedItem[], newCount: number, totalFetched: number };
+            expect(parsed.items).toHaveLength(1);
+            expect(parsed.items[0].post.uri).toBe('at://did:plc:abc123/app.bsky.feed.post/new1');
+            expect(parsed.newCount).toBe(1);
+            expect(parsed.totalFetched).toBe(2);
+        });
+
+        test('should call processFeedItems with feedName and items', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getFeed');
+
+            await handler({});
+
+            expect(mockCheckpointManager.processFeedItems).toHaveBeenCalledTimes(1);
+            const [feedNameArg] = mockCheckpointManager.processFeedItems.mock.calls[0] as [string, BskyFeedItem[]];
+            expect(feedNameArg).toBe('for-you');
+        });
+
+        test('should include all items when includeProcessed is true', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getFeed');
+
+            const result = await handler({ includeProcessed: true });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { items: BskyFeedItem[] };
+            // Should return the raw result without filtering
+            expect(parsed.items).toHaveLength(1);
+            expect(mockCheckpointManager.processFeedItems).not.toHaveBeenCalled();
+        });
+
+        test('should return newCount and totalFetched metadata', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getFeed');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { newCount: number, totalFetched: number, cursor: string };
+            expect(parsed.newCount).toBe(1);
+            expect(parsed.totalFetched).toBe(1);
+            expect(parsed.cursor).toBe('cursor-abc');
+        });
+
+        test('should handle empty checkpoint (first fetch)', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getFeed');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { items: BskyFeedItem[], newCount: number };
+            expect(parsed.items).toHaveLength(1);
+            expect(parsed.newCount).toBe(1);
+            expect(mockCheckpointManager.processFeedItems).toHaveBeenCalledTimes(1);
+        });
+
+        test('should use "for-you" as default feed name', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getFeed');
+
+            await handler({});
+
+            const [feedNameArg] = mockCheckpointManager.processFeedItems.mock.calls[0] as [string, BskyFeedItem[]];
+            expect(feedNameArg).toBe('for-you');
+        });
+    });
+
+    describe('getNotifications tool with checkpoint manager', () => {
+        test('should filter out already-processed notifications', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const allNotifications = [
+                mockNotification({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' }),
+                mockNotification({ uri: 'at://did:plc:abc123/app.bsky.feed.post/new1' }),
+            ];
+            // processNotifications returns only the new notification
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [allNotifications[1]],
+                totalFetched:          2,
+                lastSeenAt:            '2025-01-01T00:00:00.000Z',
+                hadExistingCheckpoint: true,
+            }));
+
+            (mockClient.getNotifications as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({
+                notifications: allNotifications,
+                cursor:        'notif-cursor',
+            }));
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { notifications: BskyNotification[], newCount: number, totalFetched: number };
+            expect(parsed.notifications).toHaveLength(1);
+            expect(parsed.notifications[0].uri).toBe('at://did:plc:abc123/app.bsky.feed.post/new1');
+            expect(parsed.newCount).toBe(1);
+            expect(parsed.totalFetched).toBe(2);
+        });
+
+        test('should call updateNotificationsSeen', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+
+            await handler({});
+
+            expect(mockClient.updateNotificationsSeen).toHaveBeenCalledTimes(1);
+        });
+
+        test('should not call updateNotificationsSeen when no new notifications and checkpoint already existed', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [],
+                totalFetched:          0,
+                lastSeenAt:            undefined,
+                hadExistingCheckpoint: true,
+            }));
+            (mockClient.getNotifications as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({
+                notifications: [],
+                cursor:        undefined,
+            }));
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+
+            await handler({});
+
+            expect(mockClient.updateNotificationsSeen).not.toHaveBeenCalled();
+        });
+
+        test('should call updateNotificationsSeen on first poll even with no new notifications', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications:      [],
+                totalFetched:          0,
+                lastSeenAt:            undefined,
+                hadExistingCheckpoint: false,
+            }));
+            (mockClient.getNotifications as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({
+                notifications: [],
+                cursor:        undefined,
+            }));
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+
+            await handler({});
+
+            // First poll (no prior checkpoint) must mark seen to avoid re-processing on restart
+            expect(mockClient.updateNotificationsSeen).toHaveBeenCalledTimes(1);
+        });
+
+        test('should include all notifications when includeProcessed is true', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+
+            const result = await handler({ includeProcessed: true });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { notifications: BskyNotification[] };
+            // Should return raw result without filtering
+            expect(parsed.notifications).toHaveLength(1);
+            expect(mockCheckpointManager.processNotifications).not.toHaveBeenCalled();
+        });
+
+        test('should call processNotifications with all fetched notifications', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const notifications         = [mockNotification({ uri: 'at://only/notif' })];
+            (mockClient.getNotifications as ReturnType<typeof mock>).mockResolvedValueOnce({ notifications, cursor: undefined });
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+            await handler({});
+
+            expect(mockCheckpointManager.processNotifications).toHaveBeenCalledTimes(1);
+            const [notifArg] = mockCheckpointManager.processNotifications.mock.calls[0] as [BskyNotification[]];
+            expect(notifArg).toHaveLength(1);
+            expect(notifArg[0].uri).toBe('at://only/notif');
+        });
+
+        test('should call updateNotificationsSeen with max of indexedAt and current time', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            // Use a future timestamp — Math.max should pick it over Date.now()
+            const futureDate = new Date(Date.now() + 60_000).toISOString();
+            mockCheckpointManager.processNotifications.mockImplementation(async () => ({
+                newNotifications: [mockNotification({ indexedAt: futureDate })],
+                totalFetched:     1,
+                lastSeenAt:       futureDate,
+            }));
+            (mockClient.getNotifications as ReturnType<typeof mock>).mockResolvedValueOnce({
+                notifications: [mockNotification({ indexedAt: futureDate, uri: 'at://notif/1' })],
+                cursor:        undefined,
+            });
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getNotifications');
+            await handler({});
+
+            const seenAtArg = (mockClient.updateNotificationsSeen as ReturnType<typeof mock>).mock.calls[0][0] as string;
+            // Since futureDate > Date.now(), Math.max should pick futureDate
+            expect(new Date(seenAtArg).getTime()).toBeGreaterThanOrEqual(new Date(futureDate).getTime());
+        });
+    });
+
+    describe('getAuthorFeed tool with checkpoint manager', () => {
+        test('should filter out already-processed items', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const allItems = [
+                mockFeedItem({ post: mockPost({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' }) }),
+                mockFeedItem({ post: mockPost({ uri: 'at://did:plc:abc123/app.bsky.feed.post/new1' }) }),
+            ];
+            // processFeedItems returns only the new item
+            mockCheckpointManager.processFeedItems.mockImplementation(async () => ({
+                newItems:     [allItems[1]],
+                totalFetched: 2,
+            }));
+
+            (mockClient.getAuthorFeed as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({
+                items:  allItems,
+                cursor: 'author-cursor',
+            }));
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getAuthorFeed');
+
+            const result = await handler({ actor: 'alice.bsky.social' });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { items: BskyFeedItem[], newCount: number, totalFetched: number };
+            expect(parsed.items).toHaveLength(1);
+            expect(parsed.items[0].post.uri).toBe('at://did:plc:abc123/app.bsky.feed.post/new1');
+            expect(parsed.newCount).toBe(1);
+            expect(parsed.totalFetched).toBe(2);
+        });
+
+        test('should use resolved DID as feed name for checkpoint', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getAuthorFeed');
+
+            await handler({ actor: 'alice.bsky.social' });
+
+            // getProfile is called to resolve actor to DID
+            expect(mockClient.getProfile).toHaveBeenCalledWith('alice.bsky.social');
+            // processFeedItems is keyed by DID, not handle
+            const [feedNameArg] = mockCheckpointManager.processFeedItems.mock.calls[0] as [string, BskyFeedItem[]];
+            expect(feedNameArg).toBe('did:plc:abc123');
+        });
+
+        test('should include all items when includeProcessed is true', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getAuthorFeed');
+
+            const result = await handler({ actor: 'alice.bsky.social', includeProcessed: true });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { items: BskyFeedItem[] };
+            // Should return raw result without filtering
+            expect(parsed.items).toHaveLength(1);
+            expect(mockCheckpointManager.processFeedItems).not.toHaveBeenCalled();
+            // getProfile should not be called when includeProcessed is true (no checkpoint work)
+            expect(mockClient.getProfile).not.toHaveBeenCalled();
+        });
+
+        test('should call processFeedItems with resolved DID and items', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const items = [mockFeedItem({ post: mockPost({ uri: 'at://only/uri' }) })];
+            (mockClient.getAuthorFeed as ReturnType<typeof mock>).mockResolvedValueOnce({ items, cursor: undefined });
+
+            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const handler = getToolHandler(server, 'getAuthorFeed');
+            await handler({ actor: 'alice.bsky.social' });
+
+            expect(mockCheckpointManager.processFeedItems).toHaveBeenCalledTimes(1);
+            const [feedNameArg, itemsArg] = mockCheckpointManager.processFeedItems.mock.calls[0] as [string, BskyFeedItem[]];
+            expect(feedNameArg).toBe('did:plc:abc123');
+            expect(itemsArg).toHaveLength(1);
         });
     });
 

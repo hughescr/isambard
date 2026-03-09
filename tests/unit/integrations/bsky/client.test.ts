@@ -30,6 +30,7 @@ const mockSearchPosts         = mock(async (): Promise<MockSearchResponse> => ({
 const mockLike                = mock(async (): Promise<MockLikeResponse> => ({ uri: 'at://like/uri', cid: 'like-cid' }));
 const mockFollow              = mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://follow/uri', cid: 'follow-cid' }));
 const mockDeleteFollow        = mock(async (): Promise<void> => undefined);
+const mockUpdateSeen          = mock(async (): Promise<void> => undefined);
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
 mock.module('@atproto/api', () => ({
@@ -49,9 +50,10 @@ mock.module('@atproto/api', () => ({
         getPosts          = mockGetPosts;
         listNotifications = mockListNotifications;
         getProfile        = mockGetProfile;
-        like              = mockLike;
-        follow            = mockFollow;
-        deleteFollow      = mockDeleteFollow;
+        like                    = mockLike;
+        follow                  = mockFollow;
+        deleteFollow            = mockDeleteFollow;
+        updateSeenNotifications = mockUpdateSeen;
     },
 }));
 
@@ -97,10 +99,11 @@ const POST_VIEW = {
 };
 
 const POST_VIEW_NO_COUNTS = {
-    uri:    'at://did:plc:author123/app.bsky.feed.post/abc456',
-    cid:    'bafypost456',
-    author: AUTHOR_BASIC,
-    record: POST_RECORD,
+    uri:       'at://did:plc:author123/app.bsky.feed.post/abc456',
+    cid:       'bafypost456',
+    author:    AUTHOR_BASIC,
+    record:    POST_RECORD,
+    indexedAt: '2026-03-07T12:00:01.000Z',
 };
 
 const FEED_VIEW_POST = {
@@ -158,6 +161,7 @@ describe.concurrent('BlueskyClient', () => {
         mockLike.mockReset();
         mockFollow.mockReset();
         mockDeleteFollow.mockReset();
+        mockUpdateSeen.mockReset();
         mockLogger.error.mockClear();
     });
 
@@ -250,12 +254,12 @@ describe.concurrent('BlueskyClient', () => {
             expect(mockGetTimeline).toHaveBeenCalledWith({ limit: 25, cursor: 'cursor-abc' });
         });
 
-        test('uses discover feed URI when feedName is "for-you"', async () => {
+        test('uses for-you feed URI when feedName is "for-you"', async () => {
             mockGetFeed.mockResolvedValueOnce({ data: { feed: [FEED_VIEW_POST], cursor: undefined } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const result = await client.getFeed('for-you');
             expect(mockGetFeed).toHaveBeenCalledWith(expect.objectContaining({
-                feed: 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot',
+                feed: 'at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you',
             }));
             expect(result.items).toHaveLength(1);
         });
@@ -267,6 +271,17 @@ describe.concurrent('BlueskyClient', () => {
             expect(mockGetFeed).toHaveBeenCalledWith(expect.objectContaining({
                 feed: 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot',
             }));
+        });
+
+        test('"for-you" and "discover" resolve to different feed URIs', async () => {
+            mockGetFeed.mockResolvedValueOnce({ data: { feed: [], cursor: undefined } });
+            mockGetFeed.mockResolvedValueOnce({ data: { feed: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.getFeed('for-you');
+            await client.getFeed('discover');
+            const forYouCall   = (mockGetFeed.mock.calls[0] as unknown as [{ feed: string }])[0].feed;
+            const discoverCall = (mockGetFeed.mock.calls[1] as unknown as [{ feed: string }])[0].feed;
+            expect(forYouCall).not.toBe(discoverCall);
         });
 
         test('passes raw at:// URI through as-is', async () => {
@@ -298,6 +313,7 @@ describe.concurrent('BlueskyClient', () => {
                     replyCount:  3,
                     likeCount:   42,
                     repostCount: 7,
+                    indexedAt:   '2026-03-07T12:00:01.000Z',
                     author:      {
                         did:         AUTHOR_BASIC.did,
                         handle:      AUTHOR_BASIC.handle,
@@ -305,6 +321,71 @@ describe.concurrent('BlueskyClient', () => {
                         avatar:      AUTHOR_BASIC.avatar,
                     },
                 },
+            });
+        });
+
+        test('includes viewer state when present', async () => {
+            const postWithViewer = {
+                ...POST_VIEW,
+                viewer: { like: 'at://like/uri', repost: 'at://repost/uri' },
+            };
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [{ post: postWithViewer }], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items[0].post.viewer).toEqual({
+                like:   'at://like/uri',
+                repost: 'at://repost/uri',
+            });
+        });
+
+        test('omits viewer when not present on post', async () => {
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [FEED_VIEW_POST], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items[0].post.viewer).toBeUndefined();
+        });
+
+        test('normalizes viewer with all boolean fields', async () => {
+            const postWithFullViewer = {
+                ...POST_VIEW,
+                viewer: {
+                    like:              'at://like/uri',
+                    repost:            'at://repost/uri',
+                    bookmarked:        true,
+                    threadMuted:       false,
+                    replyDisabled:     true,
+                    embeddingDisabled: false,
+                    pinned:            true,
+                },
+            };
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [{ post: postWithFullViewer }], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items[0].post.viewer).toEqual({
+                like:              'at://like/uri',
+                repost:            'at://repost/uri',
+                bookmarked:        true,
+                threadMuted:       false,
+                replyDisabled:     true,
+                embeddingDisabled: false,
+                pinned:            true,
+            });
+        });
+
+        test('normalizes viewer with false boolean fields explicitly', async () => {
+            const postWithBooleans = {
+                ...POST_VIEW,
+                viewer: {
+                    bookmarked:  false,
+                    threadMuted: false,
+                },
+            };
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [{ post: postWithBooleans }], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items[0].post.viewer).toEqual({
+                bookmarked:  false,
+                threadMuted: false,
             });
         });
 
@@ -826,6 +907,44 @@ describe.concurrent('BlueskyClient', () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.toggleFollow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // updateNotificationsSeen()
+    // -----------------------------------------------------------------------
+
+    describe('updateNotificationsSeen()', () => {
+        test('calls API with provided seenAt timestamp', async () => {
+            mockUpdateSeen.mockResolvedValueOnce(undefined);
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.updateNotificationsSeen('2026-03-07T12:00:00.000Z');
+            expect(mockUpdateSeen).toHaveBeenCalledWith('2026-03-07T12:00:00.000Z');
+        });
+
+        test('uses current time when seenAt not provided', async () => {
+            mockUpdateSeen.mockResolvedValueOnce(undefined);
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.updateNotificationsSeen();
+            expect(mockUpdateSeen).toHaveBeenCalledWith(expect.any(String));
+        });
+
+        test('throws BskyAuthError on 401', async () => {
+            mockUpdateSeen.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyAuthError);
+        });
+
+        test('throws BskyRateLimitError on 429', async () => {
+            mockUpdateSeen.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyRateLimitError);
+        });
+
+        test('throws BskyError on generic failure', async () => {
+            mockUpdateSeen.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyError);
         });
     });
 
