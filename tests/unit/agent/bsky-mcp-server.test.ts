@@ -61,6 +61,8 @@ describe.concurrent('createBskyMCPServer', () => {
             getAuthorFeed:           mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'author-cursor' })),
             likePost:                mock(async (): Promise<void> => { /* intentionally empty */ }),
             toggleFollow:            mock(async (): Promise<{ followed: boolean }> => ({ followed: true })),
+            sendPost:                mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newpost', cid: 'bafyreinew' })),
+            replyToPost:             mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newreply', cid: 'bafyreireply' })),
             updateNotificationsSeen: mock(async (): Promise<void> => { /* intentionally empty */ }),
         } as unknown as BlueskyClient;
     });
@@ -90,6 +92,8 @@ describe.concurrent('createBskyMCPServer', () => {
             ['getAuthorFeed',    "Read a user's recent posts on Bluesky"],
             ['likePost',         'Like a Bluesky post'],
             ['toggleFollow',     'Follow or unfollow a Bluesky user (toggles current state)'],
+            ['sendPost',         'Post a new message to Bluesky'],
+            ['replyToPost',      'Reply to an existing Bluesky post'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createBskyMCPServer(mockClient);
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -106,6 +110,8 @@ describe.concurrent('createBskyMCPServer', () => {
             ['getAuthorFeed',    ['actor', 'limit', 'cursor', 'includeProcessed']],
             ['likePost',         ['uri', 'cid']],
             ['toggleFollow',     ['actor']],
+            ['sendPost',         ['text']],
+            ['replyToPost',      ['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
             const server = createBskyMCPServer(mockClient);
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -925,6 +931,143 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: forbidden');
+        });
+    });
+
+    describe('sendPost tool', () => {
+        test('should return success message with URI', async () => {
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'sendPost');
+
+            const result = await handler({ text: 'Hello from Isambard!' });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Post sent successfully: at://did:plc:abc123/app.bsky.feed.post/newpost');
+        });
+
+        test('should pass text to client', async () => {
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'sendPost');
+
+            await handler({ text: 'My new post content' });
+
+            expect(mockClient.sendPost).toHaveBeenCalledWith('My new post content');
+        });
+
+        test('should return error result on client failure', async () => {
+            (mockClient.sendPost as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Rate limited');
+            });
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'sendPost');
+
+            const result = await handler({ text: 'Hello!' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Rate limited');
+        });
+
+        test('should handle non-Error rejection', async () => {
+            (mockClient.sendPost as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw 'network failure';
+            });
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'sendPost');
+
+            const result = await handler({ text: 'Hello!' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: network failure');
+        });
+    });
+
+    describe('replyToPost tool', () => {
+        test('should return success message with URI', async () => {
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'My reply!',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply sent successfully: at://did:plc:abc123/app.bsky.feed.post/newreply');
+        });
+
+        test('should pass all args to client and default rootUri/rootCid to parent values', async () => {
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Top-level reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Top-level reply',
+                'at://did:plc:abc123/app.bsky.feed.post/parent',
+                'bafyreiparent',
+                undefined,
+                undefined
+            );
+        });
+
+        test('should pass explicit rootUri and rootCid when provided', async () => {
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Nested reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/root',
+                rootCid:   'bafyreiroot',
+            });
+
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Nested reply',
+                'at://did:plc:abc123/app.bsky.feed.post/parent',
+                'bafyreiparent',
+                'at://did:plc:abc123/app.bsky.feed.post/root',
+                'bafyreiroot'
+            );
+        });
+
+        test('should return error result on client failure', async () => {
+            (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Post not found');
+            });
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'My reply!',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Post not found');
+        });
+
+        test('should handle non-Error rejection', async () => {
+            (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw 'auth failure';
+            });
+            const server  = createBskyMCPServer(mockClient);
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'My reply!',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: auth failure');
         });
     });
 });

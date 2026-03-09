@@ -233,6 +233,47 @@ export class BlueskyClient {
     }
 
     /**
+     * Send a new post to Bluesky.
+     */
+    async sendPost(text: string): Promise<{ uri: string, cid: string }> {
+        try {
+            const response = await this.agent.post({ text });
+            return { uri: response.uri, cid: response.cid };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to send post');
+        }
+    }
+
+    /**
+     * Reply to an existing Bluesky post.
+     * rootUri/rootCid default to parentUri/parentCid for top-level replies.
+     */
+    async replyToPost(
+        text:        string,
+        parentUri:   string,
+        parentCid:   string,
+        rootUri?:    string,
+        rootCid?:    string
+    ): Promise<{ uri: string, cid: string }> {
+        try {
+            const actualRootUri = rootUri ?? parentUri;
+            const actualRootCid = rootCid ?? parentCid;
+            const response = await this.agent.post({
+                text,
+                reply: {
+                    root:   { uri: actualRootUri, cid: actualRootCid },
+                    parent: { uri: parentUri,     cid: parentCid },
+                },
+            });
+            return { uri: response.uri, cid: response.cid };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to reply to post');
+        }
+    }
+
+    /**
      * Toggle follow state for a user by DID or handle.
      * If currently following, unfollows; otherwise follows.
      * Returns { followed: true } when a follow was created, { followed: false } when unfollowed.

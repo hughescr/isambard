@@ -31,6 +31,8 @@ function buildCheckpointedResponse(newItems: BskyFeedItem[], cursor: string | un
  * - Reading an author's post feed
  * - Liking posts
  * - Following or unfollowing users
+ * - Sending new posts
+ * - Replying to existing posts
  *
  * This server wraps the BlueskyClient for use with the Claude Agent SDK.
  * When a checkpoint manager is provided, getFeed, getNotifications, and getAuthorFeed
@@ -252,6 +254,66 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Toggle Follow', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
+            ),
+
+            tool(
+                'sendPost',
+                'Post a new message to Bluesky',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    text: z.string().describe('The text content of the post'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        const result = await client.sendPost(args.text);
+                        return {
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            content: [{ type: 'text' as const, text: `Post sent successfully: ${result.uri}` }],
+                        };
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Send Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
+            ),
+
+            tool(
+                'replyToPost',
+                'Reply to an existing Bluesky post',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    text:      z.string().describe('The text content of the reply'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    parentUri: z.string().describe('AT URI of the post to reply to'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    parentCid: z.string().describe('CID of the post to reply to'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    rootUri:   z.string().optional().describe('AT URI of the root/thread post (defaults to parentUri for top-level replies)'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    rootCid:   z.string().optional().describe('CID of the root/thread post (defaults to parentCid for top-level replies)'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        const result = await client.replyToPost(args.text, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
+                        return {
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            content: [{ type: 'text' as const, text: `Reply sent successfully: ${result.uri}` }],
+                        };
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Reply To Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
         ],
     });
