@@ -1,8 +1,10 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
-import type { BskyCheckpointManager, BlueskyClient, BskyFeedItem } from '@/integrations/bsky';
+import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyFeedItem } from '@/integrations/bsky';
+import type { SendRateLimiter } from '@/integrations/email';
 
 /** Shared pagination schema fields for feed tools that support checkpointing. */
 const FEED_PAGINATION_SCHEMA = {
@@ -37,9 +39,41 @@ function buildCheckpointedResponse(newItems: BskyFeedItem[], cursor: string | un
  * This server wraps the BlueskyClient for use with the Claude Agent SDK.
  * When a checkpoint manager is provided, getFeed, getNotifications, and getAuthorFeed
  * will automatically filter out already-processed items and persist checkpoints.
+ *
+ * ## Bluesky Etiquette
+ *
+ * When posting or replying on Bluesky, be mindful of social norms:
+ * - Consider whether you're replying to a friend or a stranger — uninvited replies
+ *   to strangers should add genuine value, not just be "nice bot" engagement
+ * - Avoid dunking, ratio-seeking, or pile-ons — even if you disagree
+ * - Don't post just to be visible — post when you have something worth saying
+ * - Keep a healthy ratio: read and like far more than you post or reply
+ * - Be authentic and conversational, not performative or promotional
+ * - Respect the 300-character limit — brevity is a feature, not a constraint
+ * - If unsure whether to reply, observe instead
  */
 
-export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: BskyCheckpointManager) {
+export interface BskyMCPServerOptions {
+    client:               BlueskyClient
+    checkpointManager?:   BskyCheckpointManager
+    rateLimiter?:         SendRateLimiter
+    allowlist?:           BskyAllowlist
+    sendApprovalRequest?: (text: string, targetHandle: string, parentUri: string, parentCid: string,
+        rootUri?: string, rootCid?: string) => Promise<void>
+}
+
+export function createBskyMCPServer(options: BskyMCPServerOptions) {
+    const { client, checkpointManager, rateLimiter, allowlist, sendApprovalRequest } = options;
+
+    function buildRateLimitWarning(): string {
+        if(!rateLimiter?.isAtLimit()) {
+            // Stryker disable next-line StringLiteral: initial empty string for rateLimitWarning
+            return '';
+        }
+        // Stryker disable next-line StringLiteral: Warning message is configuration
+        return ` Warning: send rate limit reached (${rateLimiter.tokensRemaining()} tokens remaining).`;
+    }
+
     return createSdkMcpServer({
         name:    'bsky',
         version: '1.0.0',
@@ -265,17 +299,13 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const result = await client.sendPost(args.text);
-                        return {
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                            content: [{ type: 'text' as const, text: `Post sent successfully: ${result.uri}` }],
-                        };
+                        const result           = await client.sendPost(args.text);
+                        const rateLimitWarning = buildRateLimitWarning();
+                        rateLimiter?.increment();
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                        return mcpTextResult(`Post sent successfully: ${result.uri}${rateLimitWarning}`);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -284,7 +314,7 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
 
             tool(
                 'replyToPost',
-                'Reply to an existing Bluesky post',
+                'Reply to an existing Bluesky post. If the target author is on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     text:      z.string().describe('The text content of the reply'),
@@ -299,17 +329,44 @@ export function createBskyMCPServer(client: BlueskyClient, checkpointManager?: B
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const result = await client.replyToPost(args.text, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
-                        return {
+                        // Fetch parent post to determine the target author
+                        const parentPost   = await client.getPost(args.parentUri);
+                        const targetHandle = parentPost.author.handle;
+                        const targetDid    = parentPost.author.did;
+
+                        // Check if target is allowlisted (by handle or DID).
+                        // When no allowlist is configured, treat as allowed (permissive default).
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — no-allowlist means permissive; handle and DID checks both needed
+                        const isAllowed = !allowlist || allowlist.isAllowed(targetHandle) || allowlist.isAllowed(targetDid);
+
+                        if(isAllowed) {
+                            // Allowlisted — send immediately
+                            const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
+                            const rateLimitWarning = buildRateLimitWarning();
+                            rateLimiter?.increment();
                             // Stryker disable next-line StringLiteral: success message is informational only
-                            content: [{ type: 'text' as const, text: `Reply sent successfully: ${result.uri}` }],
-                        };
+                            return mcpTextResult(`Reply sent successfully: ${result.uri}${rateLimitWarning}`);
+                        }
+
+                        // Not allowlisted — request admin approval
+                        if(sendApprovalRequest) {
+                            // Stryker disable BlockStatement: try-catch wraps approval request - logger-only catch body
+                            try {
+                                await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
+                            } catch (error) {
+                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                                logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky approval request' });
+                            }
+                            // Stryker restore BlockStatement
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
+                        }
+
+                        // No approval callback — just inform
+                        // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
+                        return mcpTextResult(`Reply to ${targetHandle} requires approval but no approval handler is configured.`);
                     } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: 'text' as const, text: `Error: ${message}` }],
-                            isError: true,
-                        };
+                        return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration

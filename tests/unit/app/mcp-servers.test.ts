@@ -289,6 +289,9 @@ describe('createMCPServers', () => {
 
         expect(result.bskyMcpServer).toBe(mockBskyMcpServer);
         expect(createBskyMcpServerSpy).toHaveBeenCalledTimes(1);
-        expect(createBskyMcpServerSpy).toHaveBeenCalledWith(mockBskyClient, expect.any(BskyCheckpointManager));
+        expect(createBskyMcpServerSpy).toHaveBeenCalledWith({
+            client:            mockBskyClient,
+            checkpointManager: expect.any(BskyCheckpointManager),
+        });
     });
 });

@@ -1,0 +1,211 @@
+import { describe, test, expect } from 'bun:test';
+import type { APIButtonComponentWithCustomId } from 'discord.js';
+import { buildBskyApprovalEmbed, type BskyApprovalEmbedParams } from '@/integrations/bsky/review-embed-builder';
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function makeParams(overrides: Partial<BskyApprovalEmbedParams> = {}): BskyApprovalEmbedParams {
+    return {
+        text:         'Hello @user.bsky.social, great post!',
+        targetHandle: 'user.bsky.social',
+        parentUri:    'at://did:plc:abc123/app.bsky.feed.post/xyz456',
+        parentCid:    'bafyreiabc123',
+        ...overrides,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// buildBskyApprovalEmbed
+// ---------------------------------------------------------------------------
+
+describe('buildBskyApprovalEmbed', () => {
+    test('returns embed and actionRow', () => {
+        const result = buildBskyApprovalEmbed(makeParams());
+        expect(result.embed).toBeDefined();
+        expect(result.actionRow).toBeDefined();
+    });
+
+    test('embed has correct title', () => {
+        const result = buildBskyApprovalEmbed(makeParams());
+        expect(result.embed.toJSON().title).toBe('Bluesky Post Approval Required');
+    });
+
+    test('embed has Bluesky blue color (0x0085FF)', () => {
+        const result = buildBskyApprovalEmbed(makeParams());
+        expect(result.embed.toJSON().color).toBe(0x00_85_FF);
+    });
+
+    test('embed description contains post text', () => {
+        const params = makeParams({ text: 'My reply text here' });
+        const result = buildBskyApprovalEmbed(params);
+        expect(result.embed.toJSON().description).toBe('My reply text here');
+    });
+
+    test('embed truncates long post text to 280 chars', () => {
+        const longText = 'A'.repeat(400);
+        const result   = buildBskyApprovalEmbed(makeParams({ text: longText }));
+        const data     = result.embed.toJSON();
+        // lodash truncate at 280 adds '...' so total is 280 chars
+        expect(data.description?.length).toBe(280);
+        expect(data.description).toEndWith('...');
+    });
+
+    test('embed does not truncate short post text', () => {
+        const shortText = 'Short reply.';
+        const result    = buildBskyApprovalEmbed(makeParams({ text: shortText }));
+        expect(result.embed.toJSON().description).toBe(shortText);
+    });
+
+    test('embed includes Replying to field', () => {
+        const params = makeParams({ targetHandle: 'someone.bsky.social' });
+        const result = buildBskyApprovalEmbed(params);
+        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Replying to');
+        expect(field?.value).toBe('someone.bsky.social');
+        expect(field?.inline).toBe(true);
+    });
+
+    test('embed includes Parent URI field', () => {
+        const params = makeParams({ parentUri: 'at://did:plc:test/app.bsky.feed.post/111' });
+        const result = buildBskyApprovalEmbed(params);
+        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent URI');
+        expect(field?.value).toBe('at://did:plc:test/app.bsky.feed.post/111');
+        expect(field?.inline).toBe(true);
+    });
+
+    test('embed includes Parent CID field', () => {
+        const params = makeParams({ parentCid: 'bafyreidxyz' });
+        const result = buildBskyApprovalEmbed(params);
+        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent CID');
+        expect(field?.value).toBe('bafyreidxyz');
+        expect(field?.inline).toBe(true);
+    });
+
+    describe('without rootUri/rootCid', () => {
+        test('omits Root URI field when rootUri is not provided', () => {
+            const result = buildBskyApprovalEmbed(makeParams());
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root URI');
+            expect(field).toBeUndefined();
+        });
+
+        test('omits Root CID field when rootUri is not provided', () => {
+            const result = buildBskyApprovalEmbed(makeParams());
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
+            expect(field).toBeUndefined();
+        });
+    });
+
+    describe('with rootUri/rootCid', () => {
+        test('includes Root URI field when rootUri is provided', () => {
+            const params = makeParams({
+                rootUri: 'at://did:plc:root/app.bsky.feed.post/root123',
+                rootCid: 'bafyreroot123',
+            });
+            const result = buildBskyApprovalEmbed(params);
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root URI');
+            expect(field?.value).toBe('at://did:plc:root/app.bsky.feed.post/root123');
+            expect(field?.inline).toBe(true);
+        });
+
+        test('includes Root CID field when rootUri is provided', () => {
+            const params = makeParams({
+                rootUri: 'at://did:plc:root/app.bsky.feed.post/root123',
+                rootCid: 'bafyreroot123',
+            });
+            const result = buildBskyApprovalEmbed(params);
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
+            expect(field?.value).toBe('bafyreroot123');
+            expect(field?.inline).toBe(true);
+        });
+
+        test('falls back to parentCid when rootUri provided but rootCid is not', () => {
+            const params = makeParams({
+                rootUri:   'at://did:plc:root/app.bsky.feed.post/root123',
+                parentCid: 'bafyreparent',
+                // rootCid intentionally omitted
+            });
+            const result = buildBskyApprovalEmbed(params);
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
+            expect(field?.value).toBe('bafyreparent');
+        });
+    });
+
+    describe('with parentText', () => {
+        test('includes Parent Post field when parentText is provided', () => {
+            const params = makeParams({ parentText: 'Original post content here' });
+            const result = buildBskyApprovalEmbed(params);
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent Post');
+            expect(field?.value).toBe('Original post content here');
+            expect(field?.inline).toBe(false);
+        });
+
+        test('truncates long parentText to 280 chars', () => {
+            const longText = 'B'.repeat(400);
+            const params   = makeParams({ parentText: longText });
+            const result   = buildBskyApprovalEmbed(params);
+            const field    = result.embed.toJSON().fields?.find(f => f.name === 'Parent Post');
+            expect(field?.value.length).toBe(280);
+            expect(field?.value).toEndWith('...');
+        });
+
+        test('omits Parent Post field when parentText is not provided', () => {
+            const result = buildBskyApprovalEmbed(makeParams());
+            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Parent Post');
+            expect(field).toBeUndefined();
+        });
+    });
+
+    describe('action row buttons', () => {
+        test('creates 3 buttons', () => {
+            const result = buildBskyApprovalEmbed(makeParams());
+            expect(result.actionRow.components).toHaveLength(3);
+        });
+
+        test('Approve button customId has bsky-send-approve prefix', () => {
+            const result  = buildBskyApprovalEmbed(makeParams());
+            const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            expect(buttons[0].custom_id).toMatch(/^bsky-send-approve:/);
+        });
+
+        test('Approve+Allowlist button customId has bsky-send-approveallowlist prefix', () => {
+            const result  = buildBskyApprovalEmbed(makeParams());
+            const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            expect(buttons[1].custom_id).toMatch(/^bsky-send-approveallowlist:/);
+        });
+
+        test('Reject button customId has bsky-send-reject prefix', () => {
+            const result  = buildBskyApprovalEmbed(makeParams());
+            const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            expect(buttons[2].custom_id).toMatch(/^bsky-send-reject:/);
+        });
+
+        test('all three buttons share the same UUID suffix', () => {
+            const result  = buildBskyApprovalEmbed(makeParams());
+            const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            const uuid0   = buttons[0].custom_id.split(':')[1];
+            const uuid1   = buttons[1].custom_id.split(':')[1];
+            const uuid2   = buttons[2].custom_id.split(':')[1];
+            expect(uuid0).toBe(uuid1);
+            expect(uuid1).toBe(uuid2);
+        });
+
+        test('buttons have correct labels', () => {
+            const result  = buildBskyApprovalEmbed(makeParams());
+            const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            expect(buttons[0].label).toBe('Approve');
+            expect(buttons[1].label).toBe('Approve + Allowlist');
+            expect(buttons[2].label).toBe('Reject');
+        });
+
+        test('two calls produce different UUIDs', () => {
+            const result1 = buildBskyApprovalEmbed(makeParams());
+            const result2 = buildBskyApprovalEmbed(makeParams());
+            const buttons1 = result1.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            const buttons2 = result2.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
+            const uuid1    = buttons1[0].custom_id.split(':')[1];
+            const uuid2    = buttons2[0].custom_id.split(':')[1];
+            expect(uuid1).not.toBe(uuid2);
+        });
+    });
+});

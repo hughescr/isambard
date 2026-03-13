@@ -1,6 +1,6 @@
-import { AtpAgent, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost } from '@atproto/api';
+import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost } from '@atproto/api';
 import { logger } from '@hughescr/logger';
-import { BskyError, BskyAuthError, BskyRateLimitError } from '@/integrations/bsky/errors';
+import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
 import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState } from '@/integrations/bsky/types';
 
 // HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
@@ -35,6 +35,9 @@ function isXRPCError(err: unknown): err is XRPCErrorLike {
 const DISCOVER_FEED_URI = 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
 // Stryker disable next-line StringLiteral: Feed URI is configuration
 const FOR_YOU_FEED_URI  = 'at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you';
+
+// Stryker disable next-line ArithmeticOperator: Bluesky character limit is a fixed protocol constant
+const BSKY_MAX_GRAPHEME_LENGTH = 300;
 
 export interface BlueskyClientOptions {
     handle:      string
@@ -234,12 +237,22 @@ export class BlueskyClient {
 
     /**
      * Send a new post to Bluesky.
+     * Detects RichText facets (mentions, links, tags) and validates grapheme length.
      */
     async sendPost(text: string): Promise<{ uri: string, cid: string }> {
         try {
-            const response = await this.agent.post({ text });
+            const rt = new RichText({ text });
+            await rt.detectFacets(this.agent);
+            if(rt.graphemeLength > BSKY_MAX_GRAPHEME_LENGTH) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw new BskyValidationError(`Post exceeds ${BSKY_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
+            }
+            const response = await this.agent.post({ text: rt.text, facets: rt.facets });
             return { uri: response.uri, cid: response.cid };
         } catch (err: unknown) {
+            if(err instanceof BskyValidationError) {
+                throw err;
+            }
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to send post');
         }
@@ -248,6 +261,7 @@ export class BlueskyClient {
     /**
      * Reply to an existing Bluesky post.
      * rootUri/rootCid default to parentUri/parentCid for top-level replies.
+     * Detects RichText facets and validates grapheme length.
      */
     async replyToPost(
         text:        string,
@@ -257,17 +271,27 @@ export class BlueskyClient {
         rootCid?:    string
     ): Promise<{ uri: string, cid: string }> {
         try {
+            const rt = new RichText({ text });
+            await rt.detectFacets(this.agent);
+            if(rt.graphemeLength > BSKY_MAX_GRAPHEME_LENGTH) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw new BskyValidationError(`Post exceeds ${BSKY_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
+            }
             const actualRootUri = rootUri ?? parentUri;
             const actualRootCid = rootCid ?? parentCid;
             const response = await this.agent.post({
-                text,
-                reply: {
+                text:   rt.text,
+                facets: rt.facets,
+                reply:  {
                     root:   { uri: actualRootUri, cid: actualRootCid },
                     parent: { uri: parentUri,     cid: parentCid },
                 },
             });
             return { uri: response.uri, cid: response.cid };
         } catch (err: unknown) {
+            if(err instanceof BskyValidationError) {
+                throw err;
+            }
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to reply to post');
         }

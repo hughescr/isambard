@@ -20,3 +20,10 @@ export class BskyRateLimitError extends BskyError {
         this.name = 'BskyRateLimitError';
     }
 }
+
+export class BskyValidationError extends BskyError {
+    constructor(message: string, context?: Record<string, unknown>) {
+        super(message, ErrorCode.BSKY_VALIDATION_ERROR, context);
+        this.name = 'BskyValidationError';
+    }
+}

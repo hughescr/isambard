@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { mockLogger } from '../../../setup';
-import { BskyError, BskyAuthError, BskyRateLimitError } from '@/integrations/bsky/errors';
+import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
 
 // ---------------------------------------------------------------------------
 // Mock return types (loose enough for test data flexibility)
@@ -14,11 +14,13 @@ interface MockNotifResponse { data: { notifications: MockNotification[], cursor?
 interface MockProfileResponse { data: Record<string, unknown> }
 interface MockSearchResponse { data: { posts: Record<string, unknown>[], cursor?: string } }
 interface MockLikeResponse { uri: string, cid: string }
+interface MockPostResponse { uri: string, cid: string }
 
 // ---------------------------------------------------------------------------
 // Mock @atproto/api
 // ---------------------------------------------------------------------------
 
+const mockAgentPost           = mock(async (): Promise<MockPostResponse> => ({ uri: 'at://new/post/uri', cid: 'new-post-cid' }));
 const mockLogin               = mock(async (): Promise<Record<string, unknown>> => ({}));
 const mockGetTimeline         = mock(async (): Promise<MockFeedResponse> => ({ data: { feed: [] } }));
 const mockGetFeed             = mock(async (): Promise<MockFeedResponse> => ({ data: { feed: [] } }));
@@ -31,6 +33,15 @@ const mockLike                = mock(async (): Promise<MockLikeResponse> => ({ u
 const mockFollow              = mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://follow/uri', cid: 'follow-cid' }));
 const mockDeleteFollow        = mock(async (): Promise<void> => undefined);
 const mockUpdateSeen          = mock(async (): Promise<void> => undefined);
+
+// RichText mock state — tests can override these per-test via mockRichTextState
+const mockDetectFacets = mock(async (): Promise<void> => undefined);
+
+const mockRichTextState = {
+    graphemeLength: 10,
+    text:           'Hello Bluesky!',
+    facets:         undefined as Record<string, unknown>[] | undefined,
+};
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
 mock.module('@atproto/api', () => ({
@@ -54,6 +65,13 @@ mock.module('@atproto/api', () => ({
         follow                  = mockFollow;
         deleteFollow            = mockDeleteFollow;
         updateSeenNotifications = mockUpdateSeen;
+        post                    = mockAgentPost;
+    },
+    RichText: class MockRichText {
+        detectFacets = mockDetectFacets;
+        get graphemeLength() { return mockRichTextState.graphemeLength; }
+        get text()           { return mockRichTextState.text; }
+        get facets()         { return mockRichTextState.facets; }
     },
 }));
 
@@ -150,6 +168,7 @@ function makeXRPCError(status: number, error = 'Error', message = 'Something fai
 
 describe.concurrent('BlueskyClient', () => {
     beforeEach(() => {
+        mockAgentPost.mockReset();
         mockLogin.mockReset();
         mockGetTimeline.mockReset();
         mockGetFeed.mockReset();
@@ -162,6 +181,10 @@ describe.concurrent('BlueskyClient', () => {
         mockFollow.mockReset();
         mockDeleteFollow.mockReset();
         mockUpdateSeen.mockReset();
+        mockDetectFacets.mockReset();
+        mockRichTextState.graphemeLength = 10;
+        mockRichTextState.text           = 'Hello Bluesky!';
+        mockRichTextState.facets         = undefined;
         mockLogger.error.mockClear();
     });
 
@@ -907,6 +930,193 @@ describe.concurrent('BlueskyClient', () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.toggleFollow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // sendPost()
+    // -----------------------------------------------------------------------
+
+    describe('sendPost()', () => {
+        test('calls agent.post with rt.text and rt.facets', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.text   = 'Hello @user.bsky.social!';
+            mockRichTextState.facets = [{ $type: 'app.bsky.richtext.facet' }];
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://new/post/uri', cid: 'new-post-cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.sendPost('Hello @user.bsky.social!');
+            expect(mockAgentPost).toHaveBeenCalledWith({
+                text:   'Hello @user.bsky.social!',
+                facets: [{ $type: 'app.bsky.richtext.facet' }],
+            });
+        });
+
+        test('returns uri and cid from agent.post response', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://result/uri', cid: 'result-cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.sendPost('Hello Bluesky!');
+            expect(result).toEqual({ uri: 'at://result/uri', cid: 'result-cid' });
+        });
+
+        test('calls detectFacets on the RichText instance', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.sendPost('Hello!');
+            expect(mockDetectFacets).toHaveBeenCalledTimes(1);
+        });
+
+        test('throws BskyValidationError when grapheme length exceeds 300', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 301;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: BskyValidationError | undefined;
+            try {
+                await client.sendPost('x'.repeat(301));
+            } catch (e) {
+                thrownError = e as BskyValidationError;
+            }
+            expect(thrownError).toBeInstanceOf(BskyValidationError);
+            expect(thrownError?.context).toMatchObject({ graphemeLength: 301 });
+        });
+
+        test('succeeds when grapheme length is exactly 300', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 300;
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.sendPost('x'.repeat(300))).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
+        });
+
+        test('throws BskyAuthError on 401 from agent.post', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyAuthError);
+        });
+
+        test('throws BskyRateLimitError on 429 from agent.post', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyRateLimitError);
+        });
+
+        test('throws BskyError on generic Error from agent.post', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce(new Error('Socket closed'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyError);
+        });
+
+        test('throws BskyError on non-Error value from agent.post', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce({ code: 'UNKNOWN' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // replyToPost()
+    // -----------------------------------------------------------------------
+
+    describe('replyToPost()', () => {
+        const PARENT_URI = 'at://did:plc:author123/app.bsky.feed.post/parent001';
+        const PARENT_CID = 'bafy-parent-cid';
+        const ROOT_URI   = 'at://did:plc:author123/app.bsky.feed.post/root001';
+        const ROOT_CID   = 'bafy-root-cid';
+
+        test('calls agent.post with text, facets, and reply ref', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.text   = 'Reply text';
+            mockRichTextState.facets = undefined;
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://reply/uri', cid: 'reply-cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.replyToPost('Reply text', PARENT_URI, PARENT_CID, ROOT_URI, ROOT_CID);
+            expect(mockAgentPost).toHaveBeenCalledWith({
+                text:   'Reply text',
+                facets: undefined,
+                reply:  {
+                    root:   { uri: ROOT_URI,   cid: ROOT_CID },
+                    parent: { uri: PARENT_URI, cid: PARENT_CID },
+                },
+            });
+        });
+
+        test('defaults root to parent when rootUri/rootCid omitted', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.text = 'Top-level reply';
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://reply/uri', cid: 'reply-cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.replyToPost('Top-level reply', PARENT_URI, PARENT_CID);
+            expect(mockAgentPost).toHaveBeenCalledWith({
+                text:   'Top-level reply',
+                facets: undefined,
+                reply:  {
+                    root:   { uri: PARENT_URI, cid: PARENT_CID },
+                    parent: { uri: PARENT_URI, cid: PARENT_CID },
+                },
+            });
+        });
+
+        test('returns uri and cid from agent.post response', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://reply/result', cid: 'reply-result-cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.replyToPost('Text', PARENT_URI, PARENT_CID);
+            expect(result).toEqual({ uri: 'at://reply/result', cid: 'reply-result-cid' });
+        });
+
+        test('throws BskyValidationError when grapheme length exceeds 300', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 301;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: BskyValidationError | undefined;
+            try {
+                await client.replyToPost('x'.repeat(301), PARENT_URI, PARENT_CID);
+            } catch (e) {
+                thrownError = e as BskyValidationError;
+            }
+            expect(thrownError).toBeInstanceOf(BskyValidationError);
+            expect(thrownError?.context).toMatchObject({ graphemeLength: 301 });
+        });
+
+        test('succeeds when grapheme length is exactly 300', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 300;
+            mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.replyToPost('x'.repeat(300), PARENT_URI, PARENT_CID)).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
+        });
+
+        test('throws BskyAuthError on 401', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyAuthError);
+        });
+
+        test('throws BskyRateLimitError on 429', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyRateLimitError);
+        });
+
+        test('throws BskyError on generic Error', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce(new Error('Network error'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyError);
+        });
+
+        test('throws BskyError on non-Error value', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockAgentPost.mockRejectedValueOnce('raw error');
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyError);
         });
     });
 

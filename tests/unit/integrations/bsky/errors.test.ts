@@ -4,7 +4,8 @@ import { ErrorCode } from '@/errors/codes';
 import {
     BskyError,
     BskyAuthError,
-    BskyRateLimitError
+    BskyRateLimitError,
+    BskyValidationError
 } from '@/integrations/bsky/errors';
 
 describe.concurrent('BskyError', () => {
@@ -126,6 +127,38 @@ describe.concurrent('Error instanceof cross-checks', () => {
     test('BskyError is not BskyRateLimitError', () => {
         const error = new BskyError('Base error');
         expect(error instanceof BskyRateLimitError).toBe(false);
+    });
+});
+
+describe.concurrent('BskyValidationError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new BskyValidationError('Post too long');
+        expect(error).toBeInstanceOf(BskyValidationError);
+        expect(error).toBeInstanceOf(BskyError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name and code', () => {
+        const error = new BskyValidationError('Post too long');
+        expect(error.name).toBe('BskyValidationError');
+        expect(error.code).toBe(ErrorCode.BSKY_VALIDATION_ERROR);
+    });
+
+    test('should preserve message', () => {
+        const error = new BskyValidationError('Post exceeds 300 graphemes');
+        expect(error.message).toBe('Post exceeds 300 graphemes');
+    });
+
+    test('should support context', () => {
+        const context = { graphemeLength: 350 };
+        const error = new BskyValidationError('Too long', context);
+        expect(error.context).toEqual(context);
+    });
+
+    test('BskyValidationError is not BskyAuthError', () => {
+        const error = new BskyValidationError('Validation failed');
+        expect(error instanceof BskyAuthError).toBe(false);
     });
 });
 

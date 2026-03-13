@@ -1,9 +1,10 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
-import type { BskyCheckpointManager } from '../../../src/integrations/bsky';
+import type { BskyAllowlist, BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
 import type { BskyAuthor, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
+import type { SendRateLimiter } from '../../../src/integrations/email';
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -74,7 +75,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('createBskyMCPServer function', () => {
         test('should create MCP server with correct properties', () => {
-            const server = createBskyMCPServer(mockClient);
+            const server = createBskyMCPServer({ client: mockClient });
 
             expect(server).toBeDefined();
             expect(server.name).toBe('bsky');
@@ -93,9 +94,9 @@ describe.concurrent('createBskyMCPServer', () => {
             ['likePost',         'Like a Bluesky post'],
             ['toggleFollow',     'Follow or unfollow a Bluesky user (toggles current state)'],
             ['sendPost',         'Post a new message to Bluesky'],
-            ['replyToPost',      'Reply to an existing Bluesky post'],
+            ['replyToPost',      'Reply to an existing Bluesky post. If the target author is on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
-            const server = createBskyMCPServer(mockClient);
+            const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(registeredTool.description).toBe(expectedDescription);
@@ -113,7 +114,7 @@ describe.concurrent('createBskyMCPServer', () => {
             ['sendPost',         ['text']],
             ['replyToPost',      ['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
-            const server = createBskyMCPServer(mockClient);
+            const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             for(const field of expectedFields) {
@@ -124,7 +125,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('getFeed tool', () => {
         test('should return feed items as JSON', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({});
@@ -138,7 +139,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass feedName, limit, and cursor to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getFeed');
 
             await handler({ feedName: 'for-you', limit: 10, cursor: 'next-page' });
@@ -147,7 +148,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass "for-you" as default feedName when not provided', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getFeed');
 
             await handler({});
@@ -159,7 +160,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getFeed as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Network error');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({});
@@ -172,7 +173,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getFeed as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'string error';
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({});
@@ -184,7 +185,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('getNotifications tool', () => {
         test('should return notifications as JSON', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getNotifications');
 
             const result = await handler({});
@@ -198,7 +199,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass limit and cursor to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getNotifications');
 
             await handler({ limit: 5, cursor: 'notif-page' });
@@ -210,7 +211,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getNotifications as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Auth failed');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getNotifications');
 
             const result = await handler({});
@@ -223,7 +224,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getNotifications as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 42;
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getNotifications');
 
             const result = await handler({});
@@ -235,7 +236,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('searchPosts tool', () => {
         test('should return posts as JSON', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'searchPosts');
 
             const result = await handler({ query: 'bluesky' });
@@ -249,7 +250,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass query, limit, and cursor to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'searchPosts');
 
             await handler({ query: 'test query', limit: 20, cursor: 'search-page' });
@@ -261,7 +262,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.searchPosts as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Search failed');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'searchPosts');
 
             const result = await handler({ query: 'test' });
@@ -274,7 +275,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.searchPosts as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw false;
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'searchPosts');
 
             const result = await handler({ query: 'test' });
@@ -286,7 +287,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('getPost tool', () => {
         test('should return post as JSON', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getPost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' });
@@ -299,7 +300,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass uri to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getPost');
 
             await handler({ uri: 'at://did:plc:xyz/app.bsky.feed.post/abc' });
@@ -311,7 +312,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Post not found');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getPost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' });
@@ -324,7 +325,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw { code: 404 };
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getPost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz' });
@@ -336,7 +337,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('getProfile tool', () => {
         test('should return profile as JSON', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getProfile');
 
             const result = await handler({ actor: 'alice.bsky.social' });
@@ -349,7 +350,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass actor to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getProfile');
 
             await handler({ actor: 'bob.bsky.social' });
@@ -361,7 +362,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getProfile as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Profile not found');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getProfile');
 
             const result = await handler({ actor: 'unknown.bsky.social' });
@@ -374,7 +375,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getProfile as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw null;
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getProfile');
 
             const result = await handler({ actor: 'unknown.bsky.social' });
@@ -386,7 +387,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('getAuthorFeed tool', () => {
         test('should return author feed items as JSON', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             const result = await handler({ actor: 'alice.bsky.social' });
@@ -400,7 +401,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass actor, limit, and cursor to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             await handler({ actor: 'alice.bsky.social', limit: 15, cursor: 'author-page' });
@@ -412,7 +413,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getAuthorFeed as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Actor not found');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             const result = await handler({ actor: 'ghost.bsky.social' });
@@ -425,7 +426,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getAuthorFeed as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw undefined;
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             const result = await handler({ actor: 'ghost.bsky.social' });
@@ -440,7 +441,7 @@ describe.concurrent('createBskyMCPServer', () => {
             // getPost returns post with no viewer.like
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => mockPost());
 
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
@@ -452,7 +453,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should pass uri and cid to client when not already liked', async () => {
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => mockPost());
 
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             await handler({ uri: 'at://did:plc:xyz/app.bsky.feed.post/abc', cid: 'bafyreid123' });
@@ -465,7 +466,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 mockPost({ viewer: { like: 'at://did:plc:abc123/app.bsky.feed.like/existinglike' } })
             );
 
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
@@ -479,7 +480,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 mockPost({ viewer: { like: 'at://like/uri' } })
             );
 
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
@@ -491,7 +492,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Rate limited');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
@@ -505,7 +506,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.likePost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Like failed');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
@@ -518,7 +519,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'not allowed';
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'likePost');
 
             const result = await handler({ uri: 'at://did:plc:abc123/app.bsky.feed.post/xyz', cid: 'bafyreiabc' });
@@ -571,7 +572,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 cursor: 'cursor-abc',
             }));
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({});
@@ -587,7 +588,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should call processFeedItems with feedName and items', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getFeed');
 
             await handler({});
@@ -600,7 +601,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should include all items when includeProcessed is true', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({ includeProcessed: true });
@@ -615,7 +616,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should return newCount and totalFetched metadata', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({});
@@ -630,7 +631,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should handle empty checkpoint (first fetch)', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getFeed');
 
             const result = await handler({});
@@ -645,7 +646,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should use "for-you" as default feed name', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getFeed');
 
             await handler({});
@@ -675,7 +676,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 cursor:        'notif-cursor',
             }));
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
 
             const result = await handler({});
@@ -691,7 +692,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should call updateNotificationsSeen', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
 
             await handler({});
@@ -712,7 +713,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 cursor:        undefined,
             }));
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
 
             await handler({});
@@ -733,7 +734,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 cursor:        undefined,
             }));
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
 
             await handler({});
@@ -745,7 +746,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should include all notifications when includeProcessed is true', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
 
             const result = await handler({ includeProcessed: true });
@@ -762,7 +763,7 @@ describe.concurrent('createBskyMCPServer', () => {
             const notifications         = [mockNotification({ uri: 'at://only/notif' })];
             (mockClient.getNotifications as ReturnType<typeof mock>).mockResolvedValueOnce({ notifications, cursor: undefined });
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
             await handler({});
 
@@ -786,7 +787,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 cursor:        undefined,
             });
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getNotifications');
             await handler({});
 
@@ -814,7 +815,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 cursor: 'author-cursor',
             }));
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             const result = await handler({ actor: 'alice.bsky.social' });
@@ -830,7 +831,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should use resolved DID as feed name for checkpoint', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             await handler({ actor: 'alice.bsky.social' });
@@ -845,7 +846,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should include all items when includeProcessed is true', async () => {
             const mockCheckpointManager = createMockCheckpointManager();
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getAuthorFeed');
 
             const result = await handler({ actor: 'alice.bsky.social', includeProcessed: true });
@@ -864,7 +865,7 @@ describe.concurrent('createBskyMCPServer', () => {
             const items = [mockFeedItem({ post: mockPost({ uri: 'at://only/uri' }) })];
             (mockClient.getAuthorFeed as ReturnType<typeof mock>).mockResolvedValueOnce({ items, cursor: undefined });
 
-            const server  = createBskyMCPServer(mockClient, mockCheckpointManager as unknown as BskyCheckpointManager);
+            const server  = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
             const handler = getToolHandler(server, 'getAuthorFeed');
             await handler({ actor: 'alice.bsky.social' });
 
@@ -878,7 +879,7 @@ describe.concurrent('createBskyMCPServer', () => {
     describe('toggleFollow tool', () => {
         test('should return "Followed" message when client returns followed: true', async () => {
             (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ followed: boolean }> => ({ followed: true }));
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'toggleFollow');
 
             const result = await handler({ actor: 'alice.bsky.social' });
@@ -889,7 +890,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
         test('should return "Unfollowed" message when client returns followed: false', async () => {
             (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ followed: boolean }> => ({ followed: false }));
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'toggleFollow');
 
             const result = await handler({ actor: 'bob.bsky.social' });
@@ -899,7 +900,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should include actor handle in success message', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'toggleFollow');
 
             await handler({ actor: 'carol.bsky.social' });
@@ -911,7 +912,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Rate limited');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'toggleFollow');
 
             const result = await handler({ actor: 'alice.bsky.social' });
@@ -924,7 +925,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'forbidden';
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'toggleFollow');
 
             const result = await handler({ actor: 'alice.bsky.social' });
@@ -936,7 +937,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('sendPost tool', () => {
         test('should return success message with URI', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'sendPost');
 
             const result = await handler({ text: 'Hello from Isambard!' });
@@ -946,7 +947,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass text to client', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'sendPost');
 
             await handler({ text: 'My new post content' });
@@ -954,11 +955,40 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(mockClient.sendPost).toHaveBeenCalledWith('My new post content');
         });
 
+        test('should call rateLimiter.increment() after successful send', async () => {
+            const mockRateLimiter = {
+                isAtLimit:       mock(() => false),
+                increment:       mock(() => { /* intentionally empty */ }),
+                tokensRemaining: mock(() => 23),
+            };
+            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const handler = getToolHandler(server, 'sendPost');
+
+            await handler({ text: 'Hello!' });
+
+            expect(mockRateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test('should append rate limit warning when at limit', async () => {
+            const mockRateLimiter = {
+                isAtLimit:       mock(() => true),
+                increment:       mock(() => { /* intentionally empty */ }),
+                tokensRemaining: mock(() => 0),
+            };
+            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const handler = getToolHandler(server, 'sendPost');
+
+            const result = await handler({ text: 'Hello!' });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Post sent successfully: at://did:plc:abc123/app.bsky.feed.post/newpost Warning: send rate limit reached (0 tokens remaining).');
+        });
+
         test('should return error result on client failure', async () => {
             (mockClient.sendPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Rate limited');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'sendPost');
 
             const result = await handler({ text: 'Hello!' });
@@ -971,7 +1001,7 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.sendPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'network failure';
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'sendPost');
 
             const result = await handler({ text: 'Hello!' });
@@ -982,8 +1012,8 @@ describe.concurrent('createBskyMCPServer', () => {
     });
 
     describe('replyToPost tool', () => {
-        test('should return success message with URI', async () => {
-            const server  = createBskyMCPServer(mockClient);
+        test('should send immediately when no allowlist provided (permissive default)', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -996,8 +1026,21 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toBe('Reply sent successfully: at://did:plc:abc123/app.bsky.feed.post/newreply');
         });
 
-        test('should pass all args to client and default rootUri/rootCid to parent values', async () => {
-            const server  = createBskyMCPServer(mockClient);
+        test('should fetch parent post to determine author', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'My reply!',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(mockClient.getPost).toHaveBeenCalledWith('at://did:plc:abc123/app.bsky.feed.post/parent');
+        });
+
+        test('should pass all args to client when no allowlist', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -1016,7 +1059,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass explicit rootUri and rootCid when provided', async () => {
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -1036,11 +1079,167 @@ describe.concurrent('createBskyMCPServer', () => {
             );
         });
 
-        test('should return error result on client failure', async () => {
-            (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async () => {
+        test('should send immediately when target is on allowlist (by handle)', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => true) };
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'Allowlisted reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply sent successfully: at://did:plc:abc123/app.bsky.feed.post/newreply');
+            expect(mockClient.replyToPost).toHaveBeenCalledTimes(1);
+        });
+
+        test('should check allowlist by handle then DID', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockApproval = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Not allowlisted',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            // isAllowed called with handle first, then DID
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('alice.bsky.social');
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('did:plc:abc123');
+        });
+
+        test('should request approval when target is not on allowlist', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'Reply needing approval',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply to alice.bsky.social requires approval. Approval request sent to admin.');
+            expect(mockApproval).toHaveBeenCalledWith(
+                'Reply needing approval',
+                'alice.bsky.social',
+                'at://did:plc:abc123/app.bsky.feed.post/parent',
+                'bafyreiparent',
+                undefined,
+                undefined
+            );
+            expect(mockClient.replyToPost).not.toHaveBeenCalled();
+        });
+
+        test('should pass rootUri and rootCid to approval request when provided', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Nested reply needing approval',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/root',
+                rootCid:   'bafyreiroot',
+            });
+
+            expect(mockApproval).toHaveBeenCalledWith(
+                'Nested reply needing approval',
+                'alice.bsky.social',
+                'at://did:plc:abc123/app.bsky.feed.post/parent',
+                'bafyreiparent',
+                'at://did:plc:abc123/app.bsky.feed.post/root',
+                'bafyreiroot'
+            );
+        });
+
+        test('should return informational message when no allowlist and no approval handler but target would need approval', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'Blocked reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply to alice.bsky.social requires approval but no approval handler is configured.');
+            expect(mockClient.replyToPost).not.toHaveBeenCalled();
+        });
+
+        test('should still return approval message when approval callback throws', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockApproval  = mock(async (): Promise<void> => {
+                throw new Error('Discord unavailable');
+            });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'Reply needing approval',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            // Error is swallowed, tool still returns the approval-pending message
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply to alice.bsky.social requires approval. Approval request sent to admin.');
+        });
+
+        test('should call rateLimiter.increment() after allowlisted send', async () => {
+            const mockAllowlist   = { isAllowed: mock((_actor: string) => true) };
+            const mockRateLimiter = {
+                isAtLimit:       mock(() => false),
+                increment:       mock(() => { /* intentionally empty */ }),
+                tokensRemaining: mock(() => 22),
+            };
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Allowlisted reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(mockRateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test('should append rate limit warning when at limit after allowlisted send', async () => {
+            const mockAllowlist   = { isAllowed: mock((_actor: string) => true) };
+            const mockRateLimiter = {
+                isAtLimit:       mock(() => true),
+                increment:       mock(() => { /* intentionally empty */ }),
+                tokensRemaining: mock(() => 0),
+            };
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'Allowlisted reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply sent successfully: at://did:plc:abc123/app.bsky.feed.post/newreply Warning: send rate limit reached (0 tokens remaining).');
+        });
+
+        test('should return error result on getPost failure', async () => {
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Post not found');
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1053,11 +1252,28 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toBe('Error: Post not found');
         });
 
-        test('should handle non-Error rejection', async () => {
+        test('should return error result on replyToPost failure', async () => {
+            (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Reply failed');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'My reply!',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Reply failed');
+        });
+
+        test('should handle non-Error rejection from replyToPost', async () => {
             (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'auth failure';
             });
-            const server  = createBskyMCPServer(mockClient);
+            const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({

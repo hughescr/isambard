@@ -120,10 +120,10 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
     );
 
     const bskyMcpServer = options.bskyClient
-        ? createBskyMCPServer(
-            options.bskyClient,
-            new BskyCheckpointManager({ backend: options.memoryBackend })
-        )
+        ? createBskyMCPServer({
+            client:            options.bskyClient,
+            checkpointManager: new BskyCheckpointManager({ backend: options.memoryBackend }),
+        })
         : undefined;
 
     return {
