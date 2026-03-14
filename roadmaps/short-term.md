@@ -1,11 +1,16 @@
 # Short-Term Roadmap
 
-## Completed: Bluesky Integration (Read-Only + Like)
+## Completed: Bluesky Integration (Full Read/Write/DM)
 - ✅ AT Protocol client library (`@atproto/api`) integration
 - ✅ Read timeline, feeds, and notifications
 - ✅ Search posts and profiles
-- ✅ Like posts, follow/unfollow users
-- ✅ MCP tools: `getFeed`, `getAuthorFeed`, `searchPosts`, `getPost`, `getProfile`, `getNotifications`, `likePost`, `toggleFollow`
+- ✅ Like posts
+- ✅ Idempotent `follow` and `unfollow` (split from `toggleFollow`)
+- ✅ Write capabilities: `sendPost`, `replyToPost` with allowlist-gated Discord approval workflow
+- ✅ DM support: `listConversations`, `getDirectMessages`, `sendDirectMessage` with approval
+- ✅ Safety rails: fail-closed guard, DID resolution, self-reply bypass
+- ✅ Grapheme-based text validation (`validatePostText`, `validateDMText`)
+- ✅ 14 MCP tools: `getFeed`, `getNotifications`, `searchPosts`, `getPost`, `getProfile`, `getAuthorFeed`, `likePost`, `follow`, `unfollow`, `sendPost`, `replyToPost`, `listConversations`, `getDirectMessages`, `sendDirectMessage`
 - ✅ Config via SST secrets (`BskyHandle`, `BskyAppPassword`)
 - ✅ 100% mutation score
 

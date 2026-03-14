@@ -19,7 +19,8 @@ Izzy has also been taught an important lesson: if they ever want to exceed free-
 - **Message History** - Search and cache Discord message history for context
 - **Time Awareness** - Temporal context injection and relative time formatting
 - **Email Integration** - Inbox reading and outbound email via WildDuck HTTP API with SSE push notifications and admin approval workflow
-- **Self-Improvement** - Proposes enhancements via PRs (requires human approval)
+- **Bluesky Integration** - AT Protocol client for feeds, posts, DMs, and social graph with Discord-based approval workflow
+- **Self-Improvement** - Designed to propose enhancements via PRs (requires human approval)
 
 ### Planned Integrations (Not Yet Implemented)
 - Apple Calendar (CalDAV)
@@ -102,6 +103,12 @@ Isambard uses OAuth authentication via Claude Max subscription:
    bunx sst secret set AdminDiscordUserId <admin-discord-user-id>
    bunx sst secret set AdminDiscordChannelId <admin-discord-channel-id>
    bunx sst secret set WildDuckApiUrl <wildduck-api-url>
+   ```
+
+   **Bluesky integration secrets (active):**
+   ```bash
+   bunx sst secret set BskyHandle <handle>
+   bunx sst secret set BskyAppPassword <app-password>
    ```
 
    **Planned integrations (not yet implemented - secrets commented out in `sst/secrets.ts`):**
@@ -201,6 +208,7 @@ src/
 │   ├── memory-mcp-server.ts            # MCP server: memory tools (view, store, search, list)
 │   ├── discord-mcp-server.ts           # MCP server: Discord message history
 │   ├── email-mcp-server.ts             # MCP server: email operations
+│   ├── bsky-mcp-server.ts             # MCP server: Bluesky operations (14 tools)
 │   ├── inbox-mcp-server.ts             # MCP server: Discord inbox operations
 │   ├── text-generator.ts               # Lightweight LLM text generation (Haiku)
 │   ├── claude-retry.ts                 # Retry logic for Claude API calls
@@ -255,6 +263,7 @@ src/
 │   │   │   ├── coordinator-setup.ts       # MessageCoordinator wiring with agent + Discord→agent boundary mapping
 │   │   │   ├── event-handler-setup.ts     # Channel registry init, message processing, cleanup handlers
 │   │   │   ├── email-setup.ts             # Email MCP server init and WildDuck SSE listener lifecycle
+│   │   │   ├── bsky-setup.ts                # Bluesky integration setup and approval callbacks
 │   │   │   └── presence-stream-handler.ts # Shared stream event handler for presence updates
 │   │   ├── state/                   # Bot operational state machine
 │   │   │   ├── types.ts                  # OperationalMode, ActivityPhase, BotState, BotStateManager interface
@@ -298,21 +307,32 @@ src/
 │   │       ├── converter.ts         # HEIC/HEIF to PNG conversion
 │   │       ├── fetcher.ts           # Fetches image attachments from Discord URLs
 │   │       └── formatting.ts        # Byte formatting and attachment info appending
-│   └── email/                       # Email integration (WildDuck HTTP API + SSE)
-│       ├── types.ts                     # Email types (EmailFolder, WildDuckMessage, SearchCriteria)
-│       ├── errors.ts                    # Email error hierarchy
-│       ├── wildduck-client.ts           # WildDuck HTTP API client (search, flags, drafts, send)
-│       ├── wildduck-listener.ts         # WildDuck SSE listener with poll fallback
-│       ├── email-processor.ts           # Email processing pipeline
-│       ├── outbound-approval-handler.ts # Admin approval workflow for outbound email
-│       ├── allowlist.ts                 # Recipient allowlist management
-│       ├── allowlist-commands.ts        # Discord slash commands for allowlist management
-│       ├── auth-checker.ts              # Authorization checking for outbound email
-│       ├── send-rate-limiter.ts         # Token bucket rate limiter (capacity=24, refill=1/hr)
-│       ├── classifier.ts                # Email classification
-│       ├── classifier-prompt.ts         # LLM prompt for email classification
-│       ├── review-embed-builder.ts      # Discord embed builder for approval review
-│       └── review-handler.ts            # Handles admin approval/rejection responses
+│   ├── email/                       # Email integration (WildDuck HTTP API + SSE)
+│   │   ├── types.ts                     # Email types (EmailFolder, WildDuckMessage, SearchCriteria)
+│   │   ├── errors.ts                    # Email error hierarchy
+│   │   ├── wildduck-client.ts           # WildDuck HTTP API client (search, flags, drafts, send)
+│   │   ├── wildduck-listener.ts         # WildDuck SSE listener with poll fallback
+│   │   ├── email-processor.ts           # Email processing pipeline
+│   │   ├── outbound-approval-handler.ts # Admin approval workflow for outbound email
+│   │   ├── allowlist.ts                 # Recipient allowlist management
+│   │   ├── allowlist-commands.ts        # Discord slash commands for allowlist management
+│   │   ├── auth-checker.ts              # Authorization checking for outbound email
+│   │   ├── send-rate-limiter.ts         # Token bucket rate limiter (capacity=24, refill=1/hr)
+│   │   ├── classifier.ts                # Email classification
+│   │   ├── classifier-prompt.ts         # LLM prompt for email classification
+│   │   ├── review-embed-builder.ts      # Discord embed builder for approval review
+│   │   └── review-handler.ts            # Handles admin approval/rejection responses
+│   └── bsky/                          # Bluesky AT Protocol integration
+│       ├── types.ts                     # Domain types (BskyPost, BskyNotification, BskyConversation, etc.)
+│       ├── errors.ts                    # Error hierarchy (BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError)
+│       ├── client.ts                    # BlueskyClient: feeds, posts, DMs, follow/unfollow, validation
+│       ├── allowlist.ts                 # Recipient allowlist for outbound posts and DMs
+│       ├── review-embed-builder.ts      # Discord embed builder for reply/DM approval requests
+│       ├── outbound-approval-handler.ts # Discord approval workflow for outbound replies and DMs
+│       └── checkpoint/                  # Notification checkpoint tracking
+│           ├── types.ts                 # Checkpoint types
+│           ├── checkpoint-manager.ts    # Checkpoint persistence
+│           └── uri-sanitizer.ts         # AT URI sanitization
 ├── storage/                         # DynamoDB data access layer
 │   ├── client.ts                    # DynamoDB client factory
 │   ├── dynamo-retry.ts              # Retry logic for DynamoDB operations

@@ -8,7 +8,8 @@
 
 ## Write Capabilities
 After read-only integrations are stable:
-- Bluesky posting, reposting, and replying (AT Protocol — read-only + like already done)
+- ✅ Bluesky posting and replying (AT Protocol — full read/write/DM integration complete)
+- ✅ Bluesky DM support (listConversations, getDirectMessages, sendDirectMessage with approval)
 - Calendar event creation (CalDAV write)
 - Box Documents (box-node-sdk)
 

@@ -44,6 +44,17 @@ classDiagram
 
     PresenceError <|-- StatusGenerationError
 
+    IsambardError <|-- EmailError
+    EmailError <|-- ClassifierError
+    EmailError <|-- EmailProcessingError
+    EmailError <|-- WildDuckError
+    WildDuckError <|-- WildDuckAuthError
+
+    IsambardError <|-- BskyError
+    BskyError <|-- BskyAuthError
+    BskyError <|-- BskyRateLimitError
+    BskyError <|-- BskyValidationError
+
     class IsambardError {
         +code: ErrorCode
         +context?: Record~string, unknown~
@@ -78,6 +89,21 @@ classDiagram
         +code: ErrorCode
         +context?: Record~string, unknown~
     }
+
+    class EmailError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
+
+    class WildDuckError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
+
+    class BskyError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
 ```
 
 ## When to Create vs Reuse Errors
@@ -99,7 +125,9 @@ classDiagram
    - Memory operations → extend `MemoryToolError`
    - Discord operations → extend `DiscordError`
    - Channel operations → extend `ChannelRegistryError`
-2. **Use intermediate base classes** for logical groupings (e.g., `ReconciliationError` under `MemoryToolError`)
+   - Email operations → extend `EmailError`
+   - Bluesky operations → extend `BskyError`
+2. **Use intermediate base classes** for logical groupings (e.g., `ReconciliationError` under `MemoryToolError`, `WildDuckError` under `EmailError`)
 3. **Preserve the hierarchy** to enable broad catch blocks when appropriate
 
 ## Naming Conventions
