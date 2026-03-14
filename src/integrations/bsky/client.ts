@@ -1,7 +1,7 @@
-import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost } from '@atproto/api';
+import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost, ChatBskyConvoDefs, type ChatBskyActorDefs } from '@atproto/api';
 import { logger } from '@hughescr/logger';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
-import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState } from '@/integrations/bsky/types';
+import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
 
 // HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
 // Stryker disable ObjectLiteral,StringLiteral: HTTP status code constants are configuration
@@ -38,6 +38,8 @@ const FOR_YOU_FEED_URI  = 'at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.g
 
 // Stryker disable next-line ArithmeticOperator: Bluesky character limit is a fixed protocol constant
 const BSKY_MAX_GRAPHEME_LENGTH = 300;
+// Stryker disable next-line ArithmeticOperator: Bluesky DM character limit is a fixed protocol constant
+const BSKY_DM_MAX_GRAPHEME_LENGTH = 1000;
 
 export interface BlueskyClientOptions {
     handle:      string
@@ -243,17 +245,58 @@ export class BlueskyClient {
     }
 
     /**
+     * Validate that post text is within the Bluesky post character limit (300 graphemes).
+     * Creates RichText and detects facets (mentions, links, tags).
+     * Throws BskyValidationError if the text is too long.
+     */
+    async validatePostText(text: string): Promise<void> {
+        await this.buildValidatedRichText(text);
+    }
+
+    /**
+     * Validate that DM text is within the Bluesky DM character limit (1000 graphemes).
+     * Creates RichText and detects facets (mentions, links, tags).
+     * Throws BskyValidationError if the text is too long.
+     */
+    async validateDMText(text: string): Promise<void> {
+        await this.buildValidatedDMRichText(text);
+    }
+
+    /**
+     * Build a validated RichText instance for posting.
+     * Detects facets and validates grapheme length against the post limit.
+     */
+    private async buildValidatedRichText(text: string): Promise<RichText> {
+        const rt = new RichText({ text });
+        await rt.detectFacets(this.agent);
+        if(rt.graphemeLength > BSKY_MAX_GRAPHEME_LENGTH) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw new BskyValidationError(`Post exceeds ${BSKY_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
+        }
+        return rt;
+    }
+
+    /**
+     * Build a validated RichText instance for direct messages.
+     * Detects facets and validates grapheme length against the DM limit.
+     */
+    private async buildValidatedDMRichText(text: string): Promise<RichText> {
+        const rt = new RichText({ text });
+        await rt.detectFacets(this.agent);
+        if(rt.graphemeLength > BSKY_DM_MAX_GRAPHEME_LENGTH) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw new BskyValidationError(`DM exceeds ${BSKY_DM_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
+        }
+        return rt;
+    }
+
+    /**
      * Send a new post to Bluesky.
      * Detects RichText facets (mentions, links, tags) and validates grapheme length.
      */
     async sendPost(text: string): Promise<{ uri: string, cid: string }> {
         try {
-            const rt = new RichText({ text });
-            await rt.detectFacets(this.agent);
-            if(rt.graphemeLength > BSKY_MAX_GRAPHEME_LENGTH) {
-                // Stryker disable next-line StringLiteral: error message is informational only
-                throw new BskyValidationError(`Post exceeds ${BSKY_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
-            }
+            const rt       = await this.buildValidatedRichText(text);
             const response = await this.agent.post({ text: rt.text, facets: rt.facets });
             return { uri: response.uri, cid: response.cid };
         } catch (err: unknown) {
@@ -278,15 +321,10 @@ export class BlueskyClient {
         rootCid?:    string
     ): Promise<{ uri: string, cid: string }> {
         try {
-            const rt = new RichText({ text });
-            await rt.detectFacets(this.agent);
-            if(rt.graphemeLength > BSKY_MAX_GRAPHEME_LENGTH) {
-                // Stryker disable next-line StringLiteral: error message is informational only
-                throw new BskyValidationError(`Post exceeds ${BSKY_MAX_GRAPHEME_LENGTH} graphemes (${rt.graphemeLength})`, { graphemeLength: rt.graphemeLength });
-            }
+            const rt            = await this.buildValidatedRichText(text);
             const actualRootUri = rootUri ?? parentUri;
             const actualRootCid = rootCid ?? parentCid;
-            const response = await this.agent.post({
+            const response      = await this.agent.post({
                 text:   rt.text,
                 facets: rt.facets,
                 reply:  {
@@ -305,27 +343,135 @@ export class BlueskyClient {
     }
 
     /**
-     * Toggle follow state for a user by DID or handle.
-     * If currently following, unfollows; otherwise follows.
-     * Returns { followed: true } when a follow was created, { followed: false } when unfollowed.
+     * Follow a user by DID or handle.
+     * Returns { alreadyFollowing: true } if already following (no-op).
+     * Returns { alreadyFollowing: false } when a new follow was created.
      */
-    async toggleFollow(actor: string): Promise<{ followed: boolean }> {
+    async follow(actor: string): Promise<{ alreadyFollowing: boolean }> {
         try {
             const response  = await this.agent.getProfile({ actor });
             const followUri = response.data.viewer?.following;
 
             if(followUri) {
-                // Currently following → unfollow
-                await this.agent.deleteFollow(followUri);
-                return { followed: false };
+                return { alreadyFollowing: true };
             }
 
-            // Not following → follow
             await this.agent.follow(response.data.did);
-            return { followed: true };
+            return { alreadyFollowing: false };
         } catch (err: unknown) {
             // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to toggle follow');
+            throw this.mapError(err, 'Failed to follow user');
+        }
+    }
+
+    /**
+     * Unfollow a user by DID or handle.
+     * Returns { wasFollowing: false } if not currently following (no-op).
+     * Returns { wasFollowing: true } when the follow was removed.
+     */
+    async unfollow(actor: string): Promise<{ wasFollowing: boolean }> {
+        try {
+            const response  = await this.agent.getProfile({ actor });
+            const followUri = response.data.viewer?.following;
+
+            if(!followUri) {
+                return { wasFollowing: false };
+            }
+
+            await this.agent.deleteFollow(followUri);
+            return { wasFollowing: true };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to unfollow user');
+        }
+    }
+
+    /**
+     * List conversations for the authenticated user.
+     */
+    async listConversations(
+        limit?:     number,
+        cursor?:    string,
+        readState?: string,
+        status?:    string
+    ): Promise<{ conversations: BskyConversation[], cursor?: string }> {
+        try {
+            const response = await this.agent.chat.bsky.convo.listConvos({ limit, cursor, readState, status });
+            return {
+                conversations: response.data.convos.map(convo => this.normalizeConversation(convo)),
+                cursor:        response.data.cursor,
+            };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to list conversations');
+        }
+    }
+
+    /**
+     * Get or create a conversation for a set of member DIDs.
+     */
+    async getConversationForMembers(memberDids: string[]): Promise<BskyConversation> {
+        try {
+            const response = await this.agent.chat.bsky.convo.getConvoForMembers({ members: memberDids });
+            return this.normalizeConversation(response.data.convo);
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to get conversation for members');
+        }
+    }
+
+    /**
+     * Get messages in a conversation, filtering out deleted messages.
+     */
+    async getMessages(
+        convoId: string,
+        limit?:  number,
+        cursor?: string
+    ): Promise<{ messages: BskyDirectMessage[], cursor?: string }> {
+        try {
+            const response = await this.agent.chat.bsky.convo.getMessages({ convoId, limit, cursor });
+            return {
+                messages: response.data.messages
+                    .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
+                    .map(msg => this.normalizeMessage(msg as ChatBskyConvoDefs.MessageView)),
+                cursor: response.data.cursor,
+            };
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to get messages');
+        }
+    }
+
+    /**
+     * Send a direct message to a conversation.
+     * Validates text length against the 1000-grapheme DM limit.
+     */
+    async sendDirectMessage(convoId: string, text: string): Promise<BskyDirectMessage> {
+        try {
+            const rt = await this.buildValidatedDMRichText(text);
+            const response = await this.agent.chat.bsky.convo.sendMessage({
+                convoId,
+                message: { text: rt.text, facets: rt.facets },
+            });
+            return this.normalizeMessage(response.data);
+        } catch (err: unknown) {
+            if(err instanceof BskyValidationError) {
+                throw err;
+            }
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to send direct message');
+        }
+    }
+
+    /**
+     * Mark a conversation as read.
+     */
+    async markConversationRead(convoId: string): Promise<void> {
+        try {
+            await this.agent.chat.bsky.convo.updateRead({ convoId });
+        } catch (err: unknown) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw this.mapError(err, 'Failed to mark conversation as read');
         }
     }
 
@@ -437,6 +583,46 @@ export class BlueskyClient {
             uri:       notification.uri,
             author:    this.normalizeProfileView(notification.author),
             indexedAt: notification.indexedAt,
+        };
+    }
+
+    private normalizeConversationMember(profile: ChatBskyActorDefs.ProfileViewBasic): BskyConversationMember {
+        return {
+            did:    profile.did,
+            handle: profile.handle,
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.displayName ? { displayName: profile.displayName } : {}),
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(profile.avatar ? { avatar: profile.avatar } : {}),
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional boolean field
+            ...(profile.chatDisabled === undefined ? {} : { chatDisabled: profile.chatDisabled }),
+        };
+    }
+
+    private normalizeMessage(msg: ChatBskyConvoDefs.MessageView): BskyDirectMessage {
+        return {
+            id:        msg.id,
+            rev:       msg.rev,
+            text:      msg.text,
+            senderDid: msg.sender.did,
+            sentAt:    msg.sentAt,
+        };
+    }
+
+    private normalizeConversation(convo: ChatBskyConvoDefs.ConvoView): BskyConversation {
+        return {
+            id:          convo.id,
+            rev:         convo.rev,
+            members:     convo.members.map(m => this.normalizeConversationMember(m)),
+            muted:       convo.muted,
+            unreadCount: convo.unreadCount,
+            // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+            ...(convo.status ? { status: convo.status } : {}),
+            // Only normalize lastMessage if it's a MessageView (not DeletedMessageView)
+            // Stryker disable next-line ConditionalExpression: ternary guards optional lastMessage normalization
+            ...(convo.lastMessage && ChatBskyConvoDefs.isMessageView(convo.lastMessage)
+                ? { lastMessage: this.normalizeMessage(convo.lastMessage) }
+                : {}),
         };
     }
 

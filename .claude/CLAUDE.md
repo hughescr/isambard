@@ -63,7 +63,7 @@ Isambard can propose improvements to its own code:
 ### Claude Agent Subsystem
 The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/agent.ts` - Claude agent with `handleInput()` method using `@anthropic-ai/claude-agent-sdk`
-- `src/agent/context-builder.ts` - Memory context loading (identity, user, events) and user message prefix assembly
+- `src/agent/context-builder.ts` - Memory context loading (identity, user, events), user message prefix assembly, and perch context (email inbox + Bluesky DM notifications)
 - `src/agent/memory-mcp-server.ts` - MCP server exposing memory tools (view, storeSelf, storeUserMemory, logEvent, search, list)
 - `src/agent/discord-mcp-server.ts` - MCP server for Discord message history (searchMessages, getRecentMessages, getMessageById)
 - `src/agent/text-generator.ts` - Lightweight LLM text generation via Haiku
@@ -86,7 +86,7 @@ The agent subsystem connects Discord to Claude with persistent memory:
   - `types.ts` - Question types (PendingQuestion, QuestionAnswer, QuestionOption, QuestionState)
   - `index.ts` - Public exports
 - `src/agent/email-mcp-server.ts` - MCP server for email operations (checkInbox, getEmailContent, archiveEmail, searchEmail, sendEmail, replyToEmail, deleteDraft, amendAndResubmitDraft)
-- `src/agent/bsky-mcp-server.ts` - MCP server for Bluesky operations (getFeed, getNotifications, searchPosts, getPost, getProfile, getAuthorFeed, likePost, toggleFollow)
+- `src/agent/bsky-mcp-server.ts` - MCP server for Bluesky operations (getFeed, getNotifications, searchPosts, getPost, getProfile, getAuthorFeed, likePost, follow, unfollow, sendPost, replyToPost, listConversations, getDirectMessages, sendDirectMessage)
 - `src/agent/inbox-mcp-server.ts` - MCP server for Discord inbox operations (getUnreadOverview, getChannelSummary, fetchMessages, markAsRead, markChannelRead)
 - `src/agent/event-summarizer.ts` - LLM-based event summarization for context compression
 - `src/agent/multimodal-message-builder.ts` - Builds multimodal messages with image support
@@ -130,6 +130,7 @@ The Discord integration provides bot functionality:
   - `coordinator-setup.ts` - Message coordinator integration with agent, attachment processing, boundary mapping (Discord→agent types)
   - `event-handler-setup.ts` - Channel registry initialization, message processing setup, channel cleanup handlers
   - `email-setup.ts` - Email MCP server initialization and WildDuck SSE listener lifecycle
+  - `bsky-setup.ts` - Bluesky integration setup: allowlist, rate limiter, reply and DM approval callbacks, outbound approval handler
 - `src/integrations/discord/index.ts` - Public exports
 
 ### Discord Attachments
@@ -216,10 +217,13 @@ WildDuck HTTP API for inbox reading with SSE push notifications, outbound sendin
 - `src/integrations/email/index.ts` - Public exports
 
 ### Bluesky Integration
-AT Protocol client for read-only feed access and liking:
-- `src/integrations/bsky/types.ts` - Domain types (BskyAuthor, BskyPost, BskyFeedItem, BskyNotification)
+AT Protocol client for feeds, posts, DMs, and social graph:
+- `src/integrations/bsky/types.ts` - Domain types (BskyAuthor, BskyPost, BskyFeedItem, BskyNotification, BskyConversation, BskyDirectMessage, BskyConversationMember)
 - `src/integrations/bsky/errors.ts` - Error hierarchy (BskyError, BskyAuthError, BskyRateLimitError)
-- `src/integrations/bsky/client.ts` - `BlueskyClient` class wrapping `AtpAgent` from `@atproto/api`
+- `src/integrations/bsky/client.ts` - `BlueskyClient` class wrapping `AtpAgent` from `@atproto/api` (feeds, posts, DMs, follow/unfollow, validation)
+- `src/integrations/bsky/allowlist.ts` - Recipient allowlist management for outbound posts and DMs
+- `src/integrations/bsky/review-embed-builder.ts` - Discord embed builder for reply and DM approval requests with type discriminator
+- `src/integrations/bsky/outbound-approval-handler.ts` - Discord button/modal approval workflow for outbound Bluesky replies and DMs (bsky-send-* and bsky-dm-* prefixes)
 - `src/integrations/bsky/index.ts` - Public exports
 
 ### Memory Tool Subsystem

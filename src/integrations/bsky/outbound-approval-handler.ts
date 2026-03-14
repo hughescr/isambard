@@ -13,15 +13,19 @@ export interface BskyOutboundApprovalHandlerDeps {
 }
 
 /**
- * Handles Discord button/modal interactions for outbound Bluesky reply approval workflow.
+ * Handles Discord button/modal interactions for outbound Bluesky reply and DM approval workflows.
  *
  * Supports button customIds:
  * - bsky-send-approve:{uuid}
  * - bsky-send-approveallowlist:{uuid}
  * - bsky-send-reject:{uuid}
+ * - bsky-dm-approve:{uuid}
+ * - bsky-dm-approveallowlist:{uuid}
+ * - bsky-dm-reject:{uuid}
  *
  * Supports modal customIds:
  * - bsky-send-reject-reason:{uuid}
+ * - bsky-dm-reject-reason:{uuid}
  *
  * **Authorization**: Delegated to Discord channel permissions on `adminDiscordChannelId`.
  * No in-code user ID check is needed because only admins have access to that channel.
@@ -41,7 +45,13 @@ export class BskyOutboundApprovalHandler {
         const prefix = parts[0];
         const uuid   = parts[1];
 
-        if(prefix !== 'bsky-send-approve' && prefix !== 'bsky-send-approveallowlist' && prefix !== 'bsky-send-reject') {
+        const knownPrefixes = new Set([
+            'bsky-send-approve', 'bsky-send-approveallowlist', 'bsky-send-reject',
+            'bsky-dm-approve',   'bsky-dm-approveallowlist',   'bsky-dm-reject',
+        ]);
+        // Stryker disable next-line StringLiteral: '' fallback is L-class — any non-Set string (incl. "Stryker was here!") causes the same early return
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- prefix from split()[0] is typed as string|undefined by tsconfig noUncheckedIndexedAccess
+        if(!knownPrefixes.has(prefix ?? '')) {
             return;
         }
 
@@ -51,20 +61,40 @@ export class BskyOutboundApprovalHandler {
 
         // Acknowledge the interaction immediately to avoid Discord's 3-second timeout.
         // Reject shows a modal instead — no defer before showModal.
-        // Stryker disable next-line ConditionalExpression: reject path uses showModal, not deferUpdate
-        const wasDeferred = prefix !== 'bsky-send-reject';
+        // Stryker disable next-line ConditionalExpression: reject paths use showModal, not deferUpdate
+        const wasDeferred = prefix !== 'bsky-send-reject' && prefix !== 'bsky-dm-reject';
         if(wasDeferred) {
             await interaction.deferUpdate();
         }
 
         // Stryker disable BlockStatement: try-catch wraps button handler - error handling
         try {
-            if(prefix === 'bsky-send-approve') {
-                await this.handleApprove(interaction);
-            } else if(prefix === 'bsky-send-approveallowlist') {
-                await this.handleApproveAllowlist(interaction);
-            } else {
-                await this.handleReject(interaction);
+            switch(prefix) {
+                case 'bsky-send-approve': {
+                    await this.handleApprove(interaction);
+                    break;
+                }
+                case 'bsky-send-approveallowlist': {
+                    await this.handleApproveAllowlist(interaction);
+                    break;
+                }
+                case 'bsky-send-reject': {
+                    await this.handleReject(interaction);
+                    break;
+                }
+                case 'bsky-dm-approve': {
+                    await this.handleDMApprove(interaction);
+                    break;
+                }
+                case 'bsky-dm-approveallowlist': {
+                    await this.handleDMApproveAllowlist(interaction);
+                    break;
+                }
+                case 'bsky-dm-reject': {
+                    await this.handleReject(interaction, 'bsky-dm-reject-reason', 'Reject Bluesky DM');
+                    break;
+                }
+                // No default needed — knownPrefixes guard ensures only known prefixes reach this switch
             }
         } catch (err) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -95,7 +125,7 @@ export class BskyOutboundApprovalHandler {
         const uuid   = parts[1];
 
         // Stryker disable next-line StringLiteral,ConditionalExpression: customId prefix check is configuration
-        if(prefix !== 'bsky-send-reject-reason') {
+        if(prefix !== 'bsky-send-reject-reason' && prefix !== 'bsky-dm-reject-reason') {
             return;
         }
 
@@ -211,13 +241,13 @@ export class BskyOutboundApprovalHandler {
         });
     }
 
-    private async handleReject(interaction: ButtonInteraction): Promise<void> {
+    private async handleReject(interaction: ButtonInteraction, modalPrefix = 'bsky-send-reject-reason', modalTitle = 'Reject Bluesky Reply'): Promise<void> {
         // Show a modal asking for rejection reason
         const modal = new ModalBuilder()
-            // Stryker disable next-line StringLiteral: customId is configuration
-            .setCustomId(`bsky-send-reject-reason:${interaction.customId.split(':')[1]}`)
+            // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+            .setCustomId(`${modalPrefix}:${interaction.customId.split(':')[1]}`)
             // Stryker disable next-line StringLiteral: Modal title is UI configuration
-            .setTitle('Reject Bluesky Reply');
+            .setTitle(modalTitle);
 
         const reasonInput = new TextInputBuilder()
             // Stryker disable next-line StringLiteral: field customId is configuration
@@ -233,5 +263,92 @@ export class BskyOutboundApprovalHandler {
         modal.addLabelComponents(reasonLabel);
 
         await interaction.showModal(modal);
+    }
+
+    private async handleDMApprove(interaction: ButtonInteraction): Promise<void> {
+        const embed  = interaction.message.embeds[0];
+        // Stryker disable next-line StringLiteral: '' fallback for null description is never exercised in tests — embed description is always present in practice
+        const text   = embed.description ?? '';
+        const fields = embed.fields;
+
+        const convoId = fields.find(f => f.name === 'Conversation ID')?.value;
+
+        if(!convoId) {
+            // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
+            throw new Error('Missing conversation ID in embed');
+        }
+
+        await this.client.sendDirectMessage(convoId, text);
+
+        const updatedEmbed = new EmbedBuilder()
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            .setTitle('DM Sent \u2713')
+            .setColor(GREEN);
+
+        await interaction.editReply({
+            embeds:     [updatedEmbed],
+            components: [],
+        });
+    }
+
+    private async handleDMApproveAllowlist(interaction: ButtonInteraction): Promise<void> {
+        const embed  = interaction.message.embeds[0];
+        // Stryker disable next-line StringLiteral: '' fallback for null description is never exercised in tests — embed description is always present in practice
+        const text   = embed.description ?? '';
+        const fields = embed.fields;
+
+        const convoId           = fields.find(f => f.name === 'Conversation ID')?.value;
+        // Stryker disable next-line ConditionalExpression: equivalent mutant — Recipients field is always first in the embed; find(f => true) returns the same field
+        const recipientsValue   = fields.find(f => f.name === 'Recipients')?.value;
+        let recipientHandles: string[] = [];
+        if(recipientsValue) {
+            // Stryker disable BlockStatement: try-catch guards JSON.parse from malformed embed fields
+            try {
+                recipientHandles = JSON.parse(recipientsValue) as string[];
+            } catch{
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ recipientsValue, msg: 'Failed to parse Recipients field from DM approval embed' });
+            }
+        }
+
+        if(!convoId) {
+            // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
+            throw new Error('Missing conversation ID in embed');
+        }
+
+        await this.client.sendDirectMessage(convoId, text);
+
+        // Add all recipient handles to allowlist (best-effort, concurrent)
+        const allowlistResults = await Promise.allSettled(
+            recipientHandles.map(async (handle) => {
+                const profile = await this.client.getProfile(handle);
+                await this.allowlist.addEntry({
+                    handle,
+                    did:     profile.did,
+                    // Stryker disable next-line StringLiteral: ISO timestamp format is convention
+                    addedAt: new Date().toISOString(),
+                    // Stryker disable next-line StringLiteral: addedBy value is configuration
+                    addedBy: 'outbound-approval',
+                });
+            })
+        );
+        // Stryker disable next-line ConditionalExpression: empty recipientHandles guard — .every() on [] returns true, which would misleadingly say "allowlisted"
+        const allowlistSuccess = recipientHandles.length > 0 && allowlistResults.every(r => r.status === 'fulfilled');
+        for(const result of allowlistResults) {
+            if(result.status === 'rejected') {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ err: result.reason, msg: 'Failed to add handle to bsky DM allowlist' });
+            }
+        }
+
+        const updatedEmbed = new EmbedBuilder()
+            // Stryker disable next-line ConditionalExpression,StringLiteral: UI label depends on allowlist write result
+            .setTitle(allowlistSuccess ? 'DM Sent \u2713 (handles allowlisted)' : 'DM Sent \u2713 (allowlist failed)')
+            .setColor(GREEN);
+
+        await interaction.editReply({
+            embeds:     [updatedEmbed],
+            components: [],
+        });
     }
 }

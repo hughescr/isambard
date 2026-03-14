@@ -30,12 +30,18 @@ export interface BskySetupResult {
     outboundApprovalHandler: BskyOutboundApprovalHandler
     /** sendApprovalRequest callback for MCP server integration */
     sendApprovalRequest: (
-        text:       string,
+        text:         string,
         targetHandle: string,
-        parentUri:  string,
-        parentCid:  string,
-        rootUri?:   string,
-        rootCid?:   string
+        parentUri:    string,
+        parentCid:    string,
+        rootUri?:     string,
+        rootCid?:     string
+    ) => Promise<void>
+    /** sendDMApprovalRequest callback for DM MCP server integration */
+    sendDMApprovalRequest: (
+        text:            string,
+        targetHandles:   string[],
+        convoId:         string
     ) => Promise<void>
 }
 
@@ -50,6 +56,7 @@ export interface BskySetupResult {
  * - BskyAllowlist (loaded from DynamoDB)
  * - SendRateLimiter (capacity=24, refill=1/hr)
  * - sendApprovalRequest callback (posts approval embed to admin channel, retries 3x)
+ * - sendDMApprovalRequest callback (posts DM approval embed to admin channel, retries 3x)
  * - BskyOutboundApprovalHandler for Discord button interactions
  *
  * @param options - Bsky setup options
@@ -87,6 +94,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         }
 
         const { embed, actionRow } = buildBskyApprovalEmbed({
+            type: 'reply',
             text,
             targetHandle,
             parentUri,
@@ -108,7 +116,34 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
-    // Create outbound approval handler (handles bsky-send-* button/modal interactions)
+    // Build sendDMApprovalRequest callback (posts DM approval embed to #admin channel)
+    // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
+    // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator: sendDMApprovalRequest callback is integration wiring
+    const sendDMApprovalRequest = async (
+        text:          string,
+        targetHandles: string[],
+        convoId:       string
+    ): Promise<void> => {
+        const { embed, actionRow } = buildBskyApprovalEmbed({
+            type:             'dm',
+            text,
+            targetHandle:     targetHandles[0] ?? '',
+            recipientHandles: targetHandles,
+            convoId,
+        });
+
+        await retryAsync(async () => {
+            const channel = await client.channels.fetch(adminDiscordChannelId);
+            if(channel && 'send' in channel) {
+                await channel.send({ embeds: [embed], components: [actionRow] });
+            } else {
+                throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
+            }
+        }, { policy: { maxAttempts: 3 } });
+    };
+    // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator
+
+    // Create outbound approval handler (handles bsky-send-* and bsky-dm-* button/modal interactions)
     // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({
         client: bskyClient,
@@ -124,5 +159,6 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         rateLimiter,
         outboundApprovalHandler,
         sendApprovalRequest,
+        sendDMApprovalRequest,
     };
 }

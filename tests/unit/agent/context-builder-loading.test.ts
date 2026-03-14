@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder } from '../../../src/agent/context-builder';
+import type { BlueskyClient } from '../../../src/integrations/bsky';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
 import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -3046,6 +3047,227 @@ describe('createContextBuilder loading methods', () => {
             const result = await contextBuilder.buildPerchContext();
 
             expect(result).not.toContain('CRITICAL');
+        });
+
+        // -------------------------------------------------------------------
+        // Bluesky DM section (bskyDMService DI)
+        // -------------------------------------------------------------------
+
+        test('should skip DM section when bskyDMService is not provided', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            // No bskyDMService passed
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Bluesky DMs');
+        });
+
+        test('should skip DM section when no unread conversations', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockBskyClient = {
+                listConversations: mock(async (): Promise<{ conversations: [], cursor: undefined }> => ({ conversations: [], cursor: undefined })),
+                ownHandle:         'izzy.bsky.social',
+            } as unknown as BlueskyClient;
+
+            const bskyDMService = { client: mockBskyClient };
+            const contextBuilder = createContextBuilder({ backend, bskyDMService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Bluesky DMs');
+        });
+
+        test('should include DM section with formatted unread counts', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockBskyClient = {
+                listConversations: mock(async () => ({
+                    conversations: [
+                        {
+                            id:      'convo1',
+                            rev:     '1',
+                            members: [
+                                { did: 'did:plc:izzy',  handle: 'izzy.bsky.social' },
+                                { did: 'did:plc:craig', handle: 'craig.rungie.com' },
+                            ],
+                            muted:       false,
+                            unreadCount: 1,
+                        },
+                        {
+                            id:      'convo2',
+                            rev:     '2',
+                            members: [
+                                { did: 'did:plc:izzy',  handle: 'izzy.bsky.social' },
+                                { did: 'did:plc:fred',  handle: 'fred.bsky.social' },
+                                { did: 'did:plc:craig', handle: 'craig.rungie.com' },
+                            ],
+                            muted:       false,
+                            unreadCount: 2,
+                        },
+                    ],
+                    cursor: undefined,
+                })),
+                ownHandle: 'izzy.bsky.social',
+            } as unknown as BlueskyClient;
+
+            const bskyDMService = { client: mockBskyClient };
+            const contextBuilder = createContextBuilder({ backend, bskyDMService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('## Bluesky DMs');
+            expect(result).toContain('You have 3 DMs');
+            expect(result).toContain('1 in the conversation with craig.rungie.com');
+            expect(result).toContain('2 in the conversation with fred.bsky.social, craig.rungie.com');
+        });
+
+        test('should paginate through all pages when listConversations returns a cursor', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const page1 = {
+                conversations: [
+                    {
+                        id:      'convo1',
+                        rev:     '1',
+                        members: [
+                            { did: 'did:plc:izzy',  handle: 'izzy.bsky.social' },
+                            { did: 'did:plc:alice', handle: 'alice.bsky.social' },
+                        ],
+                        muted:       false,
+                        unreadCount: 2,
+                    },
+                ],
+                cursor: 'page2cursor',
+            };
+            const page2 = {
+                conversations: [
+                    {
+                        id:      'convo2',
+                        rev:     '2',
+                        members: [
+                            { did: 'did:plc:izzy', handle: 'izzy.bsky.social' },
+                            { did: 'did:plc:bob',  handle: 'bob.bsky.social' },
+                        ],
+                        muted:       false,
+                        unreadCount: 3,
+                    },
+                ],
+                cursor: undefined,
+            };
+
+            let callCount = 0;
+            const mockBskyClient = {
+                listConversations: mock(async (_limit: unknown, cursor: string | undefined) => {
+                    callCount++;
+                    return cursor === undefined ? page1 : page2;
+                }),
+                ownHandle: 'izzy.bsky.social',
+            } as unknown as BlueskyClient;
+
+            const bskyDMService = { client: mockBskyClient };
+            const contextBuilder = createContextBuilder({ backend, bskyDMService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(callCount).toBe(2);
+            expect(result).toContain('## Bluesky DMs');
+            expect(result).toContain('You have 5 DMs');
+            expect(result).toContain('2 in the conversation with alice.bsky.social');
+            expect(result).toContain('3 in the conversation with bob.bsky.social');
+        });
+
+        test('should filter out own handle from member list', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockBskyClient = {
+                listConversations: mock(async () => ({
+                    conversations: [
+                        {
+                            id:      'convo1',
+                            rev:     '1',
+                            members: [
+                                { did: 'did:plc:izzy',  handle: 'izzy.bsky.social' },
+                                { did: 'did:plc:craig', handle: 'craig.rungie.com' },
+                            ],
+                            muted:       false,
+                            unreadCount: 3,
+                        },
+                    ],
+                    cursor: undefined,
+                })),
+                ownHandle: 'izzy.bsky.social',
+            } as unknown as BlueskyClient;
+
+            const bskyDMService = { client: mockBskyClient };
+            const contextBuilder = createContextBuilder({ backend, bskyDMService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('## Bluesky DMs');
+            // Own handle should not appear in the member list
+            expect(result).not.toContain('izzy.bsky.social');
+            expect(result).toContain('craig.rungie.com');
+        });
+
+        test('should skip DM section and log warning when listConversations throws', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockBskyClient = {
+                listConversations: mock(async () => {
+                    throw new Error('Bluesky API error');
+                }),
+                ownHandle: 'izzy.bsky.social',
+            } as unknown as BlueskyClient;
+
+            const bskyDMService = { client: mockBskyClient };
+            const contextBuilder = createContextBuilder({ backend, bskyDMService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).not.toContain('## Bluesky DMs');
+            expect(mockLogger.warn).toHaveBeenCalled();
+        });
+
+        test('should include DM section in buildPerchContext output when unread DMs exist', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockBskyClient = {
+                listConversations: mock(async () => ({
+                    conversations: [
+                        {
+                            id:      'convo1',
+                            rev:     '1',
+                            members: [
+                                { did: 'did:plc:izzy', handle: 'izzy.bsky.social' },
+                                { did: 'did:plc:user', handle: 'someone.bsky.social' },
+                            ],
+                            muted:       false,
+                            unreadCount: 5,
+                        },
+                    ],
+                    cursor: undefined,
+                })),
+                ownHandle: 'izzy.bsky.social',
+            } as unknown as BlueskyClient;
+
+            const bskyDMService = { client: mockBskyClient };
+            const contextBuilder = createContextBuilder({ backend, bskyDMService });
+            const result = await contextBuilder.buildPerchContext();
+
+            expect(result).toContain('## Bluesky DMs');
+            expect(result).toContain('You have 5 DMs');
+            expect(result).toContain('5 in the conversation with someone.bsky.social');
         });
     });
 });

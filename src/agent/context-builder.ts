@@ -7,6 +7,7 @@
 
 import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
+import type { BlueskyClient, BskyConversation } from '@/integrations/bsky';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
 
@@ -21,6 +22,11 @@ export interface WildDuckService {
 /** Combined email service dependency for perch inbox section */
 export interface EmailService {
     wildDuckClient: WildDuckService
+}
+
+/** Bluesky DM service dependency for perch/catch-up DM section */
+export interface BskyDMService {
+    client: BlueskyClient
 }
 
 export interface RecentEventsResult {
@@ -40,6 +46,7 @@ export interface ContextBuilderOptions {
     maxEventBatchSize?:     number              // Default: 10
     summarizeEventBatches?: SummarizeEventBatchesFn  // Optional DI for event summarization
     emailService?:          EmailService        // Optional email service for perch inbox section
+    bskyDMService?:         BskyDMService       // Optional Bluesky DM service for perch DM section
 }
 
 export interface ContextBuilder {
@@ -244,6 +251,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
     const maxEventBatchSize = options.maxEventBatchSize ?? DEFAULT_MAX_EVENT_BATCH_SIZE;
     const summarizeEventBatchesFn = options.summarizeEventBatches;
     const emailService = options.emailService;
+    const bskyDMService = options.bskyDMService;
 
     const maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
     const maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
@@ -397,6 +405,57 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         } catch (err) {
             // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
             logger.warn({ err, msg: 'Failed to load rejected draft context' });
+        }
+        // Stryker restore BlockStatement
+        return undefined;
+    };
+
+    /**
+     * Build the Bluesky DM section for perch context.
+     * Returns formatted DM section string, or undefined if no unread DMs or service unavailable.
+     */
+    const buildBskyDMSection = async (): Promise<string | undefined> => {
+        if(!bskyDMService) {
+            return undefined;
+        }
+
+        // Stryker disable BlockStatement: try-catch guards bsky DM errors from breaking perch context
+        try {
+            // Fetch all unread conversations (paginated)
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for allConvos
+            const allConvos: BskyConversation[] = [];
+            let cursor: string | undefined;
+            do {
+                // Stryker disable next-line StringLiteral: 'unread' readState filter is API configuration
+                // eslint-disable-next-line no-await-in-loop -- sequential: cursor depends on prior page result
+                const result = await bskyDMService.client.listConversations(undefined, cursor, 'unread');
+                allConvos.push(...result.conversations);
+                cursor = result.cursor;
+            } while(cursor);
+
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no conversations = no section
+            if(allConvos.length === 0) {
+                return undefined;
+            }
+
+            // Count total unread messages across all conversations
+            // Stryker disable next-line ArithmeticOperator: sum accumulator for unread count
+            const totalUnread = allConvos.reduce((sum, c) => sum + c.unreadCount, 0);
+
+            // Build per-conversation descriptions: "N in the conversation with handle1, handle2"
+            const convoDescriptions = allConvos.map((c) => {
+                const memberHandles = c.members
+                    .filter(m => m.handle !== bskyDMService.client.ownHandle)
+                    .map(m => m.handle)
+                    .join(', ');
+                return `${c.unreadCount} in the conversation with ${memberHandles}`;
+            });
+
+            // Stryker disable next-line StringLiteral: section header is cosmetic
+            return `## Bluesky DMs\nYou have ${totalUnread} DMs: ${convoDescriptions.join('; ')}`;
+        } catch (error) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ error, msg: 'Bluesky DM fetch failed, skipping DM section' });
         }
         // Stryker restore BlockStatement
         return undefined;
@@ -684,6 +743,12 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             const rejectedDraftsSection = await buildRejectedDraftSection();
             if(rejectedDraftsSection) {
                 sections.push(rejectedDraftsSection);
+            }
+
+            // 6. Bluesky DM summary (optional — skip if no bsky service configured)
+            const bskyDMSection = await buildBskyDMSection();
+            if(bskyDMSection) {
+                sections.push(bskyDMSection);
             }
 
             // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting

@@ -148,21 +148,25 @@ export async function createApp(): Promise<App> {
         ? { wildDuckClient: emailSetup.wildDuckClient }
         : undefined;
 
-    const contextLayer = createContextLayer(storage.memoryBackend, emailService);
+    // Build bsky DM service from bskyClient (if available and safety rails active)
+    const bskyDMService = bskyClient ? { client: bskyClient } : undefined;
+
+    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService);
     const mcpServers = createMCPServers({
-        memoryBackend:           storage.memoryBackend,
-        messageSearchService:    discordInfra.messageSearchService,
-        discordClient:           discordInfra.discordClient,
+        memoryBackend:             storage.memoryBackend,
+        messageSearchService:      discordInfra.messageSearchService,
+        discordClient:             discordInfra.discordClient,
         questionRegistry,
-        channelRegistry:         discordInfra.channelRegistry,
-        inboxManager:            discordInfra.inboxManager,
-        botStateManager:         discordInfra.botStateManager,
-        timezone:                resolveTimezone(),
-        recordAccess:            contextLayer.contextBuilder.recordAccess,
+        channelRegistry:           discordInfra.channelRegistry,
+        inboxManager:              discordInfra.inboxManager,
+        botStateManager:           discordInfra.botStateManager,
+        timezone:                  resolveTimezone(),
+        recordAccess:              contextLayer.contextBuilder.recordAccess,
         bskyClient,
-        bskyAllowlist:           bskySetup?.allowlist,
-        bskyRateLimiter:         bskySetup?.rateLimiter,
-        bskySendApprovalRequest: bskySetup?.sendApprovalRequest,
+        bskyAllowlist:             bskySetup?.allowlist,
+        bskyRateLimiter:           bskySetup?.rateLimiter,
+        bskySendApprovalRequest:   bskySetup?.sendApprovalRequest,
+        bskySendDMApprovalRequest: bskySetup?.sendDMApprovalRequest,
     });
 
     // Load plugins and create agent

@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
-import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyFeedItem } from '@/integrations/bsky';
+import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem } from '@/integrations/bsky';
 import type { SendRateLimiter } from '@/integrations/email';
 
 /** Shared pagination schema fields for feed tools that support checkpointing. */
@@ -60,10 +60,30 @@ export interface BskyMCPServerOptions {
     allowlist?:           BskyAllowlist
     sendApprovalRequest?: (text: string, targetHandle: string, parentUri: string, parentCid: string,
         rootUri?: string, rootCid?: string) => Promise<void>
+    sendDMApprovalRequest?: (text: string, targetHandles: string[], convoId: string) => Promise<void>
+}
+
+/** Transform a BskyConversation to strip DIDs and replace senderDid with senderHandle in lastMessage. */
+function transformConversation(convo: BskyConversation): object {
+    const didToHandle = new Map(convo.members.map(m => [m.did, m.handle]));
+    const members     = convo.members.map(m => ({
+        handle:       m.handle,
+        displayName:  m.displayName,
+        chatDisabled: m.chatDisabled,
+    }));
+
+    if(!convo.lastMessage) {
+        return { ...convo, members };
+    }
+
+    const { senderDid, ...msgRest } = convo.lastMessage;
+    const lastMessage = { ...msgRest, senderHandle: didToHandle.get(senderDid) ?? senderDid };
+
+    return { ...convo, members, lastMessage };
 }
 
 export function createBskyMCPServer(options: BskyMCPServerOptions) {
-    const { client, checkpointManager, rateLimiter, allowlist, sendApprovalRequest } = options;
+    const { client, checkpointManager, rateLimiter, allowlist, sendApprovalRequest, sendDMApprovalRequest } = options;
 
     function buildRateLimitWarning(): string {
         if(!rateLimiter?.isAtLimit()) {
@@ -271,23 +291,51 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
             ),
 
             tool(
-                'toggleFollow',
-                'Follow or unfollow a Bluesky user (toggles current state)',
+                'follow',
+                'Follow a Bluesky user',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID of the user to follow/unfollow"),
+                    actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const result = await client.toggleFollow(args.actor);
-                        const action = result.followed ? 'Followed' : 'Unfollowed';
-                        return mcpTextResult(`${action} ${args.actor} successfully`);
+                        const result = await client.follow(args.actor);
+                        if(result.alreadyFollowing) {
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`Already following ${args.actor}`);
+                        }
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                        return mcpTextResult(`Followed ${args.actor} successfully`);
                     } catch (error) {
                         return mcpErrorResult(error);
                     }
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Toggle Follow', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
+                { annotations: { title: 'Follow', readOnlyHint: false, destructiveHint: false, idempotentHint: true } }
+            ),
+
+            tool(
+                'unfollow',
+                'Unfollow a Bluesky user',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        const result = await client.unfollow(args.actor);
+                        if(!result.wasFollowing) {
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`Not following ${args.actor}`);
+                        }
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                        return mcpTextResult(`Unfollowed ${args.actor} successfully`);
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Unfollow', readOnlyHint: false, destructiveHint: true, idempotentHint: true } }
             ),
 
             tool(
@@ -374,6 +422,151 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Reply To Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
+            ),
+
+            tool(
+                'listConversations',
+                'List Bluesky direct message conversations',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    limit:     z.number().int().positive().optional().describe('Maximum number of conversations to return'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    cursor:    z.string().optional().describe('Pagination cursor from previous response'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    readState: z.string().optional().describe("Filter by read state: 'unread' for only unread conversations"),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    status:    z.string().optional().describe("Filter by status: 'request' or 'accepted'"),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        const result          = await client.listConversations(args.limit, args.cursor, args.readState, args.status);
+                        const conversations   = result.conversations.map(convo => transformConversation(convo));
+                        return mcpJsonResult({ conversations, cursor: result.cursor });
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'List Conversations', readOnlyHint: true, idempotentHint: true } }
+            ),
+
+            tool(
+                'getDirectMessages',
+                'Get direct messages with specific Bluesky users. Automatically marks the conversation as read.',
+                {
+                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .min(1) is Zod schema configuration
+                    recipients: z.array(z.string()).min(1).describe("Handles of the users (e.g., ['alice.bsky.social'])"),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    limit:      z.number().int().positive().optional().describe('Maximum number of messages to return'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    cursor:     z.string().optional().describe('Pagination cursor from previous response'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        // Resolve each handle → DID
+                        const resolvedRecipients = await Promise.all(
+                            args.recipients.map(async (handle: string) => {
+                                const profile = await client.getProfile(handle);
+                                return { did: profile.did, handle: profile.handle };
+                            })
+                        );
+                        const dids  = resolvedRecipients.map(r => r.did);
+                        const convo = await client.getConversationForMembers(dids);
+
+                        const result = await client.getMessages(convo.id, args.limit, args.cursor);
+
+                        // Auto-mark conversation as read (best-effort — don't fail the fetch on mark-read error)
+                        // Stryker disable BlockStatement: try-catch guards mark-read from breaking message fetch
+                        try {
+                            await client.markConversationRead(convo.id);
+                        } catch (markError) {
+                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                            logger.warn({ error: markError instanceof Error ? markError.message : String(markError), msg: 'Failed to mark conversation as read' });
+                        }
+
+                        // Build DID→handle map from conversation members
+                        const didToHandle = new Map(convo.members.map(m => [m.did, m.handle]));
+
+                        // Transform messages: replace senderDid with senderHandle
+                        const messages = result.messages.map((msg) => {
+                            const { senderDid, ...rest } = msg;
+                            return { ...rest, senderHandle: didToHandle.get(senderDid) ?? senderDid };
+                        });
+
+                        return mcpJsonResult({ messages, cursor: result.cursor });
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Get Direct Messages', readOnlyHint: false, idempotentHint: false } }
+            ),
+
+            tool(
+                'sendDirectMessage',
+                'Send a direct message to Bluesky users. If recipients are on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.',
+                {
+                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .min(1) is Zod schema configuration
+                    recipients: z.array(z.string()).min(1).describe("Handles of the recipients (e.g., ['alice.bsky.social'])"),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    text:       z.string().describe('The text content of the message'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    try {
+                        // Resolve each handle → profile
+                        const resolvedRecipients = await Promise.all(
+                            args.recipients.map(async (handle: string) => {
+                                const profile = await client.getProfile(handle);
+                                return { did: profile.did, handle: profile.handle };
+                            })
+                        );
+
+                        // Check if this is a self-DM (single recipient = own handle)
+                        // Stryker disable next-line OptionalChaining: defensive chaining — array guaranteed non-empty by .min(1) schema validation
+                        const isSelfDM = resolvedRecipients.length === 1 && resolvedRecipients[0]?.handle === client.ownHandle;
+
+                        // Check if all recipients are allowlisted (by handle or DID)
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-DM, no-allowlist, handle, and DID checks all needed
+                        const allAllowed = isSelfDM || !allowlist || resolvedRecipients.every(
+                            r => allowlist.isAllowed(r.handle) || allowlist.isAllowed(r.did)
+                        );
+
+                        const dids  = resolvedRecipients.map(r => r.did);
+                        const convo = await client.getConversationForMembers(dids);
+
+                        if(allAllowed) {
+                            // Allowlisted — send immediately
+                            await client.sendDirectMessage(convo.id, args.text);
+                            const rateLimitWarning = buildRateLimitWarning();
+                            rateLimiter?.increment();
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`DM sent successfully${rateLimitWarning}`);
+                        }
+
+                        // Not allowlisted — request admin approval
+                        if(sendDMApprovalRequest) {
+                            try {
+                                const allHandles = resolvedRecipients.map(r => r.handle);
+                                await sendDMApprovalRequest(args.text, allHandles, convo.id);
+                                // Stryker disable next-line StringLiteral: success message is informational only
+                                return mcpTextResult('DM requires approval. Approval request sent to admin.');
+                            } catch (error) {
+                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                                logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky DM approval request' });
+                                // Stryker disable next-line StringLiteral: error message is informational only
+                                return mcpErrorResult(new Error('DM requires approval but failed to send approval request to admin. Please try again later.'));
+                            }
+                        }
+
+                        // No approval callback — just inform
+                        // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
+                        return mcpTextResult('DM requires approval but no approval handler is configured.');
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Send Direct Message', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
         ],
     });

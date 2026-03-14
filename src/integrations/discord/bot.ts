@@ -344,8 +344,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
         client.on('interactionCreate', async (interaction) => {
             if(interaction.isButton()) {
-                // Route bsky-send-* buttons to bsky outbound approval handler
-                if(bskySetup && interaction.customId.startsWith('bsky-send-')) {
+                // Route bsky-send-* and bsky-dm-* buttons to bsky outbound approval handler
+                if(bskySetup && (interaction.customId.startsWith('bsky-send-') || interaction.customId.startsWith('bsky-dm-'))) {
                     await bskySetup.outboundApprovalHandler.handleButton(interaction);
                     return;
                 }
@@ -361,7 +361,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 }
                 await interactionHandler.handleButtonInteraction(interaction);
             } else if(interaction.isModalSubmit()) {
-                if(bskySetup && interaction.customId.startsWith('bsky-send-reject-reason:')) {
+                if(bskySetup && (interaction.customId.startsWith('bsky-send-reject-reason:') || interaction.customId.startsWith('bsky-dm-reject-reason:'))) {
                     await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
                 } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
                     await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);

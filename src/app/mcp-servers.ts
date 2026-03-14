@@ -84,6 +84,11 @@ export interface MCPServersOptions {
         rootUri?:     string,
         rootCid?:     string
     ) => Promise<void>
+
+    /**
+     * Optional callback to request admin approval for an outbound Bluesky DM.
+     */
+    bskySendDMApprovalRequest?: (text: string, targetHandles: string[], convoId: string) => Promise<void>
 }
 
 /**
@@ -144,11 +149,12 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
 
     const bskyMcpServer = options.bskyClient
         ? createBskyMCPServer({
-            client:              options.bskyClient,
-            checkpointManager:   new BskyCheckpointManager({ backend: options.memoryBackend }),
-            rateLimiter:         options.bskyRateLimiter,
-            allowlist:           options.bskyAllowlist,
-            sendApprovalRequest: options.bskySendApprovalRequest,
+            client:                options.bskyClient,
+            checkpointManager:     new BskyCheckpointManager({ backend: options.memoryBackend }),
+            rateLimiter:           options.bskyRateLimiter,
+            allowlist:             options.bskyAllowlist,
+            sendApprovalRequest:   options.bskySendApprovalRequest,
+            sendDMApprovalRequest: options.bskySendDMApprovalRequest,
         })
         : undefined;
 

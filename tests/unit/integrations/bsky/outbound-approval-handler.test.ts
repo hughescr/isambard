@@ -10,14 +10,20 @@ import { mockLogger } from '../../../setup';
 // Test constants
 // ---------------------------------------------------------------------------
 
-const TEST_UUID   = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
-const PARENT_URI  = 'at://did:plc:test/app.bsky.feed.post/parent123';
-const PARENT_CID  = 'bafyreparentcid';
-const ROOT_URI    = 'at://did:plc:test/app.bsky.feed.post/root456';
-const ROOT_CID    = 'bafyrerootcid';
-const TEST_HANDLE = 'someone.bsky.social';
-const TEST_DID    = 'did:plc:someoneabc';
-const POST_TEXT   = 'Hello @someone.bsky.social!';
+const TEST_UUID        = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+const PARENT_URI       = 'at://did:plc:test/app.bsky.feed.post/parent123';
+const PARENT_CID       = 'bafyreparentcid';
+const ROOT_URI         = 'at://did:plc:test/app.bsky.feed.post/root456';
+const ROOT_CID         = 'bafyrerootcid';
+const TEST_HANDLE      = 'someone.bsky.social';
+const TEST_DID         = 'did:plc:someoneabc';
+const POST_TEXT        = 'Hello @someone.bsky.social!';
+const DM_TEXT          = 'Hey, want to collaborate?';
+const DM_CONVO_ID      = 'convo-abc123';
+const DM_HANDLE_ALICE  = 'alice.bsky.social';
+const DM_HANDLE_BOB    = 'bob.bsky.social';
+const DM_DID_ALICE     = 'did:plc:aliceabc';
+const DM_DID_BOB       = 'did:plc:bobabc';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -94,10 +100,43 @@ function makeModalInteraction(customId: string, reason = 'Not appropriate'): {
     return { interaction, deferUpdate, editReply };
 }
 
+function makeDMButtonInteraction(customId: string, opts: {
+    text?:             string
+    recipientHandles?: string[]
+    convoId?:          string
+} = {}): {
+    interaction: ButtonInteraction
+    deferUpdate: ReturnType<typeof mock>
+    editReply:   ReturnType<typeof mock>
+    showModal:   ReturnType<typeof mock>
+} {
+    const deferUpdate = mock(async () => ({}));
+    const editReply   = mock(async () => ({}));
+    const showModal   = mock(async () => ({}));
+    const fields: { name: string, value: string, inline: boolean }[] = [
+        { name: 'Recipients',       value: JSON.stringify(opts.recipientHandles ?? [DM_HANDLE_ALICE]), inline: false },
+        { name: 'Conversation ID',  value: opts.convoId ?? DM_CONVO_ID,                               inline: true },
+    ];
+    const interaction = {
+        customId,
+        message: {
+            embeds: [{
+                description: opts.text ?? DM_TEXT,
+                fields,
+            }],
+        },
+        deferUpdate,
+        editReply,
+        showModal,
+    } as unknown as ButtonInteraction;
+    return { interaction, deferUpdate, editReply, showModal };
+}
+
 function makeDeps(overrides: Partial<BskyOutboundApprovalHandlerDeps> = {}): BskyOutboundApprovalHandlerDeps {
     const mockClient: BlueskyClient = {
-        replyToPost: mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://result/uri', cid: 'bafyreresult' })),
-        getProfile:  mock(async () => ({ did: TEST_DID, handle: TEST_HANDLE })),
+        replyToPost:       mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://result/uri', cid: 'bafyreresult' })),
+        getProfile:        mock(async () => ({ did: TEST_DID, handle: TEST_HANDLE })),
+        sendDirectMessage: mock(async (): Promise<{ id: string, rev: string, text: string, senderDid: string, sentAt: string }> => ({ id: 'msg-1', rev: 'rev-1', text: DM_TEXT, senderDid: 'did:plc:bot', sentAt: '2025-01-01T00:00:00Z' })),
     } as unknown as BlueskyClient;
 
     const mockAllowlist: BskyAllowlist = {
@@ -417,7 +456,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 expect(showModal).toHaveBeenCalledTimes(1);
                 const modalArg = showModal.mock.calls[0]?.[0] as { data: { custom_id: string } };
-                expect(modalArg.data?.custom_id).toContain(TEST_UUID);
+                expect(modalArg.data?.custom_id).toBe(`bsky-send-reject-reason:${TEST_UUID}`);
             });
 
             test('should set rejection reason text input as not required', async () => {
@@ -437,6 +476,18 @@ describe('BskyOutboundApprovalHandler', () => {
                 // The text input should be optional (not required)
                 const textInput = modalJson.components?.[0]?.component;
                 expect(textInput?.required).toBe(false);
+            });
+
+            test('should show modal with title "Reject Bluesky Reply" for bsky-send-reject', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, showModal } = makeButtonInteraction(`bsky-send-reject:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(showModal).toHaveBeenCalledTimes(1);
+                const modalArg = showModal.mock.calls[0]?.[0] as { data: { title: string } };
+                expect(modalArg.data?.title).toBe('Reject Bluesky Reply');
             });
         });
 
@@ -573,6 +624,419 @@ describe('BskyOutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             expect(mockLogger.error).toHaveBeenCalled();
+        });
+
+        test('should process bsky-dm-reject-reason modal and show rejection embed', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction, deferUpdate, editReply } = makeModalInteraction(`bsky-dm-reject-reason:${TEST_UUID}`, 'Not appropriate');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deferUpdate).toHaveBeenCalledTimes(1);
+            expect(editReply).toHaveBeenCalledTimes(1);
+            const replyArg = editReply.mock.calls[0]?.[0] as { embeds: unknown[], components: unknown[] };
+            expect(replyArg.embeds).toHaveLength(1);
+            expect(replyArg.components).toHaveLength(0);
+        });
+
+        test('should return early for bsky-dm-reject-reason when uuid is missing', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeModalInteraction('bsky-dm-reject-reason');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+        });
+    });
+
+    // ---------------------------------------------------------------------------
+    // DM button handlers
+    // ---------------------------------------------------------------------------
+
+    describe('handleButton() — DM flows', () => {
+        test('should return early for unknown prefix (dm path)', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeDMButtonInteraction('bsky-other:42');
+
+            await handler.handleButton(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+        });
+
+        describe('bsky-dm-approve', () => {
+            test('should deferUpdate, call sendDirectMessage, show success embed', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, deferUpdate, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(deferUpdate).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(editReply).toHaveBeenCalledTimes(1);
+            });
+
+            test('should call sendDirectMessage with convoId from embed and DM text', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`, {
+                    text:    DM_TEXT,
+                    convoId: DM_CONVO_ID,
+                });
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledWith(DM_CONVO_ID, DM_TEXT);
+            });
+
+            test('should show "DM Sent ✓" in embed title', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('DM Sent');
+            });
+
+            test('should clear buttons in success editReply', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: unknown[], components: unknown[] };
+                expect(replyArg.embeds).toHaveLength(1);
+                expect(replyArg.components).toHaveLength(0);
+            });
+
+            test('should throw if convoId is missing from embed', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const interaction = {
+                    customId: `bsky-dm-approve:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: DM_TEXT,
+                            fields:      [],  // no fields — no convoId
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.error).toHaveBeenCalled();
+            });
+
+            test('should NOT add to allowlist on plain DM approve', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('bsky-dm-approveallowlist', () => {
+            test('should deferUpdate, call sendDirectMessage, add recipients to allowlist, show success embed', async () => {
+                const deps    = makeDeps();
+                // Override getProfile to return the correct handle for each call
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, deferUpdate, editReply } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deferUpdate).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.client.getProfile).toHaveBeenCalledWith(DM_HANDLE_ALICE);
+                expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(1);
+                expect(editReply).toHaveBeenCalledTimes(1);
+            });
+
+            test('should add all recipients to allowlist when multiple handles', async () => {
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE })
+                    .mockResolvedValueOnce({ did: DM_DID_BOB, handle: DM_HANDLE_BOB });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE, DM_HANDLE_BOB] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(2);
+            });
+
+            test('should show "DM Sent ✓ (handles allowlisted)" in embed title on allowlist success', async () => {
+                const deps    = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE] }
+                );
+
+                await handler.handleButton(interaction);
+
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlisted');
+            });
+
+            test('should still complete DM when allowlist addEntry fails, shows "allowlist failed"', async () => {
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
+                (deps.allowlist.addEntry as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(mockLogger.warn).toHaveBeenCalled();
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
+            });
+
+            test('should still complete DM when getProfile fails for a recipient', async () => {
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockRejectedValue(new Error('profile fetch failed'));
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
+                expect(mockLogger.warn).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+            });
+
+            test('should call sendDirectMessage with exact convoId from embed field', async () => {
+                // Mutants 15/16: ConditionalExpression/EqualityOperator on convoId field lookup
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const customConvoId = 'specific-convo-xyz';
+                const { interaction } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE], convoId: customConvoId }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledWith(customConvoId, DM_TEXT);
+            });
+
+            test('should parse recipient handles from Recipients embed field and add each to allowlist', async () => {
+                // Mutant 17: ConditionalExpression on recipientsValue field lookup
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE })
+                    .mockResolvedValueOnce({ did: DM_DID_BOB, handle: DM_HANDLE_BOB });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE, DM_HANDLE_BOB] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.getProfile).toHaveBeenCalledWith(DM_HANDLE_ALICE);
+                expect(deps.client.getProfile).toHaveBeenCalledWith(DM_HANDLE_BOB);
+                expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(2);
+            });
+
+            test('should show "allowlist failed" when one of multiple allowlist writes fails', async () => {
+                // Mutant 18: every → some — if "some" were used, partial success would show success title
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE })
+                    .mockResolvedValueOnce({ did: DM_DID_BOB, handle: DM_HANDLE_BOB });
+                // Alice's addEntry succeeds, Bob's fails
+                (deps.allowlist.addEntry as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce(undefined)
+                    .mockRejectedValueOnce(new Error('DynamoDB throttled'));
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE, DM_HANDLE_BOB] }
+                );
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(mockLogger.warn).toHaveBeenCalled();
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
+            });
+
+            test('should send DM and not call addEntry when Recipients field is absent from embed', async () => {
+                // Covers the [] fallback in recipientHandles when recipientsValue is undefined
+                // Mutant: [] → ["Stryker was here"] would cause addEntry to be called with a spurious handle
+                const deps = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const fields: { name: string, value: string, inline: boolean }[] = [
+                    { name: 'Conversation ID', value: DM_CONVO_ID, inline: true },
+                    // No 'Recipients' field
+                ];
+                const interaction = {
+                    customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: DM_TEXT,
+                            fields,
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('bsky-dm-reject', () => {
+            test('should show a modal for rejection reason without deferUpdate', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, deferUpdate, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(deferUpdate).not.toHaveBeenCalled();
+                expect(showModal).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
+            });
+
+            test('should show modal with customId containing bsky-dm-reject-reason prefix and original uuid', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(showModal).toHaveBeenCalledTimes(1);
+                const modalArg = showModal.mock.calls[0]?.[0] as { data: { custom_id: string } };
+                expect(modalArg.data?.custom_id).toContain('bsky-dm-reject-reason');
+                expect(modalArg.data?.custom_id).toContain(TEST_UUID);
+            });
+
+            test('should NOT call editReply when DM reject path (showModal) throws', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
+                showModal.mockRejectedValue(new Error('modal failed'));
+
+                await handler.handleButton(interaction);
+
+                expect(editReply).not.toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalled();
+            });
+
+            test('should show modal with title "Reject Bluesky DM" for bsky-dm-reject', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(showModal).toHaveBeenCalledTimes(1);
+                const modalArg = showModal.mock.calls[0]?.[0] as { data: { title: string } };
+                expect(modalArg.data?.title).toBe('Reject Bluesky DM');
+            });
+        });
+
+        describe('bsky-dm-approveallowlist — malformed JSON and empty recipients', () => {
+            test('should still send DM and show "allowlist failed" when Recipients field is malformed JSON', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const fields: { name: string, value: string, inline: boolean }[] = [
+                    { name: 'Recipients',      value: 'not-valid-json', inline: false },
+                    { name: 'Conversation ID', value: DM_CONVO_ID,      inline: true },
+                ];
+                const interaction = {
+                    customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: DM_TEXT,
+                            fields,
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledWith(DM_CONVO_ID, DM_TEXT);
+                expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
+                expect(mockLogger.warn).toHaveBeenCalled();
+                const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
+            });
+
+            test('should show "allowlist failed" when Recipients field is absent from embed (empty handles)', async () => {
+                // Regression: .every([]) returns true — guard ensures empty recipientHandles shows "allowlist failed"
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const fields: { name: string, value: string, inline: boolean }[] = [
+                    { name: 'Conversation ID', value: DM_CONVO_ID, inline: true },
+                    // No 'Recipients' field
+                ];
+                const interaction = {
+                    customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: DM_TEXT,
+                            fields,
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
+                const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
+            });
         });
     });
 });

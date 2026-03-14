@@ -34,6 +34,12 @@ const mockFollow              = mock(async (): Promise<{ uri: string, cid: strin
 const mockDeleteFollow        = mock(async (): Promise<void> => undefined);
 const mockUpdateSeen          = mock(async (): Promise<void> => undefined);
 
+const mockListConvos         = mock(async (): Promise<{ data: { convos: unknown[], cursor?: string } }> => ({ data: { convos: [] } }));
+const mockGetConvoForMembers = mock(async (): Promise<{ data: { convo: unknown } }> => ({ data: { convo: {} } }));
+const mockGetMessages        = mock(async (): Promise<{ data: { messages: unknown[], cursor?: string } }> => ({ data: { messages: [] } }));
+const mockSendMessage        = mock(async (): Promise<{ data: unknown }> => ({ data: {} }));
+const mockUpdateRead         = mock(async (): Promise<{ data: unknown }> => ({ data: {} }));
+
 // RichText mock state — tests can override these per-test via mockRichTextState
 const mockDetectFacets = mock(async (): Promise<void> => undefined);
 
@@ -55,6 +61,18 @@ mock.module('@atproto/api', () => ({
             },
         };
 
+        chat = {
+            bsky: {
+                convo: {
+                    listConvos:         mockListConvos,
+                    getConvoForMembers: mockGetConvoForMembers,
+                    getMessages:        mockGetMessages,
+                    sendMessage:        mockSendMessage,
+                    updateRead:         mockUpdateRead,
+                },
+            },
+        };
+
         login             = mockLogin;
         getTimeline       = mockGetTimeline;
         getAuthorFeed     = mockGetAuthorFeed;
@@ -72,6 +90,12 @@ mock.module('@atproto/api', () => ({
         get graphemeLength() { return mockRichTextState.graphemeLength; }
         get text()           { return mockRichTextState.text; }
         get facets()         { return mockRichTextState.facets; }
+    },
+    ChatBskyConvoDefs: {
+        isMessageView: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'chat.bsky.convo.defs#messageView' || (typeof record.text === 'string' && typeof record.sender === 'object' && record.sender !== null);
+        },
     },
 }));
 
@@ -182,6 +206,11 @@ describe.concurrent('BlueskyClient', () => {
         mockDeleteFollow.mockReset();
         mockUpdateSeen.mockReset();
         mockDetectFacets.mockReset();
+        mockListConvos.mockReset();
+        mockGetConvoForMembers.mockReset();
+        mockGetMessages.mockReset();
+        mockSendMessage.mockReset();
+        mockUpdateRead.mockReset();
         mockRichTextState.graphemeLength = 10;
         mockRichTextState.text           = 'Hello Bluesky!';
         mockRichTextState.facets         = undefined;
@@ -883,58 +912,200 @@ describe.concurrent('BlueskyClient', () => {
     });
 
     // -----------------------------------------------------------------------
-    // toggleFollow()
+    // follow()
     // -----------------------------------------------------------------------
 
-    describe('toggleFollow()', () => {
+    describe('follow()', () => {
         const PROFILE_DID = 'did:plc:target456';
 
         test('follows when not currently following (viewer has no following field)', async () => {
             mockGetProfile.mockResolvedValueOnce({ data: { did: PROFILE_DID, handle: 'target.bsky.social', viewer: {} } });
             mockFollow.mockResolvedValueOnce({ uri: 'at://follow/uri', cid: 'follow-cid' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            const result = await client.toggleFollow('target.bsky.social');
+            const result = await client.follow('target.bsky.social');
             expect(mockFollow).toHaveBeenCalledWith(PROFILE_DID);
             expect(mockDeleteFollow).not.toHaveBeenCalled();
-            expect(result).toEqual({ followed: true });
+            expect(result).toEqual({ alreadyFollowing: false });
         });
 
-        test('unfollows when currently following (viewer.following is set)', async () => {
+        test('returns alreadyFollowing: true when already following (viewer.following present)', async () => {
             const followUri = 'at://follow/record/uri';
             mockGetProfile.mockResolvedValueOnce({ data: { did: PROFILE_DID, handle: 'target.bsky.social', viewer: { following: followUri } } });
-            mockDeleteFollow.mockResolvedValueOnce(undefined);
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            const result = await client.toggleFollow('target.bsky.social');
-            expect(mockDeleteFollow).toHaveBeenCalledWith(followUri);
+            const result = await client.follow('target.bsky.social');
             expect(mockFollow).not.toHaveBeenCalled();
-            expect(result).toEqual({ followed: false });
+            expect(mockDeleteFollow).not.toHaveBeenCalled();
+            expect(result).toEqual({ alreadyFollowing: true });
         });
 
         test('follows when viewer is undefined', async () => {
             mockGetProfile.mockResolvedValueOnce({ data: { did: PROFILE_DID, handle: 'target.bsky.social' } });
             mockFollow.mockResolvedValueOnce({ uri: 'at://follow/uri', cid: 'follow-cid' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            const result = await client.toggleFollow('did:plc:target456');
+            const result = await client.follow('did:plc:target456');
             expect(mockFollow).toHaveBeenCalledWith(PROFILE_DID);
-            expect(result).toEqual({ followed: true });
+            expect(result).toEqual({ alreadyFollowing: false });
         });
 
         test('throws BskyAuthError on 401', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.toggleFollow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
+            expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.toggleFollow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
+            expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.toggleFollow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+            expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // unfollow()
+    // -----------------------------------------------------------------------
+
+    describe('unfollow()', () => {
+        const PROFILE_DID = 'did:plc:target456';
+
+        test('unfollows when currently following (viewer.following present)', async () => {
+            const followUri = 'at://follow/record/uri';
+            mockGetProfile.mockResolvedValueOnce({ data: { did: PROFILE_DID, handle: 'target.bsky.social', viewer: { following: followUri } } });
+            mockDeleteFollow.mockResolvedValueOnce(undefined);
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.unfollow('target.bsky.social');
+            expect(mockDeleteFollow).toHaveBeenCalledWith(followUri);
+            expect(mockFollow).not.toHaveBeenCalled();
+            expect(result).toEqual({ wasFollowing: true });
+        });
+
+        test('returns wasFollowing: false when not following (no viewer.following)', async () => {
+            mockGetProfile.mockResolvedValueOnce({ data: { did: PROFILE_DID, handle: 'target.bsky.social', viewer: {} } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.unfollow('target.bsky.social');
+            expect(mockDeleteFollow).not.toHaveBeenCalled();
+            expect(result).toEqual({ wasFollowing: false });
+        });
+
+        test('returns wasFollowing: false when viewer is undefined', async () => {
+            mockGetProfile.mockResolvedValueOnce({ data: { did: PROFILE_DID, handle: 'target.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.unfollow('target.bsky.social');
+            expect(mockDeleteFollow).not.toHaveBeenCalled();
+            expect(result).toEqual({ wasFollowing: false });
+        });
+
+        test('throws BskyAuthError on 401', async () => {
+            mockGetProfile.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
+        });
+
+        test('throws BskyRateLimitError on 429', async () => {
+            mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
+        });
+
+        test('throws BskyError on generic failure', async () => {
+            mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // validatePostText()
+    // -----------------------------------------------------------------------
+
+    describe('validatePostText()', () => {
+        test('resolves when text is within 300 graphemes', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 150;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.validatePostText('Short text');
+            expect(mockDetectFacets).toHaveBeenCalledTimes(1);
+        });
+
+        test('throws BskyValidationError when text exceeds 300 graphemes', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 301;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: BskyValidationError | undefined;
+            try {
+                await client.validatePostText('x'.repeat(301));
+            } catch (e) {
+                thrownError = e as BskyValidationError;
+            }
+            expect(thrownError).toBeInstanceOf(BskyValidationError);
+            expect(thrownError?.context).toMatchObject({ graphemeLength: 301 });
+        });
+
+        test('resolves when text is exactly 300 graphemes (boundary)', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 300;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.validatePostText('x'.repeat(300));
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeUndefined();
+        });
+
+        test('calls detectFacets on the RichText instance', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 10;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.validatePostText('Hello!');
+            expect(mockDetectFacets).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // validateDMText()
+    // -----------------------------------------------------------------------
+
+    describe('validateDMText()', () => {
+        test('resolves when text is within 1000 graphemes', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 500;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.validateDMText('Medium text');
+            expect(mockDetectFacets).toHaveBeenCalledTimes(1);
+        });
+
+        test('throws BskyValidationError when text exceeds 1000 graphemes', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 1001;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: BskyValidationError | undefined;
+            try {
+                await client.validateDMText('x'.repeat(1001));
+            } catch (e) {
+                thrownError = e as BskyValidationError;
+            }
+            expect(thrownError).toBeInstanceOf(BskyValidationError);
+            expect(thrownError?.context).toMatchObject({ graphemeLength: 1001 });
+        });
+
+        test('resolves when text is exactly 1000 graphemes (boundary)', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockRichTextState.graphemeLength = 1000;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.validateDMText('x'.repeat(1000));
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeUndefined();
         });
     });
 
@@ -1226,6 +1397,306 @@ describe.concurrent('BlueskyClient', () => {
                 thrownError = e as BskyError;
             }
             expect(thrownError?.context).toMatchObject({ originalMessage: 'DNS timeout' });
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Conversation test data
+    // -----------------------------------------------------------------------
+
+    const CONVO_MEMBER = {
+        did:         'did:plc:member1',
+        handle:      'alice.bsky.social',
+        displayName: 'Alice',
+        avatar:      'https://cdn.bsky.app/avatar1.jpg',
+    };
+
+    const MESSAGE_VIEW = {
+        $type:  'chat.bsky.convo.defs#messageView',
+        id:     'msg-001',
+        rev:    'rev-001',
+        text:   'Hello there!',
+        sender: { did: 'did:plc:member1' },
+        sentAt: '2025-01-15T10:00:00.000Z',
+    };
+
+    const DELETED_MESSAGE_VIEW = {
+        $type:  'chat.bsky.convo.defs#deletedMessageView',
+        id:     'msg-deleted',
+        rev:    'rev-deleted',
+        sender: { did: 'did:plc:member1' },
+        sentAt: '2025-01-15T09:00:00.000Z',
+    };
+
+    const CONVO_VIEW = {
+        id:          'convo-001',
+        rev:         'convo-rev-001',
+        members:     [CONVO_MEMBER],
+        lastMessage: MESSAGE_VIEW,
+        muted:       false,
+        unreadCount: 2,
+        status:      'accepted',
+    };
+
+    // -----------------------------------------------------------------------
+    // listConversations()
+    // -----------------------------------------------------------------------
+
+    describe('listConversations()', () => {
+        test('returns normalized conversations with cursor', async () => {
+            mockListConvos.mockResolvedValueOnce({
+                data: { convos: [CONVO_VIEW], cursor: 'next-cursor' },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.listConversations(10, 'prev-cursor');
+            expect(mockListConvos).toHaveBeenCalledWith({ limit: 10, cursor: 'prev-cursor', readState: undefined, status: undefined });
+            expect(result.cursor).toBe('next-cursor');
+            expect(result.conversations).toHaveLength(1);
+            expect(result.conversations[0]).toMatchObject({
+                id:          'convo-001',
+                rev:         'convo-rev-001',
+                muted:       false,
+                unreadCount: 2,
+                status:      'accepted',
+            });
+        });
+
+        test('maps member profiles to BskyConversationMember', async () => {
+            mockListConvos.mockResolvedValueOnce({
+                data: { convos: [CONVO_VIEW] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.listConversations();
+            const member = result.conversations[0]?.members[0];
+            expect(member).toMatchObject({
+                did:         'did:plc:member1',
+                handle:      'alice.bsky.social',
+                displayName: 'Alice',
+                avatar:      'https://cdn.bsky.app/avatar1.jpg',
+            });
+        });
+
+        test('normalizes lastMessage when it is a MessageView', async () => {
+            mockListConvos.mockResolvedValueOnce({
+                data: { convos: [CONVO_VIEW] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.listConversations();
+            expect(result.conversations[0]?.lastMessage).toMatchObject({
+                id:        'msg-001',
+                rev:       'rev-001',
+                text:      'Hello there!',
+                senderDid: 'did:plc:member1',
+                sentAt:    '2025-01-15T10:00:00.000Z',
+            });
+        });
+
+        test('omits lastMessage when it is a DeletedMessageView', async () => {
+            mockListConvos.mockResolvedValueOnce({
+                data: { convos: [{ ...CONVO_VIEW, lastMessage: DELETED_MESSAGE_VIEW }] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.listConversations();
+            expect(result.conversations[0]?.lastMessage).toBeUndefined();
+        });
+
+        test('handles empty conversations list', async () => {
+            mockListConvos.mockResolvedValueOnce({ data: { convos: [] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.listConversations();
+            expect(result.conversations).toEqual([]);
+            expect(result.cursor).toBeUndefined();
+        });
+
+        test('maps 401 to BskyAuthError', async () => {
+            mockListConvos.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.listConversations();
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyAuthError);
+        });
+
+        test('maps generic errors to BskyError', async () => {
+            mockListConvos.mockRejectedValueOnce(makeXRPCError(500, 'InternalError', 'Server error'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.listConversations();
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // getConversationForMembers()
+    // -----------------------------------------------------------------------
+
+    describe('getConversationForMembers()', () => {
+        test('passes member DIDs to API', async () => {
+            mockGetConvoForMembers.mockResolvedValueOnce({ data: { convo: CONVO_VIEW } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.getConversationForMembers(['did:plc:member1', 'did:plc:member2']);
+            expect(mockGetConvoForMembers).toHaveBeenCalledWith({ members: ['did:plc:member1', 'did:plc:member2'] });
+        });
+
+        test('returns normalized conversation', async () => {
+            mockGetConvoForMembers.mockResolvedValueOnce({ data: { convo: CONVO_VIEW } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getConversationForMembers(['did:plc:member1']);
+            expect(result).toMatchObject({ id: 'convo-001', unreadCount: 2 });
+        });
+
+        test('maps errors to BskyError', async () => {
+            mockGetConvoForMembers.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.getConversationForMembers(['did:plc:member1']);
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // getMessages()
+    // -----------------------------------------------------------------------
+
+    describe('getMessages()', () => {
+        test('returns normalized messages with cursor', async () => {
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_VIEW], cursor: 'msg-cursor' },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getMessages('convo-001', 20, 'prev-cursor');
+            expect(mockGetMessages).toHaveBeenCalledWith({ convoId: 'convo-001', limit: 20, cursor: 'prev-cursor' });
+            expect(result.cursor).toBe('msg-cursor');
+            expect(result.messages).toHaveLength(1);
+            expect(result.messages[0]).toMatchObject({
+                id:        'msg-001',
+                text:      'Hello there!',
+                senderDid: 'did:plc:member1',
+            });
+        });
+
+        test('filters out DeletedMessageView entries', async () => {
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_VIEW, DELETED_MESSAGE_VIEW] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getMessages('convo-001');
+            expect(result.messages).toHaveLength(1);
+            expect(result.messages[0]?.id).toBe('msg-001');
+        });
+
+        test('handles empty messages list', async () => {
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getMessages('convo-001');
+            expect(result.messages).toEqual([]);
+            expect(result.cursor).toBeUndefined();
+        });
+
+        test('maps errors to BskyError', async () => {
+            mockGetMessages.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.getMessages('convo-001');
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // sendDirectMessage()
+    // -----------------------------------------------------------------------
+
+    describe('sendDirectMessage()', () => {
+        test('sends message with text and facets and returns normalized message', async () => {
+            mockRichTextState.text   = 'Hello Alice!';
+            mockRichTextState.facets = [{ index: { byteStart: 0, byteEnd: 5 }, features: [] }];
+            mockSendMessage.mockResolvedValueOnce({ data: MESSAGE_VIEW });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.sendDirectMessage('convo-001', 'Hello Alice!');
+            expect(mockSendMessage).toHaveBeenCalledWith({
+                convoId: 'convo-001',
+                message: {
+                    text:   'Hello Alice!',
+                    facets: [{ index: { byteStart: 0, byteEnd: 5 }, features: [] }],
+                },
+            });
+            expect(result).toMatchObject({ id: 'msg-001', text: 'Hello there!', senderDid: 'did:plc:member1' });
+        });
+
+        test('throws BskyValidationError when text exceeds 1000 graphemes', async () => {
+            mockRichTextState.graphemeLength = 1001;
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.sendDirectMessage('convo-001', 'x'.repeat(1001));
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyValidationError);
+            expect((thrownError as BskyValidationError).context).toMatchObject({ graphemeLength: 1001 });
+        });
+
+        test('sends message when text is exactly 1000 graphemes (boundary)', async () => {
+            mockRichTextState.graphemeLength = 1000;
+            mockRichTextState.text   = 'x'.repeat(1000);
+            mockSendMessage.mockResolvedValueOnce({ data: MESSAGE_VIEW });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.sendDirectMessage('convo-001', 'x'.repeat(1000));
+            expect(result).toBeDefined();
+            expect(mockSendMessage).toHaveBeenCalledTimes(1);
+        });
+
+        test('maps other errors to BskyError but re-throws BskyValidationError', async () => {
+            mockRichTextState.graphemeLength = 10;
+            mockSendMessage.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.sendDirectMessage('convo-001', 'Hello!');
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // markConversationRead()
+    // -----------------------------------------------------------------------
+
+    describe('markConversationRead()', () => {
+        test('calls updateRead with convoId', async () => {
+            mockUpdateRead.mockResolvedValueOnce({ data: {} });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.markConversationRead('convo-001');
+            expect(mockUpdateRead).toHaveBeenCalledWith({ convoId: 'convo-001' });
+        });
+
+        test('maps errors to BskyError', async () => {
+            mockUpdateRead.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            let thrownError: unknown;
+            try {
+                await client.markConversationRead('convo-001');
+            } catch (e) {
+                thrownError = e;
+            }
+            expect(thrownError).toBeInstanceOf(BskyAuthError);
         });
     });
 });

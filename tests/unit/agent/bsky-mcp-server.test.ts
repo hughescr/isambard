@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
 import type { BskyAllowlist, BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
-import type { BskyAuthor, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
+import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import type { SendRateLimiter } from '../../../src/integrations/email';
 import { textContent } from '../../setup';
 
@@ -49,23 +49,49 @@ const mockNotification = (overrides: Partial<BskyNotification> = {}): BskyNotifi
     ...overrides,
 });
 
+const mockDirectMessage = (overrides: Partial<BskyDirectMessage> = {}): BskyDirectMessage => ({
+    id:        'msg-1',
+    rev:       'rev-1',
+    text:      'Hello there!',
+    senderDid: 'did:plc:abc123',
+    sentAt:    '2025-01-01T00:00:00.000Z',
+    ...overrides,
+});
+
+const mockConversation = (overrides: Partial<BskyConversation> = {}): BskyConversation => ({
+    id:          'convo-1',
+    rev:         'rev-1',
+    members:     [{ did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' }],
+    muted:       false,
+    unreadCount: 0,
+    ...overrides,
+});
+
 describe.concurrent('createBskyMCPServer', () => {
     let mockClient: BlueskyClient;
 
     beforeEach(() => {
         mockClient = {
-            getFeed:                 mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'cursor-abc' })),
-            getNotifications:        mock(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({ notifications: [mockNotification()], cursor: 'notif-cursor' })),
-            searchPosts:             mock(async (): Promise<{ posts: BskyPost[], cursor?: string }> => ({ posts: [mockPost()], cursor: 'search-cursor' })),
-            getPost:                 mock(async (): Promise<BskyPost> => mockPost()),
-            getProfile:              mock(async (): Promise<BskyAuthor> => mockAuthor()),
-            getAuthorFeed:           mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'author-cursor' })),
-            likePost:                mock(async (): Promise<void> => { /* intentionally empty */ }),
-            toggleFollow:            mock(async (): Promise<{ followed: boolean }> => ({ followed: true })),
-            sendPost:                mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newpost', cid: 'bafyreinew' })),
-            replyToPost:             mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newreply', cid: 'bafyreireply' })),
-            updateNotificationsSeen: mock(async (): Promise<void> => { /* intentionally empty */ }),
-            ownHandle:               'bot.bsky.social',
+            getFeed:                   mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'cursor-abc' })),
+            getNotifications:          mock(async (): Promise<{ notifications: BskyNotification[], cursor?: string }> => ({ notifications: [mockNotification()], cursor: 'notif-cursor' })),
+            searchPosts:               mock(async (): Promise<{ posts: BskyPost[], cursor?: string }> => ({ posts: [mockPost()], cursor: 'search-cursor' })),
+            getPost:                   mock(async (): Promise<BskyPost> => mockPost()),
+            getProfile:                mock(async (): Promise<BskyAuthor> => mockAuthor()),
+            getAuthorFeed:             mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [mockFeedItem()], cursor: 'author-cursor' })),
+            likePost:                  mock(async (): Promise<void> => { /* intentionally empty */ }),
+            follow:                    mock(async (): Promise<{ alreadyFollowing: boolean }> => ({ alreadyFollowing: false })),
+            unfollow:                  mock(async (): Promise<{ wasFollowing: boolean }> => ({ wasFollowing: true })),
+            validatePostText:          mock(async (): Promise<void> => { /* intentionally empty */ }),
+            validateDMText:            mock(async (): Promise<void> => { /* intentionally empty */ }),
+            sendPost:                  mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newpost', cid: 'bafyreinew' })),
+            replyToPost:               mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newreply', cid: 'bafyreireply' })),
+            updateNotificationsSeen:   mock(async (): Promise<void> => { /* intentionally empty */ }),
+            listConversations:         mock(async (): Promise<{ conversations: BskyConversation[], cursor?: string }> => ({ conversations: [mockConversation()], cursor: undefined })),
+            getConversationForMembers: mock(async (): Promise<BskyConversation> => mockConversation()),
+            getMessages:               mock(async (): Promise<{ messages: BskyDirectMessage[], cursor?: string }> => ({ messages: [mockDirectMessage()], cursor: undefined })),
+            sendDirectMessage:         mock(async (): Promise<BskyDirectMessage> => mockDirectMessage()),
+            markConversationRead:      mock(async (): Promise<void> => { /* intentionally empty */ }),
+            ownHandle:                 'bot.bsky.social',
         } as unknown as BlueskyClient;
     });
 
@@ -86,16 +112,20 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test.each([
-            ['getFeed',          'Read a Bluesky feed'],
-            ['getNotifications', 'Get recent Bluesky notifications'],
-            ['searchPosts',      'Search Bluesky posts'],
-            ['getPost',          'Get a Bluesky post by AT URI'],
-            ['getProfile',       'Get a Bluesky user profile'],
-            ['getAuthorFeed',    "Read a user's recent posts on Bluesky"],
-            ['likePost',         'Like a Bluesky post'],
-            ['toggleFollow',     'Follow or unfollow a Bluesky user (toggles current state)'],
-            ['sendPost',         'Post a new message to Bluesky'],
-            ['replyToPost',      'Reply to an existing Bluesky post. If the target author is on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.'],
+            ['getFeed',              'Read a Bluesky feed'],
+            ['getNotifications',     'Get recent Bluesky notifications'],
+            ['searchPosts',          'Search Bluesky posts'],
+            ['getPost',              'Get a Bluesky post by AT URI'],
+            ['getProfile',           'Get a Bluesky user profile'],
+            ['getAuthorFeed',        "Read a user's recent posts on Bluesky"],
+            ['likePost',             'Like a Bluesky post'],
+            ['follow',               'Follow a Bluesky user'],
+            ['unfollow',             'Unfollow a Bluesky user'],
+            ['sendPost',             'Post a new message to Bluesky'],
+            ['replyToPost',          'Reply to an existing Bluesky post. If the target author is on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.'],
+            ['listConversations',    'List Bluesky direct message conversations'],
+            ['getDirectMessages',    'Get direct messages with specific Bluesky users. Automatically marks the conversation as read.'],
+            ['sendDirectMessage',    'Send a direct message to Bluesky users. If recipients are on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -104,16 +134,20 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test.each([
-            ['getFeed',          ['feedName', 'limit', 'cursor', 'includeProcessed']],
-            ['getNotifications', ['limit', 'cursor', 'includeProcessed']],
-            ['searchPosts',      ['query', 'limit', 'cursor']],
-            ['getPost',          ['uri']],
-            ['getProfile',       ['actor']],
-            ['getAuthorFeed',    ['actor', 'limit', 'cursor', 'includeProcessed']],
-            ['likePost',         ['uri', 'cid']],
-            ['toggleFollow',     ['actor']],
-            ['sendPost',         ['text']],
-            ['replyToPost',      ['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']],
+            ['getFeed',           ['feedName', 'limit', 'cursor', 'includeProcessed']],
+            ['getNotifications',  ['limit', 'cursor', 'includeProcessed']],
+            ['searchPosts',       ['query', 'limit', 'cursor']],
+            ['getPost',           ['uri']],
+            ['getProfile',        ['actor']],
+            ['getAuthorFeed',     ['actor', 'limit', 'cursor', 'includeProcessed']],
+            ['likePost',          ['uri', 'cid']],
+            ['follow',            ['actor']],
+            ['unfollow',          ['actor']],
+            ['sendPost',          ['text']],
+            ['replyToPost',       ['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']],
+            ['listConversations', ['limit', 'cursor', 'readState', 'status']],
+            ['getDirectMessages', ['recipients', 'limit', 'cursor']],
+            ['sendDirectMessage', ['recipients', 'text']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
             const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -877,11 +911,11 @@ describe.concurrent('createBskyMCPServer', () => {
         });
     });
 
-    describe('toggleFollow tool', () => {
-        test('should return "Followed" message when client returns followed: true', async () => {
-            (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ followed: boolean }> => ({ followed: true }));
+    describe('follow tool', () => {
+        test('should return "Followed" message when not already following', async () => {
+            (mockClient.follow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ alreadyFollowing: boolean }> => ({ alreadyFollowing: false }));
             const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'toggleFollow');
+            const handler = getToolHandler(server, 'follow');
 
             const result = await handler({ actor: 'alice.bsky.social' });
 
@@ -889,32 +923,32 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toBe('Followed alice.bsky.social successfully');
         });
 
-        test('should return "Unfollowed" message when client returns followed: false', async () => {
-            (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ followed: boolean }> => ({ followed: false }));
+        test('should return "Already following" message when already following', async () => {
+            (mockClient.follow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ alreadyFollowing: boolean }> => ({ alreadyFollowing: true }));
             const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'toggleFollow');
+            const handler = getToolHandler(server, 'follow');
 
             const result = await handler({ actor: 'bob.bsky.social' });
 
             expect(result.isError).toBeUndefined();
-            expect(textContent(result.content[0])).toBe('Unfollowed bob.bsky.social successfully');
+            expect(textContent(result.content[0])).toBe('Already following bob.bsky.social');
         });
 
-        test('should include actor handle in success message', async () => {
+        test('should pass actor to client.follow', async () => {
             const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'toggleFollow');
+            const handler = getToolHandler(server, 'follow');
 
             await handler({ actor: 'carol.bsky.social' });
 
-            expect(mockClient.toggleFollow).toHaveBeenCalledWith('carol.bsky.social');
+            expect(mockClient.follow).toHaveBeenCalledWith('carol.bsky.social');
         });
 
         test('should return error result on client failure', async () => {
-            (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async () => {
+            (mockClient.follow as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw new Error('Rate limited');
             });
             const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'toggleFollow');
+            const handler = getToolHandler(server, 'follow');
 
             const result = await handler({ actor: 'alice.bsky.social' });
 
@@ -923,11 +957,70 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should handle non-Error rejection', async () => {
-            (mockClient.toggleFollow as ReturnType<typeof mock>).mockImplementation(async () => {
+            (mockClient.follow as ReturnType<typeof mock>).mockImplementation(async () => {
                 throw 'forbidden';
             });
             const server  = createBskyMCPServer({ client: mockClient });
-            const handler = getToolHandler(server, 'toggleFollow');
+            const handler = getToolHandler(server, 'follow');
+
+            const result = await handler({ actor: 'alice.bsky.social' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: forbidden');
+        });
+    });
+
+    describe('unfollow tool', () => {
+        test('should return "Unfollowed" message when was following', async () => {
+            (mockClient.unfollow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ wasFollowing: boolean }> => ({ wasFollowing: true }));
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'unfollow');
+
+            const result = await handler({ actor: 'alice.bsky.social' });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Unfollowed alice.bsky.social successfully');
+        });
+
+        test('should return "Not following" message when was not following', async () => {
+            (mockClient.unfollow as ReturnType<typeof mock>).mockImplementation(async (): Promise<{ wasFollowing: boolean }> => ({ wasFollowing: false }));
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'unfollow');
+
+            const result = await handler({ actor: 'bob.bsky.social' });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Not following bob.bsky.social');
+        });
+
+        test('should pass actor to client.unfollow', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'unfollow');
+
+            await handler({ actor: 'carol.bsky.social' });
+
+            expect(mockClient.unfollow).toHaveBeenCalledWith('carol.bsky.social');
+        });
+
+        test('should return error result on client failure', async () => {
+            (mockClient.unfollow as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Rate limited');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'unfollow');
+
+            const result = await handler({ actor: 'alice.bsky.social' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Rate limited');
+        });
+
+        test('should handle non-Error rejection', async () => {
+            (mockClient.unfollow as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw 'forbidden';
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'unfollow');
 
             const result = await handler({ actor: 'alice.bsky.social' });
 
@@ -1013,6 +1106,25 @@ describe.concurrent('createBskyMCPServer', () => {
     });
 
     describe('replyToPost tool', () => {
+        test('should return error result when replyToPost throws BskyValidationError', async () => {
+            const { BskyValidationError } = await import('@/integrations/bsky/errors');
+            (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
+                throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'x'.repeat(301),
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Post exceeds 300 graphemes');
+            expect(mockClient.getPost).toHaveBeenCalled();
+        });
+
         test('should send immediately when no allowlist provided (permissive default)', async () => {
             const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'replyToPost');
@@ -1307,6 +1419,442 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: auth failure');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // listConversations tool
+    // -------------------------------------------------------------------------
+
+    describe('listConversations tool', () => {
+        test('should return conversations as JSON with members transformed (DIDs stripped)', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { conversations: { members: unknown[] }[] };
+            expect(parsed.conversations).toHaveLength(1);
+            const member = parsed.conversations[0]?.members[0] as Record<string, unknown>;
+            expect(member.handle).toBe('alice.bsky.social');
+            expect(member.did).toBeUndefined();
+        });
+
+        test('should replace senderDid with senderHandle in lastMessage', async () => {
+            (mockClient.listConversations as ReturnType<typeof mock>).mockResolvedValueOnce({
+                conversations: [mockConversation({
+                    members:     [{ did: 'did:plc:abc123', handle: 'alice.bsky.social' }],
+                    lastMessage: mockDirectMessage({ senderDid: 'did:plc:abc123' }),
+                })],
+                cursor: undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { conversations: { lastMessage: Record<string, unknown> }[] };
+            const msg = parsed.conversations[0]?.lastMessage ?? {};
+            expect(msg.senderHandle).toBe('alice.bsky.social');
+            expect(msg.senderDid).toBeUndefined();
+        });
+
+        test('should pass limit, cursor, readState, status to client.listConversations', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            await handler({ limit: 5, cursor: 'page-cursor', readState: 'unread', status: 'accepted' });
+
+            expect(mockClient.listConversations).toHaveBeenCalledWith(5, 'page-cursor', 'unread', 'accepted');
+        });
+
+        test('should pass undefined cursor when not provided to client.listConversations', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            await handler({ limit: 5, readState: 'unread', status: 'accepted' });
+
+            expect(mockClient.listConversations).toHaveBeenCalledWith(5, undefined, 'unread', 'accepted');
+        });
+
+        test('should return cursor when present', async () => {
+            (mockClient.listConversations as ReturnType<typeof mock>).mockResolvedValueOnce({
+                conversations: [],
+                cursor:        'next-convo-cursor',
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { cursor: string };
+            expect(parsed.cursor).toBe('next-convo-cursor');
+        });
+
+        test('should return error result on client failure', async () => {
+            (mockClient.listConversations as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('DM service unavailable');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: DM service unavailable');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // getDirectMessages tool
+    // -------------------------------------------------------------------------
+
+    describe('getDirectMessages tool', () => {
+        test('should resolve handles to DIDs and fetch messages', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockClient.getProfile).toHaveBeenCalledWith('alice.bsky.social');
+            expect(mockClient.getConversationForMembers).toHaveBeenCalled();
+            expect(mockClient.getMessages).toHaveBeenCalled();
+        });
+
+        test('should auto-mark conversation as read', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            await handler({ recipients: ['alice.bsky.social'] });
+
+            expect(mockClient.markConversationRead).toHaveBeenCalledWith('convo-1');
+        });
+
+        test('should transform senderDid to senderHandle in messages', async () => {
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123' })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { messages: Record<string, unknown>[] };
+            const msg = parsed.messages[0] ?? {};
+            expect(msg.senderHandle).toBe('alice.bsky.social');
+            expect(msg.senderDid).toBeUndefined();
+        });
+
+        test('should call getMessages with conversation ID and optional limit', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            await handler({ recipients: ['alice.bsky.social'], limit: 20 });
+
+            expect(mockClient.getMessages).toHaveBeenCalledWith('convo-1', 20, undefined);
+        });
+
+        test('should pass cursor to getMessages when provided', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            await handler({ recipients: ['alice.bsky.social'], limit: 10, cursor: 'msg-cursor-xyz' });
+
+            expect(mockClient.getMessages).toHaveBeenCalledWith('convo-1', 10, 'msg-cursor-xyz');
+        });
+
+        test('should return error result when getProfile fails', async () => {
+            (mockClient.getProfile as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Handle not found');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['unknown.bsky.social'] });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Handle not found');
+        });
+
+        test('should return error result when getConversationForMembers fails', async () => {
+            (mockClient.getConversationForMembers as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Conversation not found');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Conversation not found');
+        });
+
+        test('should still return messages when markConversationRead throws', async () => {
+            (mockClient.markConversationRead as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Mark read failed');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as { messages: unknown[] };
+            expect(parsed.messages).toHaveLength(1);
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // sendDirectMessage tool
+    // -------------------------------------------------------------------------
+
+    describe('sendDirectMessage tool', () => {
+        test('should return error when sendDirectMessage throws a validation error', async () => {
+            (mockClient.sendDirectMessage as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Text exceeds 1000 graphemes');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'A'.repeat(1001) });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Text exceeds 1000 graphemes');
+        });
+
+        test('should resolve handles to profiles before checking allowlist', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => true),
+            } as unknown as BskyAllowlist;
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(mockClient.getProfile).toHaveBeenCalledWith('alice.bsky.social');
+        });
+
+        test('should send DM immediately when recipient is on allowlist', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => true),
+            } as unknown as BskyAllowlist;
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(mockClient.sendDirectMessage).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toContain('DM sent successfully');
+        });
+
+        test('should send DM immediately when no allowlist is configured', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(mockClient.sendDirectMessage).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should send DM immediately when recipient is own handle (self-DM)', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+            // getProfile returns own handle
+            (mockClient.getProfile as ReturnType<typeof mock>).mockResolvedValueOnce({
+                did: 'did:plc:bot', handle: 'bot.bsky.social',
+            });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['bot.bsky.social'], text: 'Testing myself' });
+
+            expect(mockClient.sendDirectMessage).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should trigger approval when recipient is not on allowlist', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(mockClient.sendDirectMessage).not.toHaveBeenCalled();
+            expect(sendDMApprovalRequest).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toContain('approval');
+        });
+
+        test('should call sendDMApprovalRequest with text, handles, and convoId', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(sendDMApprovalRequest).toHaveBeenCalledWith('Hello!', ['alice.bsky.social'], 'convo-1');
+        });
+
+        test('should return informational text when not allowed and no approval callback', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(mockClient.sendDirectMessage).not.toHaveBeenCalled();
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should return error when approval request fails', async () => {
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => {
+                throw new Error('Discord channel not found');
+            });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(result.isError).toBe(true);
+        });
+
+        test('should increment rateLimiter when DM is sent', async () => {
+            const mockRateLimiter: SendRateLimiter = {
+                increment:       mock(() => { /* intentionally empty */ }),
+                isAtLimit:       mock(() => false),
+                tokensRemaining: mock(() => 20),
+            } as unknown as SendRateLimiter;
+
+            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(mockRateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test('should return error when getConversationForMembers fails', async () => {
+            (mockClient.getConversationForMembers as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('Conversation lookup failed');
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Conversation lookup failed');
+        });
+
+        test('should NOT treat multi-recipient DM as self-DM even when first recipient is own handle', async () => {
+            // Mutant 3: isSelfDM → true would bypass allowlist and send immediately even with 2 recipients
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
+            // First recipient resolves to bot's own handle; second resolves to someone else
+            (mockClient.getProfile as ReturnType<typeof mock>)
+                .mockResolvedValueOnce({ did: 'did:plc:bot', handle: 'bot.bsky.social' })
+                .mockResolvedValueOnce({ did: 'did:plc:abc123', handle: 'alice.bsky.social' });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['bot.bsky.social', 'alice.bsky.social'], text: 'Group chat!' });
+
+            // Should go through approval path (isSelfDM is false for 2 recipients)
+            expect(mockClient.sendDirectMessage).not.toHaveBeenCalled();
+            expect(sendDMApprovalRequest).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should require ALL recipients to be allowlisted (not just any one)', async () => {
+            // Mutant 5: every → some — if "some" were used, one allowlisted recipient would bypass approval
+            const isAllowedMock = mock((handleOrDid: string) => handleOrDid === 'alice.bsky.social');
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: isAllowedMock,
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
+            // Two recipients: alice (allowlisted by handle), bob (not allowlisted)
+            (mockClient.getProfile as ReturnType<typeof mock>)
+                .mockResolvedValueOnce({ did: 'did:plc:aliceabc', handle: 'alice.bsky.social' })
+                .mockResolvedValueOnce({ did: 'did:plc:bobabc', handle: 'bob.bsky.social' });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social', 'bob.bsky.social'], text: 'Hello both!' });
+
+            // Bob is NOT allowlisted, so approval should be triggered even though Alice is
+            expect(mockClient.sendDirectMessage).not.toHaveBeenCalled();
+            expect(sendDMApprovalRequest).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should allow DM when recipient handle is allowlisted (handle OR DID check)', async () => {
+            // Mutant 6: || → && — if AND were used, handle-allowlisted recipients without DID allowlist would be blocked
+            const isAllowedMock = mock((handleOrDid: string) => handleOrDid === 'alice.bsky.social');
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: isAllowedMock,
+            } as unknown as BskyAllowlist;
+            // getProfile returns alice's handle; DID is NOT in the allowlist
+            (mockClient.getProfile as ReturnType<typeof mock>)
+                .mockResolvedValueOnce({ did: 'did:plc:aliceabc', handle: 'alice.bsky.social' });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'Hello!' });
+
+            // Handle is allowlisted → should send immediately without approval
+            expect(mockClient.sendDirectMessage).toHaveBeenCalledTimes(1);
+            expect(result.isError).toBeUndefined();
+        });
+
+        test('should include all recipients in approval request (not just non-allowlisted)', async () => {
+            // Approval request receives ALL resolved handles, regardless of allowlist status.
+            // The embed shows all participants so the admin knows who the DM is for.
+            const isAllowedMock = mock((handleOrDid: string) => handleOrDid === 'alice.bsky.social');
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: isAllowedMock,
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
+            // Two recipients: alice (allowlisted by handle, not DID), bob (not allowlisted)
+            (mockClient.getProfile as ReturnType<typeof mock>)
+                .mockResolvedValueOnce({ did: 'did:plc:aliceabc', handle: 'alice.bsky.social' })
+                .mockResolvedValueOnce({ did: 'did:plc:bobabc', handle: 'bob.bsky.social' });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            await handler({ recipients: ['alice.bsky.social', 'bob.bsky.social'], text: 'Hello!' });
+
+            // Approval request should include ALL recipients (alice and bob)
+            expect(sendDMApprovalRequest).toHaveBeenCalledWith('Hello!', ['alice.bsky.social', 'bob.bsky.social'], 'convo-1');
         });
     });
 });

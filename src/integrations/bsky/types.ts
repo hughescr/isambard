@@ -62,3 +62,39 @@ export interface BskyNotification {
     author:    BskyAuthor
     indexedAt: string
 }
+
+/**
+ * Normalized Bluesky conversation member.
+ * Internal types keep DIDs for allowlist checks; MCP responses strip them.
+ */
+export interface BskyConversationMember {
+    did:           string
+    handle:        string
+    displayName?:  string
+    avatar?:       string
+    chatDisabled?: boolean
+}
+
+/**
+ * Normalized Bluesky direct message.
+ */
+export interface BskyDirectMessage {
+    id:        string
+    rev:       string
+    text:      string
+    senderDid: string
+    sentAt:    string
+}
+
+/**
+ * Normalized Bluesky conversation.
+ */
+export interface BskyConversation {
+    id:           string
+    rev:          string
+    members:      BskyConversationMember[]
+    lastMessage?: BskyDirectMessage
+    muted:        boolean
+    unreadCount:  number
+    status?:      string
+}
