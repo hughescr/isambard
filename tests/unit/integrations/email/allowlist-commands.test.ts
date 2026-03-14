@@ -29,7 +29,7 @@ function createMockBskyAllowlist(): {
 } {
     return {
         list:        mock(async (): Promise<{ handle: string, addedAt: string, notes?: string }[]> => []),
-        addEntry:    mock(async (_entry: { handle: string, notes?: string, addedAt: string, addedBy: string }): Promise<void> => {}),
+        addEntry:    mock(async (_entry: { handle: string, did?: string, notes?: string, addedAt: string, addedBy: string }): Promise<void> => {}),
         removeEntry: mock(async (_handle: string): Promise<void> => {}),
     };
 }
@@ -628,6 +628,89 @@ describe('AllowlistCommandHandler - /allowlist add', () => {
         await handler.handle(asChatInput);
 
         expect(deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+    });
+});
+
+describe('AllowlistCommandHandler - /allowlist add with resolveHandleToDid', () => {
+    let mockEmailAllowlist: ReturnType<typeof createMockEmailAllowlist>;
+    let mockBskyAllowlist:  ReturnType<typeof createMockBskyAllowlist>;
+
+    beforeEach(() => {
+        mockEmailAllowlist = createMockEmailAllowlist();
+        mockBskyAllowlist  = createMockBskyAllowlist();
+    });
+
+    test('passes resolved DID to bskyAllowlist.addEntry when callback provided and resolves', async () => {
+        const resolveHandleToDid = mock(async (_handle: string): Promise<string | undefined> => 'did:plc:abc123');
+        const handler = new AllowlistCommandHandler(
+            mockEmailAllowlist as unknown as EmailAllowlist,
+            mockBskyAllowlist as BskyAllowlistLike,
+            ADMIN_USER_ID,
+            resolveHandleToDid
+        );
+
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'add', { address: 'alice.bsky.social' });
+        await handler.handle(asChatInput);
+
+        expect(resolveHandleToDid).toHaveBeenCalledWith('alice.bsky.social');
+        const callArg = mockBskyAllowlist.addEntry.mock.calls[0]?.[0] as { handle: string, did?: string };
+        expect(callArg.did).toBe('did:plc:abc123');
+    });
+
+    test('adds entry without DID when callback throws', async () => {
+        const resolveHandleToDid = mock(async (_handle: string): Promise<string | undefined> => {
+            throw new Error('Network error');
+        });
+        const handler = new AllowlistCommandHandler(
+            mockEmailAllowlist as unknown as EmailAllowlist,
+            mockBskyAllowlist as BskyAllowlistLike,
+            ADMIN_USER_ID,
+            resolveHandleToDid
+        );
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'add', { address: 'alice.bsky.social' });
+        await handler.handle(asChatInput);
+
+        // Entry must still be added despite DID resolution failure
+        expect(mockBskyAllowlist.addEntry).toHaveBeenCalledTimes(1);
+        const callArg = mockBskyAllowlist.addEntry.mock.calls[0]?.[0] as { handle: string, did?: string };
+        expect(callArg.handle).toBe('alice.bsky.social');
+        expect(callArg.did).toBeUndefined();
+        // Success reply should still be sent
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Added');
+    });
+
+    test('adds entry without DID when no callback provided', async () => {
+        const handler = new AllowlistCommandHandler(
+            mockEmailAllowlist as unknown as EmailAllowlist,
+            mockBskyAllowlist as BskyAllowlistLike,
+            ADMIN_USER_ID
+            // no resolveHandleToDid
+        );
+
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'add', { address: 'alice.bsky.social' });
+        await handler.handle(asChatInput);
+
+        expect(mockBskyAllowlist.addEntry).toHaveBeenCalledTimes(1);
+        const callArg = mockBskyAllowlist.addEntry.mock.calls[0]?.[0] as { handle: string, did?: string };
+        expect(callArg.did).toBeUndefined();
+    });
+
+    test('does not call resolveHandleToDid for email address', async () => {
+        const resolveHandleToDid = mock(async (_handle: string): Promise<string | undefined> => 'did:plc:xyz');
+        const handler = new AllowlistCommandHandler(
+            mockEmailAllowlist as unknown as EmailAllowlist,
+            mockBskyAllowlist as BskyAllowlistLike,
+            ADMIN_USER_ID,
+            resolveHandleToDid
+        );
+
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'add', { address: 'alice@example.com' });
+        await handler.handle(asChatInput);
+
+        expect(resolveHandleToDid).not.toHaveBeenCalled();
+        expect(mockEmailAllowlist.addEntry).toHaveBeenCalledTimes(1);
     });
 });
 

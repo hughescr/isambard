@@ -61,6 +61,13 @@ export class BlueskyClient {
     }
 
     /**
+     * The authenticated handle for this client.
+     */
+    get ownHandle(): string {
+        return this.handle;
+    }
+
+    /**
      * Authenticate with Bluesky using handle and app password.
      */
     async login(): Promise<void> {

@@ -334,10 +334,13 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         const targetHandle = parentPost.author.handle;
                         const targetDid    = parentPost.author.did;
 
+                        // Check if replying to own post (always allowed — threading own posts)
+                        const isSelfReply = targetHandle === client.ownHandle;
+
                         // Check if target is allowlisted (by handle or DID).
-                        // When no allowlist is configured, treat as allowed (permissive default).
-                        // Stryker disable next-line ConditionalExpression: allowlist guard — no-allowlist means permissive; handle and DID checks both needed
-                        const isAllowed = !allowlist || allowlist.isAllowed(targetHandle) || allowlist.isAllowed(targetDid);
+                        // Self-replies and missing allowlist are always allowed.
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-reply, no-allowlist, handle, and DID checks all needed
+                        const isAllowed = isSelfReply || !allowlist || allowlist.isAllowed(targetHandle) || allowlist.isAllowed(targetDid);
 
                         if(isAllowed) {
                             // Allowlisted — send immediately

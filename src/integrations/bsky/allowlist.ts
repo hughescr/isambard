@@ -77,13 +77,22 @@ export class BskyAllowlist {
     }
 
     /**
-     * Add an entry to the allowlist. 2 writes:
-     * 1. PutItem for HANDLE metadata
-     * 2. ADD handles on INDEX
-     * Refreshes caches after.
+     * Add an entry to the allowlist. 1 read + 2 writes:
+     * 1. GetItem to fetch existing DID for stale cache cleanup
+     * 2. PutItem for HANDLE metadata
+     * 3. ADD handles on INDEX
+     * Refreshes caches after, removing old DID if it changed.
      */
     async addEntry(entry: BskyAllowlistEntry): Promise<void> {
         const normalized = this.normalize(entry.handle);
+
+        // Fetch existing entry to clean up old DID from cache if it changed
+        const existing = await this.docClient.send(new GetCommand({
+            TableName: this.tableName,
+            Key:       { PK: ALLOWLIST_PK, SK: `${HANDLE_SK_PREFIX}${normalized}` },
+        }));
+        // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent mutants — undefined is never a valid DID; empty string is never in the cache
+        const oldDid = existing.Item?.did as string | undefined;
 
         // Write metadata item
         await this.docClient.send(new PutCommand({
@@ -108,8 +117,12 @@ export class BskyAllowlist {
             ExpressionAttributeValues: { ':newHandle': new Set([normalized]) },
         }));
 
-        // Refresh caches
+        // Refresh caches — clean up old DID if it changed
         this.handleCache.add(normalized);
+        // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent mutants — undefined/empty are never valid DID cache entries
+        if(oldDid !== undefined && oldDid !== '' && oldDid !== entry.did) {
+            this.didCache.delete(oldDid);
+        }
         if(entry.did !== undefined && entry.did !== '') {
             this.didCache.add(entry.did);
         }

@@ -291,7 +291,8 @@ describe('BskyAllowlist.isAllowed()', () => {
 });
 
 describe('BskyAllowlist.addEntry()', () => {
-    test('sends PutCommand and UpdateCommand, updates handle cache', async () => {
+    test('sends GetCommand, PutCommand and UpdateCommand, updates handle cache', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: undefined });
         ddbMock.on(PutCommand).resolves({});
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -308,6 +309,13 @@ describe('BskyAllowlist.addEntry()', () => {
         };
 
         await allowlist.addEntry(entry);
+
+        const getCalls = ddbMock.commandCalls(GetCommand);
+        expect(getCalls).toHaveLength(1);
+        expect(getCalls[0]?.args[0].input).toMatchObject({
+            TableName: TABLE_NAME,
+            Key:       { PK: 'BSKY#ALLOWLIST', SK: 'HANDLE#alice.bsky.social' },
+        });
 
         const putCalls = ddbMock.commandCalls(PutCommand);
         expect(putCalls).toHaveLength(1);
@@ -339,6 +347,7 @@ describe('BskyAllowlist.addEntry()', () => {
     });
 
     test('with DID — stores DID in metadata and updates didCache', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: undefined });
         ddbMock.on(PutCommand).resolves({});
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -364,6 +373,7 @@ describe('BskyAllowlist.addEntry()', () => {
     });
 
     test('without DID — didCache not polluted', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: undefined });
         ddbMock.on(PutCommand).resolves({});
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -383,6 +393,7 @@ describe('BskyAllowlist.addEntry()', () => {
     });
 
     test('with empty-string DID — didCache not polluted', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: undefined });
         ddbMock.on(PutCommand).resolves({});
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -403,6 +414,7 @@ describe('BskyAllowlist.addEntry()', () => {
     });
 
     test('normalizes handle before storing', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: undefined });
         ddbMock.on(PutCommand).resolves({});
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -421,6 +433,132 @@ describe('BskyAllowlist.addEntry()', () => {
         expect(putCalls[0]?.args[0].input.Item?.handle).toBe('alice.bsky.social');
         expect(putCalls[0]?.args[0].input.Item?.SK).toBe('HANDLE#alice.bsky.social');
         expect(allowlist.isAllowed('alice.bsky.social')).toBe(true);
+    });
+
+    test('re-adding with different DID removes old DID from cache', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: {
+                PK:      'BSKY#ALLOWLIST',
+                SK:      'HANDLE#alice.bsky.social',
+                handle:  'alice.bsky.social',
+                did:     'did:plc:old',
+                addedAt: '2026-01-01T00:00:00Z',
+                addedBy: 'admin',
+            },
+        });
+        ddbMock.on(PutCommand).resolves({});
+        ddbMock.on(UpdateCommand).resolves({});
+
+        const allowlist = new BskyAllowlist(
+            DynamoDBDocumentClient.from({} as never),
+            TABLE_NAME
+        );
+        // Seed didCache as if loaded from DB
+        await allowlist.addEntry({
+            handle:  'alice.bsky.social',
+            did:     'did:plc:old',
+            addedAt: '2026-01-01T00:00:00Z',
+            addedBy: 'admin',
+        });
+        expect(allowlist.isAllowed('did:plc:old')).toBe(true);
+
+        // Re-add with a different DID — old DID should be evicted
+        ddbMock.on(GetCommand).resolves({
+            Item: {
+                PK:      'BSKY#ALLOWLIST',
+                SK:      'HANDLE#alice.bsky.social',
+                handle:  'alice.bsky.social',
+                did:     'did:plc:old',
+                addedAt: '2026-01-01T00:00:00Z',
+                addedBy: 'admin',
+            },
+        });
+        await allowlist.addEntry({
+            handle:  'alice.bsky.social',
+            did:     'did:plc:new',
+            addedAt: '2026-01-02T00:00:00Z',
+            addedBy: 'discord-command',
+        });
+
+        expect(allowlist.isAllowed('did:plc:old')).toBe(false);
+        expect(allowlist.isAllowed('did:plc:new')).toBe(true);
+    });
+
+    test('re-adding with same DID leaves cache unchanged', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: {
+                PK:      'BSKY#ALLOWLIST',
+                SK:      'HANDLE#alice.bsky.social',
+                handle:  'alice.bsky.social',
+                did:     'did:plc:abc123',
+                addedAt: '2026-01-01T00:00:00Z',
+                addedBy: 'admin',
+            },
+        });
+        ddbMock.on(PutCommand).resolves({});
+        ddbMock.on(UpdateCommand).resolves({});
+
+        const allowlist = new BskyAllowlist(
+            DynamoDBDocumentClient.from({} as never),
+            TABLE_NAME
+        );
+
+        await allowlist.addEntry({
+            handle:  'alice.bsky.social',
+            did:     'did:plc:abc123',
+            addedAt: '2026-01-02T00:00:00Z',
+            addedBy: 'discord-command',
+        });
+
+        expect(allowlist.isAllowed('did:plc:abc123')).toBe(true);
+    });
+
+    test('re-adding with no new DID removes old DID from cache', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: {
+                PK:      'BSKY#ALLOWLIST',
+                SK:      'HANDLE#alice.bsky.social',
+                handle:  'alice.bsky.social',
+                did:     'did:plc:old',
+                addedAt: '2026-01-01T00:00:00Z',
+                addedBy: 'admin',
+            },
+        });
+        ddbMock.on(PutCommand).resolves({});
+        ddbMock.on(UpdateCommand).resolves({});
+
+        const allowlist = new BskyAllowlist(
+            DynamoDBDocumentClient.from({} as never),
+            TABLE_NAME
+        );
+        // Seed didCache
+        await allowlist.addEntry({
+            handle:  'alice.bsky.social',
+            did:     'did:plc:old',
+            addedAt: '2026-01-01T00:00:00Z',
+            addedBy: 'admin',
+        });
+        expect(allowlist.isAllowed('did:plc:old')).toBe(true);
+
+        // Re-add with no DID — old DID should be evicted
+        ddbMock.on(GetCommand).resolves({
+            Item: {
+                PK:      'BSKY#ALLOWLIST',
+                SK:      'HANDLE#alice.bsky.social',
+                handle:  'alice.bsky.social',
+                did:     'did:plc:old',
+                addedAt: '2026-01-01T00:00:00Z',
+                addedBy: 'admin',
+            },
+        });
+        await allowlist.addEntry({
+            handle:  'alice.bsky.social',
+            // no did
+            addedAt: '2026-01-02T00:00:00Z',
+            addedBy: 'discord-command',
+        });
+
+        expect(allowlist.isAllowed('did:plc:old')).toBe(false);
     });
 });
 
@@ -694,16 +832,20 @@ describe('Cache consistency', () => {
     test('after addEntry, isAllowed returns true; after removeEntry, returns false', async () => {
         ddbMock.on(PutCommand).resolves({});
         ddbMock.on(UpdateCommand).resolves({});
-        ddbMock.on(GetCommand).resolves({
-            Item: {
-                PK:      'BSKY#ALLOWLIST',
-                SK:      'HANDLE#alice.bsky.social',
-                handle:  'alice.bsky.social',
-                did:     'did:plc:abc123',
-                addedAt: '2026-01-01T00:00:00Z',
-                addedBy: 'admin',
-            },
-        });
+        // First GetCommand call (from addEntry — no existing entry)
+        // Second GetCommand call (from removeEntry — returns the entry with DID)
+        ddbMock.on(GetCommand)
+            .resolvesOnce({ Item: undefined })
+            .resolvesOnce({
+                Item: {
+                    PK:      'BSKY#ALLOWLIST',
+                    SK:      'HANDLE#alice.bsky.social',
+                    handle:  'alice.bsky.social',
+                    did:     'did:plc:abc123',
+                    addedAt: '2026-01-01T00:00:00Z',
+                    addedBy: 'admin',
+                },
+            });
         ddbMock.on(DeleteCommand).resolves({});
 
         const allowlist = new BskyAllowlist(

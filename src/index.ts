@@ -131,9 +131,16 @@ export async function createApp(): Promise<App> {
                 error: err instanceof Error ? err.message : String(err),
                 msg:   'Bluesky safety rails setup failed, disabling Bluesky integration',
             });
-            bskyClient = undefined;
         }
         // Stryker enable BlockStatement
+    }
+
+    // If bsky client exists but safety rails were not set up (no email config or setup failed),
+    // disable Bluesky entirely to prevent unguarded posting
+    if(bskyClient && !bskySetup) {
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+        logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky integration' });
+        bskyClient = undefined;
     }
 
     // Build email service from emailSetup components (if available)
@@ -177,12 +184,20 @@ export async function createApp(): Promise<App> {
 
     // Construct allowlist command handler externally (after both email and bsky setups are done)
     // so it can manage both the email and Bluesky allowlists from a single /allowlist command.
+    const activeBskyClient = bskyClient; // capture for closure — TypeScript narrowing
+    const resolveHandleToDid = activeBskyClient
+        ? async (handle: string): Promise<string | undefined> => {
+            const profile = await activeBskyClient.getProfile(handle);
+            return profile.did;
+        }
+        : undefined;
     const allowlistHandler = emailSetup
         ? new AllowlistCommandHandler(
             emailSetup.allowlist,
             // Stryker disable next-line ConditionalExpression,ObjectLiteral: optional bsky allowlist wiring
             bskySetup?.allowlist ?? { addEntry: async () => { /* no-op */ }, removeEntry: async () => { /* no-op */ }, list: async () => [] },
-            config.email!.adminDiscordUserId
+            config.email!.adminDiscordUserId,
+            resolveHandleToDid
         )
         : undefined;
 

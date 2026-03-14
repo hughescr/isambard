@@ -8,7 +8,7 @@ import type { EmailAllowlist } from '@/integrations/email/allowlist';
  * allowed import boundaries).
  */
 export interface BskyAllowlistLike {
-    addEntry(entry: { handle: string, notes?: string, addedAt: string, addedBy: string }): Promise<void>
+    addEntry(entry: { handle: string, did?: string, notes?: string, addedAt: string, addedBy: string }): Promise<void>
     removeEntry(handle: string): Promise<void>
     list(): Promise<{ handle: string, addedAt: string, notes?: string }[]>
 }
@@ -74,14 +74,21 @@ export function buildAllowlistCommand(): SlashCommandBuilder {
  * Only the admin (adminDiscordUserId) is authorized to use these commands.
  */
 export class AllowlistCommandHandler {
-    private readonly emailAllowlist:     EmailAllowlist;
-    private readonly bskyAllowlist:      BskyAllowlistLike;
-    private readonly adminDiscordUserId: string;
+    private readonly emailAllowlist:      EmailAllowlist;
+    private readonly bskyAllowlist:       BskyAllowlistLike;
+    private readonly adminDiscordUserId:  string;
+    private readonly resolveHandleToDid?: (handle: string) => Promise<string | undefined>;
 
-    constructor(emailAllowlist: EmailAllowlist, bskyAllowlist: BskyAllowlistLike, adminDiscordUserId: string) {
+    constructor(
+        emailAllowlist:      EmailAllowlist,
+        bskyAllowlist:       BskyAllowlistLike,
+        adminDiscordUserId:  string,
+        resolveHandleToDid?: (handle: string) => Promise<string | undefined>
+    ) {
         this.emailAllowlist     = emailAllowlist;
         this.bskyAllowlist      = bskyAllowlist;
         this.adminDiscordUserId = adminDiscordUserId;
+        this.resolveHandleToDid = resolveHandleToDid;
     }
 
     async handle(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -193,8 +200,19 @@ export class AllowlistCommandHandler {
             } else {
                 // Stryker disable next-line Regex: /^@/ and /@/ are equivalent for bsky-typed inputs (@ only appears at position 0)
                 const handle = address.replace(/^@/, '');
+                let did: string | undefined;
+                // Stryker disable BlockStatement: best-effort DID resolution — failure is non-fatal
+                if(this.resolveHandleToDid) {
+                    try {
+                        did = await this.resolveHandleToDid(handle);
+                    } catch{
+                        // Best-effort — DID resolution failure is non-fatal
+                    }
+                }
+                // Stryker restore BlockStatement
                 await this.bskyAllowlist.addEntry({
                     handle,
+                    did,
                     notes,
                     addedAt: new Date().toISOString(),
                     addedBy: 'discord-command',

@@ -202,6 +202,11 @@ describe.concurrent('BlueskyClient', () => {
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, serviceUrl: 'https://custom.bsky.app' });
             expect(client).toBeInstanceOf(BlueskyClient);
         });
+
+        test('ownHandle returns the configured handle', () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.ownHandle).toBe('test.bsky.social');
+        });
     });
 
     // -----------------------------------------------------------------------

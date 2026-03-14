@@ -65,6 +65,7 @@ describe.concurrent('createBskyMCPServer', () => {
             sendPost:                mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newpost', cid: 'bafyreinew' })),
             replyToPost:             mock(async (): Promise<{ uri: string, cid: string }> => ({ uri: 'at://did:plc:abc123/app.bsky.feed.post/newreply', cid: 'bafyreireply' })),
             updateNotificationsSeen: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            ownHandle:               'bot.bsky.social',
         } as unknown as BlueskyClient;
     });
 
@@ -1233,6 +1234,28 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(textContent(result.content[0])).toBe('Reply sent successfully: at://did:plc:abc123/app.bsky.feed.post/newreply Warning: send rate limit reached (0 tokens remaining).');
+        });
+
+        test('should send immediately when replying to own post (self-reply bypass)', async () => {
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            // Return a post authored by the bot itself
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> =>
+                mockPost({ author: { did: 'did:plc:botself', handle: 'bot.bsky.social' } })
+            );
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'Threading my own post',
+                parentUri: 'at://did:plc:botself/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Reply sent successfully: at://did:plc:abc123/app.bsky.feed.post/newreply');
+            expect(mockClient.replyToPost).toHaveBeenCalledTimes(1);
+            // Allowlist should not have been checked (or at least replyToPost was called regardless)
+            expect(mockAllowlist.isAllowed).not.toHaveBeenCalled();
         });
 
         test('should return error result on getPost failure', async () => {
