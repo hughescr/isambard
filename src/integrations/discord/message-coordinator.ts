@@ -42,11 +42,12 @@ export type MessageProcessor = (
 
 /** Configuration for the coordinator */
 export interface MessageCoordinatorConfig {
-    debounceMs?:        number  // Default: 2000ms
+    debounceMs?:          number  // Default: 2000ms
+    processingTimeoutMs?: number  // Default: 120_000 (2 minutes)
     /** Optional callback invoked when processing completes (not on interruption) */
-    onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>
+    onResponse?:          (result: ProcessResult, discordMessage: Message | null) => Promise<void>
     /** Optional event delta tracker for capturing new events during processing */
-    eventDeltaTracker?: EventDeltaTracker
+    eventDeltaTracker?:   EventDeltaTracker
 }
 
 /** Discord channel interface for typing indicator */
@@ -106,14 +107,17 @@ interface ChannelState {
  * ```
  */
 export class MessageCoordinator {
-    private readonly debounceMs:         number;
-    private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
-    private readonly eventDeltaTracker?: EventDeltaTracker;
+    private readonly debounceMs:          number;
+    // Stryker disable next-line ConditionalExpression: Config-driven default value
+    private readonly processingTimeoutMs: number;
+    private readonly onResponse?:         (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
+    private readonly eventDeltaTracker?:  EventDeltaTracker;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
-    private processor:                   MessageProcessor | null = null;
+    private processor:                    MessageProcessor | null = null;
 
     constructor(config?: MessageCoordinatorConfig) {
         this.debounceMs = config?.debounceMs ?? 2000;
+        this.processingTimeoutMs = config?.processingTimeoutMs ?? 120_000;
         this.onResponse = config?.onResponse;
         this.eventDeltaTracker = config?.eventDeltaTracker;
     }
@@ -229,6 +233,12 @@ export class MessageCoordinator {
 
         // Create the processing promise
         const processingPromise = (async () => {
+            // Stryker disable StringLiteral,ObjectLiteral: timeout warning log — content is informational
+            const timeoutId = setTimeout(() => {
+                logger.warn({ channelId, msg: 'Processing timeout reached, aborting' });
+                abortController.abort();
+            }, this.processingTimeoutMs);
+            // Stryker restore StringLiteral,ObjectLiteral
             try {
                 // Mark event delta start point before processing begins (must await to prevent race)
                 await this.eventDeltaTracker?.markStart();
@@ -250,6 +260,7 @@ export class MessageCoordinator {
                     await postProcess;
                 }
             } finally {
+                clearTimeout(timeoutId);
                 // Stop typing indicator
                 this.stopTypingIndicator(state);
                 // Clear active query
@@ -318,6 +329,12 @@ export class MessageCoordinator {
 
         // Create the processing promise
         const processingPromise = (async () => {
+            // Stryker disable StringLiteral,ObjectLiteral: timeout warning log — content is informational
+            const timeoutId = setTimeout(() => {
+                logger.warn({ channelId, msg: 'Processing timeout reached, aborting' });
+                abortController.abort();
+            }, this.processingTimeoutMs);
+            // Stryker restore StringLiteral,ObjectLiteral
             try {
                 // Resolve newEvents asynchronously
                 const resumeContext: ResumeContext | null = partialResumeContext
@@ -346,6 +363,7 @@ export class MessageCoordinator {
                     await postProcess;
                 }
             } finally {
+                clearTimeout(timeoutId);
                 // Stop typing indicator
                 this.stopTypingIndicator(state);
                 // Clear active query

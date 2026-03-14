@@ -1,6 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import type { DynamoDBConfig } from '@/config';
 
 export interface DynamoDBClients {
@@ -15,7 +16,11 @@ export interface DynamoDBClients {
  */
 export function buildClientConfig() {
     return {
-        maxAttempts: 3, // Retry configuration for production
+        maxAttempts:    3, // Retry configuration for production
+        requestHandler: new NodeHttpHandler({
+            connectionTimeout: 5000,  // 5s to establish connection
+            requestTimeout:    15_000, // 15s for full response
+        }),
     };
 }
 

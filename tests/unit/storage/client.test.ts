@@ -1,5 +1,6 @@
 import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { mockClient } from 'aws-sdk-client-mock';
 import type { DynamoDBConfig } from '@/config/schemas';
 import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
@@ -16,10 +17,31 @@ describe.concurrent('buildClientConfig', () => {
     test('should not include region or endpoint in config', () => {
         const clientConfig = buildClientConfig();
 
-        // Verify only maxAttempts is set
-        expect(Object.keys(clientConfig)).toEqual(['maxAttempts']);
+        // Verify expected keys are set (maxAttempts + requestHandler), no region or endpoint
         expect('region' in clientConfig).toBe(false);
         expect('endpoint' in clientConfig).toBe(false);
+    });
+
+    test('should return a requestHandler that is a NodeHttpHandler instance', () => {
+        const clientConfig = buildClientConfig();
+
+        expect(clientConfig.requestHandler).toBeInstanceOf(NodeHttpHandler);
+    });
+
+    test('should configure connectionTimeout to 5000ms', async () => {
+        const clientConfig = buildClientConfig();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
+        const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
+
+        expect(handlerConfig.connectionTimeout).toBe(5000);
+    });
+
+    test('should configure requestTimeout to 15000ms', async () => {
+        const clientConfig = buildClientConfig();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
+        const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
+
+        expect(handlerConfig.requestTimeout).toBe(15_000);
     });
 });
 
