@@ -43,13 +43,10 @@ describe('buildBskyApprovalEmbed', () => {
         expect(result.embed.toJSON().description).toBe('My reply text here');
     });
 
-    test('embed truncates long post text to 280 chars', () => {
+    test('embed does not truncate long post text (Bluesky max 300 graphemes fits in Discord)', () => {
         const longText = 'A'.repeat(400);
         const result   = buildBskyApprovalEmbed(makeParams({ text: longText }));
-        const data     = result.embed.toJSON();
-        // lodash truncate at 280 adds '...' so total is 280 chars
-        expect(data.description?.length).toBe(280);
-        expect(data.description).toEndWith('...');
+        expect(result.embed.toJSON().description).toBe(longText);
     });
 
     test('embed does not truncate short post text', () => {
@@ -119,15 +116,17 @@ describe('buildBskyApprovalEmbed', () => {
             expect(field?.inline).toBe(true);
         });
 
-        test('falls back to parentCid when rootUri provided but rootCid is not', () => {
+        test('omits Root URI and Root CID fields when rootUri provided but rootCid is not', () => {
             const params = makeParams({
                 rootUri:   'at://did:plc:root/app.bsky.feed.post/root123',
                 parentCid: 'bafyreparent',
                 // rootCid intentionally omitted
             });
-            const result = buildBskyApprovalEmbed(params);
-            const field  = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
-            expect(field?.value).toBe('bafyreparent');
+            const result   = buildBskyApprovalEmbed(params);
+            const uriField = result.embed.toJSON().fields?.find(f => f.name === 'Root URI');
+            const cidField = result.embed.toJSON().fields?.find(f => f.name === 'Root CID');
+            expect(uriField).toBeUndefined();
+            expect(cidField).toBeUndefined();
         });
     });
 

@@ -8,7 +8,8 @@ import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessio
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient } from '@/integrations/bsky';
-import { createDiscordBot, setupEmail, type DiscordBot, type EmailSetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { AllowlistCommandHandler } from '@/integrations/email';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -41,6 +42,7 @@ export interface App {
  * @returns Application instance with start/stop methods
  * @throws {Error} If required configuration is missing or invalid
  */
+// eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- createApp is a composition root; branching is inherent — wires email, bsky, and all optional integrations
 export async function createApp(): Promise<App> {
     // Clean up stale session files from previous hot reloads
     await cleanupAllStaleSessions();
@@ -112,6 +114,27 @@ export async function createApp(): Promise<App> {
         // Stryker enable BlockStatement
     }
 
+    // Set up Bluesky safety rails if bsky client was created and email config provides admin channel
+    let bskySetup: BskySetupResult | undefined;
+    if(bskyClient && config.email) {
+        // Stryker disable BlockStatement: try-catch wraps bsky safety rails setup - error handling
+        try {
+            bskySetup = await setupBsky({
+                bskyClient,
+                docClient:             storage.docClient,
+                tableName:             storage.tableName,
+                client:                discordInfra.discordClient,
+                adminDiscordChannelId: config.email.adminDiscordChannelId,
+            });
+        } catch (err) {
+            logger.error({
+                error: err instanceof Error ? err.message : String(err),
+                msg:   'Bluesky safety rails setup failed, continuing without approval workflow',
+            });
+        }
+        // Stryker enable BlockStatement
+    }
+
     // Build email service from emailSetup components (if available)
     const emailService = emailSetup
         ? { wildDuckClient: emailSetup.wildDuckClient }
@@ -119,16 +142,19 @@ export async function createApp(): Promise<App> {
 
     const contextLayer = createContextLayer(storage.memoryBackend, emailService);
     const mcpServers = createMCPServers({
-        memoryBackend:        storage.memoryBackend,
-        messageSearchService: discordInfra.messageSearchService,
-        discordClient:        discordInfra.discordClient,
+        memoryBackend:           storage.memoryBackend,
+        messageSearchService:    discordInfra.messageSearchService,
+        discordClient:           discordInfra.discordClient,
         questionRegistry,
-        channelRegistry:      discordInfra.channelRegistry,
-        inboxManager:         discordInfra.inboxManager,
-        botStateManager:      discordInfra.botStateManager,
-        timezone:             resolveTimezone(),
-        recordAccess:         contextLayer.contextBuilder.recordAccess,
+        channelRegistry:         discordInfra.channelRegistry,
+        inboxManager:            discordInfra.inboxManager,
+        botStateManager:         discordInfra.botStateManager,
+        timezone:                resolveTimezone(),
+        recordAccess:            contextLayer.contextBuilder.recordAccess,
         bskyClient,
+        bskyAllowlist:           bskySetup?.allowlist,
+        bskyRateLimiter:         bskySetup?.rateLimiter,
+        bskySendApprovalRequest: bskySetup?.sendApprovalRequest,
     });
 
     // Load plugins and create agent
@@ -148,6 +174,17 @@ export async function createApp(): Promise<App> {
     // Load identity
     const identityContext = await loadIdentityContext(config.agent.oauthToken, contextLayer.contextBuilder);
 
+    // Construct allowlist command handler externally (after both email and bsky setups are done)
+    // so it can manage both the email and Bluesky allowlists from a single /allowlist command.
+    const allowlistHandler = emailSetup
+        ? new AllowlistCommandHandler(
+            emailSetup.allowlist,
+            // Stryker disable next-line ConditionalExpression,ObjectLiteral: optional bsky allowlist wiring
+            bskySetup?.allowlist ?? { addEntry: async () => { /* no-op */ }, removeEntry: async () => { /* no-op */ }, list: async () => [] },
+            config.email!.adminDiscordUserId
+        )
+        : undefined;
+
     // Create Discord bot
     const bot: DiscordBot = createDiscordBot({
         config:            config.discord,
@@ -163,6 +200,8 @@ export async function createApp(): Promise<App> {
         contextBuilder:    contextLayer.contextBuilder,
         memoryBackend:     createCatchUpSignalAdapter(storage.memoryBackend),
         emailSetup,
+        bskySetup,
+        allowlistHandler,
     });
 
     let isStopping = false;

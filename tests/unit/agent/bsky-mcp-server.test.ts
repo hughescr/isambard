@@ -1177,7 +1177,7 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(mockClient.replyToPost).not.toHaveBeenCalled();
         });
 
-        test('should still return approval message when approval callback throws', async () => {
+        test('should return error result when approval callback throws', async () => {
             const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => {
                 throw new Error('Discord unavailable');
@@ -1191,9 +1191,9 @@ describe.concurrent('createBskyMCPServer', () => {
                 parentCid: 'bafyreiparent',
             });
 
-            // Error is swallowed, tool still returns the approval-pending message
-            expect(result.isError).toBeUndefined();
-            expect(textContent(result.content[0])).toBe('Reply to alice.bsky.social requires approval. Approval request sent to admin.');
+            // Approval delivery failure returns an error result
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('failed to send approval request');
         });
 
         test('should call rateLimiter.increment() after allowlisted send', async () => {

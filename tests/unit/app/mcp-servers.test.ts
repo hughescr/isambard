@@ -4,11 +4,12 @@ import { mockLogger } from '../../setup';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry';
 import type { MCPServersOptions } from '@/app/mcp-servers';
-import { BskyCheckpointManager, type BlueskyClient } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { BotStateManager } from '@/integrations/discord/state';
+import type { SendRateLimiter } from '@/integrations/email';
 import type { MemoryToolBackend } from '@/storage/memory-tool';
 
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
@@ -290,8 +291,50 @@ describe('createMCPServers', () => {
         expect(result.bskyMcpServer).toBe(mockBskyMcpServer);
         expect(createBskyMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createBskyMcpServerSpy).toHaveBeenCalledWith({
-            client:            mockBskyClient,
-            checkpointManager: expect.any(BskyCheckpointManager),
+            client:              mockBskyClient,
+            checkpointManager:   expect.any(BskyCheckpointManager),
+            rateLimiter:         undefined,
+            allowlist:           undefined,
+            sendApprovalRequest: undefined,
+        });
+    });
+
+    test('should pass bsky safety rail fields to createBskyMCPServer when provided', async () => {
+        const memoryMcpModule = await import('@/agent/memory-mcp-server');
+        spies.push(spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const discordMcpModule = await import('@/agent/discord-mcp-server');
+        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const inboxMcpModule = await import('@/agent/inbox-mcp-server');
+        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const mockBskyMcpServer = { name: 'bsky', version: '1.0.0' } as unknown as McpServerInstance;
+        const bskyMcpModule = await import('@/agent/bsky-mcp-server');
+        const createBskyMcpServerSpy = spyOn(bskyMcpModule, 'createBskyMCPServer').mockReturnValue(mockBskyMcpServer);
+        spies.push(createBskyMcpServerSpy);
+
+        const mockBskyClient       = {} as unknown as BlueskyClient;
+        const mockBskyAllowlist    = {} as unknown as BskyAllowlist;
+        const mockBskyRateLimiter  = {} as unknown as SendRateLimiter;
+        const mockSendApproval     = mock(async () => { /* no-op */ });
+
+        const { createMCPServers } = await import('@/app/mcp-servers');
+        createMCPServers({
+            ...mockOptions,
+            bskyClient:              mockBskyClient,
+            bskyAllowlist:           mockBskyAllowlist,
+            bskyRateLimiter:         mockBskyRateLimiter,
+            bskySendApprovalRequest: mockSendApproval,
+        });
+
+        expect(createBskyMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(createBskyMcpServerSpy).toHaveBeenCalledWith({
+            client:              mockBskyClient,
+            checkpointManager:   expect.any(BskyCheckpointManager),
+            rateLimiter:         mockBskyRateLimiter,
+            allowlist:           mockBskyAllowlist,
+            sendApprovalRequest: mockSendApproval,
         });
     });
 });

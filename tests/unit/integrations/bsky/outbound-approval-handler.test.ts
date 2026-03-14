@@ -275,7 +275,19 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(addEntryArg.addedBy).toBe('outbound-approval');
             });
 
-            test('should still complete post when allowlist addEntry fails', async () => {
+            test('should show "handle allowlisted" in embed title on allowlist success', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(1);
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlisted');
+            });
+
+            test('should still complete post when allowlist addEntry fails, shows "allowlist failed" in embed title', async () => {
                 const deps = makeDeps();
                 (deps.allowlist.addEntry as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
                 const handler = new BskyOutboundApprovalHandler(deps);
@@ -286,6 +298,8 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deps.client.replyToPost).toHaveBeenCalledTimes(1);
                 expect(mockLogger.warn).toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
+                expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
             });
 
             test('should still complete post when getProfile fails', async () => {

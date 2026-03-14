@@ -14,7 +14,6 @@ import {
     buildReviewEmbed,
     buildUnsafeAlert,
     buildRestrictedAccessEmbed,
-    AllowlistCommandHandler,
     buildAllowlistCommand,
     EmailFolder,
     WildDuckClient,
@@ -42,10 +41,11 @@ export interface EmailSetupOptions {
 export interface EmailSetupResult {
     listener:                WildDuckListener
     reviewHandler:           ReviewHandler
-    allowlistHandler:        AllowlistCommandHandler
     emailMcpServer:          McpServerConfig
     outboundApprovalHandler: OutboundApprovalHandler
     wildDuckClient:          WildDuckClient
+    /** The email allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
+    allowlist:               EmailAllowlist
     /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
     adminChannelId:          ChannelId
 }
@@ -128,9 +128,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
     const reviewHandler = new ReviewHandler({ wildDuckClient, allowlist, adminDiscordUserId: emailConfig.adminDiscordUserId });
-
-    // Create allowlist command handler (handles /allowlist interactions)
-    const allowlistHandler = new AllowlistCommandHandler(allowlist, emailConfig.adminDiscordUserId);
 
     // Create rate limiter for outbound email
     // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
@@ -227,10 +224,10 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     return {
         listener,
         reviewHandler,
-        allowlistHandler,
         emailMcpServer,
         outboundApprovalHandler,
         wildDuckClient,
+        allowlist,
         adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),
     };
 }

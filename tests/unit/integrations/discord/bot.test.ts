@@ -15,6 +15,7 @@ import type { PresenceManager } from '@/integrations/discord/presence/manager';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
+import type { AllowlistCommandHandler } from '@/integrations/email/allowlist-commands';
 
 describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
@@ -2744,19 +2745,19 @@ describe('createDiscordBot', () => {
 
             const handleMock = mock(async () => undefined);
             const mockEmailSetup = {
-                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
-                reviewHandler:    { handleButton: mock(async () => undefined) },
-                allowlistHandler: { handle: handleMock },
-                emailMcpServer:   {},
-                imap:             {},
-                counters:         {},
+                listener:       { start: mock(async () => undefined), stop: mock(async () => undefined) },
+                reviewHandler:  { handleButton: mock(async () => undefined) },
+                emailMcpServer: {},
+                imap:           {},
+                counters:       {},
             } as unknown as EmailSetupResult;
 
             createDiscordBot({
                 config: mockConfig,
 
-                channelRegistry: mockChannelRegistry,
-                emailSetup:      mockEmailSetup,
+                channelRegistry:  mockChannelRegistry,
+                emailSetup:       mockEmailSetup,
+                allowlistHandler: { handle: handleMock } as unknown as AllowlistCommandHandler,
             });
 
             // Fire clientReady to register interactionCreate handler

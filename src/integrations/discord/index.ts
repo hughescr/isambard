@@ -283,3 +283,10 @@ export {
     type EmailSetupOptions,
     type EmailSetupResult
 } from './setup/email-setup';
+
+// Bsky setup
+export {
+    setupBsky,
+    type BskySetupOptions,
+    type BskySetupResult
+} from './setup/bsky-setup';

@@ -350,16 +350,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         // Not allowlisted — request admin approval
                         if(sendApprovalRequest) {
-                            // Stryker disable BlockStatement: try-catch wraps approval request - logger-only catch body
                             try {
                                 await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
+                                // Stryker disable next-line StringLiteral: success message is informational only
+                                return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
                             } catch (error) {
                                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky approval request' });
+                                // Stryker disable next-line StringLiteral: error message is informational only
+                                return mcpErrorResult(new Error(`Reply to ${targetHandle} requires approval but failed to send approval request to admin. Please try again later.`));
                             }
-                            // Stryker restore BlockStatement
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                            return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
                         }
 
                         // No approval callback — just inform

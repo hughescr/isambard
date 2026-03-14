@@ -179,6 +179,7 @@ export class BskyOutboundApprovalHandler {
         await this.client.replyToPost(text, parentUri, parentCid, rootUri, rootCid);
 
         // Add handle to allowlist (best-effort)
+        let allowlistSuccess = false;
         if(targetHandle) {
             // Stryker disable BlockStatement: try-catch wraps allowlist write - best-effort
             try {
@@ -192,6 +193,7 @@ export class BskyOutboundApprovalHandler {
                     // Stryker disable next-line StringLiteral: addedBy value is configuration
                     addedBy: 'outbound-approval',
                 });
+                allowlistSuccess = true;
             } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ err: error, handle: targetHandle, msg: 'Failed to add handle to bsky allowlist' });
@@ -199,8 +201,8 @@ export class BskyOutboundApprovalHandler {
         }
 
         const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
-            .setTitle('Posted \u2713 (handle allowlisted)')
+            // Stryker disable next-line ConditionalExpression,StringLiteral: UI label depends on allowlist write result
+            .setTitle(allowlistSuccess ? 'Posted \u2713 (handle allowlisted)' : 'Posted \u2713 (allowlist failed)')
             .setColor(GREEN);
 
         await interaction.editReply({

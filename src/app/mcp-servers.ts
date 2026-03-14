@@ -1,8 +1,9 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, type QuestionRegistry  } from '@/agent';
-import { BskyCheckpointManager, type BlueskyClient } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
 import type { MessageSearchService, ChannelRegistryManager, InboxManager, BotStateManager } from '@/integrations/discord';
+import type { SendRateLimiter } from '@/integrations/email';
 import type { MemoryToolBackend, MemoryPath } from '@/storage';
 
 /**
@@ -61,6 +62,28 @@ export interface MCPServersOptions {
      * Optional Bluesky client for AT Protocol integration.
      */
     bskyClient?: BlueskyClient
+
+    /**
+     * Optional Bluesky allowlist for gating outbound posts.
+     */
+    bskyAllowlist?: BskyAllowlist
+
+    /**
+     * Optional rate limiter for Bluesky outbound posts.
+     */
+    bskyRateLimiter?: SendRateLimiter
+
+    /**
+     * Optional callback to request admin approval for an outbound Bluesky reply.
+     */
+    bskySendApprovalRequest?: (
+        text:         string,
+        targetHandle: string,
+        parentUri:    string,
+        parentCid:    string,
+        rootUri?:     string,
+        rootCid?:     string
+    ) => Promise<void>
 }
 
 /**
@@ -121,8 +144,11 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
 
     const bskyMcpServer = options.bskyClient
         ? createBskyMCPServer({
-            client:            options.bskyClient,
-            checkpointManager: new BskyCheckpointManager({ backend: options.memoryBackend }),
+            client:              options.bskyClient,
+            checkpointManager:   new BskyCheckpointManager({ backend: options.memoryBackend }),
+            rateLimiter:         options.bskyRateLimiter,
+            allowlist:           options.bskyAllowlist,
+            sendApprovalRequest: options.bskySendApprovalRequest,
         })
         : undefined;
 

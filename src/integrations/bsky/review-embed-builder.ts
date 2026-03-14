@@ -17,8 +17,8 @@ export interface BskyApprovalEmbedResult {
 }
 
 // Stryker disable next-line ArithmeticOperator: Bluesky brand color is configuration
-const BSKY_BLUE          = 0x00_85_FF;
-const POST_TRUNCATE_LENGTH = 280;
+const BSKY_BLUE               = 0x00_85_FF;
+const PARENT_TEXT_TRUNCATE_LENGTH = 280;
 
 /**
  * Build a Bluesky reply approval embed for admin review.
@@ -30,7 +30,7 @@ export function buildBskyApprovalEmbed(params: BskyApprovalEmbedParams): BskyApp
         // Stryker disable next-line StringLiteral: UI label is configuration
         .setTitle('Bluesky Post Approval Required')
         .setColor(BSKY_BLUE)
-        .setDescription(truncate(params.text, { length: POST_TRUNCATE_LENGTH }))
+        .setDescription(params.text)
         .addFields(
             // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
             { name: 'Replying to', value: params.targetHandle, inline: true },
@@ -40,19 +40,19 @@ export function buildBskyApprovalEmbed(params: BskyApprovalEmbedParams): BskyApp
             { name: 'Parent CID',  value: params.parentCid,    inline: true }
         );
 
-    if(params.rootUri) {
+    if(params.rootUri && params.rootCid) {
         embed.addFields(
             // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
-            { name: 'Root URI', value: params.rootUri,                    inline: true },
+            { name: 'Root URI', value: params.rootUri, inline: true },
             // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
-            { name: 'Root CID', value: params.rootCid ?? params.parentCid, inline: true }
+            { name: 'Root CID', value: params.rootCid, inline: true }
         );
     }
 
     if(params.parentText) {
         embed.addFields(
             // Stryker disable next-line StringLiteral,BooleanLiteral: Field name and inline layout are UI configuration
-            { name: 'Parent Post', value: truncate(params.parentText, { length: POST_TRUNCATE_LENGTH }), inline: false }
+            { name: 'Parent Post', value: truncate(params.parentText, { length: PARENT_TEXT_TRUNCATE_LENGTH }), inline: false }
         );
     }
 

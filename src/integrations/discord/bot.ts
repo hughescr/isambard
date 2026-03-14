@@ -16,6 +16,7 @@ import {
     type PresenceManager
 } from './presence';
 import { DiscordRateLimiter } from './rate-limiter';
+import type { BskySetupResult } from './setup/bsky-setup';
 import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
 import { setupCoordinatorIntegration } from './setup/coordinator-setup';
 import type { EmailSetupResult } from './setup/email-setup';
@@ -28,6 +29,7 @@ import {
 } from './state';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker  } from '@/agent';
 import type { DiscordConfig } from '@/config';
+import type { AllowlistCommandHandler } from '@/integrations/email';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -132,6 +134,18 @@ export interface DiscordBotOptions {
      * If provided, wires in the email listener lifecycle and email button/command routing.
      */
     emailSetup?: EmailSetupResult
+
+    /**
+     * Optional Bluesky setup result for approval workflow.
+     * If provided, wires in bsky-send-* button and modal routing.
+     */
+    bskySetup?: BskySetupResult
+
+    /**
+     * Optional allowlist command handler for the /allowlist slash command.
+     * If provided, handles /allowlist interactions for both email and Bluesky allowlists.
+     */
+    allowlistHandler?: AllowlistCommandHandler
 }
 
 /**
@@ -200,7 +214,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -327,9 +341,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         });
 
         // Register interaction handler for button clicks and slash commands
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
         client.on('interactionCreate', async (interaction) => {
             if(interaction.isButton()) {
+                // Route bsky-send-* buttons to bsky outbound approval handler
+                if(bskySetup && interaction.customId.startsWith('bsky-send-')) {
+                    await bskySetup.outboundApprovalHandler.handleButton(interaction);
+                    return;
+                }
                 // Route email-send-* buttons to outbound approval handler (before email-* catch-all)
                 if(emailSetup && interaction.customId.startsWith('email-send-')) {
                     await emailSetup.outboundApprovalHandler.handleButton(interaction);
@@ -342,7 +361,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 }
                 await interactionHandler.handleButtonInteraction(interaction);
             } else if(interaction.isModalSubmit()) {
-                if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
+                if(bskySetup && interaction.customId.startsWith('bsky-send-reject-reason:')) {
+                    await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
+                } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
                     await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
                 }
             } else if(interaction.isStringSelectMenu() && interaction.customId.startsWith('email-allowlist-select:')) {
@@ -350,7 +371,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (emailSetup ? emailSetup.allowlistHandler.handle(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
+                await (allowlistHandler ? allowlistHandler.handle(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
             }
         });
 
