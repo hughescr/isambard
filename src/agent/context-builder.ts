@@ -7,7 +7,7 @@
 
 import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
-import type { BlueskyClient, BskyConversation } from '@/integrations/bsky';
+import type { BlueskyClient } from '@/integrations/bsky';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
 
@@ -421,29 +421,21 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
         // Stryker disable BlockStatement: try-catch guards bsky DM errors from breaking perch context
         try {
-            // Fetch all unread conversations (paginated)
-            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for allConvos
-            const allConvos: BskyConversation[] = [];
-            let cursor: string | undefined;
-            do {
-                // Stryker disable next-line StringLiteral: 'unread' readState filter is API configuration
-                // eslint-disable-next-line no-await-in-loop -- sequential: cursor depends on prior page result
-                const result = await bskyDMService.client.listConversations(undefined, cursor, 'unread');
-                allConvos.push(...result.conversations);
-                cursor = result.cursor;
-            } while(cursor);
+            // Stryker disable next-line StringLiteral: 'unread' readState filter is API configuration
+            const result = await bskyDMService.client.listConversations(undefined, undefined, 'unread');
+            const convos = result.conversations;
 
             // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no conversations = no section
-            if(allConvos.length === 0) {
+            if(convos.length === 0) {
                 return undefined;
             }
 
-            // Count total unread messages across all conversations
+            // Count total unread messages across conversations on this page
             // Stryker disable next-line ArithmeticOperator: sum accumulator for unread count
-            const totalUnread = allConvos.reduce((sum, c) => sum + c.unreadCount, 0);
+            const totalUnread = convos.reduce((sum, c) => sum + c.unreadCount, 0);
 
             // Build per-conversation descriptions: "N in the conversation with handle1, handle2"
-            const convoDescriptions = allConvos.map((c) => {
+            const convoDescriptions = convos.map((c) => {
                 const memberHandles = c.members
                     .filter(m => m.handle !== bskyDMService.client.ownHandle)
                     .map(m => m.handle)
@@ -451,8 +443,12 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
                 return `${c.unreadCount} in the conversation with ${memberHandles}`;
             });
 
+            const hasMore = result.cursor !== undefined;
             // Stryker disable next-line StringLiteral: section header is cosmetic
-            return `## Bluesky DMs\nYou have ${totalUnread} DMs: ${convoDescriptions.join('; ')}`;
+            const header = `## Bluesky DMs\nYou have ${totalUnread}${hasMore ? '+' : ''} DMs: ${convoDescriptions.join('; ')}`;
+            return hasMore
+                ? `${header}\n(More conversations available — use Bluesky DM tools to see all)`
+                : header;
         } catch (error) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.warn({ error, msg: 'Bluesky DM fetch failed, skipping DM section' });

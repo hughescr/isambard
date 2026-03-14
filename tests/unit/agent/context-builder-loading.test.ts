@@ -3127,48 +3127,27 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('2 in the conversation with fred.bsky.social, craig.rungie.com');
         });
 
-        test('should paginate through all pages when listConversations returns a cursor', async () => {
+        test('should show N+ count and hint when listConversations returns a cursor, and only call once', async () => {
             backend.getStateItemsScored = mock(async () => []);
             backend.searchByTimeRange = mock(async () => []);
             backend.listByLayer = mock(async () => ({ items: [] }));
 
-            const page1 = {
-                conversations: [
-                    {
-                        id:      'convo1',
-                        rev:     '1',
-                        members: [
-                            { did: 'did:plc:izzy',  handle: 'izzy.bsky.social' },
-                            { did: 'did:plc:alice', handle: 'alice.bsky.social' },
-                        ],
-                        muted:       false,
-                        unreadCount: 2,
-                    },
-                ],
-                cursor: 'page2cursor',
-            };
-            const page2 = {
-                conversations: [
-                    {
-                        id:      'convo2',
-                        rev:     '2',
-                        members: [
-                            { did: 'did:plc:izzy', handle: 'izzy.bsky.social' },
-                            { did: 'did:plc:bob',  handle: 'bob.bsky.social' },
-                        ],
-                        muted:       false,
-                        unreadCount: 3,
-                    },
-                ],
-                cursor: undefined,
-            };
-
-            let callCount = 0;
             const mockBskyClient = {
-                listConversations: mock(async (_limit: unknown, cursor: string | undefined) => {
-                    callCount++;
-                    return cursor === undefined ? page1 : page2;
-                }),
+                listConversations: mock(async () => ({
+                    conversations: [
+                        {
+                            id:      'convo1',
+                            rev:     '1',
+                            members: [
+                                { did: 'did:plc:izzy',  handle: 'izzy.bsky.social' },
+                                { did: 'did:plc:alice', handle: 'alice.bsky.social' },
+                            ],
+                            muted:       false,
+                            unreadCount: 2,
+                        },
+                    ],
+                    cursor: 'page2cursor',
+                })),
                 ownHandle: 'izzy.bsky.social',
             } as unknown as BlueskyClient;
 
@@ -3176,11 +3155,11 @@ describe('createContextBuilder loading methods', () => {
             const contextBuilder = createContextBuilder({ backend, bskyDMService });
             const result = await contextBuilder.buildPerchContext();
 
-            expect(callCount).toBe(2);
+            expect(mockBskyClient.listConversations).toHaveBeenCalledTimes(1);
             expect(result).toContain('## Bluesky DMs');
-            expect(result).toContain('You have 5 DMs');
+            expect(result).toContain('You have 2+ DMs');
             expect(result).toContain('2 in the conversation with alice.bsky.social');
-            expect(result).toContain('3 in the conversation with bob.bsky.social');
+            expect(result).toContain('More conversations available');
         });
 
         test('should filter out own handle from member list', async () => {

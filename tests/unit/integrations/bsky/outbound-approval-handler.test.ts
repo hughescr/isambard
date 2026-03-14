@@ -924,6 +924,31 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
             });
+
+            test('should throw if convoId is missing from embed', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const interaction = {
+                    customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: DM_TEXT,
+                            fields:      [
+                                { name: 'Recipients', value: JSON.stringify([DM_HANDLE_ALICE]), inline: false },
+                                // Conversation ID intentionally omitted
+                            ],
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalled();
+            });
         });
 
         describe('bsky-dm-reject', () => {
