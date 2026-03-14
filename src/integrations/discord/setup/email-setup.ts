@@ -62,7 +62,6 @@ export interface EmailSetupResult {
  * - EmailProcessor with Discord DM callbacks for uncertain/unsafe verdicts
  * - WildDuckListener (NOT started — caller starts it after Discord client ready)
  * - ReviewHandler for button interactions
- * - AllowlistCommandHandler for slash command interactions
  * - Email MCP server for Claude agent
  * - Registers the /allowlist slash command with Discord via REST
  *

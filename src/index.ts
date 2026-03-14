@@ -129,8 +129,9 @@ export async function createApp(): Promise<App> {
         } catch (err) {
             logger.error({
                 error: err instanceof Error ? err.message : String(err),
-                msg:   'Bluesky safety rails setup failed, continuing without approval workflow',
+                msg:   'Bluesky safety rails setup failed, disabling Bluesky integration',
             });
+            bskyClient = undefined;
         }
         // Stryker enable BlockStatement
     }

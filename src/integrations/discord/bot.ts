@@ -371,7 +371,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 await (emailSetup ? emailSetup.outboundApprovalHandler.handleSelectMenu(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
-                await (allowlistHandler ? allowlistHandler.handle(interaction) : interaction.reply({ content: 'Email integration is not currently available.', flags: MessageFlags.Ephemeral }));
+                await (allowlistHandler ? allowlistHandler.handle(interaction) : interaction.reply({ content: 'Allowlist management is not currently available.', flags: MessageFlags.Ephemeral }));
             }
         });
 

@@ -69,35 +69,19 @@ export function buildAllowlistCommand(): SlashCommandBuilder {
         ) as SlashCommandBuilder;
 }
 
-/** No-op BskyAllowlistLike used when no Bluesky allowlist is wired in. */
-const NO_OP_BSKY_ALLOWLIST: BskyAllowlistLike = {
-    addEntry:    async () => { /* no-op */ },
-    removeEntry: async () => { /* no-op */ },
-    list:        async () => [],
-};
-
 /**
  * Handles /allowlist slash command interactions for both email and Bluesky allowlists.
  * Only the admin (adminDiscordUserId) is authorized to use these commands.
- *
- * `bskyAllowlist` is optional; when omitted, Bluesky operations are no-ops.
  */
 export class AllowlistCommandHandler {
     private readonly emailAllowlist:     EmailAllowlist;
     private readonly bskyAllowlist:      BskyAllowlistLike;
     private readonly adminDiscordUserId: string;
 
-    constructor(emailAllowlist: EmailAllowlist, bskyAllowlistOrAdminId: BskyAllowlistLike | string, adminDiscordUserId?: string) {
-        this.emailAllowlist = emailAllowlist;
-        if(typeof bskyAllowlistOrAdminId === 'string') {
-            // Legacy 2-arg call: AllowlistCommandHandler(emailAllowlist, adminDiscordUserId)
-            this.bskyAllowlist      = NO_OP_BSKY_ALLOWLIST;
-            this.adminDiscordUserId = bskyAllowlistOrAdminId;
-        } else {
-            this.bskyAllowlist      = bskyAllowlistOrAdminId;
-            // Stryker disable next-line StringLiteral: fallback '' only used if called incorrectly
-            this.adminDiscordUserId = adminDiscordUserId ?? '';
-        }
+    constructor(emailAllowlist: EmailAllowlist, bskyAllowlist: BskyAllowlistLike, adminDiscordUserId: string) {
+        this.emailAllowlist     = emailAllowlist;
+        this.bskyAllowlist      = bskyAllowlist;
+        this.adminDiscordUserId = adminDiscordUserId;
     }
 
     async handle(interaction: ChatInputCommandInteraction): Promise<void> {
