@@ -42,12 +42,13 @@ export type MessageProcessor = (
 
 /** Configuration for the coordinator */
 export interface MessageCoordinatorConfig {
-    debounceMs?:          number  // Default: 2000ms
-    processingTimeoutMs?: number  // Default: 120_000 (2 minutes)
+    debounceMs?:        number  // Default: 2000ms
     /** Optional callback invoked when processing completes (not on interruption) */
-    onResponse?:          (result: ProcessResult, discordMessage: Message | null) => Promise<void>
+    onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>
     /** Optional event delta tracker for capturing new events during processing */
-    eventDeltaTracker?:   EventDeltaTracker
+    eventDeltaTracker?: EventDeltaTracker
+    /** Optional callback invoked when processing ends, with info about whether it was interrupted and whether it will resume */
+    onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void
 }
 
 /** Discord channel interface for typing indicator */
@@ -107,19 +108,18 @@ interface ChannelState {
  * ```
  */
 export class MessageCoordinator {
-    private readonly debounceMs:          number;
-    // Stryker disable next-line ConditionalExpression: Config-driven default value
-    private readonly processingTimeoutMs: number;
-    private readonly onResponse?:         (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
-    private readonly eventDeltaTracker?:  EventDeltaTracker;
+    private readonly debounceMs:         number;
+    private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
+    private readonly eventDeltaTracker?: EventDeltaTracker;
+    private readonly onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
-    private processor:                    MessageProcessor | null = null;
+    private processor:                   MessageProcessor | null = null;
 
     constructor(config?: MessageCoordinatorConfig) {
         this.debounceMs = config?.debounceMs ?? 2000;
-        this.processingTimeoutMs = config?.processingTimeoutMs ?? 120_000;
         this.onResponse = config?.onResponse;
         this.eventDeltaTracker = config?.eventDeltaTracker;
+        this.onProcessingEnd = config?.onProcessingEnd;
     }
 
     /**
@@ -232,13 +232,9 @@ export class MessageCoordinator {
         const abortController = new AbortController();
 
         // Create the processing promise
+        // Stryker disable next-line ArrowFunction: Equivalent mutant — catch handler suppresses unhandled rejection; return value is unused
         const processingPromise = (async () => {
-            // Stryker disable StringLiteral,ObjectLiteral: timeout warning log — content is informational
-            const timeoutId = setTimeout(() => {
-                logger.warn({ channelId, msg: 'Processing timeout reached, aborting' });
-                abortController.abort();
-            }, this.processingTimeoutMs);
-            // Stryker restore StringLiteral,ObjectLiteral
+            let wasInterrupted = true; // Default: treat errors/aborts as interruptions
             try {
                 // Mark event delta start point before processing begins (must await to prevent race)
                 await this.eventDeltaTracker?.markStart();
@@ -250,6 +246,7 @@ export class MessageCoordinator {
                     state.sessionId,
                     abortController.signal
                 );
+                wasInterrupted = result.wasInterrupted;
 
                 // Conditionally await: handleProcessingResult returns a Promise only when onResponse
                 // is invoked (completed path). For interrupted/no-callback paths it returns void,
@@ -260,13 +257,16 @@ export class MessageCoordinator {
                     await postProcess;
                 }
             } finally {
-                clearTimeout(timeoutId);
                 // Stop typing indicator
                 this.stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
+                // Notify caller about processing end state
+                // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: debounceTimer is structurally redundant — handleMessage always pushes to pendingMessages before setting debounceTimer
+                const willResume = state.pendingMessages.length > 0 || state.debounceTimer !== undefined;
+                this.onProcessingEnd?.({ wasInterrupted, willResume });
             }
-        })();
+        })().catch(() => undefined);
 
         // Store in state
         state.activeQuery = {
@@ -328,13 +328,9 @@ export class MessageCoordinator {
         const abortController = new AbortController();
 
         // Create the processing promise
+        // Stryker disable next-line ArrowFunction: Equivalent mutant — catch handler suppresses unhandled rejection; return value is unused
         const processingPromise = (async () => {
-            // Stryker disable StringLiteral,ObjectLiteral: timeout warning log — content is informational
-            const timeoutId = setTimeout(() => {
-                logger.warn({ channelId, msg: 'Processing timeout reached, aborting' });
-                abortController.abort();
-            }, this.processingTimeoutMs);
-            // Stryker restore StringLiteral,ObjectLiteral
+            let wasInterrupted = true; // Default: treat errors/aborts as interruptions
             try {
                 // Resolve newEvents asynchronously
                 const resumeContext: ResumeContext | null = partialResumeContext
@@ -353,6 +349,7 @@ export class MessageCoordinator {
                     state.sessionId,
                     abortController.signal
                 );
+                wasInterrupted = result.wasInterrupted;
 
                 // Conditionally await: handleProcessingResult returns a Promise only when onResponse
                 // is invoked (completed path). For interrupted/no-callback paths it returns void,
@@ -363,13 +360,16 @@ export class MessageCoordinator {
                     await postProcess;
                 }
             } finally {
-                clearTimeout(timeoutId);
                 // Stop typing indicator
                 this.stopTypingIndicator(state);
                 // Clear active query
                 state.activeQuery = undefined;
+                // Notify caller about processing end state
+                // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: debounceTimer is structurally redundant — handleMessage always pushes to pendingMessages before setting debounceTimer
+                const willResume = state.pendingMessages.length > 0 || state.debounceTimer !== undefined;
+                this.onProcessingEnd?.({ wasInterrupted, willResume });
             }
-        })();
+        })().catch(() => undefined);
 
         // Store in state
         state.activeQuery = {

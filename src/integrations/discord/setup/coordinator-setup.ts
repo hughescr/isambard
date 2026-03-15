@@ -193,7 +193,16 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
     const coordinator = new MessageCoordinator({
         debounceMs:        250,
         eventDeltaTracker: params.eventDeltaTracker,
-        onResponse:        async (result, discordMessage) => {
+        onProcessingEnd:   ({ wasInterrupted, willResume }) => {
+            if(wasInterrupted && !willResume) {
+                const currentMode = botStateManager.getMode();
+                if(currentMode === 'processing_message') {
+                    logger.warn({ msg: 'Processing interrupted with no pending resume — recovering to idle' });
+                    botStateManager.goIdle();
+                }
+            }
+        },
+        onResponse: async (result, discordMessage) => {
             // Only send response if we have both a response and a message to reply to
             if(result.response && discordMessage) {
                 // Track bot response for idle status context
