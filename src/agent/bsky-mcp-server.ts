@@ -400,6 +400,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         }
 
                         // Not allowlisted — request admin approval
+                        await client.validatePostText(args.text);
                         if(sendApprovalRequest) {
                             try {
                                 await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
@@ -544,6 +545,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         }
 
                         // Not allowlisted — request admin approval
+                        await client.validateDMText(args.text);
                         if(sendDMApprovalRequest) {
                             try {
                                 const allHandles = resolvedRecipients.map(r => r.handle);

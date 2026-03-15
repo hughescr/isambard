@@ -1420,6 +1420,27 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: auth failure');
         });
+
+        test('should validate text before requesting approval when target is not allowlisted', async () => {
+            const { BskyValidationError } = await import('@/integrations/bsky/errors');
+            (mockClient.validatePostText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
+                throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
+            });
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            const result = await handler({
+                text:      'x'.repeat(301),
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/parent',
+                parentCid: 'bafyreiparent',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Post exceeds 300 graphemes');
+            expect(mockApproval).not.toHaveBeenCalled();
+        });
     });
 
     // -------------------------------------------------------------------------
@@ -1855,6 +1876,26 @@ describe.concurrent('createBskyMCPServer', () => {
 
             // Approval request should include ALL recipients (alice and bob)
             expect(sendDMApprovalRequest).toHaveBeenCalledWith('Hello!', ['alice.bsky.social', 'bob.bsky.social'], 'convo-1');
+        });
+
+        test('should validate text before requesting approval when recipients are not allowlisted', async () => {
+            const { BskyValidationError } = await import('@/integrations/bsky/errors');
+            (mockClient.validateDMText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
+                throw new BskyValidationError('DM text exceeds 1000 graphemes (1001)', { graphemeLength: 1001 });
+            });
+            const mockAllowlist: BskyAllowlist = {
+                isAllowed: mock(() => false),
+            } as unknown as BskyAllowlist;
+            const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
+
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
+            const handler = getToolHandler(server, 'sendDirectMessage');
+
+            const result = await handler({ recipients: ['alice.bsky.social'], text: 'A'.repeat(1001) });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('DM text exceeds 1000 graphemes');
+            expect(sendDMApprovalRequest).not.toHaveBeenCalled();
         });
     });
 });
