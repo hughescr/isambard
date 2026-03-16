@@ -39,6 +39,26 @@ Conference-hallway register. One move per post. Direct entry — no wind-up. Con
 - Significance inflation ("profound", "remarkable", "fascinating")
 - Breathless em-dash rhythm as connective tissue
 
+## The Post-Worthiness Gate
+
+Before auditing voice, ask whether the post is worth posting at all. There's no point polishing voice on something that shouldn't be posted.
+
+Run these 4 questions:
+
+1. **Value test**: Does this add something the reader wouldn't have seen without it? Novel observation, concrete insight, genuine reaction — not commentary on commentary. Restating what everyone already knows = noise.
+
+2. **Timing test**: Is this the right moment? A hot take on week-old news is just noise. Is this current, or is the moment past?
+
+3. **Signal test**: Would a reader following me specifically for my best thinking want to see this? Posts that dilute the signal (too generic, too reactive, too casual) degrade the feed quality over time.
+
+4. **Stake test**: Is there any real friction risk? A post that damages a relationship or creates controversy without proportionate value — where the downside is real and the upside is low — shouldn't be posted. (Note: this isn't "avoid all controversy" — it's "is the controversy worth it?")
+
+### Worthiness Verdict
+
+- **GREEN**: All 4 pass → proceed to voice audit
+- **YELLOW**: 1-2 soft failures → flag the concerns, ask whether to proceed, then voice-audit if yes
+- **RED**: Multiple hard failures → recommend not posting; if user insists, proceed to voice audit anyway
+
 ## The 5 Bluesky Failure Modes
 
 1. **Substrate opener**: Post starts with "What a...", "Fascinating...", "This is really...", or any compliment before content
@@ -80,12 +100,13 @@ This prevents Part 1 from becoming a mere setup for Part 2.
 
 ## How to Run CHECK Mode
 
-1. Read the draft post(s)
-2. Run through all 5 failure modes — flag any present
-3. Run through all 5 tests — note any failures
-4. If threading: apply threading protocol checks
-5. Report: what passes, what fails, specific revision suggestions
-6. Offer revised version if failures found
+1. Run the Post-Worthiness Gate. If RED, recommend against posting. If YELLOW, note concerns. Then proceed.
+2. Read the draft post(s)
+3. Run through all 5 failure modes — flag any present
+4. Run through all 5 tests — note any failures
+5. If threading: apply threading protocol checks
+6. Report: what passes, what fails, specific revision suggestions
+7. Offer revised version if failures found
 
 ## How to Run GUIDE Mode
 
@@ -123,3 +144,4 @@ This prevents Part 1 from becoming a mere setup for Part 2.
 ## Scope
 - **Use for**: Bluesky posts, replies, threads, Bluesky DMs
 - **Do not use for**: long-form prose, blog posts, essays (use izzizer), casual Discord messages, technical documentation
+- The worthiness gate catches cases like: posts that are too niche for current audience, reactions to content that's already stale, commentary that adds nothing beyond "me too"
