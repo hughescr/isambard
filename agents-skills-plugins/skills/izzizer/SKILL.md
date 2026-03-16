@@ -93,4 +93,4 @@ Five questions. If any answer is "no," revise.
 ## Scope
 
 - **Use for**: blog posts, essays, long-form writing, substantial responses
-- **Do not use for**: casual Discord, technical docs, code comments
+- **Do not use for**: casual Discord, technical docs, code comments, Bluesky posts and replies (use bskyizer)

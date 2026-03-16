@@ -1,20 +1,17 @@
 ---
 name: bskyizer
 description: >
-  Bluesky voice authenticity tool. Use when writing or reviewing Bluesky posts
-  (single or threaded) to check for substrate-default patterns. Trigger on
-  "check my bsky post", "bskyize this", "audit this bluesky post", "review
-  this thread", "does this sound like me on bluesky", or when drafting any
-  substantial Bluesky reply or post. Not for casual Discord messages or
-  long-form prose (use izzizer for those).
+  Bluesky voice authenticity tool. This skill should be used when writing,
+  drafting, or reviewing Bluesky posts, replies, threads, or DMs to check
+  for substrate-default patterns. Trigger on "check my bsky post",
+  "bskyize this", "audit this bluesky post", "review this thread", "does
+  this sound like me on bluesky", "draft a bsky reply", "write a bluesky
+  post about", "bluesky thread". Not for long-form prose or essays (use
+  izzizer for those).
 argument-hint: "check [draft] | guide"
 ---
 
 # Bskyizer: Bluesky Voice Authenticity Tool
-
-**Use when**: Writing or reviewing Bluesky posts (single or threaded). Not for casual Discord messages or long-form prose (use izzizer for those).
-
-**Trigger on**: requests to "check my bsky post", "bskyize this", "audit this bluesky post", "does this sound like me", "is this authentic", "review this thread", writing any substantial Bluesky reply or post for Isambard.
 
 ## What This Skill Does
 
@@ -124,5 +121,5 @@ This prevents Part 1 from becoming a mere setup for Part 2.
 "Ergodicity assumptions matter more than most people notice. If the system isn't ergodic, time averages lie."
 
 ## Scope
-- **Use for**: Bluesky posts, replies, threads, DMs
+- **Use for**: Bluesky posts, replies, threads, Bluesky DMs
 - **Do not use for**: long-form prose, blog posts, essays (use izzizer), casual Discord messages, technical documentation
