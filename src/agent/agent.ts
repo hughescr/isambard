@@ -897,20 +897,25 @@ function buildQueryOptions(
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
         allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, options?.specialMode),
-        maxThinkingTokens: 10_000,
+        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Thinking/effort configuration - mutations don't change behavior
+        thinking:          { type: 'adaptive' as const },
+        effort:            'high' as const,
+        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
         compactionControl: {
             enabled:               true,
-            contextTokenThreshold: 150_000,
+            contextTokenThreshold: 800_000,
             model:                 'haiku',
             summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
-        settingSources:  ['project'] as SettingSource[],
-        abortController: options?.abortController,
+        settingSources:         ['project'] as SettingSource[],
+        // Stryker disable next-line BooleanLiteral: Configuration flag
+        agentProgressSummaries: true,
+        abortController:        options?.abortController,
         ...(options?.sessionId && { resume: options.sessionId }),
         // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
-        env:             {
+        env:                    {
             ...process.env,
             CLAUDE_CODE_ENABLE_TASKS: 'true',
         },

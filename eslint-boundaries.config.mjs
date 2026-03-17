@@ -9,6 +9,8 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
+ *    Note: utils/path-validator.ts is allowed to import from errors
+ *    (throws PathSecurityError). This is scoped via internalPath.
  * 2. errors     - Error types, minimal dependencies
  * 3. config     - Configuration loading, minimal dependencies
  * 4. storage    - Data layer, independent of application/agent
@@ -49,28 +51,28 @@ export const boundariesConfig = {
         ]
     },
     rules: {
-        'boundaries/element-types': ['error', {
+        'boundaries/dependencies': ['error', {
             'default': 'disallow',
             rules:     [
-                { from: 'utils',   allow: [] },
-                { from: 'errors',  allow: ['utils'] },
-                { from: 'config',  allow: ['utils'] },
-                { from: 'storage', allow: ['utils', 'errors', 'config'] },
-                { from: 'agent',   allow: ['utils', 'errors', 'config', 'storage', 'email', 'bsky'] },
-                { from: 'email',   allow: ['utils', 'errors', 'config', 'storage', 'agent'] },
-                { from: 'bsky',    allow: ['utils', 'errors', 'config', 'storage'] },
-                { from: 'discord', allow: ['utils', 'errors', 'config', 'storage', 'agent', 'email', 'bsky'] },
-                { from: 'app',     allow: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky'] },
+                { from: { type: 'utils', internalPath: 'path-validator.ts' }, allow: { to: { type: ['errors'] } } },
+                { from: { type: 'errors' },  allow: { to: { type: ['utils'] } } },
+                { from: { type: 'config' },  allow: { to: { type: ['utils'] } } },
+                { from: { type: 'storage' }, allow: { to: { type: ['utils', 'errors', 'config'] } } },
+                { from: { type: 'agent' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'email', 'bsky'] } } },
+                { from: { type: 'email' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent'] } } },
+                { from: { type: 'bsky' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
+                { from: { type: 'discord' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent', 'email', 'bsky'] } } },
+                { from: { type: 'app' },     allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky'] } } },
+                // Entry-point enforcement (merged from boundaries/entry-point)
+                {
+                    disallow: {
+                        to: {
+                            type:         ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky', 'app'],
+                            internalPath: '!index.ts'
+                        }
+                    }
+                },
             ]
         }],
-        'boundaries/entry-point': ['error', {
-            'default': 'disallow',
-            rules:     [
-                {
-                    target: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky', 'app'],
-                    allow:  'index.ts'
-                }
-            ]
-        }]
     }
 };

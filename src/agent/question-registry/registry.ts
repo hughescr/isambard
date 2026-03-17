@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
-// eslint-disable-next-line boundaries/element-types -- Question registry imports Discord ChannelId type; decouple tracked in roadmap
+// eslint-disable-next-line boundaries/dependencies -- Question registry imports Discord ChannelId type; decouple tracked in roadmap
 import type { ChannelId } from '@/integrations/discord';
 
 export interface QuestionRegistryConfig {

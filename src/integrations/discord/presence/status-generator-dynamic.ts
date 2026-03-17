@@ -197,7 +197,7 @@ function buildPrompt(
     identityContext: string,
     context: SynopsisContext
 ): string {
-    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, responseFragment, thinkingContent } = context;
+    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, responseFragment, thinkingContent, subagentSummary } = context;
 
     // Build system prompt with identity
     let systemPart = SYSTEM_PROMPT;
@@ -232,6 +232,13 @@ function buildPrompt(
     if(phase === 'responding') {
         userPart = userPart.replace('{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
     }
+
+    // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Prompt template enrichment — mutations don't change behavior
+    // Append subagent context if available
+    if(subagentSummary) {
+        userPart += `\n\nA sub-agent is also working: "${subagentSummary}"`;
+    }
+    // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
     // Combine system and user prompts
     // Since unstable_v2_prompt doesn't support systemPrompt, we embed it in the prompt

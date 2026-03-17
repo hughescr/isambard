@@ -122,6 +122,7 @@ export function createStreamEventHandler(
     let accumulatedText = '';
     let accumulatedThinkingContent = '';
     const recentToolCalls: string[] = [];
+    let latestSubagentSummary: string | undefined;
     // Stryker disable next-line ArithmeticOperator: Configuration constant
     const MAX_THINKING_CONTENT_LENGTH = 1500;
     const MAX_RECENT_TOOLS = 3;
@@ -227,6 +228,7 @@ export function createStreamEventHandler(
                 toolDescription: getToolDescription(toolName),
                 accumulatedText: capturedAccumulatedText || undefined,
                 recentToolCalls: capturedRecentToolCalls,
+                subagentSummary: latestSubagentSummary,
             },
             {
                 type:      'using_tool',
@@ -310,6 +312,7 @@ export function createStreamEventHandler(
                                         userMessage,
                                         thinkingContent: capturedThinkingContent,
                                         recentToolCalls: capturedRecentToolCalls,
+                                        subagentSummary: latestSubagentSummary,
                                     });
                                     // Stryker disable next-line ConditionalExpression: Staleness guard for async race condition
                                     if(completed) {
@@ -357,6 +360,7 @@ export function createStreamEventHandler(
                                 // Stryker disable next-line MethodExpression: Truncation optimization for synopsis input
                                 responseFragment: event.delta?.text?.slice(0, 100),
                                 accumulatedText:  accumulatedText || undefined,
+                                subagentSummary:  latestSubagentSummary,
                             },
                             {
                                 type:      'responding',
@@ -377,6 +381,7 @@ export function createStreamEventHandler(
             }
             case 'result': {
             // Processing complete, go idle
+                latestSubagentSummary = undefined;
                 void safeUpdatePhase({
                     type:  'idle',
                     since: new Date(),
@@ -385,10 +390,34 @@ export function createStreamEventHandler(
                 break;
             }
             case 'user':
-            case 'tool_result':
-            // Stryker disable next-line ConditionalExpression,BlockStatement: Last case in switch — removing 'system' or the break has no observable effect since no code follows this case
+            case 'tool_result': {
+                break;
+            }
             case 'system': {
-            // No presence update needed for these event types
+                // Handle task_progress events from subagents
+                // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator: Subtype guard for task_progress events
+                if(event.subtype === 'task_progress' && event.summary) {
+                    latestSubagentSummary = event.summary;
+
+                    // Collapse phase to thinking or responding — 'using_tool' lacks required toolName/toolInput/toolDescription fields
+                    const synopsisPhase = currentPhase === 'responding' ? 'responding' as const : 'thinking' as const;
+
+                    // Update presence with subagent context
+                    updatePhaseWithSynopsis(
+                        {
+                            phase:           synopsisPhase,
+                            userMessage,
+                            subagentSummary: event.summary,
+                            // Stryker disable LogicalOperator,ArrayDeclaration: Context fields for synopsis enrichment — value doesn't affect core behavior
+                            thinkingContent: accumulatedThinkingContent || undefined,
+                            recentToolCalls: [...recentToolCalls],
+                            // Stryker restore LogicalOperator,ArrayDeclaration
+                        },
+                        synopsisPhase === 'responding'
+                            ? { type: 'responding' as const, startedAt: new Date() }
+                            : { type: 'thinking' as const,   startedAt: new Date(), userMessage }
+                    );
+                }
                 break;
             }
         }

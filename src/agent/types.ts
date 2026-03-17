@@ -94,9 +94,15 @@ export interface UserEvent {
  * The 'compact_boundary' subtype is emitted when context compaction occurs.
  */
 export interface SystemEvent {
-    type:        'system'
-    subtype?:    'init' | 'status' | 'compact_boundary' | 'hook_response'
-    session_id?: string
+    type:            'system'
+    subtype?:        'init' | 'status' | 'compact_boundary' | 'hook_response' | 'task_progress'
+    session_id?:     string
+    /** AI-generated progress summary for subagent tasks (when agentProgressSummaries enabled) */
+    summary?:        string
+    /** Human-readable description of what the subagent is doing */
+    description?:    string
+    /** Last tool the subagent used */
+    last_tool_name?: string
 }
 
 /**

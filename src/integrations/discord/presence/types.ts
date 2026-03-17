@@ -100,6 +100,8 @@ export interface SynopsisContext {
     thinkingContent?:  string
     /** Recent tool calls (last 3 tools, most recent first) */
     recentToolCalls?:  string[]
+    /** AI-generated progress summary from a running subagent */
+    subagentSummary?:  string
 }
 
 /**

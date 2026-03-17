@@ -14,7 +14,7 @@ import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildP
 import { type PerchSlot, type PerchConfig } from './types';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { StreamProgress } from '@/agent/stream-tracker';
-// eslint-disable-next-line boundaries/element-types -- Perch session runner imports Discord state types; decouple tracked in roadmap
+// eslint-disable-next-line boundaries/dependencies -- Perch session runner imports Discord state types; decouple tracked in roadmap
 import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
 
 /**

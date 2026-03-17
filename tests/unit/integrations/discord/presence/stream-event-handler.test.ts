@@ -754,6 +754,248 @@ describe('StreamEventHandler', () => {
         });
     });
 
+    describe('task_progress events', () => {
+        it('should store subagentSummary and trigger synopsis on task_progress with summary', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Send task_progress event with summary
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' } as AgentStreamEvent);
+            await flushPromises();
+
+            // generateSynopsis should have been called with subagentSummary and default thinking phase
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalled();
+            const progressContext = capturedContexts.find(ctx => ctx.subagentSummary === 'Analyzing code');
+            expect(progressContext).toBeDefined();
+            expect(progressContext?.phase).toBe('thinking');
+            expect(progressContext?.subagentSummary).toBe('Analyzing code');
+        });
+
+        it('should ignore task_progress without summary', async () => {
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => 'Generated synopsis');
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Send task_progress event with NO summary field
+            onStreamEvent({ type: 'system', subtype: 'task_progress' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Neither synopsis generation nor phase update should occur
+            expect(mockDynamicStatusGenerator.generateSynopsis).not.toHaveBeenCalled();
+            expect(mockBotStateManager.updateActivityPhase).not.toHaveBeenCalled();
+        });
+
+        it('should ignore task_progress with undefined summary', async () => {
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => 'Generated synopsis');
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Send task_progress event with summary: undefined
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: undefined } as AgentStreamEvent);
+            await flushPromises();
+
+            // Neither synopsis generation nor phase update should occur
+            expect(mockDynamicStatusGenerator.generateSynopsis).not.toHaveBeenCalled();
+            expect(mockBotStateManager.updateActivityPhase).not.toHaveBeenCalled();
+        });
+
+        it('should collapse using_tool phase to thinking for task_progress', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const capturedBasePhases: unknown[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+            mockBotStateManager.updateActivityPhase = mock((phase) => {
+                capturedBasePhases.push(phase);
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Set currentPhase to 'using_tool' via tool_progress event
+            onStreamEvent({ type: 'tool_progress', tool_name: 'SomeTool' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Clear captured data before sending task_progress
+            capturedContexts.length = 0;
+            capturedBasePhases.length = 0;
+
+            // Send task_progress — currentPhase is 'using_tool', should collapse to 'thinking'
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Processing subagent' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Synopsis context should have phase: 'thinking' (collapsed from 'using_tool')
+            const progressContext = capturedContexts.find(ctx => ctx.subagentSummary === 'Processing subagent');
+            expect(progressContext?.phase).toBe('thinking');
+
+            // basePhase passed to updateActivityPhase should have type: 'thinking'
+            const thinkingPhases = capturedBasePhases.filter(p => (p as { type?: string })?.type === 'thinking');
+            expect(thinkingPhases.length).toBeGreaterThan(0);
+        });
+
+        it('should use responding phase for task_progress when currentPhase is responding', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            const capturedBasePhases: unknown[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+            mockBotStateManager.updateActivityPhase = mock((phase) => {
+                capturedBasePhases.push(phase);
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Set currentPhase to 'responding' via assistant event with delta text
+            onStreamEvent({ type: 'assistant', delta: { text: 'some text' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // Clear captured data before sending task_progress
+            capturedContexts.length = 0;
+            capturedBasePhases.length = 0;
+
+            // Send task_progress — currentPhase is 'responding', should stay 'responding'
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Subagent responding' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Synopsis context should have phase: 'responding'
+            const progressContext = capturedContexts.find(ctx => ctx.subagentSummary === 'Subagent responding');
+            expect(progressContext?.phase).toBe('responding');
+
+            // basePhase passed to updateActivityPhase should have type: 'responding'
+            const respondingPhases = capturedBasePhases.filter(p => (p as { type?: string })?.type === 'responding');
+            expect(respondingPhases.length).toBeGreaterThan(0);
+        });
+
+        it('should pass subagentSummary to subsequent tool phase synopsis calls', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Store a subagentSummary via task_progress
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Stored summary' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Clear and trigger a tool phase
+            capturedContexts.length = 0;
+            onStreamEvent({ type: 'tool_progress', tool_name: 'NewTool' } as AgentStreamEvent);
+            await flushPromises();
+
+            // The tool phase synopsis call should include the stored subagentSummary
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
+            expect(toolContext?.subagentSummary).toBe('Stored summary');
+        });
+
+        it('should pass subagentSummary to subsequent thinking phase synopsis calls', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Store a subagentSummary via task_progress
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Thinking summary' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Clear and trigger a thinking→responding→thinking cycle to get the inline thinking async path
+            capturedContexts.length = 0;
+
+            // First transition to responding to change currentPhase away from thinking
+            onStreamEvent({ type: 'assistant', delta: { text: 'response' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // Now go back to thinking (currentPhase was 'responding', recentToolCalls may be empty but thinking phase still fires)
+            // Need tool history to trigger synopsis. Use a tool_progress to add to recentToolCalls
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' } as AgentStreamEvent);
+            await flushPromises();
+            capturedContexts.length = 0;
+
+            // Back to thinking — recentToolCalls has entries, so synopsis will fire
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            await flushPromises();
+
+            const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
+            expect(thinkingContext?.subagentSummary).toBe('Thinking summary');
+        });
+
+        it('should clear subagentSummary on result event', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Store a subagentSummary
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Old summary' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Send result event — should clear latestSubagentSummary
+            onStreamEvent({ type: 'result', subtype: 'success' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Clear captured contexts and trigger a new processing cycle
+            capturedContexts.length = 0;
+
+            // Start a new responding phase
+            onStreamEvent({ type: 'assistant', delta: { text: 'New response' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // The new synopsis call should NOT include the old subagentSummary
+            const newContext = capturedContexts.find(ctx => ctx.phase === 'responding');
+            expect(newContext?.subagentSummary).toBeUndefined();
+        });
+
+        it('should not trigger synopsis when botStateManager throttles but still store subagentSummary', async () => {
+            // Configure shouldUpdatePresence to return false (throttled)
+            mockBotStateManager.shouldUpdatePresence = mock(() => false);
+
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Send task_progress event while throttled
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Throttled summary' } as AgentStreamEvent);
+            await flushPromises();
+
+            // Synopsis should NOT have been called (throttled)
+            expect(mockDynamicStatusGenerator.generateSynopsis).not.toHaveBeenCalled();
+
+            // Re-enable presence updates
+            // eslint-disable-next-line require-atomic-updates -- test mock reassignment, no race condition
+            mockBotStateManager.shouldUpdatePresence = mock(() => true);
+            capturedContexts.length = 0;
+
+            // Trigger a tool phase — should include the stored subagentSummary
+            onStreamEvent({ type: 'tool_progress', tool_name: 'VerifyTool' } as AgentStreamEvent);
+            await flushPromises();
+
+            // The subsequent synopsis call should include the stored subagentSummary
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
+            expect(toolContext?.subagentSummary).toBe('Throttled summary');
+        });
+    });
+
     describe('onThinkingContentUpdate callback', () => {
         it('should fire callback when thinking content is accumulated', async () => {
             const capturedUpdates: string[] = [];

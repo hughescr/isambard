@@ -11,7 +11,7 @@ import { DateTime } from 'luxon';
 import { getSlotForHour } from './schedule';
 import { type PerchSessionRunner } from './session-runner';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
-// eslint-disable-next-line boundaries/element-types -- Perch scheduler imports Discord state types; decouple tracked in roadmap
+// eslint-disable-next-line boundaries/dependencies -- Perch scheduler imports Discord state types; decouple tracked in roadmap
 import type { BotStateManager, StateChange } from '@/integrations/discord';
 
 /**

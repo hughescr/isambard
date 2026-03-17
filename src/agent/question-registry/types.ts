@@ -1,5 +1,5 @@
 import { z } from 'zod';
-// eslint-disable-next-line boundaries/element-types -- Question types use Discord ChannelId/UserId branded types; decouple per roadmap
+// eslint-disable-next-line boundaries/dependencies -- Question types use Discord ChannelId/UserId branded types; decouple per roadmap
 import type { ChannelId, UserId } from '@/integrations/discord';
 
 export const questionOptionSchema = z.object({

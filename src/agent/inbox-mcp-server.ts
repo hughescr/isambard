@@ -5,7 +5,7 @@ import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
-// eslint-disable-next-line boundaries/element-types -- Inbox MCP server imports Discord types; decouple per roadmap (tracked in roadmap comment below)
+// eslint-disable-next-line boundaries/dependencies -- Inbox MCP server imports Discord types; decouple per roadmap (tracked in roadmap comment below)
 import { createChannelId, resolveChannelId, type InboxManager, type ChannelSummaryResponse, type MessageMetadata, type BotStateManager, type ChannelRegistryManager } from '@/integrations/discord';
 // eslint-disable-next-line no-warning-comments, sonarjs/todo-tag -- tracked in roadmap, not forgotten
 // TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
