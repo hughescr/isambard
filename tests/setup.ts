@@ -149,24 +149,29 @@ mock.module('@anthropic-ai/sdk', () => ({
     Anthropic: MockAnthropic,
 }));
 
-// Mock unstable_v2_prompt from Claude Agent SDK
-// Export the mock so text-generator.test.ts can control it
-// Other SDK functions (query, createSdkMcpServer, tool) pass through to real implementations
-export const mockUnstableV2Prompt = mock<(prompt: string, options: { model: string }) => Promise<{ subtype: string, result?: string }>>(
-    async () => ({ subtype: 'success', result: 'Mock agent response' })
-);
+// Mock query from Claude Agent SDK
+// text-generator.ts uses query() for text generation
+// Default: returns a single assistant event with mock text + result event
+async function* defaultMockQueryImpl(_params: unknown) {
+    yield {
+        type:    'assistant',
+        message: { content: [{ type: 'text', text: 'Mock agent response' }] },
+    };
+    yield { type: 'result', subtype: 'success' };
+}
 
-// Import real SDK functions to re-export them alongside our mock
+export const mockQuery = mock(defaultMockQueryImpl);
+
+// Import real SDK functions to re-export them alongside our mocks
 // This must be done BEFORE mock.module() to get the real implementations
 import * as realAgentSdk from '@anthropic-ai/claude-agent-sdk';
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-    // Pass through real SDK functions
-    query:              realAgentSdk.query,
+    // Pass through real SDK functions that aren't mocked
     createSdkMcpServer: realAgentSdk.createSdkMcpServer,
     tool:               realAgentSdk.tool,
-    // Replace unstable_v2_prompt with our controllable mock
-    unstable_v2_prompt: mockUnstableV2Prompt,
+    // Replace query with a controllable mock
+    query:              mockQuery,
 }));
 
 // Mock text-generator module to claim it before any test file
@@ -445,6 +450,15 @@ const originalSymlinkImpl = async (target: string, path: string) => {
     mockFs.set(path, { type: 'symlink', target });
 };
 
+// Counter for mkdtemp to ensure unique directories
+let mkdtempCounter = 0;
+const originalMkdtempImpl = async (prefix: string): Promise<string> => {
+    mkdtempCounter++;
+    const dirPath = `${prefix}mock${mkdtempCounter}`;
+    mockFs.set(dirPath, { type: 'dir' });
+    return dirPath;
+};
+
 export const mockFsPromises = {
     access:    mock(originalAccessImpl),
     stat:      mock(originalStatImpl),
@@ -457,11 +471,13 @@ export const mockFsPromises = {
     unlink:    mock(originalUnlinkImpl),
     cp:        mock(originalCpImpl),
     symlink:   mock(originalSymlinkImpl),
+    mkdtemp:   mock(originalMkdtempImpl),
 };
 
 // Export a helper to reset the mock filesystem between tests
 export function resetMockFs(): void {
     mockFs.clear();
+    mkdtempCounter = 0;
     // Restore original implementations and clear call history
     mockFsPromises.access.mockReset();
     mockFsPromises.access.mockImplementation(originalAccessImpl);
@@ -485,6 +501,8 @@ export function resetMockFs(): void {
     mockFsPromises.cp.mockImplementation(originalCpImpl);
     mockFsPromises.symlink.mockReset();
     mockFsPromises.symlink.mockImplementation(originalSymlinkImpl);
+    mockFsPromises.mkdtemp.mockReset();
+    mockFsPromises.mkdtemp.mockImplementation(originalMkdtempImpl);
 }
 
 // Reset only paths matching a prefix - for test isolation
@@ -517,6 +535,8 @@ export function resetMockFsPrefix(prefix: string): void {
     mockFsPromises.cp.mockImplementation(originalCpImpl);
     mockFsPromises.symlink.mockReset();
     mockFsPromises.symlink.mockImplementation(originalSymlinkImpl);
+    mockFsPromises.mkdtemp.mockReset();
+    mockFsPromises.mkdtemp.mockImplementation(originalMkdtempImpl);
 }
 
 // Note: Tests should call resetMockFs() or resetMockFsPrefix() in their own afterEach hooks

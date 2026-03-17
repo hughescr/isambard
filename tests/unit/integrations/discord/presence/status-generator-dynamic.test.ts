@@ -1075,13 +1075,26 @@ describe('DynamicStatusGenerator', () => {
                 setSystemTime();
             });
 
-            it('should return null when within cooldown and Haiku is in-flight', async () => {
-                // Create a delayed mock that we can control
-                let resolveHaiku!: (value: string) => void;
-                const slowPromise = new Promise<string>((resolve) => {
-                    resolveHaiku = resolve;
-                });
-                mockGenerateText.mockReturnValueOnce(slowPromise);
+            it('should cancel previous in-flight call and start a new one (cancel-and-replace)', async () => {
+                // Cancel-and-replace: when a call is in-flight, a second call aborts the first
+                // and starts a new one. The first call resolves to '' (aborted), the second
+                // call wins and returns its result.
+                let firstAbortController!: AbortController;
+
+                // First call: capture the abort controller, return a value that's only
+                // produced if not aborted
+                mockGenerateText.mockImplementationOnce(
+                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                        firstAbortController = opts?.abortController ?? new AbortController();
+                        // Wait until aborted
+                        await new Promise<void>((resolve) => {
+                            firstAbortController.signal.addEventListener('abort', () => resolve(), { once: true });
+                        });
+                        // Return empty string (aborted)
+                        return '';
+                    }
+                );
+                mockGenerateText.mockResolvedValueOnce('Second call wins');
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1092,20 +1105,27 @@ describe('DynamicStatusGenerator', () => {
                     userMessage: 'Test',
                 };
 
-                // Start first call (will be in-flight)
+                // Start first call (will be in-flight, waiting for abort)
                 const firstCallPromise = generator.generateSynopsis(context);
 
-                // Second call while first is in-flight should return null so caller skips update
+                // Second call cancels the first and starts fresh
                 const second = await generator.generateSynopsis(context);
-                expect(second).toBeNull();
+                expect(second).toBe('Second call wins');
 
-                // Resolve the first call
-                resolveHaiku('Finally done thinking');
+                // First call was aborted — it resolves to null (aborted returns '')
                 const first = await firstCallPromise;
-                expect(first).toBe('Finally done thinking');
+                expect(first).toBeNull();
             });
 
-            it('should return null (not stale cache) when within cooldown with populated cache and Haiku in-flight', async () => {
+            it('should pass abortController to generateText so cancel-and-replace works', async () => {
+                let capturedController: AbortController | undefined;
+                mockGenerateText.mockImplementationOnce(
+                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                        capturedController = opts?.abortController;
+                        return 'result';
+                    }
+                );
+
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1115,32 +1135,35 @@ describe('DynamicStatusGenerator', () => {
                     userMessage: 'Test',
                 };
 
-                // Step 1: Make a fast call to populate the cache
-                mockGenerateText.mockResolvedValueOnce('Stale cached status');
-                const first = await generator.generateSynopsis(context);
-                expect(first).toBe('Stale cached status');
+                await generator.generateSynopsis(context);
 
-                // Step 2: Reset cooldown time but keep cache, then start a slow call
-                resetCooldownState();
-                let resolveHaiku!: (value: string) => void;
-                const slowPromise = new Promise<string>((resolve) => {
-                    resolveHaiku = resolve;
-                });
-                mockGenerateText.mockReturnValueOnce(slowPromise);
-
-                const slowCallPromise = generator.generateSynopsis(context);
-
-                // Step 3: Third call while slow call is in-flight — should get null, NOT stale cache
-                const third = await generator.generateSynopsis(context);
-                expect(third).toBeNull(); // null, NOT 'Stale cached status'
-
-                // Clean up
-                resolveHaiku('Fresh new status');
-                const slowResult = await slowCallPromise;
-                expect(slowResult).toBe('Fresh new status');
+                // abortController should have been passed to generateText
+                expect(capturedController).toBeInstanceOf(AbortController);
             });
 
-            it('should reset haikuInFlight on error so subsequent cooldown calls use cache not null', async () => {
+            it('should clear inFlightController after call completes so next call starts fresh', async () => {
+                // After a call completes successfully, the inFlightController should be null.
+                // A subsequent call within cooldown (with cache) should return cache, NOT null.
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                // First call completes successfully
+                mockGenerateText.mockResolvedValueOnce('Cached status');
+                const first = await generator.generateSynopsis(context);
+                expect(first).toBe('Cached status');
+
+                // Second call within cooldown — should use cache (inFlightController is null)
+                const second = await generator.generateSynopsis(context);
+                expect(second).toBe('Cached status');
+            });
+
+            it('should clear inFlightController on error so subsequent cooldown calls use cache', async () => {
                 const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
@@ -1161,13 +1184,13 @@ describe('DynamicStatusGenerator', () => {
                 // Advance time past cooldown window to allow a second real call
                 setSystemTime(new Date(baseTime + 3000));
 
-                // Second call fails — finally block should still reset haikuInFlight
+                // Second call fails — finally block should still clear inFlightController
                 mockGenerateText.mockRejectedValueOnce(new Error('API error'));
                 const second = await generator.generateSynopsis(context);
                 expect(second).toBeNull(); // Error returns null
 
                 // Third call within cooldown window of second call — should use cached status from first call
-                // If haikuInFlight were stuck true (finally didn't run), this would return null instead
+                // If inFlightController were still set, this would behave differently
                 const third = await generator.generateSynopsis(context);
                 expect(third).toBe('Cached from success');
                 expect(mockGenerateText).toHaveBeenCalledTimes(2); // Only 2 real calls, third used cache
@@ -1175,19 +1198,29 @@ describe('DynamicStatusGenerator', () => {
                 setSystemTime();
             });
 
-            it('should reset haikuInFlight via resetCooldownState', async () => {
-                // Use a system time small enough that Date.now() - 0 < HAIKU_COOLDOWN_MS (2000)
-                // so the cooldown window applies after resetCooldownState sets lastHaikuCall = 0.
-                // This kills the BooleanLiteral mutant: if resetCooldownState set haikuInFlight=true,
-                // the second call within the cooldown window would return null, not the API result.
+            it('should abort in-flight call via resetCooldownState', async () => {
+                // resetCooldownState aborts any in-flight controller and clears it.
+                // After reset, a subsequent call within cooldown window makes a real API call
+                // (since lastHaikuCall = 0 with time = 1000ms: 1000 < 2000 cooldown,
+                // but cache is also null after reset, so it falls through to real call).
                 setSystemTime(new Date(1000));
 
-                // Start a slow call to set haikuInFlight = true
-                let resolveHaiku!: (value: string) => void;
-                const slowPromise = new Promise<string>((resolve) => {
-                    resolveHaiku = resolve;
-                });
-                mockGenerateText.mockReturnValueOnce(slowPromise);
+                let firstAbortController!: AbortController;
+                let abortFired = false;
+
+                mockGenerateText.mockImplementationOnce(
+                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                        firstAbortController = opts?.abortController ?? new AbortController();
+                        firstAbortController.signal.addEventListener('abort', () => {
+                            abortFired = true;
+                        }, { once: true });
+                        // Wait until aborted
+                        await new Promise<void>((resolve) => {
+                            firstAbortController.signal.addEventListener('abort', () => resolve(), { once: true });
+                        });
+                        return '';
+                    }
+                );
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1198,23 +1231,24 @@ describe('DynamicStatusGenerator', () => {
                     userMessage: 'Test',
                 };
 
-                // Start first call (sets haikuInFlight = true, lastHaikuCall = 1000)
+                // Start first call (in-flight)
                 const firstCallPromise = generator.generateSynopsis(context);
 
-                // Reset cooldown state (should clear haikuInFlight AND set lastHaikuCall = 0)
+                // Reset cooldown state — should abort the in-flight controller
                 resetCooldownState();
 
-                // At time=1000ms with lastHaikuCall=0: now - lastHaikuCall = 1000 - 0 = 1000 < 2000
-                // so the cooldown window applies. If haikuInFlight is false (correct), we fall through
-                // to make a real API call. If haikuInFlight were true (mutant), we'd get null.
+                // The abort should have fired
+                expect(abortFired).toBe(true);
+
+                // Now make a second call — it should start fresh since inFlightController was cleared
                 mockGenerateText.mockResolvedValueOnce('After reset');
                 const result = await generator.generateSynopsis(context);
-                expect(result).toBe('After reset'); // Proves haikuInFlight was reset to false
+                expect(result).toBe('After reset');
                 expect(mockGenerateText).toHaveBeenCalledTimes(2);
 
-                // Clean up the pending promise
-                resolveHaiku('Done');
-                await firstCallPromise;
+                // First call resolves to null (its generateText was aborted, returns '')
+                const firstResult = await firstCallPromise;
+                expect(firstResult).toBeNull();
 
                 setSystemTime();
             });
@@ -1555,13 +1589,24 @@ describe('DynamicStatusGenerator', () => {
 
     describe('generateCatchUpSynopsis', () => {
         describe('in-flight cooldown behavior', () => {
-            it('should return null when catch-up is within cooldown and Haiku is in-flight', async () => {
-                // Create a delayed mock that we can control
-                let resolveHaiku!: (value: string) => void;
-                const slowPromise = new Promise<string>((resolve) => {
-                    resolveHaiku = resolve;
-                });
-                mockGenerateText.mockReturnValueOnce(slowPromise);
+            it('should cancel previous in-flight catch-up call and start a new one (cancel-and-replace)', async () => {
+                let firstAborted = false;
+
+                // First call: hangs until aborted
+                mockGenerateText.mockImplementationOnce(
+                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                        const controller = opts?.abortController ?? new AbortController();
+                        controller.signal.addEventListener('abort', () => {
+                            firstAborted = true;
+                        }, { once: true });
+                        await new Promise<void>((resolve) => {
+                            controller.signal.addEventListener('abort', () => resolve(), { once: true });
+                        });
+                        return '';
+                    }
+                );
+                // Second call: returns a value immediately
+                mockGenerateText.mockResolvedValueOnce('Craig left me something!');
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1580,14 +1625,14 @@ describe('DynamicStatusGenerator', () => {
                 // Start first call (will be in-flight)
                 const firstCallPromise = generator.generateCatchUpSynopsis(catchUpContext);
 
-                // Second call while first is in-flight should return null
+                // Second call cancels the first and returns its own result
                 const second = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(second).toBeNull();
+                expect(second).toBe('Craig left me something!');
+                expect(firstAborted).toBe(true);
 
-                // Resolve the first call
-                resolveHaiku('Craig left me something!');
+                // First call resolves to null (aborted)
                 const first = await firstCallPromise;
-                expect(first).toBe('Craig left me something!');
+                expect(first).toBeNull();
             });
 
             it('should use cached catch-up status on subsequent cooldown calls', async () => {
@@ -1691,7 +1736,7 @@ describe('DynamicStatusGenerator', () => {
         });
     });
 
-    describe('cross-function haikuInFlight sharing', () => {
+    describe('cross-function cancel-and-replace sharing', () => {
         beforeEach(() => {
             mockGenerateText.mockReset();
             mockGenerateText.mockResolvedValue('Pondering deeply...');
@@ -1703,12 +1748,24 @@ describe('DynamicStatusGenerator', () => {
             setSystemTime();
         });
 
-        it('should return null for catch-up when generateSynopsis is in-flight', async () => {
-            let resolveHaiku!: (value: string) => void;
-            const slowPromise = new Promise<string>((resolve) => {
-                resolveHaiku = resolve;
-            });
-            mockGenerateText.mockReturnValueOnce(slowPromise);
+        it('should cancel synopsis and start catch-up when generateCatchUpSynopsis is called while synopsis is in-flight', async () => {
+            let synopsisAborted = false;
+
+            // First call: synopsis — hangs until aborted
+            mockGenerateText.mockImplementationOnce(
+                async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                    const controller = opts?.abortController ?? new AbortController();
+                    controller.signal.addEventListener('abort', () => {
+                        synopsisAborted = true;
+                    }, { once: true });
+                    await new Promise<void>((resolve) => {
+                        controller.signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    return '';
+                }
+            );
+            // Second call: catch-up — returns a value immediately
+            mockGenerateText.mockResolvedValueOnce('Catch-up wins');
 
             const generator = createDynamicStatusGenerator({
                 identityContext: 'Test identity',
@@ -1732,21 +1789,34 @@ describe('DynamicStatusGenerator', () => {
             // Start synopsis call (will be in-flight)
             const synopsisPromise = generator.generateSynopsis(synopsisContext);
 
-            // Catch-up call while synopsis is in-flight should return null
+            // Catch-up call cancels synopsis and returns its own result
             const catchUp = await generator.generateCatchUpSynopsis(catchUpContext);
-            expect(catchUp).toBeNull();
+            expect(catchUp).toBe('Catch-up wins');
+            expect(synopsisAborted).toBe(true);
 
-            // Clean up
-            resolveHaiku('Done');
-            await synopsisPromise;
+            // Synopsis resolves to null (its generateText returned '' when aborted)
+            const synopsis = await synopsisPromise;
+            expect(synopsis).toBeNull();
         });
 
-        it('should return null for synopsis when generateCatchUpSynopsis is in-flight', async () => {
-            let resolveHaiku!: (value: string) => void;
-            const slowPromise = new Promise<string>((resolve) => {
-                resolveHaiku = resolve;
-            });
-            mockGenerateText.mockReturnValueOnce(slowPromise);
+        it('should cancel catch-up and start synopsis when generateSynopsis is called while catch-up is in-flight', async () => {
+            let catchUpAborted = false;
+
+            // First call: catch-up — hangs until aborted
+            mockGenerateText.mockImplementationOnce(
+                async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                    const controller = opts?.abortController ?? new AbortController();
+                    controller.signal.addEventListener('abort', () => {
+                        catchUpAborted = true;
+                    }, { once: true });
+                    await new Promise<void>((resolve) => {
+                        controller.signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    return '';
+                }
+            );
+            // Second call: synopsis — returns a value immediately
+            mockGenerateText.mockResolvedValueOnce('Synopsis wins');
 
             const generator = createDynamicStatusGenerator({
                 identityContext: 'Test identity',
@@ -1771,13 +1841,14 @@ describe('DynamicStatusGenerator', () => {
             // Start catch-up call (will be in-flight)
             const catchUpPromise = generator.generateCatchUpSynopsis(catchUpContext);
 
-            // Synopsis call while catch-up is in-flight should return null
+            // Synopsis call cancels catch-up and returns its own result
             const synopsis = await generator.generateSynopsis(synopsisContext);
-            expect(synopsis).toBeNull();
+            expect(synopsis).toBe('Synopsis wins');
+            expect(catchUpAborted).toBe(true);
 
-            // Clean up
-            resolveHaiku('Done');
-            await catchUpPromise;
+            // Catch-up resolves to null (its generateText returned '' when aborted)
+            const catchUp = await catchUpPromise;
+            expect(catchUp).toBeNull();
         });
     });
 });

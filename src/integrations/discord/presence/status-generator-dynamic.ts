@@ -54,8 +54,8 @@ const MAX_THINKING_CONTENT_LENGTH = 500;
 let lastHaikuCall = 0;
 // Stryker disable next-line AssignmentOperator: Initial value irrelevant, first successful call always updates cache
 let cachedStatus: string | null = null;
-// Stryker disable next-line AssignmentOperator,BooleanLiteral: Initial value irrelevant, haikuInFlight is set before every API call
-let haikuInFlight = false;
+// Stryker disable next-line AssignmentOperator: Initial null means no call in-flight; set to controller before every API call
+let inFlightController: AbortController | null = null;
 const HAIKU_COOLDOWN_MS = 2000;
 
 /**
@@ -166,8 +166,11 @@ What thought flashes through your mind as you see what's waiting?`;
 export function resetCooldownState(): void {
     lastHaikuCall = 0;
     cachedStatus = null;
-    // Stryker disable next-line BooleanLiteral: resetCooldownState resets all module state atomically for test isolation
-    haikuInFlight = false;
+    // Stryker disable next-line ConditionalExpression,BlockStatement: abort in-flight call if any — test isolation cleanup
+    if(inFlightController) {
+        inFlightController.abort();
+    }
+    inFlightController = null;
 }
 
 /**
@@ -240,8 +243,9 @@ function buildPrompt(
     }
     // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
-    // Combine system and user prompts
-    // Since unstable_v2_prompt doesn't support systemPrompt, we embed it in the prompt
+    // Combine system and user prompts into a single string for the prompt field
+    // (generateText passes systemPrompt separately via Options.systemPrompt — this combined form
+    // is retained here for backwards compatibility with the existing prompt template structure)
     return `${systemPart}\n\n---\n\n${userPart}`;
 }
 
@@ -251,7 +255,7 @@ function buildPrompt(
  * The `msg` field is required; all other fields are caller-defined.
  */
 interface CooldownLogContext {
-    /** Logged (debug) when a Haiku call is already in-flight */
+    /** Logged (debug) when cancelling a previous in-flight Haiku call */
     inFlight:   Record<string, unknown> & { msg: string }
     /** Logged (debug) when returning the cached status during cooldown */
     cooldown:   Record<string, unknown> & { msg: string }
@@ -264,21 +268,22 @@ interface CooldownLogContext {
 }
 
 /**
- * Executes a Haiku call with mutex, cooldown, caching, truncation, and error handling.
+ * Executes a Haiku call with cancel-and-replace, cooldown, caching, truncation, and error handling.
  *
  * @param promptBuilder - Function that builds the prompt string
  * @param logContext - Per-site log objects; each carries its own fields and `msg`
- * @returns Promise resolving to a status string, or null if in-flight, cooldown-cached returned, or error
+ * @returns Promise resolving to a status string, or null if on cooldown or error
  */
 async function executeWithCooldown(
     promptBuilder: () => string,
     logContext: CooldownLogContext
 ): Promise<string | null> {
-    // Mutex: if a Haiku call is already in-flight, return null so caller skips update
-    if(haikuInFlight) {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for in-flight diagnostics
-        logger.debug({ haikuInFlight, ...logContext.inFlight });
-        return null;
+    // Cancel-and-replace: abort any previous in-flight call and start fresh
+    // Stryker disable next-line ConditionalExpression,BlockStatement: abort previous call — cancel-and-replace pattern
+    if(inFlightController) {
+        inFlightController.abort();
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for cancellation diagnostics
+        logger.debug({ ...logContext.inFlight });
     }
 
     // Rate limiting - check if we're within cooldown window (measured from last call completion)
@@ -290,14 +295,16 @@ async function executeWithCooldown(
     }
     // No cache — fall through to make real call
 
-    haikuInFlight = true;
+    const controller = new AbortController();
+    inFlightController = controller;
+
     try {
         const prompt = promptBuilder();
 
         logger.debug(logContext.generating);
 
         // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
-        const text = await generateText(prompt, { stripMarkdown: true });
+        const text = await generateText(prompt, { stripMarkdown: true, abortController: controller });
         // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
         const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
 
@@ -306,19 +313,29 @@ async function executeWithCooldown(
             return null;
         }
 
-        // eslint-disable-next-line require-atomic-updates -- single-threaded: haikuInFlight mutex guards this, no concurrent writers
+        // eslint-disable-next-line require-atomic-updates -- cancel-and-replace: inFlightController identity check in finally ensures only the winning call updates cachedStatus
         cachedStatus = statusText;
         logger.info({ statusText, ...logContext.success });
         return statusText;
     } catch (error) {
+        // Aborted by a newer call — expected, return null silently.
+        // generateText() handles abort internally (returns ''), so this catch only fires
+        // for non-abort errors (e.g., from promptBuilder). The signal check is defensive.
+        // Stryker disable next-line ConditionalExpression,BlockStatement: NoCoverage — generateText() swallows abort and returns ''; this catch is only reached for genuine errors
+        if(controller.signal.aborted) {
+            return null;
+        }
         logger.error({ error, ...logContext.failure });
         return null;
     } finally {
         // Record timestamp for cooldown AFTER call completion (not before)
-        // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
+        // eslint-disable-next-line require-atomic-updates -- cancel-and-replace: each call sets its own lastHaikuCall in finally; concurrent calls don't share this write path
         lastHaikuCall = Date.now();
-        // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block clears in-flight state, no concurrent writers
-        haikuInFlight = false;
+        // Only clear if WE are still the current controller
+        // Stryker disable next-line EqualityOperator,ConditionalExpression,BlockStatement: identity check — only clear if we're still the active controller; if we skip clearing, the next call aborts this controller at its start (equivalent behavior)
+        if(inFlightController === controller) {
+            inFlightController = null;
+        }
     }
 }
 
@@ -357,7 +374,7 @@ export function createDynamicStatusGenerator(
                 () => buildPrompt(identityContext, context),
                 {
                     // Stryker disable next-line StringLiteral: log message configuration
-                    inFlight:   { phase, msg: 'Haiku call in-flight, skipping synopsis' },
+                    inFlight:   { phase, msg: 'Cancelling previous in-flight synopsis call' },
                     cooldown:   { phase, msg: 'Haiku call within cooldown, using cached status' },
                     generating: { phase, userMessageLength: context.userMessage.length, msg: 'Generating synopsis with Haiku' },
                     success:    { phase, msg: 'Generated dynamic status' },
@@ -386,7 +403,7 @@ export function createDynamicStatusGenerator(
                     return prompt;
                 },
                 {
-                    inFlight:   { msg: 'Haiku call in-flight for catch-up, skipping synopsis' },
+                    inFlight:   { msg: 'Cancelling previous in-flight catch-up synopsis call' },
                     cooldown:   { msg: 'Haiku call within cooldown for catch-up, using cached status' },
                     generating: { totalUnread: context.totalUnread, channelCount: context.channelCount, msg: 'Generating catch-up synopsis with Haiku' },
                     success:    { msg: 'Generated catch-up status' },

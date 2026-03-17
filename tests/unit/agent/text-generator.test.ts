@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
 import {
-    mockUnstableV2Prompt,
+    mockQuery,
+    mockFsPromises,
     mockGenerateText,
     mockGenerateTextWithSystemPrompt,
     originalGenerateText,
@@ -13,16 +14,22 @@ import {
  * MUTATION TESTING NOTE:
  * This test suite is optimized for mutation testing effectiveness.
  * We focus on tests that verify actual behavior rather than implementation details.
- * Removed categories:
- * - Mock verification tests (testing the mock, not the function)
- * - Redundant trimming tests (testing lodash _.trim())
- * - Redundant error tests (all errors handled identically)
- * - Exhaustive markdown tests (testing remove-markdown library)
- * - Type verification tests (testing TypeScript)
- * - Edge case prompt tests (trivial string concatenation)
  *
  * Expected mutation score: >= 90%
  */
+
+/**
+ * Helper to create a mock query async generator that yields assistant + result events.
+ */
+async function* makeQueryGenerator(text: string, subtype = 'success') {
+    if(subtype === 'success') {
+        yield {
+            type:    'assistant',
+            message: { content: [{ type: 'text', text }] },
+        };
+    }
+    yield { type: 'result', subtype };
+}
 
 describe('generateText', () => {
     beforeEach(() => {
@@ -33,60 +40,102 @@ describe('generateText', () => {
         mockGenerateTextWithSystemPrompt.mockReset();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
 
-        // Set up SDK mock to control what the real generateText returns
-        mockUnstableV2Prompt.mockReset();
-        mockUnstableV2Prompt.mockResolvedValue({
-            subtype: 'success',
-            result:  '  Hello, world!  ',
-        });
+        // Set up query mock to return a successful response with trimmed text
+        mockQuery.mockReset();
+        mockQuery.mockImplementation(() => makeQueryGenerator('  Hello, world!  '));
+
+        // Reset mkdtemp — note: getTmpDir() is a process-lifetime singleton, so only the
+        // FIRST call in this test suite actually invokes mkdtemp. Subsequent tests reuse
+        // the cached promise. This mockReset + mockImplementation is here for completeness
+        // but mkdtemp will only be called once across all tests in this describe block.
+        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}mock1`);
     });
 
     describe('successful text generation', () => {
-        test('should return trimmed text from result', async () => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'success',
-                result:  '  Hello, world!  ',
-            });
+        test('should return trimmed text from assistant event', async () => {
+            mockQuery.mockImplementation(() => makeQueryGenerator('  Hello, world!  '));
 
             const result = await generateText('Test prompt');
 
             expect(result).toBe('Hello, world!');
         });
+
+        test('should concatenate multiple text blocks', async () => {
+            async function* multiBlockGenerator() {
+                yield {
+                    type:    'assistant',
+                    message: {
+                        content: [
+                            { type: 'text', text: 'Hello' },
+                            { type: 'text', text: ', world' },
+                        ],
+                    },
+                };
+                yield { type: 'result', subtype: 'success' };
+            }
+            mockQuery.mockImplementation(() => multiBlockGenerator());
+
+            const result = await generateText('Test prompt');
+
+            expect(result).toBe('Hello, world');
+        });
     });
 
     describe('error result handling', () => {
-        test('should return empty string when subtype is error_during_execution', async () => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'error_during_execution',
-            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
+        test('should return empty string when result subtype is not success', async () => {
+            mockQuery.mockImplementation(() => makeQueryGenerator('', 'error_during_execution'));
 
             const result = await generateText('Test prompt');
 
             expect(result).toBe('');
         });
 
-        test('should return empty string for non-success even if result property exists', async () => {
-            // This test kills the mutation: if(result.subtype === 'success') -> if(true)
-            // An error response shouldn't have .result, but if it does, we still return ''
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'error_during_execution',
-                result:  'This text should NOT be returned',
-            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
+        test('should return empty string when no assistant event is yielded', async () => {
+            async function* noAssistantGenerator() {
+                yield { type: 'result', subtype: 'error_during_execution' };
+            }
+            mockQuery.mockImplementation(() => noAssistantGenerator());
 
             const result = await generateText('Test prompt');
 
-            // Must return empty string, NOT the result text
             expect(result).toBe('');
-            expect(result).not.toBe('This text should NOT be returned');
+        });
+    });
+
+    describe('result.result fallback', () => {
+        test('should use result.result as fallback when no assistant events were streamed', async () => {
+            // Simulate SDK returning text only via result.result (no assistant events streamed)
+            async function* resultOnlyGenerator() {
+                yield { type: 'result', subtype: 'success', result: 'fallback text' };
+            }
+            mockQuery.mockImplementation(() => resultOnlyGenerator());
+
+            const result = await generateText('Test prompt');
+
+            expect(result).toBe('fallback text');
+        });
+
+        test('should prefer accumulated assistant text over result.result', async () => {
+            // When assistant events are streamed, they take precedence over result.result
+            async function* assistantPlusResultGenerator() {
+                yield {
+                    type:    'assistant',
+                    message: { content: [{ type: 'text', text: 'streamed text' }] },
+                };
+                yield { type: 'result', subtype: 'success', result: 'fallback text' };
+            }
+            mockQuery.mockImplementation(() => assistantPlusResultGenerator());
+
+            const result = await generateText('Test prompt');
+
+            expect(result).toBe('streamed text');
         });
     });
 
     describe('stripMarkdown option', () => {
         test('should leave markdown intact when stripMarkdown is not specified', async () => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'success',
-                result:  '```status```',
-            });
+            mockQuery.mockImplementation(() => makeQueryGenerator('```status```'));
 
             const result = await generateText('Test prompt');
 
@@ -100,10 +149,7 @@ describe('generateText', () => {
             { input: '**Bold** and _italic_ with `code`', expected: 'Bold and italic with code', description: 'mixed markdown' },
             { input: '  ```status```  ', expected: 'status', description: 'whitespace with markdown' },
         ])('should strip $description', async ({ input, expected }) => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'success',
-                result:  input,
-            });
+            mockQuery.mockImplementation(() => makeQueryGenerator(input));
 
             const result = await generateText('Test prompt', { stripMarkdown: true });
 
@@ -115,19 +161,217 @@ describe('generateText', () => {
         test('should use haiku model when model is not specified', async () => {
             await generateText('Test prompt');
 
-            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
-                'Test prompt',
-                expect.objectContaining({ model: 'haiku' })
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ model: 'haiku' }),
+                })
             );
         });
 
         test('should use specified model when model option is provided', async () => {
             await generateText('Test prompt', { model: 'sonnet' });
 
-            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
-                'Test prompt',
-                expect.objectContaining({ model: 'sonnet' })
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ model: 'sonnet' }),
+                })
             );
+        });
+    });
+
+    describe('query options', () => {
+        test('should pass persistSession: false to prevent session file creation', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ persistSession: false }),
+                })
+            );
+        });
+
+        test('should pass empty tools array', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ tools: [] }),
+                })
+            );
+        });
+
+        test('should pass thinking disabled', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ thinking: { type: 'disabled' } }),
+                })
+            );
+        });
+
+        test('should pass executable: bun', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ executable: 'bun' }),
+                })
+            );
+        });
+
+        test('should pass effort: low', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ effort: 'low' }),
+                })
+            );
+        });
+
+        test('should pass maxTurns: 1', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ maxTurns: 1 }),
+                })
+            );
+        });
+
+        test('should use a temp directory (not process.cwd()) as cwd', async () => {
+            await generateText('Test prompt');
+
+            const callArgs = mockQuery.mock.calls[0][0] as { options: { cwd: string } };
+            // cwd should NOT be process.cwd() — it should be the mkdtemp result
+            expect(callArgs.options.cwd).not.toBe(process.cwd());
+            // Should contain the isambard-textgen- prefix from the mkdtemp call
+            expect(callArgs.options.cwd).toContain('isambard-textgen-');
+        });
+    });
+
+    describe('abort/timeout behavior', () => {
+        test('should return empty string when abortController is pre-aborted (generator throws)', async () => {
+            // Pre-abort the controller before calling generateText
+            const controller = new AbortController();
+            controller.abort();
+
+            // Generator throws when it sees the abort signal, simulating SDK behavior
+            async function* abortAwareGenerator() {
+                throw new Error('Aborted');
+                yield { type: 'result', subtype: 'success' }; // unreachable — needed for generator type inference
+            }
+            mockQuery.mockImplementation(() => abortAwareGenerator());
+
+            const result = await generateText('Test prompt', { abortController: controller, timeoutMs: 0 });
+
+            expect(result).toBe('');
+        });
+
+        test('should return empty string when abortController is pre-aborted (generator completes normally)', async () => {
+            // Pre-abort the controller, but generator completes without throwing
+            // This verifies the internal controller is aborted when caller's signal is pre-aborted,
+            // so the abort guard on the success path returns '' instead of the response text
+            const controller = new AbortController();
+            controller.abort();
+
+            mockQuery.mockImplementation(() => makeQueryGenerator('Should not be returned'));
+
+            const result = await generateText('Test prompt', { abortController: controller, timeoutMs: 0 });
+
+            expect(result).toBe('');
+        });
+
+        test('should return empty string when caller aborts during generation (generator throws on abort)', async () => {
+            // Caller aborts while the generator is running (not pre-aborted)
+            // This verifies the addEventListener wiring: when the caller's signal fires,
+            // our internal controller aborts, SDK detects it and throws
+            const callerController = new AbortController();
+
+            // Generator waits for our internal controller's signal then throws
+            mockQuery.mockImplementation((params: unknown) => {
+                const typedParams = params as { options?: { abortController?: AbortController } };
+                const internalSignal = typedParams.options?.abortController?.signal;
+                async function* gen() {
+                    // Wait until the internal controller is aborted (wired to callerController)
+                    await new Promise<void>((resolve) => {
+                        if(internalSignal?.aborted) {
+                            resolve();
+                            return;
+                        }
+                        internalSignal?.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    throw new Error('AbortError');
+                    yield { type: 'result', subtype: 'success' }; // unreachable
+                }
+                return gen();
+            });
+
+            // Start the generation, then immediately abort the caller's controller
+            const resultPromise = generateText('Test prompt', { abortController: callerController, timeoutMs: 0 });
+            callerController.abort();
+
+            const result = await resultPromise;
+            expect(result).toBe('');
+        });
+
+        test('should pass an abortController to query (internal, not caller\'s)', async () => {
+            // generateText always creates an internal AbortController and wires the
+            // caller's signal to it. The caller's controller is never mutated.
+            const callerController = new AbortController();
+
+            await generateText('Test prompt', { abortController: callerController });
+
+            const callArgs = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
+            // An abortController is passed
+            expect(callArgs.options.abortController).toBeDefined();
+            // But it is NOT the caller's controller — it's our internal one
+            expect(callArgs.options.abortController).not.toBe(callerController);
+        });
+
+        test('should rethrow non-abort errors from the generator', async () => {
+            // When the generator throws an error that is NOT due to abort, the error
+            // should be rethrown (not swallowed as empty string)
+            const nonAbortError = new Error('Network failure');
+            async function* throwingGenerator() {
+                throw nonAbortError;
+                yield { type: 'result', subtype: 'success' }; // unreachable
+            }
+            mockQuery.mockImplementation(() => throwingGenerator());
+
+            // Should throw, not return ''
+            expect(generateText('Test prompt', { timeoutMs: 0 })).rejects.toThrow('Network failure');
+        });
+
+        test('should return empty string when timeout fires and generator throws', async () => {
+            // Simulate the SDK aborting when the controller fires: the generator throws
+            // The executePrompt catch block sees signal.aborted === true and returns ''
+            async function* abortOnSignalGenerator(_params: unknown, signal?: AbortSignal) {
+                // Wait until the caller signals abort, then throw
+                await new Promise<void>((resolve) => {
+                    // Check if already aborted
+                    if(signal?.aborted) {
+                        resolve();
+                        return;
+                    }
+                    signal?.addEventListener('abort', () => resolve(), { once: true });
+                });
+                throw new Error('AbortError');
+                yield { type: 'result', subtype: 'success' }; // unreachable — needed for generator type inference
+            }
+
+            // Mock query to simulate SDK behavior: throw when aborted
+            mockQuery.mockImplementation((params: unknown) => {
+                const typedParams = params as { options?: { abortController?: AbortController } };
+                const signal = typedParams.options?.abortController?.signal;
+                return abortOnSignalGenerator(params, signal);
+            });
+
+            // Use a very short timeout (10ms)
+            const result = await generateText('Test prompt', { timeoutMs: 10 });
+
+            expect(result).toBe('');
         });
     });
 });
@@ -141,31 +385,40 @@ describe('generateTextWithSystemPrompt', () => {
         mockGenerateTextWithSystemPrompt.mockReset();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
 
-        // Set up SDK mock to control what the real generateTextWithSystemPrompt returns
-        mockUnstableV2Prompt.mockReset();
-        mockUnstableV2Prompt.mockResolvedValue({
-            subtype: 'success',
-            result:  '  Generated response  ',
-        });
+        // Set up query mock to return a successful response
+        mockQuery.mockReset();
+        mockQuery.mockImplementation(() => makeQueryGenerator('  Generated response  '));
+
+        // Reset mkdtemp — getTmpDir() is a process-lifetime singleton; mkdtemp only executes once per process
+        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}mock1`);
     });
 
     describe('prompt formatting', () => {
         test('should combine system and user prompts with correct format', async () => {
             await generateTextWithSystemPrompt('Be helpful', 'What is 2+2?');
 
-            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
-                'System:\nBe helpful\n\nUser:\nWhat is 2+2?',
-                expect.any(Object)
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: 'System:\nBe helpful\n\nUser:\nWhat is 2+2?',
+                })
+            );
+        });
+
+        test('should pass systemPrompt as a separate SDK option', async () => {
+            await generateTextWithSystemPrompt('Be helpful', 'What is 2+2?');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ systemPrompt: 'Be helpful' }),
+                })
             );
         });
     });
 
     describe('successful text generation', () => {
         test('should return trimmed text from result', async () => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'success',
-                result:  '  Hello, world!  ',
-            });
+            mockQuery.mockImplementation(() => makeQueryGenerator('  Hello, world!  '));
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
@@ -174,36 +427,30 @@ describe('generateTextWithSystemPrompt', () => {
     });
 
     describe('error result handling', () => {
-        test('should return empty string when subtype is error_during_execution', async () => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'error_during_execution',
-            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
+        test('should return empty string when result subtype is not success', async () => {
+            mockQuery.mockImplementation(() => makeQueryGenerator('', 'error_during_execution'));
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
             expect(result).toBe('');
         });
 
-        test('should return empty string for non-success even if result property exists', async () => {
-            // This test kills the mutation: if(result.subtype === 'success') -> if(true)
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'error_during_execution',
-                result:  'This text should NOT be returned',
-            } as Awaited<ReturnType<typeof mockUnstableV2Prompt>>);
+        test('should return empty string when no assistant text was emitted before error result', async () => {
+            // When query yields only an error result (no assistant text), returns empty string
+            async function* errorOnlyGenerator() {
+                yield { type: 'result', subtype: 'error_during_execution' };
+            }
+            mockQuery.mockImplementation(() => errorOnlyGenerator());
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
             expect(result).toBe('');
-            expect(result).not.toBe('This text should NOT be returned');
         });
     });
 
     describe('stripMarkdown option', () => {
         test('should leave markdown intact when stripMarkdown is not specified', async () => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'success',
-                result:  '```status```',
-            });
+            mockQuery.mockImplementation(() => makeQueryGenerator('```status```'));
 
             const result = await generateTextWithSystemPrompt('System', 'User');
 
@@ -217,10 +464,7 @@ describe('generateTextWithSystemPrompt', () => {
             { input: '**Bold** and _italic_ with `code`', expected: 'Bold and italic with code', description: 'mixed markdown' },
             { input: '  ```status```  ', expected: 'status', description: 'whitespace with markdown' },
         ])('should strip $description', async ({ input, expected }) => {
-            mockUnstableV2Prompt.mockResolvedValue({
-                subtype: 'success',
-                result:  input,
-            });
+            mockQuery.mockImplementation(() => makeQueryGenerator(input));
 
             const result = await generateTextWithSystemPrompt('System', 'User', { stripMarkdown: true });
 
@@ -232,18 +476,20 @@ describe('generateTextWithSystemPrompt', () => {
         test('should use haiku model when model is not specified', async () => {
             await generateTextWithSystemPrompt('System', 'User');
 
-            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
-                expect.any(String),
-                expect.objectContaining({ model: 'haiku' })
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ model: 'haiku' }),
+                })
             );
         });
 
         test('should use specified model when model option is provided', async () => {
             await generateTextWithSystemPrompt('System', 'User', { model: 'sonnet' });
 
-            expect(mockUnstableV2Prompt).toHaveBeenCalledWith(
-                expect.any(String),
-                expect.objectContaining({ model: 'sonnet' })
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ model: 'sonnet' }),
+                })
             );
         });
     });
