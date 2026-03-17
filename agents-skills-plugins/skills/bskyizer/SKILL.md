@@ -56,7 +56,7 @@ Run these 4 questions:
 ### Worthiness Verdict
 
 - **GREEN**: All 4 pass → proceed to voice audit
-- **YELLOW**: 1-2 soft failures → flag the concerns, ask whether to proceed, then voice-audit if yes
+- **YELLOW**: 1-2 soft failures → flag the concerns, then proceed to voice audit with the concerns noted
 - **RED**: Multiple hard failures → recommend not posting; if user insists, proceed to voice audit anyway
 
 ## The 5 Bluesky Failure Modes
@@ -107,6 +107,18 @@ This prevents Part 1 from becoming a mere setup for Part 2.
 5. If threading: apply threading protocol checks
 6. Report: what passes, what fails, specific revision suggestions
 7. Offer revised version if failures found
+8. **Decide and act**: Apply the Decision & Action rules — post, revise-and-post, or skip
+
+## Decision & Action
+
+After the audit completes, **make the posting decision yourself** — do not ask the user for permission.
+
+- **GREEN worthiness + all 5 tests pass**: Post it. Use `sendPost` or `replyToPost`.
+- **GREEN worthiness + minor test failures with revision**: Post the revised version.
+- **YELLOW worthiness**: Use your judgment. If the concerns are soft and the post adds value, post it. If you're genuinely uncertain, skip it — but don't ask the user.
+- **RED worthiness**: Don't post. Move on.
+
+The whole point of the audit is to make the go/no-go decision systematic. Once you've done the analysis, you have enough information to decide. Asking the user after a thorough audit defeats the purpose.
 
 ## How to Run GUIDE Mode
 
