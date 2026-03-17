@@ -1,5 +1,8 @@
 /**
- * Diagnostic benchmark for V1 query() latency across varying prompt sizes.
+ * Side-by-side benchmark: unstable_v2_prompt vs V1 query() for text generation.
+ *
+ * Measures latency across varying prompt sizes to compare the two SDK APIs.
+ * Useful for tracking performance as SDK versions change.
  *
  * Usage: bun scripts/benchmark-haiku.ts
  */
@@ -8,7 +11,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
 
 const SHORT_PROMPT = 'Generate a 40-char status. User asked: "hello". Output only the status text.';
 
@@ -63,18 +66,40 @@ You (Izzy) just received this question from a user:
 
 What thought flashes through your mind as you begin to form a response?`;
 
-console.log(`Prompt sizes — short: ${SHORT_PROMPT.length} chars, medium: ${MEDIUM_PROMPT.length} chars, long: ${LONG_PROMPT.length} chars\n`);
-
-const tmpDir = await mkdtemp(path.join(tmpdir(), 'isambard-bench-'));
-
 const prompts: [string, string][] = [
     ['short', SHORT_PROMPT],
     ['medium', MEDIUM_PROMPT],
     ['long', LONG_PROMPT],
 ];
 
+const ITERATIONS = 3;
+
+console.log(`Prompt sizes — short: ${SHORT_PROMPT.length} chars, medium: ${MEDIUM_PROMPT.length} chars, long: ${LONG_PROMPT.length} chars`);
+console.log(`Iterations per prompt: ${ITERATIONS}\n`);
+
+// ── V2: unstable_v2_prompt (old approach — spawns full session per call) ─────
+
+console.log('═══ unstable_v2_prompt (V2 — full session per call) ═══\n');
+
 for(const [label, prompt] of prompts) {
-    for(let i = 0; i < 3; i++) {
+    for(let i = 0; i < ITERATIONS; i++) {
+        const start = Date.now();
+        const result = await unstable_v2_prompt(prompt, { model: 'haiku' });
+        const elapsed = Date.now() - start;
+        const text = result.subtype === 'success' ? result.result : '(no result)';
+        console.log(`  ${label} #${i + 1}: ${elapsed}ms — "${text.slice(0, 60)}"`);
+    }
+    console.log();
+}
+
+// ── V1: query() with lightweight options (new approach) ─────────────────────
+
+console.log('═══ query() V1 (lightweight — no tools, no thinking, temp cwd) ═══\n');
+
+const tmpDir = await mkdtemp(path.join(tmpdir(), 'isambard-bench-'));
+
+for(const [label, prompt] of prompts) {
+    for(let i = 0; i < ITERATIONS; i++) {
         const start = Date.now();
         let resultText = '';
         for await (const event of query({
@@ -99,11 +124,15 @@ for(const [label, prompt] of prompts) {
                 }
             }
             if(event.type === 'result') {
+                const resultEvent = event as { result?: string };
+                if(!resultText && resultEvent.result) {
+                    resultText = resultEvent.result;
+                }
                 break;
             }
         }
         const elapsed = Date.now() - start;
-        console.log(`${label} #${i + 1}: ${elapsed}ms — "${resultText.trim().slice(0, 60)}"`);
+        console.log(`  ${label} #${i + 1}: ${elapsed}ms — "${resultText.trim().slice(0, 60)}"`);
     }
     console.log();
 }
