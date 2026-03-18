@@ -1,6 +1,6 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, type QuestionRegistry  } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, type QuestionRegistry  } from '@/agent';
 import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
@@ -140,11 +140,12 @@ export interface MCPServers {
 /**
  * Creates all MCP servers for the Claude agent.
  *
- * This factory consolidates the creation of four MCP servers:
+ * This factory consolidates the creation of five MCP servers:
  * 1. Memory MCP server - for deep memory access (view, store, search)
  * 2. Discord MCP server - for message history and sending messages
  * 3. Inbox MCP server - for unread message management
  * 4. Bluesky MCP server - for AT Protocol feed reading and interaction (optional)
+ * 5. Wikipedia MCP server - for random article discovery during perch time
  *
  * @param options - Options containing all required dependencies
  * @returns Object containing all MCP server configurations
@@ -213,11 +214,14 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         })
         : undefined;
 
+    const wikipediaMcpServer = createWikipediaMCPServer();
+
     return {
         memoryMcpServer,
         discordMcpServer,
         inboxMcpServer,
         bskyMcpServer,
         caldavMcpServer,
+        wikipediaMcpServer,
     };
 }

@@ -600,6 +600,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.bsky).toEqual(mockBskyServer);
         });
+
+        test('should configure wikipedia MCP server when provided', async () => {
+            const mockWikipediaServer = { command: 'node', args: ['wikipedia-server.js'] };
+            const agent = createClaudeAgent({ wikipediaMcpServer: mockWikipediaServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.wikipedia).toEqual(mockWikipediaServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -750,6 +760,44 @@ describe('createClaudeAgent', () => {
                 'Bash(bun typecheck)',
                 'Bash(ls:*)',
                 'mcp__bsky__*',
+            ]);
+        });
+
+        test('should include wikipedia tools when wikipedia MCP server provided', async () => {
+            const mockWikipediaServer = { command: 'node', args: ['wikipedia-server.js'] };
+            const agent = createClaudeAgent({ wikipediaMcpServer: mockWikipediaServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify exact array contents with wikipedia tools included
+            expect(allowedTools).toEqual([
+                'mcp__memory__*',
+                'Read',
+                'Glob',
+                'Grep',
+                'WebFetch',
+                'WebSearch',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
+                'EnterPlanMode',
+                'ExitPlanMode',
+                'Task',
+                'TaskOutput',
+                'TaskStop',
+                // Skills
+                'Skill',
+                // Bash commands (specific safe commands only)
+                'Bash(git:*)',
+                'Bash(bun run:*)',
+                'Bash(bun test:*)',
+                'Bash(bun lint:*)',
+                'Bash(bun typecheck)',
+                'Bash(ls:*)',
+                'mcp__wikipedia__*',
             ]);
         });
     });

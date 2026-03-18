@@ -49,8 +49,8 @@ describe('createMCPServers', () => {
         spies.length = 0;
     });
 
-    test('should return all three MCP server configs', async () => {
-        // Mock all three MCP server creation functions
+    test('should return all MCP server configs including wikipedia', async () => {
+        // Mock all MCP server creation functions
         const memoryMcpModule = await import('@/agent/memory-mcp-server');
         const mockMemoryMcpServer = { name: 'memory', version: '1.0.0' } as unknown as McpServerInstance;
         const createMemoryMcpServerSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcpServer);
@@ -66,15 +66,44 @@ describe('createMCPServers', () => {
         const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue(mockInboxMcpServer);
         spies.push(createInboxMcpServerSpy);
 
+        const wikipediaMcpModule = await import('@/agent/wikipedia-mcp-server');
+        const mockWikipediaMcpServer = { name: 'wikipedia', version: '1.0.0' } as unknown as McpServerInstance;
+        const createWikipediaMcpServerSpy = spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockReturnValue(mockWikipediaMcpServer);
+        spies.push(createWikipediaMcpServerSpy);
+
         // Import and call createMCPServers
         const { createMCPServers } = await import('@/app/mcp-servers');
         const result = createMCPServers(mockOptions);
 
-        // Verify all three servers are returned
+        // Verify all servers are returned
         expect(result).toBeDefined();
         expect(result.memoryMcpServer).toBe(mockMemoryMcpServer);
         expect(result.discordMcpServer).toBe(mockDiscordMcpServer);
         expect(result.inboxMcpServer).toBe(mockInboxMcpServer);
+        expect(result.wikipediaMcpServer).toBe(mockWikipediaMcpServer);
+    });
+
+    test('should always create wikipedia MCP server', async () => {
+        const memoryMcpModule = await import('@/agent/memory-mcp-server');
+        spies.push(spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const discordMcpModule = await import('@/agent/discord-mcp-server');
+        spies.push(spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const inboxMcpModule = await import('@/agent/inbox-mcp-server');
+        spies.push(spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance));
+
+        const mockWikipediaMcpServer = { name: 'wikipedia', version: '1.0.0' } as unknown as McpServerInstance;
+        const wikipediaMcpModule = await import('@/agent/wikipedia-mcp-server');
+        const createWikipediaMcpServerSpy = spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockReturnValue(mockWikipediaMcpServer);
+        spies.push(createWikipediaMcpServerSpy);
+
+        const { createMCPServers } = await import('@/app/mcp-servers');
+        const result = createMCPServers(mockOptions);
+
+        expect(result.wikipediaMcpServer).toBe(mockWikipediaMcpServer);
+        expect(createWikipediaMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(createWikipediaMcpServerSpy).toHaveBeenCalledWith();
     });
 
     test('should pass correct args to createMemoryMCPServer', async () => {

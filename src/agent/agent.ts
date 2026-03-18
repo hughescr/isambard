@@ -249,7 +249,7 @@ export interface ClaudeAgentOptions {
     bskyMcpServer?:              McpServerConfig
     /** CalDAV MCP server instance for calendar queries */
     caldavMcpServer?:            McpServerConfig
-    /** Wikipedia MCP server instance for encyclopedia lookups */
+    /** Wikipedia MCP server instance for random article discovery */
     wikipediaMcpServer?:         McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
     plugins?:                    SdkPluginConfig[]
@@ -886,6 +886,7 @@ async function processStreamEvents(
  * @param emailMcpServer Email MCP server configuration
  * @param bskyMcpServer Bluesky MCP server configuration
  * @param caldavMcpServer CalDAV MCP server configuration
+ * @param wikipediaMcpServer Wikipedia MCP server configuration
  * @param plugins Plugin configurations
  * @param options Optional batch processing options
  * @returns Query options object for Agent SDK

@@ -54,6 +54,9 @@ export { createBskyMCPServer } from './bsky-mcp-server';
 // CalDAV MCP Server
 export { createCaldavMCPServer, type CaldavMCPServerOptions } from './caldav-mcp-server';
 
+// Wikipedia MCP Server
+export { createWikipediaMCPServer } from './wikipedia-mcp-server';
+
 // MCP Helpers
 export { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
 
