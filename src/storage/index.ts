@@ -1,6 +1,9 @@
 // Client
 export { createDynamoDBClient, type DynamoDBClients } from './client';
 
+// Allowlist base
+export { DynamoAllowlist, type AllowlistConfig } from './allowlist-base';
+
 // Errors
 export { StorageError, ItemNotFoundError, ValidationError } from '@/errors';
 

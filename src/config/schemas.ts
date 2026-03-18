@@ -126,7 +126,7 @@ export const dynamoDBConfigSchema = z.object({
 /* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration - validated by schema tests */
 export const perchConfigSchema = z.object({
     /** Whether perch time is enabled */
-    enabled:              z.boolean().default(false),
+    enabled:              z.boolean().default(true),
     /** Timezone for schedule (default: system timezone) */
     timezone:             z.string().default(resolveTimezone()),
     /** Minutes between perch triggers (default: 60) */

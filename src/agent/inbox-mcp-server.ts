@@ -5,10 +5,7 @@ import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
-// eslint-disable-next-line boundaries/dependencies -- Inbox MCP server imports Discord types; decouple per roadmap (tracked in roadmap comment below)
-import { createChannelId, resolveChannelId, type InboxManager, type ChannelSummaryResponse, type MessageMetadata, type BotStateManager, type ChannelRegistryManager } from '@/integrations/discord';
-// eslint-disable-next-line no-warning-comments, sonarjs/todo-tag -- tracked in roadmap, not forgotten
-// TODO: Decouple - Inbox MCP server should expose platform-agnostic MCP tool interfaces wrapping inbox management capabilities
+import { createChannelId, type MCPInboxManager, type MCPInboxStateManager, type MCPChannelRegistry, type MCPChannelSummaryResponse, type MCPMessageMetadata } from './types';
 
 /**
  * System prompt for generating channel summaries.
@@ -45,9 +42,9 @@ Keep it factual and actionable. The assistant will decide whether to read full m
  * @param stateManager - Optional bot state manager for tracking viewed channels
  */
 export function createInboxMCPServer(
-    inboxManager: InboxManager,
-    channelRegistry: ChannelRegistryManager,
-    stateManager?: BotStateManager
+    inboxManager: MCPInboxManager,
+    channelRegistry: MCPChannelRegistry,
+    stateManager?: MCPInboxStateManager
 ) {
     return createSdkMcpServer({
         name:    'inbox',
@@ -85,7 +82,7 @@ export function createInboxMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
+                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         const messages = inboxManager.getChannelMessages(channelId);
 
                         // Track that this channel was viewed during catch-up
@@ -118,7 +115,7 @@ export function createInboxMCPServer(
                         // Stryker restore StringLiteral,ArrowFunction
 
                         // Build metadata for each message
-                        const metadata: MessageMetadata[] = messages.map(m => ({
+                        const metadata: MCPMessageMetadata[] = messages.map(m => ({
                             id:        m.id,
                             author:    m.author,
                             timestamp: m.timestamp,
@@ -136,7 +133,7 @@ export function createInboxMCPServer(
                             end:   timestamps[timestamps.length - 1],
                         };
 
-                        const response: ChannelSummaryResponse = {
+                        const response: MCPChannelSummaryResponse = {
                             channelId,
                             channelName:  messages[0].channelName,
                             messageCount: messages.length,
@@ -174,7 +171,7 @@ export function createInboxMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
+                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
 
                         // Track that this channel was viewed during catch-up
                         if(stateManager) {
@@ -222,7 +219,7 @@ export function createInboxMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
+                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         await inboxManager.markAsRead(channelId, args.messageIds);
 
                         // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
@@ -249,7 +246,7 @@ export function createInboxMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = createChannelId(resolveChannelId(args.channelId, channelRegistry));
+                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         await inboxManager.markChannelRead(channelId);
 
                         // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting

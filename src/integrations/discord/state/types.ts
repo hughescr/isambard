@@ -13,6 +13,11 @@
 
 import { z } from 'zod';
 import { channelIdSchema, type ChannelId } from '../types';
+// eslint-disable-next-line boundaries/dependencies -- discord/state/types re-exports agent OperationalMode; direct import avoids circular dep through agent index
+import type { OperationalMode } from '@/agent/types';
+
+// eslint-disable-next-line boundaries/dependencies -- discord/state/types re-exports agent OperationalMode; direct import avoids circular dep through agent index
+export type { OperationalMode } from '@/agent/types';
 
 // ============================================================================
 // Operational Mode - Top-level bot state
@@ -20,6 +25,7 @@ import { channelIdSchema, type ChannelId } from '../types';
 
 /**
  * The bot's operational mode determines its primary behavior and context.
+ * Re-exported from agent/types for backwards-compatibility.
  *
  * State transitions:
  * - idle: Normal operation, no active conversation
@@ -33,7 +39,6 @@ import { channelIdSchema, type ChannelId } from '../types';
  * const mode2: OperationalMode = 'catching_up';
  * ```
  */
-export type OperationalMode = 'idle' | 'catching_up' | 'processing_message' | 'perching';
 
 /**
  * Zod schema for validating operational modes.
@@ -119,17 +124,10 @@ export const idleModeContextSchema = z.object({}).strict();
 
 /**
  * Details about a message that interrupted a catch-up session.
+ * Re-exported from agent/types for backwards-compatibility.
  */
-export interface InterruptingMessageDetails {
-    /** Channel ID where the interruption occurred */
-    channelId:   ChannelId
-    /** Author of the interrupting message */
-    author:      string
-    /** Channel name where the interruption occurred */
-    channelName: string
-    /** Content of the interrupting message */
-    content:     string
-}
+// eslint-disable-next-line boundaries/dependencies -- discord/state/types re-exports agent InterruptingMessageDetails; direct import avoids circular dep through agent index
+export type { InterruptingMessageDetails } from '@/agent/types';
 
 /**
  * Context for catch-up mode.

@@ -11,15 +11,14 @@ import { DateTime } from 'luxon';
 import { getSlotForHour } from './schedule';
 import { type PerchSessionRunner } from './session-runner';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
-// eslint-disable-next-line boundaries/dependencies -- Perch scheduler imports Discord state types; decouple tracked in roadmap
-import type { BotStateManager, StateChange } from '@/integrations/discord';
+import type { AgentStateManager, AgentStateChange } from '@/agent/types';
 
 /**
  * Dependencies for the perch scheduler.
  */
 export interface PerchSchedulerDeps {
     /** State manager for checking/transitioning modes */
-    stateManager:         BotStateManager
+    stateManager:         AgentStateManager
     /** Logger instance */
     logger:               Logger
     /** Perch configuration */
@@ -222,7 +221,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
      * Handle state change from BotStateManager.
      * If transitioning to idle and perchPending, trigger perch.
      */
-    function onStateChange(change: StateChange): void {
+    function onStateChange(change: AgentStateChange): void {
         // Only care about mode transitions to idle
         // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — tests have getMode()='processing_message', so doTrigger() guards against non-idle state anyway; removing early return produces no observable trigger
         if(change.changeType !== 'mode_transition') {

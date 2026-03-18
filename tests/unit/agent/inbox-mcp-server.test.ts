@@ -3,15 +3,13 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
 import * as textGenerator from '@/agent/text-generator';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
+import type { MCPChannelRegistry, MCPInboxManager, MCPInboxStateManager } from '@/agent/types';
 import type { UnreadMessage, UnreadOverview, ChannelSummaryResponse } from '@/integrations/discord/inbox/types';
-import type { BotStateManager } from '@/integrations/discord/state';
 import { createChannelId } from '@/integrations/discord/types';
 
 describe('createInboxMCPServer', () => {
-    let mockInboxManager: InboxManager;
-    let mockChannelRegistry: ChannelRegistryManager;
+    let mockInboxManager: MCPInboxManager;
+    let mockChannelRegistry: MCPChannelRegistry;
     const spies: ReturnType<typeof spyOn>[] = [];
 
     beforeEach(() => {
@@ -24,11 +22,15 @@ describe('createInboxMCPServer', () => {
             getMessage:         mock(() => undefined),
             markAsRead:         mock(async () => { /* intentionally empty */ }),
             markChannelRead:    mock(async () => { /* intentionally empty */ }),
-        } as unknown as InboxManager;
+        } as unknown as MCPInboxManager;
 
         mockChannelRegistry = {
-            getAllChannels: mock(() => []),
-        } as unknown as ChannelRegistryManager;
+            resolveChannelId:   mock((nameOrId: string) => nameOrId),
+            getAllChannels:     mock(() => []),
+            getUnmutedChannels: mock(async () => []),
+            muteChannel:        mock(async () => { /* intentionally empty */ }),
+            unmuteChannel:      mock(async () => { /* intentionally empty */ }),
+        } as unknown as MCPChannelRegistry;
     });
 
     afterEach(() => {
@@ -608,7 +610,7 @@ describe('createInboxMCPServer', () => {
         });
     });
 
-    describe('BotStateManager integration', () => {
+    describe('MCPInboxStateManager integration', () => {
         test('getChannelSummary should mark channel as viewed when state manager provided', async () => {
             const messages: UnreadMessage[] = [
                 {
@@ -627,9 +629,9 @@ describe('createInboxMCPServer', () => {
             const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Test summary');
             spies.push(spy);
 
-            const mockStateManager: BotStateManager = {
+            const mockStateManager: MCPInboxStateManager = {
                 markChannelViewed: mock(() => undefined),
-            } as unknown as BotStateManager;
+            } as unknown as MCPInboxStateManager;
 
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
             const handler = getToolHandler(server, 'getChannelSummary');
@@ -681,9 +683,9 @@ describe('createInboxMCPServer', () => {
 
             mockInboxManager.getMessage = mock(() => message);
 
-            const mockStateManager: BotStateManager = {
+            const mockStateManager: MCPInboxStateManager = {
                 markChannelViewed: mock(() => undefined),
-            } as unknown as BotStateManager;
+            } as unknown as MCPInboxStateManager;
 
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
             const handler = getToolHandler(server, 'fetchMessages');

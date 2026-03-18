@@ -143,14 +143,15 @@ describe('createMCPServers', () => {
         const { createMCPServers } = await import('@/app/mcp-servers');
         createMCPServers(mockOptions);
 
-        // Verify createDiscordMCPServer was called with correct args
+        // Verify createDiscordMCPServer was called with single options object
         expect(createDiscordMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createDiscordMcpServerSpy).toHaveBeenCalledWith(
-            mockOptions.messageSearchService,
-            mockOptions.discordClient,
-            mockOptions.questionRegistry,
-            mockOptions.channelRegistry,
-            mockOptions.timezone
+            expect.objectContaining({
+                searchService:    mockOptions.messageSearchService,
+                client:           mockOptions.discordClient,
+                questionRegistry: mockOptions.questionRegistry,
+                timezone:         mockOptions.timezone,
+            })
         );
     });
 
@@ -176,7 +177,13 @@ describe('createMCPServers', () => {
         expect(createInboxMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createInboxMcpServerSpy).toHaveBeenCalledWith(
             mockOptions.inboxManager,
-            mockOptions.channelRegistry,
+            expect.objectContaining({
+                resolveChannelId:   expect.any(Function),
+                muteChannel:        expect.any(Function),
+                unmuteChannel:      expect.any(Function),
+                getAllChannels:     expect.any(Function),
+                getUnmutedChannels: expect.any(Function),
+            }),
             mockOptions.botStateManager
         );
     });

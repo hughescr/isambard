@@ -18,7 +18,6 @@ export {
     PerchSlotSchema,
     SuggestionLevelSchema,
     PerchSlotConfigSchema,
-    PerchConfigSchema,
     PerchSchedulerStateSchema
 } from './types';
 

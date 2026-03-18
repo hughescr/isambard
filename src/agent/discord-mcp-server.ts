@@ -4,22 +4,9 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
-// eslint-disable-next-line no-warning-comments, sonarjs/todo-tag -- tracked in roadmap, not forgotten
-// TODO: Decouple - Discord MCP server should expose platform-agnostic MCP tool interfaces wrapping messaging platform capabilities
-// eslint-disable-next-line boundaries/dependencies -- Discord MCP server imports Discord message history; decouple per roadmap
-import { buildQuestionButtons } from '../integrations/discord/button-builder';
-// eslint-disable-next-line boundaries/dependencies -- Discord MCP server imports Discord channel registry; decouple per roadmap
-import { type ChannelRegistryManager, DMTracker, resolveChannelId  } from '../integrations/discord/channel-registry';
-// eslint-disable-next-line boundaries/dependencies -- Discord MCP server imports Discord message history; decouple per roadmap
-import type { MessageSearchService } from '../integrations/discord/message-history/search';
-// eslint-disable-next-line boundaries/dependencies -- Discord MCP server imports Discord messages; decouple per roadmap
-import { splitMessage } from '../integrations/discord/messages';
-// eslint-disable-next-line boundaries/dependencies -- Discord MCP server imports Discord retry; decouple per roadmap
-import { withDiscordRetry } from '../integrations/discord/retry';
-// eslint-disable-next-line boundaries/dependencies -- Discord MCP server imports Discord types; decouple per roadmap
-import { createChannelId, createUserId, type UserId, type ChannelId } from '../integrations/discord/types';
 import { mcpErrorResult } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
+import { createChannelId, createUserId, type UserId, type ChannelId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
 import { PathSecurityError } from '@/errors';
 import { validateFilePaths, formatLocalDateTime } from '@/utils';
 
@@ -85,9 +72,10 @@ function validateThreadCreation(createThread?: boolean, threadName?: string): Ca
  */
 async function fetchAndValidateChannel(
     client: Client,
-    channelId: string
+    channelId: string,
+    retryHelper: MCPRetryHelper
 ): Promise<{ channel: TextChannel } | { error: CallToolResult }> {
-    const channel = await withDiscordRetry(
+    const channel = await retryHelper.withRetry(
         () => client.channels.fetch(channelId),
         // Stryker disable next-line StringLiteral: Operation name for logging
         'fetchChannel'
@@ -125,6 +113,7 @@ async function fetchAndValidateChannel(
 async function sendMessage(
     channel: TextChannel,
     content: string,
+    retryHelper: MCPRetryHelper,
     replyToMessageId?: string,
     files?: string[]
 ): Promise<Message> {
@@ -134,19 +123,19 @@ async function sendMessage(
     }
 
     if(replyToMessageId) {
-        const originalMessage = await withDiscordRetry(
+        const originalMessage = await retryHelper.withRetry(
             () => channel.messages.fetch(replyToMessageId),
             // Stryker disable next-line StringLiteral: Operation name for logging
             'fetchMessage'
         );
-        return withDiscordRetry(
+        return retryHelper.withRetry(
             () => originalMessage.reply(messageOptions),
             // Stryker disable next-line StringLiteral: Operation name for logging
             'replyToMessage'
         );
     }
 
-    return withDiscordRetry(
+    return retryHelper.withRetry(
         () => channel.send(messageOptions),
         // Stryker disable next-line StringLiteral: Operation name for logging
         'sendMessage'
@@ -160,6 +149,7 @@ async function sendMessage(
 async function createThreadIfRequested(
     channel: TextChannel,
     sentMessage: Message,
+    retryHelper: MCPRetryHelper,
     createThread?: boolean,
     threadName?: string
 ): Promise<string | undefined> {
@@ -170,7 +160,7 @@ async function createThreadIfRequested(
     // Check if channel supports threads (not DM channels or thread-incapable channels)
     // Stryker disable next-line ConditionalExpression,LogicalOperator: All conditions required for thread capability check
     if('threads' in channel && channel.isTextBased() && !channel.isThread() && !channel.isDMBased()) {
-        const thread = await withDiscordRetry(
+        const thread = await retryHelper.withRetry(
             () => sentMessage.startThread({ name: threadName }),
             // Stryker disable next-line StringLiteral: Operation name for logging
             'startThread'
@@ -204,13 +194,14 @@ function validateQuestionOptions(options?: { label: string, value: string }[]): 
  */
 async function normalizeChannelId(
     client: Client,
-    channelId: string
+    channelId: string,
+    retryHelper: MCPRetryHelper
 ): Promise<{
     normalizedChannelId: string
     existingThreadId?:   string
     channel:             TextChannel
 } | { error: CallToolResult }> {
-    const fetchedChannel = await withDiscordRetry(
+    const fetchedChannel = await retryHelper.withRetry(
         () => client.channels.fetch(channelId),
         // Stryker disable next-line StringLiteral: Operation name for logging
         'fetchChannel'
@@ -236,7 +227,7 @@ async function normalizeChannelId(
     }
 
     const channel = fetchedChannel.isThread()
-        ? await withDiscordRetry(
+        ? await retryHelper.withRetry(
             () => client.channels.fetch(normalizedChannelId),
             // Stryker disable next-line StringLiteral: Operation name for logging
             'fetchParentChannel'
@@ -279,6 +270,7 @@ async function normalizeChannelId(
 async function prepareQuestionChannel(
     fetchedChannel: ReturnType<Client['channels']['fetch']> extends Promise<infer T> ? T : never,
     channel: TextChannel,
+    retryHelper: MCPRetryHelper,
     existingThreadId?: string,
     createThread?: boolean,
     threadName?: string
@@ -293,7 +285,7 @@ async function prepareQuestionChannel(
 
     // Stryker disable next-line LogicalOperator: Both conditions required - createThread flag AND channel capability
     if(createThread && 'threads' in channel) {
-        const thread = await withDiscordRetry(
+        const thread = await retryHelper.withRetry(
             () => channel.threads.create({
                 // Stryker disable next-line LogicalOperator,StringLiteral: Fallback chain for thread name with default
                 name: threadName ?? 'Q&A'
@@ -316,6 +308,7 @@ async function prepareQuestionChannel(
 function buildQuestionMessage(
     questionId: string,
     question: string,
+    buttonBuilder: MCPQuestionButtonBuilder,
     targetUserId?: string,
     options?: { label: string, value: string }[]
 ): MessageCreateOptions {
@@ -327,7 +320,7 @@ function buildQuestionMessage(
     const messageOptions: MessageCreateOptions = { content: questionContent };
 
     if(options && options.length > 0) {
-        messageOptions.components = buildQuestionButtons({ questionId, options });
+        messageOptions.components = buttonBuilder.buildQuestionButtons({ questionId, options });
     }
 
     return messageOptions;
@@ -427,6 +420,34 @@ function formatQuestionResult(
 }
 
 /**
+ * Options for creating the Discord MCP server.
+ */
+export interface DiscordMCPServerOptions {
+    /** Message search service for querying message history */
+    searchService:    MCPMessageSearchService
+    /** Discord.js client for sending messages and fetching channel data */
+    client:           Client
+    /** Registry for tracking pending questions awaiting user responses */
+    questionRegistry: QuestionRegistry
+    /** Channel registry for name resolution and mute management */
+    channelRegistry:  MCPChannelRegistry
+    /** DM tracker for username-to-channel resolution */
+    dmTracker:        MCPDMTracker
+    /** Message splitter for chunking long messages */
+    messageSplitter:  MCPMessageSplitter
+    /** Button builder for interactive question options */
+    buttonBuilder:    MCPQuestionButtonBuilder
+    /** Retry helper for Discord API calls */
+    retryHelper:      MCPRetryHelper
+    /** Server timezone for localTimestamp enrichment. The MCP server is a
+     *  shared, session-level resource created at startup. Per-user timezone
+     *  would require threading user context into each tool call. The agent's
+     *  prompts and message formatting use per-user timezone where available.
+     */
+    timezone?:        string
+}
+
+/**
  * Creates an MCP server for Discord message history and message sending operations.
  *
  * Provides tools for:
@@ -438,24 +459,10 @@ function formatQuestionResult(
  *
  * This server wraps the MessageSearchService and Discord client for use with the Claude Agent SDK.
  *
- * @param searchService Message search service for querying Discord message history
- * @param client Discord.js client for sending messages and fetching channel data
- * @param questionRegistry Registry for tracking pending questions awaiting user responses
- * @param channelRegistry Channel registry manager for DM channel and user metadata
- * @param timezone Server timezone for localTimestamp enrichment. The MCP server is a
- *                 shared, session-level resource created at startup. Per-user timezone
- *                 would require threading user context into each tool call. The agent's
- *                 prompts and message formatting use per-user timezone where available.
+ * @param options - All required dependencies for the Discord MCP server
  */
-export function createDiscordMCPServer(
-    searchService: MessageSearchService,
-    client: Client,
-    questionRegistry: QuestionRegistry,
-    channelRegistry: ChannelRegistryManager,
-    timezone?: string
-) {
-    // Create DMTracker for username resolution (requires channelRegistry)
-    const dmTracker = new DMTracker(channelRegistry, client);
+export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
+    const { searchService, client, questionRegistry, channelRegistry, dmTracker, messageSplitter, buttonBuilder, retryHelper, timezone } = options;
 
     return createSdkMcpServer({
         name:    'discord',
@@ -478,7 +485,7 @@ export function createDiscordMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
                         const result = await searchService.searchMessages({
                             channelId,
                             query:     args.query,
@@ -491,7 +498,8 @@ export function createDiscordMCPServer(
                         // Enrich messages with local timestamps if timezone is provided
                         if(timezone) {
                             for(const msg of result.messages) {
-                                msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
+                                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
+                                msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
                             }
                         }
 
@@ -520,7 +528,7 @@ export function createDiscordMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
                         const result = await searchService.getRecentMessages(
                             channelId,
                             // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
@@ -530,7 +538,8 @@ export function createDiscordMCPServer(
                         // Enrich messages with local timestamps if timezone is provided
                         if(timezone) {
                             for(const msg of result.messages) {
-                                msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
+                                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
+                                msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
                             }
                         }
 
@@ -559,7 +568,7 @@ export function createDiscordMCPServer(
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
                         // Handle array input
                         if(Array.isArray(args.messageId)) {
                             const results = await searchService.getMessagesById(
@@ -678,23 +687,24 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             resolvedChannelId = dmChannelId;
                         } else {
                             // If not @username, try to resolve as #channel-name or pass through numeric ID
-                            resolvedChannelId = resolveChannelId(args.channelId, channelRegistry);
+                            resolvedChannelId = channelRegistry.resolveChannelId(args.channelId);
                         }
 
                         // Fetch and validate channel
-                        const channelResult = await fetchAndValidateChannel(client, resolvedChannelId);
+                        const channelResult = await fetchAndValidateChannel(client, resolvedChannelId, retryHelper);
                         if('error' in channelResult) {
                             return channelResult.error;
                         }
 
                         // Split message into chunks
-                        const chunks = splitMessage(args.content);
+                        const chunks = messageSplitter.splitMessage(args.content);
                         const sentMessages: Message[] = [];
 
                         // Send first chunk (with reply and files if specified)
                         const firstMessage = await sendMessage(
                             channelResult.channel,
                             chunks[0],
+                            retryHelper,
                             args.replyToMessageId,
                             validatedFiles
                         );
@@ -704,7 +714,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
                         for(let i = 1; i < chunks.length; i++) {
                             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
-                            const msg = await sendMessage(channelResult.channel, chunks[i]);
+                            const msg = await sendMessage(channelResult.channel, chunks[i], retryHelper);
                             sentMessages.push(msg);
                         }
 
@@ -712,6 +722,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const threadId = await createThreadIfRequested(
                             channelResult.channel,
                             firstMessage,
+                            retryHelper,
                             args.createThread,
                             args.threadName
                         );
@@ -766,10 +777,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         }
 
                         // 2. Resolve channel name to ID if needed
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
 
                         // 3. Normalize channel ID (handles threads)
-                        const normalizeResult = await normalizeChannelId(client, channelId);
+                        const normalizeResult = await normalizeChannelId(client, channelId, retryHelper);
                         if('error' in normalizeResult) {
                             return normalizeResult.error;
                         }
@@ -781,6 +792,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const messageOptions = buildQuestionMessage(
                             questionId,
                             args.question,
+                            buttonBuilder,
                             args.targetUserId,
                             args.options
                         );
@@ -789,13 +801,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         const { targetChannel, threadId } = await prepareQuestionChannel(
                             existingThreadId ? await client.channels.fetch(existingThreadId) : channel,
                             channel,
+                            retryHelper,
                             existingThreadId,
                             args.createThread,
                             args.threadName
                         );
 
                         // 6. Send question
-                        const sentMessage = await withDiscordRetry(
+                        const sentMessage = await retryHelper.withRetry(
                             () => targetChannel.send(messageOptions),
                             // Stryker disable next-line StringLiteral: Operation name for logging
                             'sendQuestion'
@@ -854,16 +867,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                 async (args): Promise<CallToolResult> => {
                     try {
                         // Resolve channel name to ID if needed
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
 
                         // Fetch and validate channel
-                        const channelResult = await fetchAndValidateChannel(client, channelId);
+                        const channelResult = await fetchAndValidateChannel(client, channelId, retryHelper);
                         if('error' in channelResult) {
                             return channelResult.error;
                         }
 
                         // Fetch the message
-                        const message = await withDiscordRetry(
+                        const message = await retryHelper.withRetry(
                             () => channelResult.channel.messages.fetch(args.messageId),
                             // Stryker disable next-line StringLiteral: Operation name for logging
                             'fetchMessage'
@@ -889,7 +902,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                         for(const emoji of emojis) {
                             try {
                                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
-                                await withDiscordRetry(
+                                await retryHelper.withRetry(
                                     () => message.react(emoji),
                                     // Stryker disable next-line StringLiteral: Operation name for logging
                                     'addReaction'
@@ -942,7 +955,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
                         await channelRegistry.muteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
@@ -970,7 +983,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const channelId = resolveChannelId(args.channelId, channelRegistry);
+                        const channelId = channelRegistry.resolveChannelId(args.channelId);
                         await channelRegistry.unmuteChannel(channelId);
                         // Stryker disable next-line all: Logging for observability
                         logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });

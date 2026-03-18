@@ -1,10 +1,9 @@
+import type { SessionType } from '../state/types';
 import type { ChannelId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import { processResponse } from './sentinel';
 import type { WellKnownChannel } from './types';
 import { WellKnownChannelNotFoundError } from '@/errors';
-
-export type SessionType = 'catching_up' | 'perching' | 'processing_message' | 'dm';
 
 export interface RoutingResult {
     /** The channel to send the response to */

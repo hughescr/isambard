@@ -495,7 +495,7 @@ describe('configSchema', () => {
 });
 
 describe('perchConfigSchema', () => {
-    test('should apply default enabled = false when not provided', () => {
+    test('should apply default enabled = true when not provided', () => {
         const configWithoutEnabled = {
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
@@ -506,7 +506,7 @@ describe('perchConfigSchema', () => {
         const result = perchConfigSchema.safeParse(configWithoutEnabled);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data?.enabled).toBe(false);
+            expect(result.data?.enabled).toBe(true);
         }
     });
 
@@ -618,14 +618,14 @@ describe('perchConfigSchema', () => {
         }
     });
 
-    test('should ensure enabled defaults to false not true', () => {
+    test('should ensure enabled defaults to true not false', () => {
         const configWithoutEnabled = {};
 
         const result = perchConfigSchema.safeParse(configWithoutEnabled);
         expect(result.success).toBe(true);
         if(result.success) {
-            expect(result.data?.enabled).toBe(false);
-            expect(result.data?.enabled).not.toBe(true);
+            expect(result.data?.enabled).toBe(true);
+            expect(result.data?.enabled).not.toBe(false);
         }
     });
 

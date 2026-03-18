@@ -88,7 +88,7 @@ export {
     createInteractionHandler
 } from './interactions';
 
-// State management (explicit — conflicts: TransitionError, SessionType, AgentConfig)
+// State management (explicit — conflicts: TransitionError, AgentConfig)
 export {
     operationalModeSchema,
     activityPhaseSchema,
@@ -137,7 +137,7 @@ export {
     type AgentContextBuilderDeps
 } from './state';
 
-// Channel Registry (explicit — conflicts: ChannelNotFoundError alias, SessionType, error classes moved to @/errors block)
+// Channel Registry (explicit — conflicts: ChannelNotFoundError alias, error classes moved to @/errors block)
 export {
     wellKnownChannelSchema,
     channelMetadataSchema,

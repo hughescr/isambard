@@ -14,8 +14,7 @@ import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildP
 import { type PerchSlot, type PerchConfig } from './types';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { StreamProgress } from '@/agent/stream-tracker';
-// eslint-disable-next-line boundaries/dependencies -- Perch session runner imports Discord state types; decouple tracked in roadmap
-import type { BotStateManager, InterruptingMessageDetails } from '@/integrations/discord';
+import type { AgentStateManager, InterruptingMessageDetails } from '@/agent/types';
 
 /**
  * Options for running an agent session.
@@ -48,7 +47,7 @@ export interface AgentSessionResult {
  */
 export interface PerchSessionRunnerDeps {
     /** State manager for mode transitions */
-    stateManager:    BotStateManager
+    stateManager:    AgentStateManager
     /** Logger instance */
     logger:          Logger
     /** Perch configuration (for timeout settings) */
@@ -145,6 +144,19 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         interruptingMessage: InterruptingMessage
     } | null = null;
 
+    // Helper to reset session state after a session ends or errors
+    function resetSessionState(): void {
+        currentSessionId = undefined;
+        partialWork = null;
+        currentSlot = null;
+        // Stryker disable next-line BlockStatement: Defensive cleanup — sessionTimeout may or may not be set at call sites
+        if(sessionTimeout) {
+            clearTimeout(sessionTimeout);
+            sessionTimeout = null;
+            sessionStartTime = null;
+        }
+    }
+
     // Timeout handler - aborts session when max duration reached
     function handleSessionTimeout(): void {
         // Don't timeout if not in perching mode
@@ -216,17 +228,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 stateManager.goIdle();
             }
             // Clear session state
-            currentSessionId = undefined;
-            // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block owns these vars exclusively
-            partialWork = null;
-            currentSlot = null;
-            // Clear session timeout
-            if(sessionTimeout) {
-                clearTimeout(sessionTimeout);
-                sessionTimeout = null;
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block owns sessionStartTime exclusively
-                sessionStartTime = null;
-            }
+            resetSessionState();
         }
         // Stryker restore all
     }
@@ -261,17 +263,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
-                // Clear session state
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential state cleanup, no concurrent writers
-                currentSessionId = undefined;
-                partialWork = null;
-                currentSlot = null;
-                // Clear timeout
-                if(sessionTimeout) {
-                    clearTimeout(sessionTimeout);
-                    sessionTimeout = null;
-                    sessionStartTime = null;
-                }
+                resetSessionState();
             } else if(isTimingOut) {
                 // Timeout abort caught via return path (agent caught AbortError internally and returned completed:false)
                 // Run wrap-up using shared helper
@@ -284,16 +276,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
-                // eslint-disable-next-line require-atomic-updates -- single-threaded: safety-net state cleanup, no concurrent writers
-                currentSessionId = undefined;
-                partialWork = null;
-                currentSlot = null;
-                // Stryker disable next-line BlockStatement: Defensive cleanup tested via timer count assertions
-                if(sessionTimeout) {
-                    clearTimeout(sessionTimeout);
-                    sessionTimeout = null;
-                    sessionStartTime = null;
-                }
+                resetSessionState();
             } else {
                 // Suspended — preserve session state for resume
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Session ID storage in suspension path
@@ -337,17 +320,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             if(stateManager.getMode() === 'perching') {
                 stateManager.goIdle();
             }
-            // Clear session state
-            // eslint-disable-next-line require-atomic-updates -- single-threaded: error path state cleanup, no concurrent writers
-            currentSessionId = undefined;
-            partialWork = null;
-            currentSlot = null;
-            // Clear timeout
-            if(sessionTimeout) {
-                clearTimeout(sessionTimeout);
-                sessionTimeout = null;
-                sessionStartTime = null;
-            }
+            resetSessionState();
         } finally {
             // eslint-disable-next-line require-atomic-updates -- single-threaded: finally block owns currentAbortController exclusively
             currentAbortController = null;
@@ -418,16 +391,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
-                currentSessionId = undefined;
-                partialWork = null;
-                currentSlot = null;
-                // Stryker disable next-line ConditionalExpression: Defensive cleanup - tested via timer count assertions
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: sessionTimeout may be set or null depending on error timing
-                if(sessionTimeout) {
-                    clearTimeout(sessionTimeout);
-                    sessionTimeout = null;
-                    sessionStartTime = null;
-                }
+                resetSessionState();
                 currentAbortController = null;
             }
             // Stryker restore BlockStatement

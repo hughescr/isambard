@@ -2,7 +2,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, type QuestionRegistry  } from '@/agent';
 import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
-import type { MessageSearchService, ChannelRegistryManager, InboxManager, BotStateManager } from '@/integrations/discord';
+import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { SendRateLimiter } from '@/integrations/email';
 import type { MemoryToolBackend, MemoryPath } from '@/storage';
 
@@ -133,17 +133,44 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         recordAccess: options.recordAccess,
     });
 
-    const discordMcpServer = createDiscordMCPServer(
-        options.messageSearchService,
-        options.discordClient,
-        options.questionRegistry,
-        options.channelRegistry,
-        options.timezone
-    );
+    // Create DMTracker for username-to-DM-channel resolution
+    const dmTracker = new DMTracker(options.channelRegistry, options.discordClient);
+
+    const discordMcpServer = createDiscordMCPServer({
+        searchService:    options.messageSearchService,
+        client:           options.discordClient,
+        questionRegistry: options.questionRegistry,
+        channelRegistry:  {
+            resolveChannelId:   nameOrId => resolveChannelId(nameOrId, options.channelRegistry),
+            muteChannel:        channelId => options.channelRegistry.muteChannel(channelId),
+            unmuteChannel:      channelId => options.channelRegistry.unmuteChannel(channelId),
+            getAllChannels:     () => options.channelRegistry.getAllChannels(),
+            getUnmutedChannels: () => options.channelRegistry.getUnmutedChannels(),
+        },
+        dmTracker: {
+            getOrCreateDMByUsername: username => dmTracker.getOrCreateDMByUsername(username),
+        },
+        messageSplitter: {
+            splitMessage: content => splitMessage(content),
+        },
+        buttonBuilder: {
+            buildQuestionButtons: config => buildQuestionButtons(config),
+        },
+        retryHelper: {
+            withRetry: (fn, operationName) => withDiscordRetry(fn, operationName),
+        },
+        timezone: options.timezone,
+    });
 
     const inboxMcpServer = createInboxMCPServer(
         options.inboxManager,
-        options.channelRegistry,
+        {
+            resolveChannelId:   nameOrId => resolveChannelId(nameOrId, options.channelRegistry),
+            muteChannel:        channelId => options.channelRegistry.muteChannel(channelId),
+            unmuteChannel:      channelId => options.channelRegistry.unmuteChannel(channelId),
+            getAllChannels:     () => options.channelRegistry.getAllChannels(),
+            getUnmutedChannels: () => options.channelRegistry.getUnmutedChannels(),
+        },
         options.botStateManager
     );
 

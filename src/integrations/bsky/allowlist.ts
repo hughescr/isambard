@@ -1,16 +1,12 @@
 import {
     type DynamoDBDocumentClient,
     GetCommand,
-    PutCommand,
-    DeleteCommand,
-    UpdateCommand,
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
-import { logger } from '@hughescr/logger';
+import { DynamoAllowlist } from '@/storage';
 
-const ALLOWLIST_PK      = 'BSKY#ALLOWLIST';
-const INDEX_SK          = 'INDEX';
-const HANDLE_SK_PREFIX  = 'HANDLE#';
+const ALLOWLIST_PK     = 'BSKY#ALLOWLIST';
+const HANDLE_SK_PREFIX = 'HANDLE#';
 
 export interface BskyAllowlistEntry {
     handle:  string     // normalized: trim + lowercase
@@ -20,39 +16,39 @@ export interface BskyAllowlistEntry {
     addedBy: string     // 'outbound-approval' | 'discord-command'
 }
 
-export class BskyAllowlist {
-    private readonly docClient: DynamoDBDocumentClient;
-    private readonly tableName: string;
-    private handleCache = new Set<string>();
-    private didCache    = new Set<string>();
+export class BskyAllowlist extends DynamoAllowlist<BskyAllowlistEntry> {
+    private didCache = new Set<string>();
 
     constructor(docClient: DynamoDBDocumentClient, tableName: string) {
-        this.docClient = docClient;
-        this.tableName = tableName;
+        super(docClient, tableName, {
+            pk:         ALLOWLIST_PK,
+            skPrefix:   HANDLE_SK_PREFIX,
+            indexField: 'handles',
+            // Stryker disable next-line StringLiteral: name is only used in log messages
+            name:       'Bsky',
+        });
     }
 
     /**
-     * Load the allowlist caches into memory. Call at startup.
-     * 1 GetItem for the handle INDEX + 1 Query for DID values.
+     * Check if a handle or DID is on the allowlist. In-memory, 0 RCU.
+     * Normalizes handles (lowercase, trim) before checking.
+     * DIDs are checked case-sensitively.
      */
-    async load(): Promise<void> {
-        // Load handle cache from INDEX StringSet
-        const indexResult = await this.docClient.send(new GetCommand({
-            TableName: this.tableName,
-            Key:       { PK: ALLOWLIST_PK, SK: INDEX_SK },
-        }));
-        this.handleCache = indexResult.Item?.handles
-            ? new Set<string>(indexResult.Item.handles as Set<string>)
-            : new Set<string>();
+    override isAllowed(handleOrDid: string): boolean {
+        return this.cache.has(this.normalize(handleOrDid)) || this.didCache.has(handleOrDid);
+    }
 
-        // Load DID cache from all HANDLE# metadata items
+    /**
+     * After the base class loads the handle INDEX, query HANDLE# items to populate DID cache.
+     */
+    protected override async postLoad(): Promise<void> {
         const handleResult = await this.docClient.send(new QueryCommand({
             TableName:                 this.tableName,
             KeyConditionExpression:    '#pk = :pk AND begins_with(#sk, :prefix)',
             ExpressionAttributeNames:  { '#pk': 'PK', '#sk': 'SK' },
             ExpressionAttributeValues: {
-                ':pk':     ALLOWLIST_PK,
-                ':prefix': HANDLE_SK_PREFIX,
+                ':pk':     this.config.pk,
+                ':prefix': this.config.skPrefix,
             },
         }));
         // Stryker disable ConditionalExpression: `did !== undefined` guard — equivalent mutant; undefined is never a valid DID string so adding undefined to Set is observable only via isAllowed(undefined), which is not a realistic call
@@ -62,63 +58,42 @@ export class BskyAllowlist {
                 .filter((did): did is string => did !== undefined && did !== '')
         );
         // Stryker restore ConditionalExpression
-
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({ handleCount: this.handleCache.size, didCount: this.didCache.size, msg: 'Bsky allowlist loaded' });
     }
 
     /**
-     * Check if a handle or DID is on the allowlist. In-memory, 0 RCU.
-     * Normalizes handles (lowercase, trim) before checking.
-     * DIDs are checked case-sensitively.
+     * Fetch existing HANDLE# item to capture the current DID.
+     * Used by both preAdd (for stale-DID cleanup) and preRemove (for cache eviction).
      */
-    isAllowed(handleOrDid: string): boolean {
-        return this.handleCache.has(this.normalize(handleOrDid)) || this.didCache.has(handleOrDid);
-    }
-
-    /**
-     * Add an entry to the allowlist. 1 read + 2 writes:
-     * 1. GetItem to fetch existing DID for stale cache cleanup
-     * 2. PutItem for HANDLE metadata
-     * 3. ADD handles on INDEX
-     * Refreshes caches after, removing old DID if it changed.
-     */
-    async addEntry(entry: BskyAllowlistEntry): Promise<void> {
-        const normalized = this.normalize(entry.handle);
-
-        // Fetch existing entry to clean up old DID from cache if it changed
+    private async fetchExistingDid(normalizedKey: string): Promise<string | undefined> {
         const existing = await this.docClient.send(new GetCommand({
             TableName: this.tableName,
-            Key:       { PK: ALLOWLIST_PK, SK: `${HANDLE_SK_PREFIX}${normalized}` },
+            Key:       { PK: this.config.pk, SK: `${this.config.skPrefix}${normalizedKey}` },
         }));
         // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent mutants — undefined is never a valid DID; empty string is never in the cache
-        const oldDid = existing.Item?.did as string | undefined;
+        return existing.Item?.did as string | undefined;
+    }
 
-        // Write metadata item
-        await this.docClient.send(new PutCommand({
-            TableName: this.tableName,
-            Item:      {
-                PK:      ALLOWLIST_PK,
-                SK:      `${HANDLE_SK_PREFIX}${normalized}`,
-                handle:  normalized,
-                did:     entry.did,
-                notes:   entry.notes,
-                addedAt: entry.addedAt,
-                addedBy: entry.addedBy,
-            },
-        }));
+    /**
+     * Fetch existing entry before add to capture the old DID for stale cache cleanup.
+     * Returns the old DID (or undefined) to be passed to postAddCache.
+     */
+    protected override async preAdd(
+        _entry:        BskyAllowlistEntry,
+        normalizedKey: string
+    ): Promise<string | undefined> {
+        return this.fetchExistingDid(normalizedKey);
+    }
 
-        // Add to INDEX StringSet
-        await this.docClient.send(new UpdateCommand({
-            TableName:                 this.tableName,
-            Key:                       { PK: ALLOWLIST_PK, SK: INDEX_SK },
-            UpdateExpression:          'ADD #handles :newHandle',
-            ExpressionAttributeNames:  { '#handles': 'handles' },
-            ExpressionAttributeValues: { ':newHandle': new Set([normalized]) },
-        }));
-
-        // Refresh caches — clean up old DID if it changed
-        this.handleCache.add(normalized);
+    /**
+     * Update DID cache after a successful add.
+     * preAddData is the old DID returned by preAdd.
+     */
+    protected override postAddCache(
+        entry:          BskyAllowlistEntry,
+        _normalizedKey: string,
+        preAddData:     unknown
+    ): void {
+        const oldDid = preAddData as string | undefined;
         // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent mutants — undefined/empty are never valid DID cache entries
         if(oldDid !== undefined && oldDid !== '' && oldDid !== entry.did) {
             this.didCache.delete(oldDid);
@@ -126,75 +101,49 @@ export class BskyAllowlist {
         if(entry.did !== undefined && entry.did !== '') {
             this.didCache.add(entry.did);
         }
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({ handle: normalized, msg: 'Added to Bsky allowlist' });
     }
 
     /**
-     * Remove an entry from the allowlist. 2 writes:
-     * 1. DeleteItem for HANDLE metadata
-     * 2. DELETE handles on INDEX
-     * Refreshes caches after.
+     * Fetch DID before remove so we can clean it from the DID cache afterwards.
+     * Returns the DID (or undefined).
      */
-    async removeEntry(handle: string): Promise<void> {
-        const normalized = this.normalize(handle);
+    protected override async preRemove(normalizedKey: string): Promise<string | undefined> {
+        return this.fetchExistingDid(normalizedKey);
+    }
 
-        // Fetch metadata to get DID before deleting
-        const existing = await this.docClient.send(new GetCommand({
-            TableName: this.tableName,
-            Key:       { PK: ALLOWLIST_PK, SK: `${HANDLE_SK_PREFIX}${normalized}` },
-        }));
-        const did = existing.Item?.did as string | undefined;
-
-        // Delete metadata item
-        await this.docClient.send(new DeleteCommand({
-            TableName: this.tableName,
-            Key:       { PK: ALLOWLIST_PK, SK: `${HANDLE_SK_PREFIX}${normalized}` },
-        }));
-
-        // Remove from INDEX StringSet
-        await this.docClient.send(new UpdateCommand({
-            TableName:                 this.tableName,
-            Key:                       { PK: ALLOWLIST_PK, SK: INDEX_SK },
-            UpdateExpression:          'DELETE #handles :oldHandle',
-            ExpressionAttributeNames:  { '#handles': 'handles' },
-            ExpressionAttributeValues: { ':oldHandle': new Set([normalized]) },
-        }));
-
-        // Refresh caches
-        this.handleCache.delete(normalized);
+    /**
+     * Remove the old DID from cache after a successful remove.
+     * preRemoveData is the DID returned by preRemove.
+     */
+    protected override postRemoveCache(_normalizedKey: string, preRemoveData: unknown): void {
+        const did = preRemoveData as string | undefined;
         // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent mutants — `did !== undefined` guard only matters for undefined (not a valid DID); `did !== ''` mutation to 'Stryker was here!' is equivalent because empty string is never in the cache
         if(did !== undefined && did !== '') {
             this.didCache.delete(did);
         }
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({ handle: normalized, msg: 'Removed from Bsky allowlist' });
     }
 
-    /**
-     * List all entries with full metadata. Query on PK, filter SK begins_with 'HANDLE#'.
-     * Used for /bsky-allowlist list command.
-     */
-    async list(): Promise<BskyAllowlistEntry[]> {
-        const result = await this.docClient.send(new QueryCommand({
-            TableName:                 this.tableName,
-            KeyConditionExpression:    '#pk = :pk AND begins_with(#sk, :prefix)',
-            ExpressionAttributeNames:  { '#pk': 'PK', '#sk': 'SK' },
-            ExpressionAttributeValues: {
-                ':pk':     ALLOWLIST_PK,
-                ':prefix': HANDLE_SK_PREFIX,
-            },
-        }));
-        return (result.Items ?? []).map(item => ({
+    protected getEntryKey(entry: BskyAllowlistEntry): string {
+        return entry.handle;
+    }
+
+    protected buildItem(entry: BskyAllowlistEntry, normalizedKey: string): Record<string, unknown> {
+        return {
+            handle:  normalizedKey,
+            did:     entry.did,
+            notes:   entry.notes,
+            addedAt: entry.addedAt,
+            addedBy: entry.addedBy,
+        };
+    }
+
+    protected parseItem(item: Record<string, unknown>): BskyAllowlistEntry {
+        return {
             handle:  item.handle as string,
             did:     item.did as string | undefined,
             notes:   item.notes as string | undefined,
             addedAt: item.addedAt as string,
             addedBy: item.addedBy as string,
-        }));
-    }
-
-    private normalize(handle: string): string {
-        return handle.trim().toLowerCase();
+        };
     }
 }

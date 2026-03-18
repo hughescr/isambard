@@ -1,4 +1,4 @@
-import { createChannelId, type ChannelId } from '../../discord/types';
+import { createChannelId, type ChannelId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 
 /**

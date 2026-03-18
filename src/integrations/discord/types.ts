@@ -1,28 +1,12 @@
 import { z } from 'zod';
 import { AttachmentMetadataSchema } from './attachments/types';
+// eslint-disable-next-line boundaries/dependencies -- direct import from agent/types.ts breaks circular dep: discord/types → @/agent → discord-mcp-server → @/integrations/discord
+import { channelIdSchema, userIdSchema } from '@/agent/types';
 import { guildIdSchema, type GuildId  } from '@/config';
 
+// eslint-disable-next-line boundaries/dependencies -- direct re-export from agent/types.ts breaks circular dep (see import above)
+export { channelIdSchema, type ChannelId, userIdSchema, type UserId, createChannelId, createUserId, isChannelId, isUserId } from '@/agent/types';
 export { guildIdSchema, type GuildId } from '@/config';
-
-/**
- * ChannelId is a branded type representing a Discord channel ID.
- */
-export const channelIdSchema = z
-    .string()
-    .min(1, 'Channel ID cannot be empty')
-    .brand<'ChannelId'>();
-
-export type ChannelId = z.infer<typeof channelIdSchema>;
-
-/**
- * UserId is a branded type representing a Discord user ID.
- */
-export const userIdSchema = z
-    .string()
-    .min(1, 'User ID cannot be empty')
-    .brand<'UserId'>();
-
-export type UserId = z.infer<typeof userIdSchema>;
 
 /**
  * MessageId is a branded type representing a Discord message ID.
@@ -63,22 +47,6 @@ export function createGuildId(id: string): GuildId {
 }
 
 /**
- * Creates a validated ChannelId from a string.
- * @throws {z.ZodError} If the channel ID is invalid
- */
-export function createChannelId(id: string): ChannelId {
-    return channelIdSchema.parse(id);
-}
-
-/**
- * Creates a validated UserId from a string.
- * @throws {z.ZodError} If the user ID is invalid
- */
-export function createUserId(id: string): UserId {
-    return userIdSchema.parse(id);
-}
-
-/**
  * Creates a validated MessageId from a string.
  * @throws {z.ZodError} If the message ID is invalid
  */
@@ -91,22 +59,6 @@ export function createMessageId(id: string): MessageId {
  */
 export function isGuildId(value: unknown): value is GuildId {
     const result = guildIdSchema.safeParse(value);
-    return result.success;
-}
-
-/**
- * Type guard to check if a value is a valid ChannelId.
- */
-export function isChannelId(value: unknown): value is ChannelId {
-    const result = channelIdSchema.safeParse(value);
-    return result.success;
-}
-
-/**
- * Type guard to check if a value is a valid UserId.
- */
-export function isUserId(value: unknown): value is UserId {
-    const result = userIdSchema.safeParse(value);
     return result.success;
 }
 

@@ -238,23 +238,38 @@ async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Prom
 }
 
 /**
- * Creates a context builder for managing agent memory context
+ * Class-based context builder for managing agent memory context
  */
-export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
-    const { backend } = options;
-    const maxIdentityTokens = options.maxIdentityTokens ?? DEFAULT_MAX_IDENTITY_TOKENS;
-    const maxStateFullItems = options.maxStateFullItems ?? DEFAULT_MAX_STATE_FULL_ITEMS;
-    const maxStatePreviewItems = options.maxStatePreviewItems ?? DEFAULT_MAX_STATE_PREVIEW_ITEMS;
-    const maxStateItemMaxChars = options.maxStateItemMaxChars ?? DEFAULT_MAX_STATE_ITEM_MAX_CHARS;
-    const maxEventFullItems = options.maxEventFullItems ?? DEFAULT_MAX_EVENT_FULL_ITEMS;
-    const maxEventItemMaxChars = options.maxEventItemMaxChars ?? DEFAULT_MAX_EVENT_ITEM_MAX_CHARS;
-    const maxEventBatchSize = options.maxEventBatchSize ?? DEFAULT_MAX_EVENT_BATCH_SIZE;
-    const summarizeEventBatchesFn = options.summarizeEventBatches;
-    const emailService = options.emailService;
-    const bskyDMService = options.bskyDMService;
+export class ContextBuilderImpl implements ContextBuilder {
+    readonly #backend:                 MemoryToolBackend;
+    readonly #maxIdentityChars:        number;
+    readonly #maxStateFullItems:       number;
+    readonly #maxStatePreviewItems:    number;
+    readonly #maxStateItemMaxChars:    number;
+    readonly #maxUserChars:            number;
+    readonly #maxEventFullItems:       number;
+    readonly #maxEventItemMaxChars:    number;
+    readonly #maxEventBatchSize:       number;
+    readonly #summarizeEventBatchesFn: SummarizeEventBatchesFn | undefined;
+    readonly #emailService:            EmailService | undefined;
+    readonly #bskyDMService:           BskyDMService | undefined;
 
-    const maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
-    const maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
+    constructor(options: ContextBuilderOptions) {
+        this.#backend = options.backend;
+        const maxIdentityTokens = options.maxIdentityTokens ?? DEFAULT_MAX_IDENTITY_TOKENS;
+        this.#maxStateFullItems = options.maxStateFullItems ?? DEFAULT_MAX_STATE_FULL_ITEMS;
+        this.#maxStatePreviewItems = options.maxStatePreviewItems ?? DEFAULT_MAX_STATE_PREVIEW_ITEMS;
+        this.#maxStateItemMaxChars = options.maxStateItemMaxChars ?? DEFAULT_MAX_STATE_ITEM_MAX_CHARS;
+        this.#maxEventFullItems = options.maxEventFullItems ?? DEFAULT_MAX_EVENT_FULL_ITEMS;
+        this.#maxEventItemMaxChars = options.maxEventItemMaxChars ?? DEFAULT_MAX_EVENT_ITEM_MAX_CHARS;
+        this.#maxEventBatchSize = options.maxEventBatchSize ?? DEFAULT_MAX_EVENT_BATCH_SIZE;
+        this.#summarizeEventBatchesFn = options.summarizeEventBatches;
+        this.#emailService = options.emailService;
+        this.#bskyDMService = options.bskyDMService;
+
+        this.#maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
+        this.#maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
+    }
 
     /**
      * Build event section from recent events result
@@ -262,11 +277,11 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
      * @param now Reference time for age calculation
      * @returns Formatted event section string or undefined if no events
      */
-    const buildEventSection = async (
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- event section builder partitions items into summarized/full buckets, each requiring distinct rendering paths; extraction would obscure the single-pass logic
+    async #buildEventSection(
         eventsResult: RecentEventsResult,
         now: Date
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- event section builder partitions items into summarized/full buckets, each requiring distinct rendering paths; extraction would obscure the single-pass logic
-    ): Promise<string | undefined> => {
+    ): Promise<string | undefined> {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Defensive guard - empty items produces empty join anyway, caller checks falsy
         if(eventsResult.items.length === 0) {
             return undefined;
@@ -282,17 +297,17 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
 
         // Split into full-display and summary items (newest events get full display)
         // Stryker disable next-line ConditionalExpression,EqualityOperator: Edge case - if total <= max, slice returns empty array anyway
-        const summaryItems = eventsResult.items.length <= maxEventFullItems
+        const summaryItems = eventsResult.items.length <= this.#maxEventFullItems
             ? []
-            : eventsResult.items.slice(0, -maxEventFullItems);
-        const fullItems = eventsResult.items.slice(-maxEventFullItems);
+            : eventsResult.items.slice(0, -this.#maxEventFullItems);
+        const fullItems = eventsResult.items.slice(-this.#maxEventFullItems);
 
         // Older events summarized (rendered first for chronological order)
         // Stryker disable ConditionalExpression,EqualityOperator: Defensive empty check - for loop won't execute if empty anyway
-        if(summaryItems.length > 0 && summarizeEventBatchesFn) {
+        if(summaryItems.length > 0 && this.#summarizeEventBatchesFn) {
             // Stryker disable BlockStatement — external summarization API call with graceful preview fallback on failure
             try {
-                const batchSummaries = await summarizeEventBatchesFn(summaryItems, maxEventBatchSize, now);
+                const batchSummaries = await this.#summarizeEventBatchesFn(summaryItems, this.#maxEventBatchSize, now);
                 for(const batch of batchSummaries) {
                     const startAge = formatShortRelativeTime(new Date(batch.startTime), now);
                     const endAge = formatShortRelativeTime(new Date(batch.endTime), now);
@@ -318,29 +333,29 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         for(const item of fullItems) {
             let content = item.content;
             // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
-            if(content.length > maxEventItemMaxChars) {
-                content = `${content.slice(0, maxEventItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
+            if(content.length > this.#maxEventItemMaxChars) {
+                content = `${content.slice(0, this.#maxEventItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
             }
             const age = formatShortRelativeTime(new Date(item.updatedAt), now);
             eventSections.push(`${item.path} (${age}):\n${content}`);
         }
 
         return eventSections.join('\n\n');
-    };
+    }
 
     /**
      * Build the email inbox section for perch context.
      * Returns formatted inbox section string, or undefined if no unread mail or email service unavailable.
      */
-    const buildEmailInboxSection = async (now: Date): Promise<string | undefined> => {
-        if(!emailService) {
+    async #buildEmailInboxSection(now: Date): Promise<string | undefined> {
+        if(!this.#emailService) {
             return undefined;
         }
         // Stryker disable BlockStatement: try-catch guards email errors from breaking perch context
         try {
-            const counts = await emailService.wildDuckClient.getMailboxCounts('CleanInbox');
+            const counts = await this.#emailService.wildDuckClient.getMailboxCounts('CleanInbox');
             if(counts.unseen > 0) {
-                const summaries = await emailService.wildDuckClient.listMessages('CleanInbox', { unseen: true });
+                const summaries = await this.#emailService.wildDuckClient.listMessages('CleanInbox', { unseen: true });
                 // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for inboxLines
                 const inboxLines: string[] = [];
                 for(const summary of summaries) {
@@ -360,18 +375,18 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         }
         // Stryker restore BlockStatement
         return undefined;
-    };
+    }
 
     /**
      * Build the rejected drafts section for perch context.
      * Returns formatted rejected drafts section string, or undefined if none found or service unavailable.
      * Also includes a CRITICAL escalation section for drafts where Discord notification has permanently failed.
      */
-    const buildRejectedDraftSection = async (): Promise<string | undefined> => {
-        if(!emailService) {
+    async #buildRejectedDraftSection(): Promise<string | undefined> {
+        if(!this.#emailService) {
             return undefined;
         }
-        const { wildDuckClient } = emailService;
+        const { wildDuckClient } = this.#emailService;
         // Stryker disable BlockStatement: try-catch guards rejected draft errors from breaking perch context
         try {
             // Stryker disable next-line StringLiteral: EmailFolder.Drafts is configuration constant
@@ -408,21 +423,21 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         }
         // Stryker restore BlockStatement
         return undefined;
-    };
+    }
 
     /**
      * Build the Bluesky DM section for perch context.
      * Returns formatted DM section string, or undefined if no unread DMs or service unavailable.
      */
-    const buildBskyDMSection = async (): Promise<string | undefined> => {
-        if(!bskyDMService) {
+    async #buildBskyDMSection(): Promise<string | undefined> {
+        if(!this.#bskyDMService) {
             return undefined;
         }
 
         // Stryker disable BlockStatement: try-catch guards bsky DM errors from breaking perch context
         try {
             // Stryker disable next-line StringLiteral: 'unread' readState filter is API configuration
-            const result = await bskyDMService.client.listConversations(undefined, undefined, 'unread');
+            const result = await this.#bskyDMService.client.listConversations(undefined, undefined, 'unread');
             const convos = result.conversations;
 
             // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no conversations = no section
@@ -437,7 +452,7 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
             // Build per-conversation descriptions: "N in the conversation with handle1, handle2"
             const convoDescriptions = convos.map((c) => {
                 const memberHandles = c.members
-                    .filter(m => m.handle !== bskyDMService.client.ownHandle)
+                    .filter(m => m.handle !== this.#bskyDMService!.client.ownHandle)
                     .map(m => m.handle)
                     .join(', ');
                 return `${c.unreadCount} in the conversation with ${memberHandles}`;
@@ -455,302 +470,305 @@ export function createContextBuilder(options: ContextBuilderOptions): ContextBui
         }
         // Stryker restore BlockStatement
         return undefined;
-    };
+    }
 
-    const builder: ContextBuilder = {
-        loadCoreIdentity: async (): Promise<string> => {
-            logger.debug({ msg: 'Loading core identity...' });
+    async loadCoreIdentity(): Promise<string> {
+        logger.debug({ msg: 'Loading core identity...' });
 
-            // Load identity layer items (permanent, auto-loaded)
-            const result = await backend.listByLayer(createLayerName('identity'));
+        // Load identity layer items (permanent, auto-loaded)
+        const result = await this.#backend.listByLayer(createLayerName('identity'));
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty array join returns ''
-            if(result.items.length === 0) {
-                logger.debug({ identityLength: 0 }, 'Core identity loaded');
-                return '';
+        // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty array join returns ''
+        if(result.items.length === 0) {
+            logger.debug({ identityLength: 0 }, 'Core identity loaded');
+            return '';
+        }
+
+        // Format and truncate if needed
+        const content = result.items.map(item => item.content).join('\n\n');
+        if(content.length > this.#maxIdentityChars) {
+            const truncated = `${content.slice(0, this.#maxIdentityChars - 3)}...`;
+            const overflowNote = `\n\n...and ${result.items.length} total identity memories (use 'list /identity' to see all)`;
+            const identity = truncated + overflowNote;
+            logger.debug({ identityLength: identity.length }, 'Core identity loaded');
+            return identity;
+        } else {
+            const identity = content;
+            logger.debug({ identityLength: identity.length }, 'Core identity loaded');
+            return identity;
+        }
+    }
+
+    async loadHotState(now: Date = new Date()): Promise<string> {
+        logger.debug({ msg: 'Loading hot state...' });
+
+        const scoredItems = await this.#backend.getStateItemsScored({ now });
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty loop produces same result
+        if(scoredItems.length === 0) {
+            logger.debug({ fullTierCount: 0, previewTierCount: 0, overflowCount: 0, stateLength: 0 }, 'Hot state loaded');
+            return '';
+        }
+
+        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+        const sections: string[] = [];
+        let fullTierCount = 0;
+        let previewTierCount = 0;
+
+        for(const { item } of scoredItems) {
+            // Stryker disable next-line ConditionalExpression: Guard break for tier limits — both tiers full
+            if(fullTierCount >= this.#maxStateFullItems && previewTierCount >= this.#maxStatePreviewItems) {
+                break;
             }
 
-            // Format and truncate if needed
-            const content = result.items.map(item => item.content).join('\n\n');
-            if(content.length > maxIdentityChars) {
-                const truncated = `${content.slice(0, maxIdentityChars - 3)}...`;
-                const overflowNote = `\n\n...and ${result.items.length} total identity memories (use 'list /identity' to see all)`;
-                const identity = truncated + overflowNote;
-                logger.debug({ identityLength: identity.length }, 'Core identity loaded');
-                return identity;
+            if(fullTierCount < this.#maxStateFullItems) {
+                // Full content tier - cap per-item content length
+                let content = item.content;
+                // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
+                if(content.length > this.#maxStateItemMaxChars) {
+                    content = `${content.slice(0, this.#maxStateItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
+                }
+                sections.push(`${item.path}:\n${content}`);
+                fullTierCount++;
             } else {
-                const identity = content;
-                logger.debug({ identityLength: identity.length }, 'Core identity loaded');
-                return identity;
+                // Preview tier
+                const preview = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
+                sections.push(preview);
+                previewTierCount++;
             }
-        },
+        }
 
-        loadHotState: async (now: Date = new Date()): Promise<string> => {
-            logger.debug({ msg: 'Loading hot state...' });
+        const overflowCount = scoredItems.length - fullTierCount - previewTierCount;
+        if(overflowCount > 0) {
+            sections.push(`...and ${overflowCount} more state memories (use 'list /state' to see all)`);
+        }
 
-            const scoredItems = await backend.getStateItemsScored({ now });
+        const result = sections.join('\n');
+        logger.debug({ fullTierCount, previewTierCount, overflowCount, stateLength: result.length }, 'Hot state loaded');
+        return result;
+    }
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty loop produces same result
-            if(scoredItems.length === 0) {
-                logger.debug({ fullTierCount: 0, previewTierCount: 0, overflowCount: 0, stateLength: 0 }, 'Hot state loaded');
-                return '';
+    async loadUserMemories(userId: string, now: Date = new Date()): Promise<string> {
+        logger.debug({ userId }, 'Loading user memories');
+
+        const result = await this.#backend.list(`/users/${userId}`);
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty loop produces same result
+        if(result.items.length === 0) {
+            logger.debug({ userId, memoryCount: 0, overflowCount: 0 }, 'User memories loaded');
+            return '';
+        }
+
+        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+        const sections: string[] = [];
+        let charsUsed = 0;
+        let overflowCount = 0;
+
+        for(const item of result.items) {
+            const formatted = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
+            if(charsUsed + formatted.length <= this.#maxUserChars) {
+                sections.push(formatted);
+                charsUsed += formatted.length;
+            } else {
+                overflowCount++;
             }
+        }
 
-            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
-            const sections: string[] = [];
-            let fullTierCount = 0;
-            let previewTierCount = 0;
+        if(overflowCount > 0) {
+            sections.push(`...and ${overflowCount} more user memories (use 'list /users/${userId}' to see all)`);
+        }
 
-            for(const { item } of scoredItems) {
-                // Stryker disable next-line ConditionalExpression: Guard break for tier limits — both tiers full
-                if(fullTierCount >= maxStateFullItems && previewTierCount >= maxStatePreviewItems) {
-                    break;
-                }
+        const memoryResult = sections.join('\n');
+        logger.debug({ userId, memoryCount: result.items.length - overflowCount, overflowCount }, 'User memories loaded');
+        return memoryResult;
+    }
 
-                if(fullTierCount < maxStateFullItems) {
-                    // Full content tier - cap per-item content length
-                    let content = item.content;
-                    // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
-                    if(content.length > maxStateItemMaxChars) {
-                        content = `${content.slice(0, maxStateItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
-                    }
-                    sections.push(`${item.path}:\n${content}`);
-                    fullTierCount++;
-                } else {
-                    // Preview tier
-                    const preview = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
-                    sections.push(preview);
-                    previewTierCount++;
-                }
-            }
-
-            const overflowCount = scoredItems.length - fullTierCount - previewTierCount;
-            if(overflowCount > 0) {
-                sections.push(`...and ${overflowCount} more state memories (use 'list /state' to see all)`);
-            }
-
-            const result = sections.join('\n');
-            logger.debug({ fullTierCount, previewTierCount, overflowCount, stateLength: result.length }, 'Hot state loaded');
-            return result;
-        },
-
-        loadUserMemories: async (userId: string, now: Date = new Date()): Promise<string> => {
-            logger.debug({ userId }, 'Loading user memories');
-
-            const result = await backend.list(`/users/${userId}`);
-
-            // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant - empty loop produces same result
-            if(result.items.length === 0) {
-                logger.debug({ userId, memoryCount: 0, overflowCount: 0 }, 'User memories loaded');
-                return '';
-            }
-
-            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
-            const sections: string[] = [];
-            let charsUsed = 0;
-            let overflowCount = 0;
-
-            for(const item of result.items) {
-                const formatted = formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now);
-                if(charsUsed + formatted.length <= maxUserChars) {
-                    sections.push(formatted);
-                    charsUsed += formatted.length;
-                } else {
-                    overflowCount++;
-                }
-            }
-
-            if(overflowCount > 0) {
-                sections.push(`...and ${overflowCount} more user memories (use 'list /users/${userId}' to see all)`);
-            }
-
-            const memoryResult = sections.join('\n');
-            logger.debug({ userId, memoryCount: result.items.length - overflowCount, overflowCount }, 'User memories loaded');
-            return memoryResult;
-        },
-
-        recordAccess: async (paths: MemoryPath[]): Promise<void> => {
-            for(const path of paths) {
-                // Get current item
-                // eslint-disable-next-line no-await-in-loop -- sequential: order-dependent (get then update same item)
-                const item = await backend.get(path);
-
-                if(!item) {
-                    // Skip if item doesn't exist
-                    continue;
-                }
-
-                // Get current access count from metadata
-                // Stryker disable next-line OptionalChaining: metadata always exists per schema, ?. is defensive
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata is non-nullable per schema but accessed via generic DynamoDB record type
-                const currentAccessCount = typeof item.metadata?.accessCount === 'number'
-                    ? item.metadata.accessCount
-                    : 0;
-
-                // Update metadata with incremented access count and timestamp
-                // This metadata-only update bumps updatedAt (keeps item visible in GSI1) but skips tag index.
-                // The reconciler handles eventual tag index consistency, avoiding O(num_tags) write amplification.
-                // eslint-disable-next-line no-await-in-loop -- sequential: each update depends on prior get result
-                await backend.update(path, {
-                    metadata: {
-                        ...item.metadata,
-                        accessCount:  currentAccessCount + 1,
-                        lastAccessed: new Date().toISOString(),
-                    },
-                });
-            }
-        },
-
-        loadRecentEvents: async (limit = 50, now: Date = new Date()): Promise<RecentEventsResult> => {
-            logger.debug({ msg: 'Loading recent events' });
-
-            // Load recent events by time range (last 14 days)
-            const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-            let result = await backend.searchByTimeRange(
-                twoWeeksAgo.toISOString(),
-                now.toISOString(),
-                createLayerName('events'),
-                { limit }
-            );
-
-            // Fallback: if no events in 14 days, get most recent regardless of age
-            let isFallback = false;
-            if(result.length === 0) {
-                const fallbackResult = await backend.listByLayer(createLayerName('events'), { limit });
-                result = fallbackResult.items;
-                isFallback = result.length > 0;
-            }
-
-            // Ensure ascending order: searchByTimeRange returns ascending, but listByLayer fallback returns descending
-            result = result.toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-
-            logger.debug({ eventCount: result.length }, 'Recent events loaded');
-            return { items: result, isFallback };
-        },
-
-        loadUserTimezone: async (userId: string): Promise<string | undefined> => {
-            const path = createMemoryPath(`/users/${userId}/timezone`);
-            const item = await backend.get(path);
+    async recordAccess(paths: MemoryPath[]): Promise<void> {
+        for(const path of paths) {
+            // Get current item
+            // eslint-disable-next-line no-await-in-loop -- sequential: order-dependent (get then update same item)
+            const item = await this.#backend.get(path);
 
             if(!item) {
-                logger.debug({ userId }, 'User timezone not found');
-                return undefined;
+                // Skip if item doesn't exist
+                continue;
             }
 
-            return item.content;
-        },
+            // Get current access count from metadata
+            // Stryker disable next-line OptionalChaining: metadata always exists per schema, ?. is defensive
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: metadata is non-nullable per schema but accessed via generic DynamoDB record type
+            const currentAccessCount = typeof item.metadata?.accessCount === 'number'
+                ? item.metadata.accessCount
+                : 0;
 
-        buildUserMessagePrefix: async (userId: string, userTimezone?: string): Promise<string> => {
-            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
-            const sections: string[] = [];
-            const now = new Date();
+            // Update metadata with incremented access count and timestamp
+            // This metadata-only update bumps updatedAt (keeps item visible in GSI1) but skips tag index.
+            // The reconciler handles eventual tag index consistency, avoiding O(num_tags) write amplification.
+            // eslint-disable-next-line no-await-in-loop -- sequential: each update depends on prior get result
+            await this.#backend.update(path, {
+                metadata: {
+                    ...item.metadata,
+                    accessCount:  currentAccessCount + 1,
+                    lastAccessed: new Date().toISOString(),
+                },
+            });
+        }
+    }
 
-            // 1. Time header (always first, refreshed per-message)
-            sections.push(formatTimeHeader(userTimezone));
+    async loadRecentEvents(limit = 50, now: Date = new Date()): Promise<RecentEventsResult> {
+        logger.debug({ msg: 'Loading recent events' });
 
-            // 2. User-specific memories (path-based)
-            const userMemories = await builder.loadUserMemories(userId, now);
-            if(userMemories) {
-                sections.push(`[About this user]\n${userMemories}`);
-            }
+        // Load recent events by time range (last 14 days)
+        const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+        let result = await this.#backend.searchByTimeRange(
+            twoWeeksAgo.toISOString(),
+            now.toISOString(),
+            createLayerName('events'),
+            { limit }
+        );
 
-            // 3. Hot state (sigmoid-scored, tiered)
-            const hotState = await builder.loadHotState(now);
-            if(hotState) {
-                sections.push(`[Current state]\n${hotState}`);
-            }
+        // Fallback: if no events in 14 days, get most recent regardless of age
+        let isFallback = false;
+        if(result.length === 0) {
+            const fallbackResult = await this.#backend.listByLayer(createLayerName('events'), { limit });
+            result = fallbackResult.items;
+            isFallback = result.length > 0;
+        }
 
-            // 4. Recent events (tiered display)
-            // Stryker disable ArithmeticOperator: Config constant calculation for event loading limit
-            const eventsResult = await builder.loadRecentEvents(
-                maxEventFullItems + maxEventBatchSize * 4,
-                now
-            );
-            // Stryker restore ArithmeticOperator
-            const eventSection = await buildEventSection(eventsResult, now);
-            if(eventSection) {
-                sections.push(`[Recent events]\n${eventSection}`);
-            }
+        // Ensure ascending order: searchByTimeRange returns ascending, but listByLayer fallback returns descending
+        result = result.toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt));
 
-            // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Dead code — sections always has time header; body never executes, return value unreachable
-            if(sections.length === 0) {
-                return '';
-            }
-            // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
+        logger.debug({ eventCount: result.length }, 'Recent events loaded');
+        return { items: result, isFallback };
+    }
 
-            // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting
-            return `${sections.join('\n\n')}\n\n`;
-        },
+    async loadUserTimezone(userId: string): Promise<string | undefined> {
+        const path = createMemoryPath(`/users/${userId}/timezone`);
+        const item = await this.#backend.get(path);
 
-        buildPerchContext: async (now: Date = new Date()): Promise<string> => {
-            // 1. Time header (no user timezone for perch)
-            // Stryker disable next-line ArrayDeclaration: Equivalent - time header is always first element
-            const sections: string[] = [formatTimeHeader()];
+        if(!item) {
+            logger.debug({ userId }, 'User timezone not found');
+            return undefined;
+        }
 
-            // 2. Top state memories (full content, truncated per-item)
-            // Stryker disable next-line ObjectLiteral: Config parameter for getStateItemsScored
-            const scoredItems = await backend.getStateItemsScored({ now });
-            if(scoredItems.length > 0) {
-                // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for stateSections
-                const stateSections: string[] = [];
-                // Stryker disable next-line ArithmeticOperator: Config constant for perch state count
-                const perchStateCount = 3;
-                for(const { item } of scoredItems.slice(0, perchStateCount)) {
-                    let content = item.content;
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: Config-driven content truncation threshold
-                    if(content.length > maxStateItemMaxChars) {
-                        // Stryker disable next-line StringLiteral: Cosmetic truncation message for context display
-                        content = `${content.slice(0, maxStateItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
-                    }
-                    stateSections.push(`${item.path}:\n${content}`);
+        return item.content;
+    }
+
+    async buildUserMessagePrefix(userId: string, userTimezone?: string): Promise<string> {
+        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+        const sections: string[] = [];
+        const now = new Date();
+
+        // 1. Time header (always first, refreshed per-message)
+        sections.push(formatTimeHeader(userTimezone));
+
+        // 2. User-specific memories (path-based)
+        const userMemories = await this.loadUserMemories(userId, now);
+        if(userMemories) {
+            sections.push(`[About this user]\n${userMemories}`);
+        }
+
+        // 3. Hot state (sigmoid-scored, tiered)
+        const hotState = await this.loadHotState(now);
+        if(hotState) {
+            sections.push(`[Current state]\n${hotState}`);
+        }
+
+        // 4. Recent events (tiered display)
+        // Stryker disable ArithmeticOperator: Config constant calculation for event loading limit
+        const eventsResult = await this.loadRecentEvents(
+            this.#maxEventFullItems + this.#maxEventBatchSize * 4,
+            now
+        );
+        // Stryker restore ArithmeticOperator
+        const eventSection = await this.#buildEventSection(eventsResult, now);
+        if(eventSection) {
+            sections.push(`[Recent events]\n${eventSection}`);
+        }
+
+        // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Dead code — sections always has time header; body never executes, return value unreachable
+        if(sections.length === 0) {
+            return '';
+        }
+        // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
+
+        // Stryker disable next-line StringLiteral: Equivalent - trailing newlines are formatting
+        return `${sections.join('\n\n')}\n\n`;
+    }
+
+    async buildPerchContext(now: Date = new Date()): Promise<string> {
+        // 1. Time header (no user timezone for perch)
+        // Stryker disable next-line ArrayDeclaration: Equivalent - time header is always first element
+        const sections: string[] = [formatTimeHeader()];
+
+        // 2. Top state memories (full content, truncated per-item)
+        // Stryker disable next-line ObjectLiteral: Config parameter for getStateItemsScored
+        const scoredItems = await this.#backend.getStateItemsScored({ now });
+        if(scoredItems.length > 0) {
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for stateSections
+            const stateSections: string[] = [];
+            // Stryker disable next-line ArithmeticOperator: Config constant for perch state count
+            const perchStateCount = 3;
+            for(const { item } of scoredItems.slice(0, perchStateCount)) {
+                let content = item.content;
+                // Stryker disable next-line ConditionalExpression,EqualityOperator: Config-driven content truncation threshold
+                if(content.length > this.#maxStateItemMaxChars) {
+                    // Stryker disable next-line StringLiteral: Cosmetic truncation message for context display
+                    content = `${content.slice(0, this.#maxStateItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
                 }
-                // Stryker disable next-line StringLiteral: Cosmetic section join separator
-                sections.push(`## Recent Focus\n${stateSections.join('\n\n')}`);
+                stateSections.push(`${item.path}:\n${content}`);
             }
+            // Stryker disable next-line StringLiteral: Cosmetic section join separator
+            sections.push(`## Recent Focus\n${stateSections.join('\n\n')}`);
+        }
 
-            // 3. Recent events (all shown in full, no summarization)
-            // Stryker disable next-line ArithmeticOperator: Config constant for perch event count
-            const perchEventCount = 5;
-            const eventsResult = await builder.loadRecentEvents(perchEventCount, now);
-            if(eventsResult.items.length > 0) {
-                // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for eventSections
-                const eventSections: string[] = [];
-                for(const item of eventsResult.items) {
-                    let content = item.content;
-                    // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
-                    if(content.length > maxEventItemMaxChars) {
-                        // Stryker disable next-line StringLiteral: Cosmetic truncation message text
-                        content = `${content.slice(0, maxEventItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
-                    }
-                    const age = formatShortRelativeTime(new Date(item.updatedAt), now);
-                    eventSections.push(`${item.path} (${age}):\n${content}`);
+        // 3. Recent events (all shown in full, no summarization)
+        // Stryker disable next-line ArithmeticOperator: Config constant for perch event count
+        const perchEventCount = 5;
+        const eventsResult = await this.loadRecentEvents(perchEventCount, now);
+        if(eventsResult.items.length > 0) {
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for eventSections
+            const eventSections: string[] = [];
+            for(const item of eventsResult.items) {
+                let content = item.content;
+                // Stryker disable next-line EqualityOperator: Config-driven content truncation threshold
+                if(content.length > this.#maxEventItemMaxChars) {
+                    // Stryker disable next-line StringLiteral: Cosmetic truncation message text
+                    content = `${content.slice(0, this.#maxEventItemMaxChars)}\n[truncated — use 'memory view ${item.path}' for full content]`;
                 }
-                // Stryker disable next-line StringLiteral: Cosmetic section join separator
-                sections.push(`## Recent Events\n${eventSections.join('\n\n')}`);
+                const age = formatShortRelativeTime(new Date(item.updatedAt), now);
+                eventSections.push(`${item.path} (${age}):\n${content}`);
             }
+            // Stryker disable next-line StringLiteral: Cosmetic section join separator
+            sections.push(`## Recent Events\n${eventSections.join('\n\n')}`);
+        }
 
-            // 4. Email inbox summary (optional — skip if no email service configured)
-            const inboxSection = await buildEmailInboxSection(now);
-            if(inboxSection) {
-                sections.push(inboxSection);
-            }
+        // 4. Email inbox summary (optional — skip if no email service configured)
+        const inboxSection = await this.#buildEmailInboxSection(now);
+        if(inboxSection) {
+            sections.push(inboxSection);
+        }
 
-            // 5. Rejected drafts context (outbound emails rejected by admin)
-            const rejectedDraftsSection = await buildRejectedDraftSection();
-            if(rejectedDraftsSection) {
-                sections.push(rejectedDraftsSection);
-            }
+        // 5. Rejected drafts context (outbound emails rejected by admin)
+        const rejectedDraftsSection = await this.#buildRejectedDraftSection();
+        if(rejectedDraftsSection) {
+            sections.push(rejectedDraftsSection);
+        }
 
-            // 6. Bluesky DM summary (optional — skip if no bsky service configured)
-            const bskyDMSection = await buildBskyDMSection();
-            if(bskyDMSection) {
-                sections.push(bskyDMSection);
-            }
+        // 6. Bluesky DM summary (optional — skip if no bsky service configured)
+        const bskyDMSection = await this.#buildBskyDMSection();
+        if(bskyDMSection) {
+            sections.push(bskyDMSection);
+        }
 
-            // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting
-            return `${sections.join('\n\n')}\n\n`;
-        },
-    };
+        // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting
+        return `${sections.join('\n\n')}\n\n`;
+    }
+}
 
-    return builder;
+/**
+ * Creates a context builder for managing agent memory context
+ */
+export function createContextBuilder(options: ContextBuilderOptions): ContextBuilder {
+    return new ContextBuilderImpl(options);
 }

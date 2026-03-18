@@ -5,13 +5,14 @@
  */
 
 export { createClaudeAgent, type ClaudeAgent, type ClaudeAgentOptions, extractToolUses, redactSensitiveArgs } from './agent';
-export { createContextBuilder, formatMemoryPreview, type ContextBuilder, type ContextBuilderOptions, type RecentEventsResult, type EmailService, type WildDuckService, type BskyDMService } from './context-builder';
+export { createContextBuilder, ContextBuilderImpl, formatMemoryPreview, type ContextBuilder, type ContextBuilderOptions, type RecentEventsResult, type EmailService, type WildDuckService, type BskyDMService } from './context-builder';
 export { EventDeltaTracker } from './event-delta-tracker';
 export { summarizeEventBatches, type EventBatchSummary, type SummarizeEventBatchesFn } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
-export { createDiscordMCPServer, setConversationContext, clearConversationContext, type DiscordMCPServerContext } from './discord-mcp-server';
+export { createDiscordMCPServer, setConversationContext, clearConversationContext, type DiscordMCPServerContext, type DiscordMCPServerOptions } from './discord-mcp-server';
 export { loadPlugins, type PluginsConfig } from './plugin-loader';
-export type { MessageContext, PlatformImage, AgentStreamEvent } from './types';
+export type { MessageContext, PlatformImage, AgentStreamEvent, ChannelId, UserId, OperationalMode, AgentStateChange, AgentStateManager, InterruptingMessageDetails, MCPChannelInfo, MCPChannelRegistry, MCPDMTracker, MCPMessageSearchService, MCPMessageSplitter, MCPQuestionButtonBuilder, MCPRetryHelper, MCPUnreadMessage, MCPMessageMetadata, MCPUnreadOverview, MCPChannelSummaryResponse, MCPInboxManager, MCPInboxStateManager } from './types';
+export { channelIdSchema, userIdSchema, createChannelId, createUserId, isChannelId, isUserId } from './types';
 
 /** @internal */
 export { buildMultimodalContent, hasImages, type ContentBlock, type TextContentBlock, type ImageContentBlock } from './multimodal-message-builder';

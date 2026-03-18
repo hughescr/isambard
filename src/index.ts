@@ -161,7 +161,7 @@ export async function createApp(): Promise<App> {
         inboxManager:              discordInfra.inboxManager,
         botStateManager:           discordInfra.botStateManager,
         timezone:                  resolveTimezone(),
-        recordAccess:              contextLayer.contextBuilder.recordAccess,
+        recordAccess:              paths => contextLayer.contextBuilder.recordAccess(paths),
         bskyClient,
         bskyAllowlist:             bskySetup?.allowlist,
         bskyRateLimiter:           bskySetup?.rateLimiter,

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
-import { ResponseRouter, type SessionType } from '../../../../../src/integrations/discord/channel-registry/response-router';
+import { ResponseRouter } from '../../../../../src/integrations/discord/channel-registry/response-router';
 import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
+import type { SessionType } from '../../../../../src/integrations/discord/state/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
 import { WellKnownChannelNotFoundError } from '@/errors';
 

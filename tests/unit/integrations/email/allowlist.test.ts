@@ -162,10 +162,10 @@ describe('EmailAllowlist.addEntry()', () => {
         expect(updateCalls[0]?.args[0].input).toMatchObject({
             TableName:                TABLE_NAME,
             Key:                      { PK: 'EMAIL#ALLOWLIST', SK: 'INDEX' },
-            UpdateExpression:         'ADD #addresses :newAddr',
+            UpdateExpression:         'ADD #addresses :newKey',
             ExpressionAttributeNames: { '#addresses': 'addresses' },
         });
-        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':newAddr']).toEqual(
+        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':newKey']).toEqual(
             new Set(['alice@example.com'])
         );
 
@@ -229,10 +229,10 @@ describe('EmailAllowlist.removeEntry()', () => {
         expect(updateCalls[0]?.args[0].input).toMatchObject({
             TableName:                TABLE_NAME,
             Key:                      { PK: 'EMAIL#ALLOWLIST', SK: 'INDEX' },
-            UpdateExpression:         'DELETE #addresses :oldAddr',
+            UpdateExpression:         'DELETE #addresses :oldKey',
             ExpressionAttributeNames: { '#addresses': 'addresses' },
         });
-        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':oldAddr']).toEqual(
+        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':oldKey']).toEqual(
             new Set(['alice@example.com'])
         );
 

@@ -1,7 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
-// eslint-disable-next-line boundaries/dependencies -- Question registry imports Discord ChannelId type; decouple tracked in roadmap
-import type { ChannelId } from '@/integrations/discord';
+import type { ChannelId } from '@/agent/types';
 
 export interface QuestionRegistryConfig {
     defaultTimeoutMs?: number  // Default: 300000 (5 minutes)

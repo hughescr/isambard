@@ -49,7 +49,7 @@ export { NO_RESPONSE_SENTINEL, hasSentinel, stripSentinel, processResponse } fro
 
 // Response router
 export { ResponseRouter } from './response-router';
-export type { SessionType, RoutingResult, ResponseRouterConfig } from './response-router';
+export type { RoutingResult, ResponseRouterConfig } from './response-router';
 
 // Discovery
 export { discoverAllChannels, setupChannelEventHandlers } from './discovery';

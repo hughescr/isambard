@@ -4,8 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, MessageCreateOptions } from 'discord.js';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
-import type { ChannelRegistryManager } from '../../../src/integrations/discord/channel-registry';
-import type { MessageSearchService } from '../../../src/integrations/discord/message-history/search';
+import type { MCPChannelRegistry, MCPDMTracker, MCPMessageSplitter, MCPQuestionButtonBuilder, MCPRetryHelper, MCPMessageSearchService } from '../../../src/agent/types';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId, UserId } from '../../../src/integrations/discord/types';
 import { mockFsPromises, resetMockFsPrefix, textContent } from '../../setup';
@@ -35,12 +34,23 @@ interface MockQuestionRegistry {
     register: ReturnType<typeof mock>
 }
 interface MockChannelRegistry {
+    resolveChannelId:   ReturnType<typeof mock>
     muteChannel:        ReturnType<typeof mock>
     unmuteChannel:      ReturnType<typeof mock>
     getAllChannels:     ReturnType<typeof mock>
     getUnmutedChannels: ReturnType<typeof mock>
-    getOrCreateDM:      ReturnType<typeof mock>
-    upsertChannel?:     ReturnType<typeof mock>
+}
+interface MockDMTracker {
+    getOrCreateDMByUsername: ReturnType<typeof mock>
+}
+interface MockMessageSplitter {
+    splitMessage: ReturnType<typeof mock>
+}
+interface MockButtonBuilder {
+    buildQuestionButtons: ReturnType<typeof mock>
+}
+interface MockRetryHelper {
+    withRetry: ReturnType<typeof mock>
 }
 
 // Helper to create mock search result
@@ -75,10 +85,14 @@ const createMockSearchResponse = (overrides: Partial<SearchResponse> = {}): Sear
 });
 
 describe('createDiscordMCPServer', () => {
-    let mockSearchService: MessageSearchService;
+    let mockSearchService: MCPMessageSearchService;
     let mockClient: MockDiscordClient;
     let mockQuestionRegistry: MockQuestionRegistry;
     let mockChannelRegistry: MockChannelRegistry;
+    let mockDMTracker: MockDMTracker;
+    let mockMessageSplitter: MockMessageSplitter;
+    let mockButtonBuilder: MockButtonBuilder;
+    let mockRetryHelper: MockRetryHelper;
 
     beforeEach(() => {
         // Clear conversation context before each test
@@ -119,12 +133,45 @@ describe('createDiscordMCPServer', () => {
 
         // Mock channel registry
         mockChannelRegistry = {
+            resolveChannelId:   mock((nameOrId: string) => nameOrId as ChannelId),
             muteChannel:        mock(() => Promise.resolve()),
             unmuteChannel:      mock(() => Promise.resolve()),
             getAllChannels:     mock(() => []),
             getUnmutedChannels: mock(() => Promise.resolve([])),
-            getOrCreateDM:      mock(() => Promise.resolve('dm-channel-id' as ChannelId)),
         };
+
+        // Mock DM tracker
+        mockDMTracker = {
+            getOrCreateDMByUsername: mock(() => Promise.resolve('dm-channel-id' as ChannelId)),
+        };
+
+        // Mock message splitter (default: return content in single chunk)
+        mockMessageSplitter = {
+            splitMessage: mock((content: string) => [content]),
+        };
+
+        // Mock button builder (default: return empty array)
+        mockButtonBuilder = {
+            buildQuestionButtons: mock(() => []),
+        };
+
+        // Mock retry helper (default: call fn directly without retry)
+        mockRetryHelper = {
+            withRetry: mock((fn: () => Promise<unknown>) => fn()),
+        };
+    });
+
+    // Helper to create server with current mocks and optional timezone override
+    const createServer = (timezone?: string): ReturnType<typeof createDiscordMCPServer> => createDiscordMCPServer({
+        searchService:    mockSearchService,
+        client:           mockClient as unknown as Client,
+        questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+        channelRegistry:  mockChannelRegistry as unknown as MCPChannelRegistry,
+        dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+        messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+        buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+        retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+        timezone,
     });
 
     // Helper function to get tool handler from server instance
@@ -139,7 +186,7 @@ describe('createDiscordMCPServer', () => {
             ['type', (server: ReturnType<typeof createDiscordMCPServer>) => server.type, 'sdk'],
             ['version', (server: ReturnType<typeof createDiscordMCPServer>) => (server.instance as unknown as RegisteredToolInstance).server._serverInfo.version, '1.0.0'],
         ])('should create MCP server with correct %s', (_name, accessor, expected) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             expect(accessor(server)).toEqual(expected);
         });
 
@@ -160,7 +207,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.'],
             ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(tool.description).toBe(expectedDescription);
@@ -171,7 +218,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['getRecentMessages', ['channelId', 'limit']],
             ['getMessageById', ['channelId', 'messageId']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(tool.inputSchema).toBeDefined();
@@ -193,20 +240,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['unmuteChannel',     { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
             ['listChannels',      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true }],
         ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
 
             expect(tool.annotations).toEqual(expectedAnnotations);
         });
 
         test('should accept timezone parameter for localTimestamp enrichment', () => {
-            const server = createDiscordMCPServer(
-                mockSearchService,
-                mockClient as unknown as Client,
-                mockQuestionRegistry as unknown as QuestionRegistry,
-                mockChannelRegistry as unknown as ChannelRegistryManager,
-                'America/New_York'
-            );
+            const server = createServer('America/New_York');
             // Server should be created successfully with timezone parameter
             expect(server).toBeDefined();
             expect(server.name).toBe('discord');
@@ -230,7 +271,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 },
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -251,7 +292,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should parse startTime from ISO string', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             await handler({
@@ -269,7 +310,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should parse endTime from ISO string', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             await handler({
@@ -289,7 +330,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Discord API error');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -315,7 +356,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw 'Network failure';
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -339,7 +380,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 },
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -359,13 +400,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messages: mockMessages,
             }));
 
-            const server = createDiscordMCPServer(
-                mockSearchService,
-                mockClient as unknown as Client,
-                mockQuestionRegistry as unknown as QuestionRegistry,
-                mockChannelRegistry as unknown as ChannelRegistryManager,
-                'America/Los_Angeles'
-            );
+            const server = createServer('America/Los_Angeles');
             const handler = getToolHandler(server, 'searchMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -384,12 +419,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messages: mockMessages,
             }));
 
-            const server = createDiscordMCPServer(
-                mockSearchService,
-                mockClient as unknown as Client,
-                mockQuestionRegistry as unknown as QuestionRegistry,
-                mockChannelRegistry as unknown as ChannelRegistryManager
-            );
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -401,7 +431,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should use default limit of 10 when limit not provided', async () => {
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse());
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'searchMessages');
 
             await handler({ channelId: '123456789012345678' });
@@ -429,7 +459,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 },
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getRecentMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -450,7 +480,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Channel not found');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getRecentMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -472,7 +502,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw { code: 'TIMEOUT' };
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getRecentMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -491,13 +521,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messages: mockMessages,
             }));
 
-            const server = createDiscordMCPServer(
-                mockSearchService,
-                mockClient as unknown as Client,
-                mockQuestionRegistry as unknown as QuestionRegistry,
-                mockChannelRegistry as unknown as ChannelRegistryManager,
-                'America/Los_Angeles'
-            );
+            const server = createServer('America/Los_Angeles');
             const handler = getToolHandler(server, 'getRecentMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -516,7 +540,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 messages: mockMessages,
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getRecentMessages');
 
             const result = await handler({ channelId: '123456789012345678' });
@@ -528,7 +552,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should use default limit of 10 when limit not provided', async () => {
             mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse());
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getRecentMessages');
 
             await handler({ channelId: '123456789012345678' });
@@ -545,7 +569,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
             mockSearchService.getMessageById = mock(async () => mockMessage);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -567,7 +591,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should return "Message not found" when message does not exist', async () => {
             mockSearchService.getMessageById = mock(() => Promise.resolve(null));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -592,13 +616,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
             mockSearchService.getMessageById = mock(async () => mockMessage);
 
-            const server = createDiscordMCPServer(
-                mockSearchService,
-                mockClient as unknown as Client,
-                mockQuestionRegistry as unknown as QuestionRegistry,
-                mockChannelRegistry as unknown as ChannelRegistryManager,
-                'America/Los_Angeles'
-            );
+            const server = createServer('America/Los_Angeles');
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -619,7 +637,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             });
             mockSearchService.getMessageById = mock(async () => mockMessage);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -636,7 +654,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Access denied');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -661,7 +679,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw 'Unknown error';
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -681,7 +699,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -707,7 +725,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -735,13 +753,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(
-                mockSearchService,
-                mockClient as unknown as Client,
-                mockQuestionRegistry as unknown as QuestionRegistry,
-                mockChannelRegistry as unknown as ChannelRegistryManager,
-                'America/Los_Angeles'
-            );
+            const server = createServer('America/Los_Angeles');
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -760,7 +772,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         test('should handle empty array', async () => {
             mockSearchService.getMessagesById = mock(async () => []);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -782,7 +794,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ];
             mockSearchService.getMessagesById = mock(async () => mockMessages);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -801,7 +813,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
                 throw new Error('Batch fetch failed');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'getMessageById');
 
             const result = await handler({
@@ -815,7 +827,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
         });
 
         test('should accept union schema for messageId (string or array)', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const byIdTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getMessageById;
 
             const schema = byIdTool.inputSchema.shape.messageId;
@@ -840,7 +852,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             ['getRecentMessages', 100, true],
             ['getRecentMessages', 101, false],
         ])('should validate %s limit schema for value %d (expect success: %s)', (toolName, value, expectedSuccess) => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
             const result = tool.inputSchema.shape.limit.unwrap().safeParse(value);
 
@@ -850,7 +862,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
     describe('sendDiscordMessage tool', () => {
         test('should have sendDiscordMessage tool with correct description', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendDiscordMessage;
 
             expect(tool.description).toBe(`Send a message to a Discord channel or DM to a user. Use this to communicate with users.
@@ -866,7 +878,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should have correct input schema fields', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendDiscordMessage;
 
             expect(tool.inputSchema).toBeDefined();
@@ -889,7 +901,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -909,14 +921,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should resolve #channel-name to channel ID via registry', async () => {
-            // Set up channel registry to have a channel named "test-channel"
-            mockChannelRegistry.getAllChannels = mock(() => [
-                {
-                    channelId:   '999888777666555444' as ChannelId,
-                    channelName: 'test-channel',
-                    isMuted:     false,
-                },
-            ]);
+            // Set up channel registry to resolve #test-channel to its ID
+            mockChannelRegistry.resolveChannelId = mock((_nameOrId: string) => '999888777666555444' as ChannelId);
 
             const mockChannel = {
                 id:          '999888777666555444',
@@ -931,7 +937,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 return mockChannel;
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -946,7 +952,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
             expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
-            expect(mockChannelRegistry.getAllChannels).toHaveBeenCalled();
+            expect(mockChannelRegistry.resolveChannelId).toHaveBeenCalledWith('#test-channel');
         });
 
         test('should split and send long messages in multiple chunks', async () => {
@@ -967,7 +973,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            // Set up splitter to return 2 chunks for long content
+            mockMessageSplitter.splitMessage = mock((content: string) => [
+                content.slice(0, 1000),
+                content.slice(1000),
+            ]);
+
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             // Create content just over 2000 chars (will be split into 2 chunks)
@@ -1027,7 +1039,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            // Set up splitter to return 2 chunks for long content
+            mockMessageSplitter.splitMessage = mock((content: string) => [
+                content.slice(0, 1000),
+                content.slice(1000),
+            ]);
+
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const longContent = 'a'.repeat(2001);
@@ -1051,7 +1069,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1068,7 +1086,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return error when channel not found', async () => {
             mockClient.channels.fetch = mock(async () => null);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1087,7 +1105,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when missing threadName with createThread', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1102,7 +1120,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when createThread is true with empty threadName', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1133,7 +1151,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1164,7 +1182,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1185,7 +1203,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should not create thread when threadName is undefined even with createThread true', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1216,7 +1234,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1250,7 +1268,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1283,7 +1301,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1304,12 +1322,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should resolve @username to DM channel and send message', async () => {
-            // Mock channel registry for DM tracker
-            const mockDMChannelRegistry = {
-                upsertChannel: mock(async () => undefined),
-            };
-
-            // Mock user and DM channel
+            // Mock DM channel
             const mockDMChannel = {
                 id:          'dm-channel-id-123',
                 send:        mock(async (_content: string) => ({ id: 'sent-dm-message-id' })),
@@ -1318,47 +1331,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 isDMBased:   () => true,
             };
 
-            const mockUser = {
-                id:       'user-id-456',
-                username: 'alice',
-                tag:      'alice#0000',
-                createDM: mock(async () => mockDMChannel),
-            };
+            // dmTracker resolves username to DM channel ID
+            mockDMTracker.getOrCreateDMByUsername = mock(async () => 'dm-channel-id-123' as ChannelId);
 
-            const mockMember = {
-                user: mockUser,
-            };
-
-            // Mock guild with member search
-            const mockMembers = new Map([['user-id-456', mockMember]]);
-            (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined => {
-                for(const member of mockMembers.values()) {
-                    if(predicate(member)) {
-                        return member as unknown as typeof mockMember;
-                    }
-                }
-                return undefined;
-            };
-
-            const mockGuild = {
-                members: {
-                    fetch: mock(async () => mockMembers),
-                },
-            };
-
-            mockClient.guilds = {
-                cache: {
-                    values: mock(() => [mockGuild]),
-                },
-            };
-
+            // Channel fetch returns the DM channel
             mockClient.channels.fetch = mock(async () => mockDMChannel);
 
-            mockClient.users = {
-                fetch: mock(async () => mockUser),
-            };
-
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockDMChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1372,33 +1351,15 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-dm-message-id']);
 
-            // Verify DM creation was called
-            expect(mockUser.createDM).toHaveBeenCalled();
+            // Verify DM tracker was called
+            expect(mockDMTracker.getOrCreateDMByUsername).toHaveBeenCalledWith('alice');
         });
 
         test('should return error when @username not found', async () => {
-            // Mock channel registry for DM tracker
-            const mockNotFoundChannelRegistry = {
-                upsertChannel: mock(async () => undefined),
-            };
+            // dmTracker returns null when user not found
+            mockDMTracker.getOrCreateDMByUsername = mock(async () => null);
 
-            // Mock guild with no matching members
-            const mockMembers = new Map();
-            Object.assign(mockMembers, { find: () => undefined });
-
-            const mockGuild = {
-                members: {
-                    fetch: mock(async () => mockMembers),
-                },
-            };
-
-            mockClient.guilds = {
-                cache: {
-                    values: mock(() => [mockGuild]),
-                },
-            };
-
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockNotFoundChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -1444,7 +1405,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
-                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const server = createServer();
                 const handler = getToolHandler(server, 'sendDiscordMessage');
 
                 const result = await handler({
@@ -1475,7 +1436,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
-                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const server = createServer();
                 const handler = getToolHandler(server, 'sendDiscordMessage');
 
                 const result = await handler({
@@ -1504,7 +1465,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
-                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const server = createServer();
                 const handler = getToolHandler(server, 'sendDiscordMessage');
 
                 const result = await handler({
@@ -1530,7 +1491,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 };
                 mockClient.channels.fetch = mock(async () => mockChannel);
 
-                const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+                const server = createServer();
                 const handler = getToolHandler(server, 'sendDiscordMessage');
 
                 // Use a path outside CWD (parent directory) to trigger security error
@@ -1552,14 +1513,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
     describe('askUserQuestion tool', () => {
         test('should have askUserQuestion tool with correct description', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.askUserQuestion;
 
             expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.');
         });
 
         test('should have correct input schema fields', () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.askUserQuestion;
 
             expect(tool.inputSchema).toBeDefined();
@@ -1584,7 +1545,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1607,7 +1568,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            // Set up button builder to return a non-empty components array
+            const mockActionRow = { type: 1, components: [{ type: 2, label: 'Yes' }, { type: 2, label: 'No' }] };
+            mockButtonBuilder.buildQuestionButtons = mock(() => [mockActionRow]);
+
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1634,7 +1599,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1657,7 +1622,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1689,7 +1654,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1715,7 +1680,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1740,7 +1705,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             mockClient.channels.fetch = mock(async () => mockChannel);
 
             const beforeMs = Date.now();
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1767,7 +1732,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             mockClient.channels.fetch = mock(async () => mockChannel);
 
             const beforeMs = Date.now();
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1806,7 +1771,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 channelId: '123456789012345678',
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -1841,7 +1806,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 channelId:  '123456789012345678',
             }));
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -1867,7 +1832,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -1886,7 +1851,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return error when channel not found', async () => {
             mockClient.channels.fetch = mock(async () => null);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -1903,7 +1868,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when more than 25 options provided', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // Create 26 options
@@ -1932,7 +1897,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // Create exactly 25 options (the maximum allowed)
@@ -1961,7 +1926,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -1986,7 +1951,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2010,7 +1975,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2036,7 +2001,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2060,7 +2025,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2096,7 +2061,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 return mockParentChannel;
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2121,7 +2086,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2149,7 +2114,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 return null;
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2180,7 +2145,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 return mockNonTextChannel;
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2214,7 +2179,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 return mockParentChannel;
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2244,7 +2209,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2273,7 +2238,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2296,7 +2261,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockVoiceChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -2320,7 +2285,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockDMChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'sendDiscordMessage');
 
             const result = await handler({
@@ -2353,7 +2318,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 currentChannelId: '123456789012345678' as ChannelId,
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2377,7 +2342,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             clearConversationContext();
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2406,7 +2371,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             clearConversationContext();
 
-            const server = createDiscordMCPServer(mockSearchService, mockClientWithoutUser as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           mockClientWithoutUser as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockChannelRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2425,7 +2399,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 throw new Error('Network error');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2455,7 +2429,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 currentChannelId: '123456789012345678' as ChannelId,
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2481,7 +2455,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // Ensure context is cleared
             clearConversationContext();
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2514,7 +2488,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             // Ensure context is cleared
             clearConversationContext();
 
-            const server = createDiscordMCPServer(mockSearchService, clientWithoutUser as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           clientWithoutUser as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockChannelRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
@@ -2537,7 +2520,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             // Set context
@@ -2580,7 +2563,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         test('should return proper error structure when channel not found in normalizeChannelId', async () => {
             mockClient.channels.fetch = mock(async () => null);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             const result = await handler({
@@ -2640,7 +2623,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 ]),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockUnmutedChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           mockClient as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockUnmutedChannelRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({});
@@ -2692,7 +2684,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 ]),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockAllChannelsRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           mockClient as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockAllChannelsRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({ includesMuted: true });
@@ -2746,7 +2747,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 ]),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockExcludeMutedRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           mockClient as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockExcludeMutedRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({ includesMuted: false });
@@ -2769,7 +2779,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 }),
             };
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockErrorChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           mockClient as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockErrorChannelRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
             const handler = getToolHandler(server, 'listChannels');
 
             const result = await handler({});
@@ -2794,7 +2813,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'addReaction');
 
             const result = await handler({
@@ -2825,7 +2844,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'addReaction');
 
             const result = await handler({
@@ -2860,7 +2879,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'addReaction');
 
             const result = await handler({
@@ -2887,7 +2906,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             };
             mockClient.channels.fetch = mock(async () => mockChannel);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'addReaction');
 
             const result = await handler({
@@ -2905,7 +2924,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 throw new Error('Discord API unavailable');
             });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'addReaction');
 
             const result = await handler({
@@ -2927,7 +2946,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
     describe('muteChannel tool', () => {
         test('should mute channel by numeric ID', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'muteChannel');
 
             const result = await handler({ channelId: '1451694737026449581' });
@@ -2942,20 +2961,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should mute channel by name with # prefix', async () => {
-            mockChannelRegistry.getAllChannels = mock(() => [
-                {
-                    channelId:   '1451694737026449581' as ChannelId,
-                    channelName: 'general',
-                    isMuted:     false,
-                },
-                {
-                    channelId:   '9876543210987654321' as ChannelId,
-                    channelName: 'random',
-                    isMuted:     false,
-                },
-            ]);
+            mockChannelRegistry.resolveChannelId = mock((_nameOrId: string) => '1451694737026449581' as ChannelId);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'muteChannel');
 
             const result = await handler({ channelId: '#general' });
@@ -2965,15 +2973,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when channel name not found', async () => {
-            mockChannelRegistry.getAllChannels = mock(() => [
-                {
-                    channelId:   '1451694737026449581' as ChannelId,
-                    channelName: 'general',
-                    isMuted:     false,
-                },
-            ]);
+            mockChannelRegistry.resolveChannelId = mock((_nameOrId: string) => {
+                throw new Error('Channel not found: nonexistent');
+            });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'muteChannel');
 
             const result = await handler({ channelId: '#nonexistent' });
@@ -2985,7 +2989,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
     describe('unmuteChannel tool', () => {
         test('should unmute channel by numeric ID', async () => {
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'unmuteChannel');
 
             const result = await handler({ channelId: '1451694737026449581' });
@@ -3000,20 +3004,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should unmute channel by name with # prefix', async () => {
-            mockChannelRegistry.getAllChannels = mock(() => [
-                {
-                    channelId:   '1451694737026449581' as ChannelId,
-                    channelName: 'general',
-                    isMuted:     true,
-                },
-                {
-                    channelId:   '9876543210987654321' as ChannelId,
-                    channelName: 'random',
-                    isMuted:     false,
-                },
-            ]);
+            mockChannelRegistry.resolveChannelId = mock((_nameOrId: string) => '1451694737026449581' as ChannelId);
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'unmuteChannel');
 
             const result = await handler({ channelId: '#general' });
@@ -3023,15 +3016,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
 
         test('should return error when channel name not found', async () => {
-            mockChannelRegistry.getAllChannels = mock(() => [
-                {
-                    channelId:   '1451694737026449581' as ChannelId,
-                    channelName: 'general',
-                    isMuted:     true,
-                },
-            ]);
+            mockChannelRegistry.resolveChannelId = mock((_nameOrId: string) => {
+                throw new Error('Channel not found: nonexistent');
+            });
 
-            const server = createDiscordMCPServer(mockSearchService, mockClient as unknown as Client, mockQuestionRegistry as unknown as QuestionRegistry, mockChannelRegistry as unknown as ChannelRegistryManager);
+            const server = createServer();
             const handler = getToolHandler(server, 'unmuteChannel');
 
             const result = await handler({ channelId: '#nonexistent' });

@@ -336,10 +336,10 @@ describe('BskyAllowlist.addEntry()', () => {
         expect(updateCalls[0]?.args[0].input).toMatchObject({
             TableName:                TABLE_NAME,
             Key:                      { PK: 'BSKY#ALLOWLIST', SK: 'INDEX' },
-            UpdateExpression:         'ADD #handles :newHandle',
+            UpdateExpression:         'ADD #handles :newKey',
             ExpressionAttributeNames: { '#handles': 'handles' },
         });
-        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':newHandle']).toEqual(
+        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':newKey']).toEqual(
             new Set(['alice.bsky.social'])
         );
 
@@ -619,10 +619,10 @@ describe('BskyAllowlist.removeEntry()', () => {
         expect(updateCalls[0]?.args[0].input).toMatchObject({
             TableName:                TABLE_NAME,
             Key:                      { PK: 'BSKY#ALLOWLIST', SK: 'INDEX' },
-            UpdateExpression:         'DELETE #handles :oldHandle',
+            UpdateExpression:         'DELETE #handles :oldKey',
             ExpressionAttributeNames: { '#handles': 'handles' },
         });
-        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':oldHandle']).toEqual(
+        expect(updateCalls[0]?.args[0].input.ExpressionAttributeValues?.[':oldKey']).toEqual(
             new Set(['alice.bsky.social'])
         );
 

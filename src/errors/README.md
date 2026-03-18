@@ -293,3 +293,56 @@ try {
     }
 }
 ```
+
+## Error Handling Policy
+
+Three patterns coexist in the codebase. Choose based on the decision tree below.
+
+### Pattern 1: Throw Immediately
+
+**When:** Critical path — authentication, configuration loading, state machine violations, data integrity.
+
+**Why:** These errors indicate the system cannot safely continue. Letting execution proceed would corrupt state or produce incorrect results.
+
+**Examples:** `TransitionError` in `BotStateManagerImpl`, `ZodError` in config parsing, `InvalidTokenError` on startup.
+
+### Pattern 2: Log and Degrade Gracefully
+
+**When:** Optional or degradable features — email inbox in perch context, Bluesky DMs, tag index operations, event summarization.
+
+**Why:** The primary function can continue without this data. Logging preserves visibility without taking down unrelated features.
+
+**Convention:**
+```typescript
+try {
+    return await buildOptionalSection();
+} catch (error) {
+    logger.warn({ error, msg: 'Failed to build optional section, skipping' });
+    return undefined;
+}
+```
+
+**Examples:** `buildEmailInboxSection`, `buildBskyDMSection` in `context-builder.ts`, tag reconciliation phases.
+
+### Pattern 3: Return Structured MCP Error
+
+**When:** User-facing MCP tool handlers where the agent needs to understand and recover from the error.
+
+**Why:** MCP protocol requires structured responses. Throwing would crash the tool invocation rather than returning a usable error message to the agent.
+
+**Convention:**
+```typescript
+return mcpErrorResult('Descriptive message the agent can act on');
+```
+
+**Examples:** Memory tool handlers in `handlers.ts`, Discord MCP server tools, inbox MCP server tools.
+
+### Decision Tree
+
+```
+Is this a user-facing MCP tool?
+  → YES: Return structured MCP error (Pattern 3)
+  → NO: Can the caller safely continue without this result?
+    → YES: Log and return undefined (Pattern 2)
+    → NO: Throw immediately (Pattern 1)
+```
