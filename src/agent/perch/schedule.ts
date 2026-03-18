@@ -55,7 +55,7 @@ const WIKIPEDIA: PerchSlotConfig = {
     endHour:   14,
     level:     'moderate',
     hint:      `Lunchtime breadth exploration. Start somewhere unexpected:
-- Fetch https://en.wikipedia.org/wiki/Special:Random and read what you land on
+- Fetch https://en.wikipedia.org/api/rest_v1/page/random/html to land on a random Wikipedia article and read what you find
 - Browse Bluesky for perspectives you wouldn't seek out yourself
 - Follow whatever thread catches your interest — connections, rabbit holes, questions it raises
 - The goal isn't productivity, it's range
