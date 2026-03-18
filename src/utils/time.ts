@@ -48,50 +48,94 @@ export const timeContextSchema = z.object({
 export type TimeContext = z.infer<typeof timeContextSchema>;
 
 /**
- * Formats a date as human-readable relative time using Luxon.
- * @param date - The date to format
- * @param now - Optional reference time (defaults to current time)
- * @returns Human-readable string like "just now", "2 hours ago", "3 days ago"
+ * Format strategy for relative time output strings.
+ * Each property returns the formatted string for a given time unit value.
  */
-// eslint-disable-next-line sonarjs/cognitive-complexity -- sequential time-unit cascade is inherently branchy but maximally clear
-export function formatRelativeTime(date: Date, now: Date = new Date()): string {
+interface RelativeTimeFormat {
+    now:     string
+    minutes: (n: number) => string
+    hours:   (n: number) => string
+    days:    (n: number) => string
+    weeks:   (n: number) => string
+    months:  (n: number) => string
+    years:   (n: number) => string
+}
+
+/**
+ * Core relative time formatting logic shared by both public formatters.
+ * @param date - The date to format
+ * @param now - Reference time
+ * @param fmt - Format strategy providing output strings for each time unit
+ * @returns Formatted relative time string
+ */
+function formatRelativeTimeCore(date: Date, now: Date, fmt: RelativeTimeFormat): string {
     const dtDate = DateTime.fromJSDate(date);
     const dtNow = DateTime.fromJSDate(now);
 
     const seconds = Math.floor(dtNow.diff(dtDate, 'seconds').seconds);
 
     if(seconds < SECONDS_THRESHOLD) {
-        return 'just now';
+        return fmt.now;
     }
 
     const minutes = Math.floor(dtNow.diff(dtDate, 'minutes').minutes);
     if(minutes < MINUTES_THRESHOLD) {
-        return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
+        return fmt.minutes(minutes);
     }
 
     const hours = Math.floor(dtNow.diff(dtDate, 'hours').hours);
     if(hours < HOURS_THRESHOLD) {
-        return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+        return fmt.hours(hours);
     }
 
     const days = Math.floor(dtNow.diff(dtDate, 'days').days);
     if(days < DAYS_THRESHOLD) {
-        return days === 1 ? '1 day ago' : `${days} days ago`;
+        return fmt.days(days);
     }
 
     const weeks = Math.floor(dtNow.diff(dtDate, 'weeks').weeks);
     const months = Math.floor(dtNow.diff(dtDate, 'months').months);
     // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
     if(weeks < WEEKS_THRESHOLD && months < 1) {
-        return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
+        return fmt.weeks(weeks);
     }
 
     if(months < MONTHS_THRESHOLD) {
-        return months === 1 ? '1 month ago' : `${months} months ago`;
+        return fmt.months(months);
     }
 
     const years = Math.floor(dtNow.diff(dtDate, 'years').years);
-    return years === 1 ? '1 year ago' : `${years} years ago`;
+    return fmt.years(years);
+}
+
+const longFormat: RelativeTimeFormat = {
+    now:     'just now',
+    minutes: n => (n === 1 ? '1 minute ago' : `${n} minutes ago`),
+    hours:   n => (n === 1 ? '1 hour ago' : `${n} hours ago`),
+    days:    n => (n === 1 ? '1 day ago' : `${n} days ago`),
+    weeks:   n => (n === 1 ? '1 week ago' : `${n} weeks ago`),
+    months:  n => (n === 1 ? '1 month ago' : `${n} months ago`),
+    years:   n => (n === 1 ? '1 year ago' : `${n} years ago`),
+};
+
+const shortFormat: RelativeTimeFormat = {
+    now:     'now',
+    minutes: n => `${n}m ago`,
+    hours:   n => `${n}h ago`,
+    days:    n => `${n}d ago`,
+    weeks:   n => `${n}w ago`,
+    months:  n => `${n}mo ago`,
+    years:   n => `${n}y ago`,
+};
+
+/**
+ * Formats a date as human-readable relative time using Luxon.
+ * @param date - The date to format
+ * @param now - Optional reference time (defaults to current time)
+ * @returns Human-readable string like "just now", "2 hours ago", "3 days ago"
+ */
+export function formatRelativeTime(date: Date, now: Date = new Date()): string {
+    return formatRelativeTimeCore(date, now, longFormat);
 }
 
 /**
@@ -212,43 +256,7 @@ export function formatMemoryTimestamp(updatedAt: string, now: Date = new Date(),
  * @returns Compact form like "2h ago", "3d ago", "2w ago"
  */
 export function formatShortRelativeTime(date: Date, now: Date = new Date()): string {
-    const dtDate = DateTime.fromJSDate(date);
-    const dtNow = DateTime.fromJSDate(now);
-
-    const seconds = Math.floor(dtNow.diff(dtDate, 'seconds').seconds);
-
-    if(seconds < SECONDS_THRESHOLD) {
-        return 'now';
-    }
-
-    const minutes = Math.floor(dtNow.diff(dtDate, 'minutes').minutes);
-    if(minutes < MINUTES_THRESHOLD) {
-        return `${minutes}m ago`;
-    }
-
-    const hours = Math.floor(dtNow.diff(dtDate, 'hours').hours);
-    if(hours < HOURS_THRESHOLD) {
-        return `${hours}h ago`;
-    }
-
-    const days = Math.floor(dtNow.diff(dtDate, 'days').days);
-    if(days < DAYS_THRESHOLD) {
-        return `${days}d ago`;
-    }
-
-    const weeks = Math.floor(dtNow.diff(dtDate, 'weeks').weeks);
-    const months = Math.floor(dtNow.diff(dtDate, 'months').months);
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: Complex time boundary check, both conditions needed for correct bucketing, <= boundary is equivalent
-    if(weeks < WEEKS_THRESHOLD && months < 1) {
-        return `${weeks}w ago`;
-    }
-
-    if(months < MONTHS_THRESHOLD) {
-        return `${months}mo ago`;
-    }
-
-    const years = Math.floor(dtNow.diff(dtDate, 'years').years);
-    return `${years}y ago`;
+    return formatRelativeTimeCore(date, now, shortFormat);
 }
 
 /**

@@ -46,6 +46,7 @@
     "html-to-text": "^9.0.5",
     "lodash-es": "^4.17.23",
     "luxon": "^3.7.2",
+    "mrmime": "^2.0.1",
     "p-limit": "^7.3.0",
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",

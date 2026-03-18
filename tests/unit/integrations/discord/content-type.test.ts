@@ -8,7 +8,7 @@ describe('inferImageContentType', () => {
         });
 
         it('returns EXACT Discord contentType, not inferred from extension', () => {
-            // This test kills mutant 2325: if 'image/' is mutated to 'Stryker was here!',
+            // This test kills mutant: if 'image/' is mutated to 'Stryker was here!',
             // the function would infer from extension instead of using Discord's value.
             // Use .heic extension with image/jpeg from Discord.
             // If mutant survives, would return image/heic (from extension), not image/jpeg (from Discord)
@@ -50,10 +50,9 @@ describe('inferImageContentType', () => {
             expect(inferImageContentType('README', 'image/custom')).toBe('image/custom');
         });
 
-        it('returns Discord contentType immediately without fallthrough to switch', () => {
-            // This test kills mutant 2327: block statement removal.
-            // If the return statement is removed, execution continues to the switch statement.
-            // For 'file.heic' with 'image/jpeg', if block is removed, switch would return 'image/heic'.
+        it('returns Discord contentType immediately without continuing to extension lookup', () => {
+            // If the return statement is removed, execution continues to extension lookup.
+            // For 'file.heic' with 'image/jpeg', if block is removed, lookup would return 'image/heic'.
             const result = inferImageContentType('file.heic', 'image/jpeg');
             expect(result).toBe('image/jpeg'); // Discord's value
             expect(result).not.toBe('image/heic'); // Not from extension
@@ -150,7 +149,7 @@ describe('inferImageContentType', () => {
         });
 
         it('handles filename with trailing dot', () => {
-            // _.last(_.split('photo.', '.')) returns ''
+            // 'photo.'.split('.').at(-1) returns ''
             expect(inferImageContentType('photo.', null)).toBe('application/octet-stream');
         });
 
@@ -173,69 +172,72 @@ describe('inferImageContentType', () => {
 
     describe('extension extraction logic', () => {
         it('extracts extension correctly with single dot', () => {
-            // Tests that _.split with '.' delimiter works correctly
             expect(inferImageContentType('file.jpg', null)).toBe('image/jpeg');
         });
 
         it('extracts last segment when multiple dots present', () => {
-            // Tests that _.last picks the last segment after split
             expect(inferImageContentType('my.file.name.png', null)).toBe('image/png');
         });
 
         it('handles case where split produces single element', () => {
-            // 'filename' split by '.' produces ['filename'], _.last returns 'filename'
+            // 'filename'.split('.').at(-1) returns 'filename' (no dot), mrmime returns undefined
             expect(inferImageContentType('filename', null)).toBe('application/octet-stream');
         });
 
         it('converts extension to lowercase before matching', () => {
-            // Tests _.toLower is applied before split
             expect(inferImageContentType('photo.JPEG', null)).toBe('image/jpeg');
         });
     });
 
-    describe('switch case coverage', () => {
-        it('hits heic case explicitly', () => {
+    describe('extension-based lookup coverage', () => {
+        it('resolves heic extension', () => {
             const result = inferImageContentType('test.heic', null);
             expect(result).toBe('image/heic');
         });
 
-        it('hits heif case explicitly', () => {
+        it('resolves heif extension', () => {
             const result = inferImageContentType('test.heif', null);
             expect(result).toBe('image/heif');
         });
 
-        it('hits jpg case explicitly', () => {
+        it('resolves jpg extension', () => {
             const result = inferImageContentType('test.jpg', null);
             expect(result).toBe('image/jpeg');
         });
 
-        it('hits jpeg case explicitly', () => {
+        it('resolves jpeg extension', () => {
             const result = inferImageContentType('test.jpeg', null);
             expect(result).toBe('image/jpeg');
         });
 
-        it('hits png case explicitly', () => {
+        it('resolves png extension', () => {
             const result = inferImageContentType('test.png', null);
             expect(result).toBe('image/png');
         });
 
-        it('hits gif case explicitly', () => {
+        it('resolves gif extension', () => {
             const result = inferImageContentType('test.gif', null);
             expect(result).toBe('image/gif');
         });
 
-        it('hits webp case explicitly', () => {
+        it('resolves webp extension', () => {
             const result = inferImageContentType('test.webp', null);
             expect(result).toBe('image/webp');
         });
 
-        it('hits default case with unknown extension', () => {
+        it('falls back for unknown extension', () => {
             const result = inferImageContentType('test.unknown', null);
             expect(result).toBe('application/octet-stream');
         });
 
-        it('hits default case with no extension', () => {
+        it('falls back when no extension present', () => {
             const result = inferImageContentType('testfile', null);
+            expect(result).toBe('application/octet-stream');
+        });
+
+        it('does not return non-image MIME types from extension lookup', () => {
+            // mrmime knows about .txt => text/plain, but we filter to image/ only
+            const result = inferImageContentType('file.txt', null);
             expect(result).toBe('application/octet-stream');
         });
     });
@@ -252,7 +254,7 @@ describe('inferImageContentType', () => {
         });
 
         it('takes false branch when Discord provides null', () => {
-            // if(_.startsWith(null ?? '', 'image/')) → false path
+            // if((null ?? '') .startsWith('image/')) → false path
             expect(inferImageContentType('file.png', null)).toBe('image/png');
         });
     });
@@ -264,21 +266,38 @@ describe('inferImageContentType', () => {
         });
 
         it('uses empty string when discordContentType is null in fallback', () => {
-            // In default case: discordContentType ?? 'application/octet-stream' → 'application/octet-stream'
+            // In fallback: discordContentType ?? 'application/octet-stream' → 'application/octet-stream'
             expect(inferImageContentType('file.xyz', null)).toBe('application/octet-stream');
         });
 
         it('uses provided contentType when not null in fallback', () => {
-            // In default case: discordContentType ?? 'application/octet-stream' → discordContentType
+            // In fallback: discordContentType ?? 'application/octet-stream' → discordContentType
             expect(inferImageContentType('file.xyz', 'video/mp4')).toBe('video/mp4');
         });
     });
 
     describe('non-null assertion operator coverage', () => {
         it('safely returns non-null Discord contentType', () => {
-            // return discordContentType! when _.startsWith check passes
+            // return discordContentType! when startsWith check passes
             const result = inferImageContentType('file.txt', 'image/svg+xml');
             expect(result).toBe('image/svg+xml');
+        });
+    });
+
+    describe('mime?.startsWith branch coverage', () => {
+        it('takes the mime image/ branch for known image extension', () => {
+            // mime is defined and starts with image/ → returns mime
+            expect(inferImageContentType('photo.png', null)).toBe('image/png');
+        });
+
+        it('skips mime branch for non-image extension known to mrmime', () => {
+            // mime is defined but does NOT start with image/ → falls through to fallback
+            expect(inferImageContentType('file.txt', null)).toBe('application/octet-stream');
+        });
+
+        it('skips mime branch when ext produces undefined from mrmime', () => {
+            // mime is undefined (unknown extension) → falls through to fallback
+            expect(inferImageContentType('file.zzz', null)).toBe('application/octet-stream');
         });
     });
 });
