@@ -54,6 +54,7 @@ export function createWikipediaMCPServer() {
             tool(
                 'getArticle',
                 'Fetch a Wikipedia article\'s full source content by title. Returns JSON with title, source (wikitext), and metadata.',
+                // Stryker disable next-line StringLiteral: describe() is MCP documentation only
                 { title: z.string().describe('The Wikipedia article title (e.g. "Albert Einstein", "Quantum_mechanics")') },
                 async ({ title }): Promise<CallToolResult> => {
                     try {

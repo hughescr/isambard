@@ -281,6 +281,11 @@ describe('createClaudeAgent', () => {
             }
             return mockGenerator() as unknown as Query;
         });
+        // Clear accumulated calls from the underlying mock (mockQuery from setup.ts).
+        // In Bun, spyOn() on a mock() function may return the same mock object, meaning
+        // mock.calls accumulates across tests. Clearing here ensures calls[0] always
+        // refers to the current test's handleInput call, regardless of test ordering.
+        querySpy.mockClear();
     });
 
     afterEach(() => {
@@ -610,6 +615,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.wikipedia).toEqual(mockWikipediaServer);
         });
+
+        test('should configure caldav MCP server when provided', async () => {
+            const mockCaldavServer = { command: 'node', args: ['caldav-server.js'] };
+            const agent = createClaudeAgent({ caldavMcpServer: mockCaldavServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.caldav).toEqual(mockCaldavServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -798,6 +813,44 @@ describe('createClaudeAgent', () => {
                 'Bash(bun typecheck)',
                 'Bash(ls:*)',
                 'mcp__wikipedia__*',
+            ]);
+        });
+
+        test('should include caldav tools when caldav MCP server provided', async () => {
+            const mockCaldavServer = { command: 'node', args: ['caldav-server.js'] };
+            const agent = createClaudeAgent({ caldavMcpServer: mockCaldavServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            // Verify exact array contents with caldav tools included
+            expect(allowedTools).toEqual([
+                'mcp__memory__*',
+                'Read',
+                'Glob',
+                'Grep',
+                'WebFetch',
+                'WebSearch',
+                'TaskCreate',
+                'TaskUpdate',
+                'TaskGet',
+                'TaskList',
+                'EnterPlanMode',
+                'ExitPlanMode',
+                'Task',
+                'TaskOutput',
+                'TaskStop',
+                // Skills
+                'Skill',
+                // Bash commands (specific safe commands only)
+                'Bash(git:*)',
+                'Bash(bun run:*)',
+                'Bash(bun test:*)',
+                'Bash(bun lint:*)',
+                'Bash(bun typecheck)',
+                'Bash(ls:*)',
+                'mcp__caldav__*',
             ]);
         });
     });

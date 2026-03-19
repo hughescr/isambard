@@ -96,6 +96,7 @@ describe('CalDAVClient.discoverCalendars', () => {
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('returns CalendarInfo[] from server', async () => {
@@ -196,6 +197,7 @@ describe('CalDAVClient.getEvents', () => {
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('returns empty array for empty servers list', async () => {
@@ -283,13 +285,16 @@ describe('CalDAVClient.getEvents', () => {
         ]);
         mockParseICS.mockImplementation((): Record<string, unknown> => ({
             'timezone-1': { type: 'VTIMEZONE', tzid: 'America/New_York' },
+            'event-1':    makeVEvent(),
             vcal:         { type: 'VCALENDAR', version: '2.0' },
         }));
 
         const client = new CalDAVClient();
         const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
-        expect(result).toHaveLength(0);
+        // Only the VEVENT should be extracted — VTIMEZONE and VCALENDAR must be skipped
+        expect(result).toHaveLength(1);
+        expect(result[0]!.uid).toBe('event-uid-1');
     });
 
     test('skips calendar paths not found in fetched calendars', async () => {
@@ -333,6 +338,10 @@ describe('CalDAVClient.getEvents', () => {
         const client = new CalDAVClient();
         const events = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(events).toEqual([]);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ serverUrl: expect.any(String) }),
+            expect.stringContaining('Failed to fetch')
+        );
     });
 
     test('returns empty results on auth error (partial failure)', async () => {
@@ -386,6 +395,7 @@ describe('CalDAVClient cache', () => {
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('second call within TTL hits cache and does not re-fetch', async () => {
@@ -481,6 +491,7 @@ describe('CalDAVClient.getContextEvents', () => {
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('fetches events from 24h ago to 3 days in the future', async () => {
@@ -544,6 +555,7 @@ describe('CalDAVClient event extraction', () => {
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     async function extractEvents(vevents: Record<string, unknown>[]): Promise<CalendarEvent[]> {
@@ -758,6 +770,7 @@ describe('CalDAVClient cache key rounding', () => {
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('same hour range maps to same cache key', async () => {

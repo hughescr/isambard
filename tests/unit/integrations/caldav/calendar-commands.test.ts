@@ -239,6 +239,19 @@ describe('CalendarCommandHandler - permission checks', () => {
         expect(replyArg.content).not.toContain('Only the admin');
     });
 
+    test('user specifying themselves as target can manage their own calendars', async () => {
+        const { asChatInput, editReply } = createMockInteraction(
+            USER_ID, null, 'list',
+            {},
+            { id: USER_ID }
+        );
+        await handler.handle(asChatInput);
+        // Non-admin specifying themselves should not trigger the admin check
+        expect(editReply).toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).not.toContain('Only the admin');
+    });
+
     test('non-admin cannot manage another user\'s calendars', async () => {
         const { asChatInput, editReply } = createMockInteraction(
             USER_ID, null, 'list',
@@ -750,8 +763,23 @@ describe('CalendarCommandHandler - /calendar shared list', () => {
         expect(replyArg.content).toContain('/shared/holidays');
     });
 
-    test('replies "No shared calendars configured" when none exist', async () => {
+    test('replies "No shared calendars configured" when none exist (null record)', async () => {
         mockRegistry.getSharedRecord.mockResolvedValue(null);
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, 'shared', 'list');
+        await handler.handle(asChatInput);
+
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('No shared calendars configured.');
+    });
+
+    test('replies "No shared calendars configured" when record has empty servers array', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue({
+            userId:    'SHARED',
+            createdAt: '',
+            updatedAt: '',
+            servers:   [],
+        });
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, 'shared', 'list');
         await handler.handle(asChatInput);
@@ -834,6 +862,40 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove shared server');
+    });
+});
+
+// ─── Unknown subcommands ──────────────────────────────────────────────────────
+
+describe('CalendarCommandHandler - unknown subcommands', () => {
+    let mockRegistry: ReturnType<typeof createMockRegistry>;
+    let mockCaldav:   ReturnType<typeof createMockCaldavClient>;
+    let handler:      CalendarCommandHandler;
+
+    beforeEach(() => {
+        mockRegistry = createMockRegistry();
+        mockCaldav   = createMockCaldavClient();
+        handler = new CalendarCommandHandler(
+            mockCaldav as unknown as CalDAVClient,
+            mockRegistry as unknown as CalendarRegistryBackend,
+            ADMIN_USER_ID
+        );
+    });
+
+    test('replies with error for unknown user subcommand', async () => {
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'unknown-cmd');
+        await handler.handle(asChatInput);
+
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('Unknown subcommand: unknown-cmd');
+    });
+
+    test('replies with error for unknown shared subcommand', async () => {
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'unknown-cmd');
+        await handler.handle(asChatInput);
+
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('Unknown shared subcommand: unknown-cmd');
     });
 });
 

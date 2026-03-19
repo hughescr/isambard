@@ -309,4 +309,94 @@ describe.concurrent('formatCalendarContext', () => {
         expect(yesterdayPos).toBeLessThan(todayPos);
         expect(todayPos).toBeLessThan(futurePos);
     });
+
+    it('groups event by local date, not UTC date (timezone boundary)', () => {
+        // 2026-03-19T05:00:00Z is 10:00 PM on Mar 18 in America/Los_Angeles (PDT = UTC-7)
+        // Without { zone: timezone }, this would be grouped under Mar 19 (UTC date)
+        // With the correct timezone, it must group under Mar 18
+        const event = makeEvent({
+            summary: 'Late Night Event',
+            start:   new Date('2026-03-19T05:00:00Z'), // Mar 18 10:00 PM PT, Mar 19 UTC
+            end:     new Date('2026-03-19T06:00:00Z'),
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain('### Today');
+        expect(result).not.toContain('### Tomorrow');
+    });
+
+    it('sorts all-day events by start time and timed events by start time, all-day first', () => {
+        // Shuffled input order: timed-late, all-day-A, timed-early, all-day-B
+        // Expected output order: all-day-A (earlier start), all-day-B (later start),
+        //   timed-early, timed-late
+        //
+        // Crucially, Timed Early (09:00Z) starts BEFORE All Day A (12:00Z), so if
+        // line 52's "return 1" branch is broken (mutated to false/empty), the
+        // getTime() fallthrough sorts Timed Early before All Day A. This catches:
+        //   - Line 52 ConditionalExpression → false
+        //   - Line 52 BooleanLiteral
+        //   - Line 52 BlockStatement → {}
+        //
+        // Also, putting a timed event first (before all-day events) in the input
+        // catches the line 49 LogicalOperator mutant (&&→||): with ||, timed-vs-timed
+        // comparisons short-circuit on !b.isAllDay=true and incorrectly return -1,
+        // producing wrong order [Timed Late, Timed Early, All Day B, All Day A].
+        const events = [
+            makeEvent({
+                summary: 'Timed Late',
+                start:   new Date('2026-03-18T17:00:00Z'), // 9:00 AM PT
+                end:     new Date('2026-03-18T18:00:00Z'),
+            }),
+            makeEvent({
+                summary:  'All Day A',
+                start:    new Date('2026-03-18T12:00:00Z'), // all-day, 4:00 AM PT
+                end:      new Date('2026-03-19T12:00:00Z'),
+                isAllDay: true,
+            }),
+            makeEvent({
+                summary: 'Timed Early',
+                start:   new Date('2026-03-18T09:00:00Z'), // 1:00 AM PT — same local day, BEFORE All Day A's 12:00Z
+                end:     new Date('2026-03-18T10:00:00Z'),
+            }),
+            makeEvent({
+                summary:  'All Day B',
+                start:    new Date('2026-03-18T22:00:00Z'), // all-day, 2:00 PM PT — later than timed events
+                end:      new Date('2026-03-19T22:00:00Z'),
+                isAllDay: true,
+            }),
+        ];
+        const result = formatCalendarContext(events, NOW, TZ);
+        const allDayAPos    = result.indexOf('All Day A');
+        const allDayBPos    = result.indexOf('All Day B');
+        const timedEarlyPos = result.indexOf('Timed Early');
+        const timedLatePos  = result.indexOf('Timed Late');
+        expect(allDayAPos).toBeLessThan(allDayBPos);
+        expect(allDayBPos).toBeLessThan(timedEarlyPos);
+        expect(timedEarlyPos).toBeLessThan(timedLatePos);
+    });
+
+    it('separates sections with newlines', () => {
+        const event = makeEvent({
+            summary: 'Newline Test',
+            start:   new Date('2026-03-18T17:00:00Z'),
+            end:     new Date('2026-03-18T18:00:00Z'),
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        // The output must have the calendar header and day header on separate lines
+        const lines = result.split('\n');
+        expect(lines[0]).toBe('## Calendar');
+        expect(lines[1]).toMatch(/^### /);
+    });
+
+    it('omits attendee count for empty attendees array', () => {
+        // event.attendees.length > 0 must be false for [], so "(0 attendees)" must not appear
+        const event = makeEvent({
+            summary:   'Empty Attendees',
+            start:     new Date('2026-03-18T17:00:00Z'),
+            end:       new Date('2026-03-18T18:00:00Z'),
+            attendees: [],
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).not.toContain('0 attendee');
+        expect(result).not.toContain('attendee');
+    });
 });

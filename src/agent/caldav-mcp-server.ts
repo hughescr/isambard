@@ -32,7 +32,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'getCalendarEvents',
                 'Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     userId:    z.string().min(1).describe('Discord user ID to look up calendars for'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     startDate: z.string().describe('Start date in ISO 8601 format (e.g., 2026-03-18)'),
@@ -69,7 +69,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'getUpcomingEvents',
                 'Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     userId: z.string().min(1).describe('Discord user ID to look up calendars for'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     days:   z.number().int().positive().optional().default(7).describe('Number of days to look ahead (default: 7)'),
@@ -109,7 +109,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'listUserCalendars',
                 'List all calendar labels configured for a user. Shows calendar names grouped by server, without exposing URLs or credentials.',
                 {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     userId: z.string().min(1).describe('Discord user ID to list calendars for'),
                 },
                 async (args): Promise<CallToolResult> => {

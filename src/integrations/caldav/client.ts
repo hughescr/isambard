@@ -145,7 +145,7 @@ export class CalDAVClient {
         const events: CalendarEvent[] = [];
 
         for(const [, component] of Object.entries(parsed)) {
-            if(!component || component.type !== 'VEVENT') {
+            if(component?.type !== 'VEVENT') {
                 continue;
             }
 
@@ -193,7 +193,7 @@ export class CalDAVClient {
                     return a.replace('mailto:', '');
                 }
                 // ParameterValue object with optional CN param
-                // Stryker disable next-line ConditionalExpression -- paired typeof+in guards are semantically inseparable; mutating to 'true' would error on objects without params
+                // Stryker disable next-line ConditionalExpression,LogicalOperator -- paired typeof+in guards are semantically inseparable; mutating to 'true' would error on objects without params
                 if(typeof a === 'object' && 'params' in a) {
                     const cn = (a.params as Record<string, unknown>).CN as string | undefined;
                     if(cn) {
