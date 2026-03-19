@@ -11,6 +11,16 @@ interface RegisteredTool {
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
 
+const mockPageSource = {
+    id:            12_345,
+    key:           'Test_Article',
+    title:         'Test Article',
+    content_model: 'wikitext',
+    license:       { url: 'https://creativecommons.org/licenses/by-sa/4.0/', title: 'CC BY-SA 4.0' },
+    source:        '== Test ==\nThis is wikitext source content.',
+    latest:        { id: 98_765, timestamp: '2024-01-15T10:30:00Z' },
+};
+
 const mockArticle = {
     title:        'Test Article',
     extract:      'This is a test article extract.',
@@ -63,6 +73,24 @@ describe.concurrent('createWikipediaMCPServer', () => {
             expect(registeredTool.annotations.readOnlyHint).toBe(true);
             expect(registeredTool.annotations.idempotentHint).toBe(false);
         });
+
+        test('should register getArticle tool with correct description', () => {
+            const server = createWikipediaMCPServer();
+            const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getArticle;
+
+            expect(registeredTool).toBeDefined();
+            expect(registeredTool.description).toBe('Fetch a Wikipedia article\'s full source content by title. Returns JSON with title, source (wikitext), and metadata.');
+            expect(registeredTool.inputSchema.shape.title).toBeDefined();
+        });
+
+        test('should have correct annotations on getArticle', () => {
+            const server = createWikipediaMCPServer();
+            const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getArticle;
+
+            expect(registeredTool.annotations).toBeDefined();
+            expect(registeredTool.annotations.readOnlyHint).toBe(true);
+            expect(registeredTool.annotations.idempotentHint).toBe(true);
+        });
     });
 
     describe('getRandomArticle tool', () => {
@@ -72,6 +100,8 @@ describe.concurrent('createWikipediaMCPServer', () => {
         };
 
         test('should return article data on successful fetch', async () => {
+            mockFetch = mock(() => Response.json(mockArticle));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
             const handler = getHandler();
             const result = await handler({});
 
@@ -106,6 +136,8 @@ describe.concurrent('createWikipediaMCPServer', () => {
         });
 
         test('should send correct User-Agent headers', async () => {
+            mockFetch = mock(() => Response.json(mockArticle));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
             const handler = getHandler();
             await handler({});
 
@@ -117,6 +149,8 @@ describe.concurrent('createWikipediaMCPServer', () => {
         });
 
         test('should use redirect: follow option', async () => {
+            mockFetch = mock(() => Response.json(mockArticle));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
             const handler = getHandler();
             await handler({});
 
@@ -126,12 +160,108 @@ describe.concurrent('createWikipediaMCPServer', () => {
         });
 
         test('should fetch from the correct Wikipedia API URL', async () => {
+            mockFetch = mock(() => Response.json(mockArticle));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
             const handler = getHandler();
             await handler({});
 
             expect(mockFetch).toHaveBeenCalledTimes(1);
             const [url] = mockFetch.mock.calls[0] as [string];
             expect(url).toBe('https://en.wikipedia.org/api/rest_v1/page/random/summary');
+        });
+    });
+
+    describe('getArticle tool', () => {
+        const getHandler = (): ((...args: unknown[]) => Promise<CallToolResult>) => {
+            const server = createWikipediaMCPServer();
+            return (server.instance as unknown as RegisteredToolInstance)._registeredTools.getArticle.handler;
+        };
+
+        test('should return article source data on successful fetch', async () => {
+            mockFetch = mock(() => Response.json(mockPageSource));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            const result = await handler({ title: 'Test Article' });
+
+            expect(result.content).toBeDefined();
+            expect(result.content).toHaveLength(1);
+            const parsed = JSON.parse(textContent(result.content[0]));
+            expect(parsed).toEqual(mockPageSource);
+        });
+
+        test('should return error result on HTTP 404 error', async () => {
+            mockFetch = mock(() => Promise.resolve(new Response('Not Found', { status: 404, statusText: 'Not Found' })));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            const result = await handler({ title: 'Nonexistent_Article' });
+
+            expect(result.isError).toBe(true);
+            expect(result.content).toHaveLength(1);
+            expect(textContent(result.content[0])).toContain('Wikipedia API returned 404: Not Found');
+        });
+
+        test('should return error result on network failure', async () => {
+            mockFetch = mock(() => Promise.reject(new Error('Network failure')));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            const result = await handler({ title: 'Test Article' });
+
+            expect(result.isError).toBe(true);
+            expect(result.content).toHaveLength(1);
+            expect(textContent(result.content[0])).toContain('Network failure');
+        });
+
+        test('should send correct User-Agent headers', async () => {
+            mockFetch = mock(() => Response.json(mockPageSource));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            await handler({ title: 'Test Article' });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [, fetchOptions] = mockFetch.mock.calls[0] as [string, RequestInit];
+            const headers = fetchOptions.headers as Record<string, string>;
+            expect(headers['User-Agent']).toBe('Isambard/1.0 (https://github.com/hughescr/isambard)');
+            expect(headers['Api-User-Agent']).toBe('Isambard/1.0 (https://github.com/hughescr/isambard)');
+        });
+
+        test('should use redirect: follow option', async () => {
+            mockFetch = mock(() => Response.json(mockPageSource));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            await handler({ title: 'Test Article' });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [, fetchOptions] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(fetchOptions.redirect).toBe('follow');
+        });
+
+        test('should construct correct URL from title parameter', async () => {
+            mockFetch = mock(() => Response.json(mockPageSource));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            await handler({ title: 'Quantum_mechanics' });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [url] = mockFetch.mock.calls[0] as [string];
+            expect(url).toBe('https://en.wikipedia.org/w/rest.php/v1/page/Quantum_mechanics');
+        });
+
+        test('should URL-encode the title with spaces and special characters', async () => {
+            mockFetch = mock(() => Response.json(mockPageSource));
+            globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+            const handler = getHandler();
+            await handler({ title: 'Albert Einstein' });
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [url] = mockFetch.mock.calls[0] as [string];
+            expect(url).toBe('https://en.wikipedia.org/w/rest.php/v1/page/Albert%20Einstein');
         });
     });
 });
