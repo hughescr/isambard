@@ -55,7 +55,8 @@ const WIKIPEDIA: PerchSlotConfig = {
     endHour:   14,
     level:     'moderate',
     hint:      `Lunchtime breadth exploration. Start somewhere unexpected:
-- Use the getRandomArticle tool to land on a random Wikipedia article and read what you find
+- Use getRandomArticle 2-3 times to land on different random Wikipedia articles
+- When one catches your interest, use getArticle to read the full article — don't stop at the summary
 - Browse Bluesky for perspectives you wouldn't seek out yourself
 - Follow whatever thread catches your interest — connections, rabbit holes, questions it raises
 - The goal isn't productivity, it's range
