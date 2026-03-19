@@ -178,6 +178,7 @@ export async function createApp(): Promise<App> {
         inboxMcpServer:             mcpServers.inboxMcpServer,
         emailMcpServer:             emailSetup?.emailMcpServer,
         bskyMcpServer:              mcpServers.bskyMcpServer,
+        wikipediaMcpServer:         mcpServers.wikipediaMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,

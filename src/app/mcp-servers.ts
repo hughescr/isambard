@@ -114,6 +114,11 @@ export interface MCPServers {
      * Bluesky MCP server for AT Protocol feed reading and interaction.
      */
     bskyMcpServer?: McpServerConfig
+
+    /**
+     * Wikipedia MCP server for encyclopedia lookups.
+     */
+    wikipediaMcpServer?: McpServerConfig
 }
 
 /**
