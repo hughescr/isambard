@@ -484,6 +484,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                             logger.warn({ error: markError instanceof Error ? markError.message : String(markError), msg: 'Failed to mark conversation as read' });
                         }
+                        // Stryker restore BlockStatement
 
                         // Build DID→handle map from conversation members
                         const didToHandle = new Map(convo.members.map(m => [m.did, m.handle]));

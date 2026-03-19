@@ -82,6 +82,7 @@ export function createMemoryMCPServer(
                                 logger.warn({ error, path: args.path, msg: 'Failed to record memory access' });
                             });
                         }
+                        // Stryker restore BlockStatement
                         return mcpTextResult(result.content);
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);

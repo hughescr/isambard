@@ -115,8 +115,10 @@ export class BskyOutboundApprovalHandler {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                     logger.error({ err: error, msg: 'Failed to send error editReply' });
                 }
+                // Stryker restore BlockStatement
             }
         }
+        // Stryker restore BlockStatement
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
@@ -154,6 +156,7 @@ export class BskyOutboundApprovalHandler {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uuid, msg: 'Failed to process bsky reject modal' });
         }
+        // Stryker restore BlockStatement
     }
 
     private async handleApprove(interaction: ButtonInteraction): Promise<void> {
@@ -228,6 +231,7 @@ export class BskyOutboundApprovalHandler {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ err: error, handle: targetHandle, msg: 'Failed to add handle to bsky allowlist' });
             }
+            // Stryker restore BlockStatement
         }
 
         const updatedEmbed = new EmbedBuilder()
@@ -309,6 +313,7 @@ export class BskyOutboundApprovalHandler {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ recipientsValue, msg: 'Failed to parse Recipients field from DM approval embed' });
             }
+            // Stryker restore BlockStatement
         }
 
         if(!convoId) {

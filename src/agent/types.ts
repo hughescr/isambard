@@ -196,8 +196,7 @@ export interface ResultEvent {
  */
 export interface UserEvent {
     type:     'user'
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Agent SDK message type is not exported
-    message?: any
+    message?: { content?: unknown }
 }
 
 /**

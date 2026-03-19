@@ -259,7 +259,7 @@ function updateChannelMetadataInInbox(
         createGuildId(message.guild?.id ?? 'DM')
     );
 }
-// Stryker restore StringLiteral,LogicalOperator
+// Stryker restore StringLiteral,LogicalOperator,BlockStatement
 
 /**
  * Helper function to handle state transitions and inbox updates.
@@ -281,7 +281,6 @@ function handleStateAndInbox(
 
     // Update channel metadata in inbox if shouldRespond is true
     if(inboxManager && shouldRespond) {
-        // Stryker disable next-line BlockStatement: Fire-and-forget inbox metadata update — no tests exercise this path directly; updateChannelMetadataInInbox is tested independently
         updateChannelMetadataInInbox(message, inboxManager);
     }
 }
@@ -330,7 +329,7 @@ async function updateInboxCheckpoint(
         );
     }
 }
-// Stryker restore StringLiteral,LogicalOperator
+// Stryker restore StringLiteral,LogicalOperator,BlockStatement
 
 /**
  * Helper function to check if a message should be ignored.

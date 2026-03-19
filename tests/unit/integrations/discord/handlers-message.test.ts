@@ -8,6 +8,7 @@ import type { QuestionRegistry } from '@/agent/question-registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { ChannelRegistryManager, DMTracker } from '@/integrations/discord/channel-registry';
 import { createMessageHandler } from '@/integrations/discord/handlers';
+import type { InboxManager } from '@/integrations/discord/inbox';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { BotStateManager } from '@/integrations/discord/state';
 import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
@@ -1317,6 +1318,37 @@ describe('Discord Event Handlers', () => {
                 await handler(mockMessage);
 
                 expect(mockPerchRunner.suspend).toHaveBeenCalled();
+            });
+        });
+
+        describe('inbox manager integration', () => {
+            it('should call updateChannelMetadata when inboxManager provided and shouldRespond is true', async () => {
+                const mockUpdateChannelMetadata = mock(() => undefined);
+                const mockInboxManager = {
+                    updateChannelMetadata: mockUpdateChannelMetadata,
+                    recordActivity:        mock(async () => undefined),
+                } as unknown as InboxManager;
+
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                });
+
+                // mockMessage is in a monitored channel (shouldProcess=true), not a bot message,
+                // so shouldRespond=true — the inboxManager branch should execute
+                await handler(mockMessage);
+
+                // Verifies the BlockStatement mutant is killed: the if-body must run
+                // mockTextChannel has no name set, so ?? falls back to the channel ID
+                expect(mockUpdateChannelMetadata).toHaveBeenCalledWith(
+                    createChannelId(mockMessage.channel.id),
+                    expect.any(String), // channel name or ID fallback
+                    expect.any(String)  // guildId
+                );
             });
         });
     });

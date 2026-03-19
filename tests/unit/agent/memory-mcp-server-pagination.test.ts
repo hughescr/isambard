@@ -170,6 +170,44 @@ describe.concurrent('Memory MCP Server Pagination', () => {
             });
         });
 
+        describe('trailing slash normalization', () => {
+            test('should strip trailing slash and use listByLayer for "/state/"', async () => {
+                mockBackend.listByLayer = mock(async () => ({
+                    items:      [createMockItem({ path: '/state/goals' as MemoryPath })],
+                    nextCursor: undefined,
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                const result = await handler({ path: '/state/' });
+
+                // Trailing slash must be stripped so the path matches '/state' in layerPaths,
+                // routing to listByLayer instead of list. If the normalization loop body is
+                // replaced with {} (BlockStatement mutant), backend.list('/state/', ...) would
+                // be called instead and this assertion would fail.
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('state', undefined);
+                expect(mockBackend.list).not.toHaveBeenCalled();
+                expect(textContent(result.content[0])).toContain('/state/goals');
+            });
+
+            test('should strip multiple trailing slashes and use listByLayer for "/identity//"', async () => {
+                mockBackend.listByLayer = mock(async () => ({
+                    items:      [createMockItem({ path: '/identity/core-values' as MemoryPath })],
+                    nextCursor: undefined,
+                }));
+
+                const server = createMemoryMCPServer(mockBackend);
+                const handler = getToolHandler(server, 'list');
+
+                const result = await handler({ path: '/identity//' });
+
+                expect(mockBackend.listByLayer).toHaveBeenCalledWith('identity', undefined);
+                expect(mockBackend.list).not.toHaveBeenCalled();
+                expect(textContent(result.content[0])).toContain('/identity/core-values');
+            });
+        });
+
         describe('default path', () => {
             test('should use root path "/" when path is not provided', async () => {
                 const server = createMemoryMCPServer(mockBackend);

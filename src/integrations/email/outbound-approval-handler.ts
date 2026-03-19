@@ -93,8 +93,10 @@ export class OutboundApprovalHandler {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                     logger.error({ err: error, msg: 'Failed to send error editReply' });
                 }
+                // Stryker restore BlockStatement
             }
         }
+        // Stryker restore BlockStatement
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
@@ -146,6 +148,7 @@ export class OutboundApprovalHandler {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uid, msg: 'Failed to process reject modal submit' });
         }
+        // Stryker restore BlockStatement
     }
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
@@ -190,6 +193,7 @@ export class OutboundApprovalHandler {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                     logger.warn({ err: error, uid, email, msg: 'Failed to add recipient to allowlist' });
                 }
+                // Stryker restore BlockStatement
             }
 
             const updatedEmbed = new EmbedBuilder()
@@ -217,7 +221,9 @@ export class OutboundApprovalHandler {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.error({ err: error, msg: 'Failed to send error editReply for select menu' });
             }
+            // Stryker restore BlockStatement
         }
+        // Stryker restore BlockStatement
     }
 
     private async handleApprove(interaction: ButtonInteraction, uid: number): Promise<void> {
@@ -254,6 +260,7 @@ export class OutboundApprovalHandler {
             await this.handleApprove(interaction, uid);
             return;
         }
+        // Stryker restore BlockStatement
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator,ArrayDeclaration: deduplicate in case to appears in cc
         const allRecipients = [...new Set([...toAddresses, ...ccAddresses])];

@@ -1894,6 +1894,51 @@ describe('runReconciliation', () => {
                 && call.args[0].input.ExpressionAttributeValues?.[':skPrefix'] === 'PATH#');
             expect(phaseBTagQueryCalls.length).toBeGreaterThanOrEqual(1);
         });
+
+        test('should increment errors and abort tag scan when scanTagItems query fails (all retries exhausted)', async () => {
+            // GSI2 TAG_COUNTS returns one tag
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
+
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolves({
+                Items: [{ PK: 'TAG#fail-tag', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#fail-tag', count: 1 }],
+            });
+
+            // Per-tag begins_with query fails with non-throttling error → retryWithBackoff returns undefined
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                ExpressionAttributeValues: { ':pk': 'TAG#fail-tag', ':skPrefix': 'PATH#' },
+            }).rejects(new Error('InternalServerError'));
+
+            const result = await runReconciliation(deps, options);
+
+            // scanTagItems should increment errors and break out of its loop
+            expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
+        });
+
+        test('should increment errors and return early when getAllTagNames fails in Phase B', async () => {
+            ddbMock.on(QueryCommand, {
+                IndexName: 'GSI1',
+            }).resolves({ Items: [] }); // Phase A
+
+            // GSI2 TAG_COUNTS query fails with non-throttling error → getAllTagNames returns undefined
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).rejects(new Error('InternalServerError'));
+
+            const result = await runReconciliation(deps, options);
+
+            // runPhaseB should increment errors and return early (no tags processed)
+            expect(result.phaseB.errors).toBeGreaterThanOrEqual(1);
+            expect(result.phaseB.itemsScanned).toBe(0);
+        });
     });
 
     describe('Phase C - Verify tag counts', () => {

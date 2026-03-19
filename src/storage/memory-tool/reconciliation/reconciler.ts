@@ -665,7 +665,6 @@ async function scanTagItems(
             /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.warn({ tag, msg: 'Failed to query tag index items' });
             /* Stryker restore StringLiteral,ObjectLiteral */
-            // Stryker disable next-line UpdateOperator: Error increment in uncovered error path
             ctx.progress.errors++;
             break;
         }
@@ -711,7 +710,6 @@ async function runPhaseB(
         /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
         logger.warn({ msg: 'Failed to enumerate tags for Phase B' });
         /* Stryker restore StringLiteral,ObjectLiteral */
-        // Stryker disable next-line UpdateOperator: Error increment in uncovered error path
         progress.errors++;
         progress.endTime = new Date();
         return progress;
