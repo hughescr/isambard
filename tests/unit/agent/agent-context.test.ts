@@ -6,7 +6,7 @@ import { createGuildId, createChannelId, createUserId, type DiscordMessageContex
 import { mockLogger, mockQuery } from '../../setup';
 
 // mockQuery is typed from its default implementation; cast to allow edge-case generator implementations in tests
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mockQuery default typing doesn't cover edge-case generator implementations
 const mockQueryImpl = mockQuery as { mockImplementation: (fn: (_: unknown) => any) => void } & typeof mockQuery;
 
 describe('createClaudeAgent context integration', () => {
