@@ -26,7 +26,7 @@ bun run mutate
 ```
 Target: 100% mutation score (break threshold in stryker.conf.mjs). If mutants survive, tests are incomplete.
 
-**Claude Code Note**: When running mutation testing, use `dangerouslyDisableSandbox: true` as Stryker requires filesystem access outside the sandbox.
+**Sandbox Note**: `reports/stryker-incremental.json` is protected by `denyWrite` in project sandbox settings. Run mutation testing with `dangerouslyDisableSandbox: true` so Stryker can update its incremental cache.
 
 ### Codex Consultation
 Consult Codex for:

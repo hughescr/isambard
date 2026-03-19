@@ -38,14 +38,8 @@
     "agent-sdk-dev@claude-plugins-official": true
   },
   "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true,
     "filesystem": {
       "denyWrite": ["./reports/stryker-incremental.json"]
-    },
-    "network": {
-      "allowAllUnixSockets": true,
-      "allowLocalBinding": true
     }
   },
   "hooks": {
