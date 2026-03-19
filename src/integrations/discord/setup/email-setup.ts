@@ -27,15 +27,17 @@ import { retryAsync } from '@/utils';
 // ---------------------------------------------------------------------------
 
 export interface EmailSetupOptions {
-    emailConfig:   EmailConfig
-    docClient:     DynamoDBDocumentClient
-    tableName:     string
+    emailConfig:        EmailConfig
+    docClient:          DynamoDBDocumentClient
+    tableName:          string
     /** Discord client instance */
-    client:        Client
+    client:             Client
     /** Discord bot token for slash command registration */
-    botToken:      string
+    botToken:           string
     /** Discord application ID for slash command registration */
-    applicationId: string
+    applicationId:      string
+    /** Admin Discord user ID for authorization checks */
+    adminDiscordUserId: string
 }
 
 export interface EmailSetupResult {
@@ -69,7 +71,7 @@ export interface EmailSetupResult {
  * @returns Email components for lifecycle management
  */
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
-    const { emailConfig, docClient, tableName, client, botToken, applicationId } = options;
+    const { emailConfig, docClient, tableName, client, botToken, applicationId, adminDiscordUserId } = options;
 
     // Create classifier, allowlist
     const classifier = new EmailClassifier();
@@ -126,7 +128,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
-    const reviewHandler = new ReviewHandler({ wildDuckClient, allowlist, adminDiscordUserId: emailConfig.adminDiscordUserId });
+    const reviewHandler = new ReviewHandler({ wildDuckClient, allowlist, adminDiscordUserId });
 
     // Create rate limiter for outbound email
     // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring

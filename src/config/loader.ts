@@ -81,11 +81,11 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                     : undefined,
             }
             : undefined,
-        email: resources.EmailUser.value
+        adminDiscordUserId: resources.AdminDiscordUserId.value,
+        email:              resources.EmailUser.value
             ? {
                 user:                  resources.EmailUser.value,
                 password:              resources.EmailPassword.value,
-                adminDiscordUserId:    resources.AdminDiscordUserId.value,
                 adminDiscordChannelId: resources.AdminDiscordChannelId.value,
                 wildDuckApiUrl:        resources.WildDuckApiUrl.value,
             }

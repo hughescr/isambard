@@ -1,7 +1,8 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, type QuestionRegistry  } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, type QuestionRegistry  } from '@/agent';
 import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
+import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { SendRateLimiter } from '@/integrations/email';
 import type { MemoryToolBackend, MemoryPath } from '@/storage';
@@ -89,6 +90,16 @@ export interface MCPServersOptions {
      * Optional callback to request admin approval for an outbound Bluesky DM.
      */
     bskySendDMApprovalRequest?: (text: string, targetHandles: string[], convoId: string) => Promise<void>
+
+    /**
+     * Optional CalDAV client for calendar integration.
+     */
+    caldavClient?: CalDAVClient
+
+    /**
+     * Optional CalDAV calendar registry backend.
+     */
+    caldavRegistry?: CalendarRegistryBackend
 }
 
 /**
@@ -116,7 +127,12 @@ export interface MCPServers {
     bskyMcpServer?: McpServerConfig
 
     /**
-     * Wikipedia MCP server for encyclopedia lookups.
+     * CalDAV MCP server for calendar queries.
+     */
+    caldavMcpServer?: McpServerConfig
+
+    /**
+     * Wikipedia MCP server for random article discovery.
      */
     wikipediaMcpServer?: McpServerConfig
 }
@@ -190,10 +206,18 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         })
         : undefined;
 
+    const caldavMcpServer = options.caldavClient && options.caldavRegistry
+        ? createCaldavMCPServer({
+            client:   options.caldavClient,
+            registry: options.caldavRegistry,
+        })
+        : undefined;
+
     return {
         memoryMcpServer,
         discordMcpServer,
         inboxMcpServer,
         bskyMcpServer,
+        caldavMcpServer,
     };
 }

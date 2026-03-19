@@ -29,6 +29,7 @@ import {
 } from './state';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker  } from '@/agent';
 import type { DiscordConfig } from '@/config';
+import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { AllowlistCommandHandler } from '@/integrations/email';
 
 /**
@@ -146,6 +147,12 @@ export interface DiscordBotOptions {
      * If provided, handles /allowlist interactions for both email and Bluesky allowlists.
      */
     allowlistHandler?: AllowlistCommandHandler
+
+    /**
+     * Optional calendar command handler for the /calendar slash command.
+     * If provided, handles /calendar interactions for CalDAV calendar management.
+     */
+    calendarHandler?: CalendarCommandHandler
 }
 
 /**
@@ -214,7 +221,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -372,6 +379,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'allowlist') {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
                 await (allowlistHandler ? allowlistHandler.handle(interaction) : interaction.reply({ content: 'Allowlist management is not currently available.', flags: MessageFlags.Ephemeral }));
+            } else if(interaction.isChatInputCommand() && interaction.commandName === 'calendar') {
+                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+                await (calendarHandler ? calendarHandler.handle(interaction) : interaction.reply({ content: 'Calendar management is not currently available.', flags: MessageFlags.Ephemeral }));
             }
         });
 

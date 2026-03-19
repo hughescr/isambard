@@ -60,18 +60,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -87,7 +81,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -135,18 +130,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -162,7 +151,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -302,18 +292,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -329,7 +313,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -473,18 +458,12 @@ describe('createApp', () => {
                     oauthToken: '', // Empty string (falsy)
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -500,7 +479,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -606,18 +586,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123', // Truthy
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -633,7 +607,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -741,18 +716,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123', // Truthy
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -768,7 +737,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -880,18 +850,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123', // Truthy
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -907,7 +871,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -993,18 +958,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123', // Truthy
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -1020,7 +979,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -1070,18 +1030,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -1097,7 +1051,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -1150,18 +1105,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -1177,7 +1126,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -1225,18 +1175,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -1252,7 +1196,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },
@@ -1396,18 +1341,12 @@ describe('createApp', () => {
                     oauthToken: 'test-oauth-token-123',
                     mainModel:  'sonnet',
                 },
-                caldav: {
-                    url:      'https://caldav.example.com',
-                    username: 'user',
-                    password: 'password',
-                },
                 email: {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
                     sseReconnectDelayMs:            5000,
                     maxBodySizeBytes:               50_000,
-                    adminDiscordUserId:             '423276934781468692',
                     adminDiscordChannelId:          '987654321098765432',
                     wildDuckApiUrl:                 'https://wildduck.example.com',
                     sendReservoirCapacity:          24,
@@ -1423,7 +1362,8 @@ describe('createApp', () => {
                         idleRefreshIntervalMs: 300_000,
                     },
                 },
-                box: {
+                adminDiscordUserId: '423276934781468692',
+                box:                {
                     clientId:     'box-client-id',
                     clientSecret: 'box-secret',
                 },

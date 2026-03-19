@@ -266,6 +266,7 @@ describe('Bot Lifecycle Integration', () => {
                 memoryMcpServer:            mockMemoryMcp,
                 discordMcpServer:           expect.any(Object),
                 inboxMcpServer:             expect.any(Object),
+                caldavMcpServer:            expect.any(Object),
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
                 mainModel:                  'sonnet',

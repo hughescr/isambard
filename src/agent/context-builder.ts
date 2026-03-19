@@ -8,6 +8,7 @@
 import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 import type { BlueskyClient } from '@/integrations/bsky';
+import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent } from '@/integrations/caldav';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
 
@@ -29,6 +30,12 @@ export interface BskyDMService {
     client: BlueskyClient
 }
 
+/** Calendar service dependency for calendar context injection */
+export interface CalendarService {
+    client:   CalDAVClient
+    registry: CalendarRegistryBackend
+}
+
 export interface RecentEventsResult {
     items:      MemoryToolItemData[]
     isFallback: boolean
@@ -47,6 +54,7 @@ export interface ContextBuilderOptions {
     summarizeEventBatches?: SummarizeEventBatchesFn  // Optional DI for event summarization
     emailService?:          EmailService        // Optional email service for perch inbox section
     bskyDMService?:         BskyDMService       // Optional Bluesky DM service for perch DM section
+    calendarService?:       CalendarService     // Optional calendar service for context injection
 }
 
 export interface ContextBuilder {
@@ -253,6 +261,7 @@ export class ContextBuilderImpl implements ContextBuilder {
     readonly #summarizeEventBatchesFn: SummarizeEventBatchesFn | undefined;
     readonly #emailService:            EmailService | undefined;
     readonly #bskyDMService:           BskyDMService | undefined;
+    readonly #calendarService:         CalendarService | undefined;
 
     constructor(options: ContextBuilderOptions) {
         this.#backend = options.backend;
@@ -266,6 +275,7 @@ export class ContextBuilderImpl implements ContextBuilder {
         this.#summarizeEventBatchesFn = options.summarizeEventBatches;
         this.#emailService = options.emailService;
         this.#bskyDMService = options.bskyDMService;
+        this.#calendarService = options.calendarService;
 
         this.#maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
         this.#maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
@@ -341,6 +351,84 @@ export class ContextBuilderImpl implements ContextBuilder {
         }
 
         return eventSections.join('\n\n');
+    }
+
+    /**
+     * Build the calendar context section for a specific user.
+     * Returns formatted calendar section string, or undefined if no service, no calendars, or no events.
+     */
+    async #buildCalendarSection(userId: string, userTimezone?: string, now: Date = new Date()): Promise<string | undefined> {
+        if(!this.#calendarService) {
+            return undefined;
+        }
+
+        // Stryker disable BlockStatement: try-catch guards calendar errors from breaking user message prefix
+        try {
+            const servers = await this.#calendarService.registry.getAllCalendars(userId);
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no servers = no section
+            if(servers.length === 0) {
+                return undefined;
+            }
+
+            const events = await this.#calendarService.client.getContextEvents(servers, now);
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section
+            if(events.length === 0) {
+                return undefined;
+            }
+
+            // Stryker disable next-line StringLiteral: UTC fallback timezone is configuration — display difference only
+            const timezone = userTimezone ?? 'UTC';
+            return formatCalendarContext(events, now, timezone);
+        } catch (error) {
+            logger.warn({ error, userId }, 'Failed to load calendar context');
+        }
+        // Stryker restore BlockStatement
+        return undefined;
+    }
+
+    /**
+     * Build the calendar context section for all registered users (for perch sessions).
+     * Loads all users' calendars and merges their events, using UTC as the display timezone.
+     * Returns formatted calendar section string, or undefined if no service, no users, or no events.
+     */
+    async #buildPerchCalendarSection(now: Date = new Date()): Promise<string | undefined> {
+        if(!this.#calendarService) {
+            return undefined;
+        }
+
+        // Stryker disable BlockStatement: try-catch guards calendar errors from breaking perch context
+        try {
+            const userIds = await this.#calendarService.registry.listRegisteredUserIds();
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no users = no section
+            if(userIds.length === 0) {
+                return undefined;
+            }
+
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for allEvents
+            const allEvents: CalendarEvent[] = [];
+            for(const userId of userIds) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited CalDAV API, few users
+                const servers = await this.#calendarService.registry.getAllCalendars(userId);
+                // Stryker disable next-line ConditionalExpression,EqualityOperator: skip users with no servers
+                if(servers.length > 0) {
+                    // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited CalDAV API
+                    const events = await this.#calendarService.client.getContextEvents(servers, now);
+                    allEvents.push(...events);
+                }
+            }
+
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section
+            if(allEvents.length === 0) {
+                return undefined;
+            }
+
+            // Stryker disable next-line StringLiteral: UTC timezone for perch is configuration — display difference only
+            return formatCalendarContext(allEvents, now, 'UTC');
+        } catch (error) {
+            logger.warn({ error }, 'Failed to load perch calendar context');
+        }
+        // Stryker restore BlockStatement
+        return undefined;
     }
 
     /**
@@ -668,13 +756,19 @@ export class ContextBuilderImpl implements ContextBuilder {
             sections.push(`[About this user]\n${userMemories}`);
         }
 
-        // 3. Hot state (sigmoid-scored, tiered)
+        // 3. Calendar context (optional — skip if no calendar service configured)
+        const calendarSection = await this.#buildCalendarSection(userId, userTimezone, now);
+        if(calendarSection) {
+            sections.push(calendarSection);
+        }
+
+        // 4. Hot state (sigmoid-scored, tiered)
         const hotState = await this.loadHotState(now);
         if(hotState) {
             sections.push(`[Current state]\n${hotState}`);
         }
 
-        // 4. Recent events (tiered display)
+        // 5. Recent events (tiered display)
         // Stryker disable ArithmeticOperator: Config constant calculation for event loading limit
         const eventsResult = await this.loadRecentEvents(
             this.#maxEventFullItems + this.#maxEventBatchSize * 4,
@@ -696,6 +790,7 @@ export class ContextBuilderImpl implements ContextBuilder {
         return `${sections.join('\n\n')}\n\n`;
     }
 
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- perch context aggregates 7 optional sections (time, state, events, calendar, inbox, rejected drafts, bsky DMs); each section adds one branch
     async buildPerchContext(now: Date = new Date()): Promise<string> {
         // 1. Time header (no user timezone for perch)
         // Stryker disable next-line ArrayDeclaration: Equivalent - time header is always first element
@@ -743,19 +838,25 @@ export class ContextBuilderImpl implements ContextBuilder {
             sections.push(`## Recent Events\n${eventSections.join('\n\n')}`);
         }
 
-        // 4. Email inbox summary (optional — skip if no email service configured)
+        // 4. Calendar context (optional — skip if no calendar service configured)
+        const perchCalendarSection = await this.#buildPerchCalendarSection(now);
+        if(perchCalendarSection) {
+            sections.push(perchCalendarSection);
+        }
+
+        // 5. Email inbox summary (optional — skip if no email service configured)
         const inboxSection = await this.#buildEmailInboxSection(now);
         if(inboxSection) {
             sections.push(inboxSection);
         }
 
-        // 5. Rejected drafts context (outbound emails rejected by admin)
+        // 6. Rejected drafts context (outbound emails rejected by admin)
         const rejectedDraftsSection = await this.#buildRejectedDraftSection();
         if(rejectedDraftsSection) {
             sections.push(rejectedDraftsSection);
         }
 
-        // 6. Bluesky DM summary (optional — skip if no bsky service configured)
+        // 7. Bluesky DM summary (optional — skip if no bsky service configured)
         const bskyDMSection = await this.#buildBskyDMSection();
         if(bskyDMSection) {
             sections.push(bskyDMSection);

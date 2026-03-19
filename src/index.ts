@@ -8,6 +8,7 @@ import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessio
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient } from '@/integrations/bsky';
+import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, registerCalendarCommand } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { AllowlistCommandHandler } from '@/integrations/email';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
@@ -77,12 +78,13 @@ export async function createApp(): Promise<App> {
         // Stryker disable BlockStatement: try-catch wraps email setup - error handling
         try {
             emailSetup = await setupEmail({
-                emailConfig:   config.email,
-                docClient:     storage.docClient,
-                tableName:     storage.tableName,
-                client:        discordInfra.discordClient,
-                botToken:      config.discord.botToken,
-                applicationId: config.discord.applicationId,
+                emailConfig:        config.email,
+                docClient:          storage.docClient,
+                tableName:          storage.tableName,
+                client:             discordInfra.discordClient,
+                botToken:           config.discord.botToken,
+                applicationId:      config.discord.applicationId,
+                adminDiscordUserId: config.adminDiscordUserId,
             });
         } catch (err) {
             logger.error({
@@ -151,7 +153,17 @@ export async function createApp(): Promise<App> {
     // Build bsky DM service from bskyClient (if available and safety rails active)
     const bskyDMService = bskyClient ? { client: bskyClient } : undefined;
 
-    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService);
+    // Create CalDAV components (always available — DynamoDB is required)
+    const caldavClient = new CalDAVClient();
+    const caldavRegistry = new CalendarRegistryBackend(storage.docClient, storage.tableName);
+    const calendarService = { client: caldavClient, registry: caldavRegistry };
+    const calendarHandler = new CalendarCommandHandler(
+        caldavClient,
+        caldavRegistry,
+        config.adminDiscordUserId
+    );
+
+    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService);
     const mcpServers = createMCPServers({
         memoryBackend:             storage.memoryBackend,
         messageSearchService:      discordInfra.messageSearchService,
@@ -167,6 +179,8 @@ export async function createApp(): Promise<App> {
         bskyRateLimiter:           bskySetup?.rateLimiter,
         bskySendApprovalRequest:   bskySetup?.sendApprovalRequest,
         bskySendDMApprovalRequest: bskySetup?.sendDMApprovalRequest,
+        caldavClient,
+        caldavRegistry,
     });
 
     // Load plugins and create agent
@@ -178,6 +192,7 @@ export async function createApp(): Promise<App> {
         inboxMcpServer:             mcpServers.inboxMcpServer,
         emailMcpServer:             emailSetup?.emailMcpServer,
         bskyMcpServer:              mcpServers.bskyMcpServer,
+        caldavMcpServer:            mcpServers.caldavMcpServer,
         wikipediaMcpServer:         mcpServers.wikipediaMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
@@ -201,7 +216,7 @@ export async function createApp(): Promise<App> {
             emailSetup.allowlist,
             // Stryker disable next-line ConditionalExpression,ObjectLiteral: optional bsky allowlist wiring
             bskySetup?.allowlist ?? { addEntry: async () => { /* no-op */ }, removeEntry: async () => { /* no-op */ }, list: async () => [] },
-            config.email!.adminDiscordUserId,
+            config.adminDiscordUserId,
             resolveHandleToDid
         )
         : undefined;
@@ -223,6 +238,7 @@ export async function createApp(): Promise<App> {
         emailSetup,
         bskySetup,
         allowlistHandler,
+        calendarHandler,
     });
 
     let isStopping = false;
@@ -233,6 +249,7 @@ export async function createApp(): Promise<App> {
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Starting Isambard application...');
             await bot.start();
+            await registerCalendarCommand(config.discord.botToken, config.discord.applicationId);
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.start();

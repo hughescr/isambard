@@ -5,7 +5,7 @@
  */
 
 export { createClaudeAgent, type ClaudeAgent, type ClaudeAgentOptions, extractToolUses, redactSensitiveArgs } from './agent';
-export { createContextBuilder, ContextBuilderImpl, formatMemoryPreview, type ContextBuilder, type ContextBuilderOptions, type RecentEventsResult, type EmailService, type WildDuckService, type BskyDMService } from './context-builder';
+export { createContextBuilder, ContextBuilderImpl, formatMemoryPreview, type ContextBuilder, type ContextBuilderOptions, type RecentEventsResult, type EmailService, type WildDuckService, type BskyDMService, type CalendarService } from './context-builder';
 export { EventDeltaTracker } from './event-delta-tracker';
 export { summarizeEventBatches, type EventBatchSummary, type SummarizeEventBatchesFn } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
@@ -50,6 +50,9 @@ export { createInboxMCPServer } from './inbox-mcp-server';
 
 // Bsky MCP Server
 export { createBskyMCPServer } from './bsky-mcp-server';
+
+// CalDAV MCP Server
+export { createCaldavMCPServer, type CaldavMCPServerOptions } from './caldav-mcp-server';
 
 // MCP Helpers
 export { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';

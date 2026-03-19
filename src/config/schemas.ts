@@ -19,13 +19,6 @@ export const agentConfigSchema = z.object({
     mainModel:  z.string().min(1).default('opus'),
 });
 
-// CalDAV: url (validated), username, password (non-empty strings)
-export const caldavConfigSchema = z.object({
-    url:      z.url(),
-    username: z.string().min(1),
-    password: z.string().min(1),
-});
-
 // Email config
 export const emailConfigSchema = z.object({
     user:                           z.string().min(1),
@@ -34,7 +27,6 @@ export const emailConfigSchema = z.object({
     pollFallbackMs:                 z.number().int().positive().default(300_000),    // 5 min
     sseReconnectDelayMs:            z.number().int().positive().default(5000),
     maxBodySizeBytes:               z.number().int().positive().default(50_000),
-    adminDiscordUserId:             z.string().min(1),
     adminDiscordChannelId:          z.string().min(1),
     wildDuckApiUrl:                 z.url(),
     sendReservoirCapacity:          z.number().int().positive().default(24),
@@ -204,23 +196,22 @@ export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
 
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({
-    app:            appConfigSchema,
-    agent:          agentConfigSchema,
-    discord:        discordConfigSchema,
-    perch:          perchConfigSchema,
-    reconciliation: reconciliationConfigSchema.optional(),
+    app:                appConfigSchema,
+    agent:              agentConfigSchema,
+    discord:            discordConfigSchema,
+    perch:              perchConfigSchema,
+    reconciliation:     reconciliationConfigSchema.optional(),
+    adminDiscordUserId: z.string().min(1),
     // Planned integrations (optional until implemented):
-    caldav:         caldavConfigSchema.optional(),
-    email:          emailConfigSchema.optional(),
-    box:            boxConfigSchema.optional(),
-    bsky:           bskyConfigSchema.optional(),
+    email:              emailConfigSchema.optional(),
+    box:                boxConfigSchema.optional(),
+    bsky:               bskyConfigSchema.optional(),
 });
 
 // Type exports
 export type LogLevel = z.infer<typeof logLevelSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
-export type CaldavConfig = z.infer<typeof caldavConfigSchema>;
 export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type BoxConfig = z.infer<typeof boxConfigSchema>;

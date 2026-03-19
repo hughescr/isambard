@@ -2,7 +2,6 @@ import { describe, test, expect } from 'bun:test';
 import {
     appConfigSchema,
     agentConfigSchema,
-    caldavConfigSchema,
     emailConfigSchema,
     discordConfigSchema,
     boxConfigSchema,
@@ -92,35 +91,10 @@ describe('agentConfigSchema', () => {
     });
 });
 
-describe('caldavConfigSchema', () => {
-    test('should reject invalid URL', () => {
-        const invalidConfig = {
-            url:      'not-a-valid-url',
-            username: 'user@example.com',
-            password: 'secure-password',
-        };
-
-        const result = caldavConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
-    });
-
-    test('should accept http URLs', () => {
-        const config = {
-            url:      'http://localhost:8080/caldav',
-            username: 'user',
-            password: 'pass',
-        };
-
-        const result = caldavConfigSchema.safeParse(config);
-        expect(result.success).toBe(true);
-    });
-});
-
 describe('emailConfigSchema', () => {
     const validEmailBase = {
         user:                  'user@example.com',
         password:              'secure-password',
-        adminDiscordUserId:    '111111111111111111',
         adminDiscordChannelId: '987654321098765432',
         wildDuckApiUrl:        'https://wildduck.example.com',
     };
@@ -170,26 +144,6 @@ describe('emailConfigSchema', () => {
             expect(result.data.sendReservoirRefillRatePerHour).toBe(1);
             expect(result.data.sendReservoirRefillRatePerHour).toBeGreaterThan(0);
         }
-    });
-
-    test('should require adminDiscordUserId (no default)', () => {
-        const configWithoutCraigDiscordUserId = {
-            ...validEmailBase,
-            adminDiscordUserId: undefined,
-        };
-
-        const result = emailConfigSchema.safeParse(configWithoutCraigDiscordUserId);
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject empty adminDiscordUserId', () => {
-        const invalidConfig = {
-            ...validEmailBase,
-            adminDiscordUserId: '',
-        };
-
-        const result = emailConfigSchema.safeParse(invalidConfig);
-        expect(result.success).toBe(false);
     });
 
     test('should accept custom values for all optional fields', () => {
@@ -380,19 +334,14 @@ describe('configSchema', () => {
             agent: {
                 oauthToken: 'test-oauth-token-12345',
             },
-            caldav: {
-                url:      'https://caldav.example.com',
-                username: 'user@example.com',
-                password: 'secure-password',
-            },
             email: {
                 user:                  'user@example.com',
                 password:              'secure-password',
-                adminDiscordUserId:    '111111111111111111',
                 adminDiscordChannelId: '987654321098765432',
                 wildDuckApiUrl:        'https://wildduck.example.com',
             },
-            discord: {
+            adminDiscordUserId: '111111111111111111',
+            discord:            {
                 botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                 applicationId: '123456789012345678',
                 homeGuildId:   createGuildId('home-guild-123'),
@@ -422,19 +371,14 @@ describe('configSchema', () => {
             agent: {
                 oauthToken: 'test-token',
             },
-            caldav: {
-                url:      'https://caldav.example.com',
-                username: 'user@example.com',
-                password: 'secure-password',
-            },
             email: {
                 user:                  'user@example.com',
                 password:              'secure-password',
-                adminDiscordUserId:    '111111111111111111',
                 adminDiscordChannelId: '987654321098765432',
                 wildDuckApiUrl:        'https://wildduck.example.com',
             },
-            discord: {
+            adminDiscordUserId: '111111111111111111',
+            discord:            {
                 botToken:      'token',
                 applicationId: '123',
                 homeGuildId:   createGuildId('home-guild-123'),
@@ -462,7 +406,8 @@ describe('configSchema', () => {
             agent: {
                 oauthToken: 'test-token',
             },
-            discord: {
+            adminDiscordUserId: '111111111111111111',
+            discord:            {
                 botToken:      'token',
                 applicationId: '123',
                 homeGuildId:   createGuildId('home-guild-123'),

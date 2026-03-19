@@ -47,10 +47,12 @@
     "lodash-es": "^4.17.23",
     "luxon": "^3.7.2",
     "mrmime": "^2.0.1",
+    "node-ical": "^0.25.6",
     "p-limit": "^7.3.0",
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",
     "sst": "^4.3.5",
+    "tsdav": "^2.1.8",
     "zod": "^4.3.6"
   },
   "devDependencies": {

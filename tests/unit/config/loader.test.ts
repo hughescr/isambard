@@ -21,7 +21,7 @@ function createMockResources(
         // Email secrets default to undefined (email config is optional)
         EmailUser:             { value: undefined },
         EmailPassword:         { value: undefined },
-        AdminDiscordUserId:    { value: undefined },
+        AdminDiscordUserId:    { value: '111111111111111111' },
         AdminDiscordChannelId: { value: undefined },
         WildDuckApiUrl:        { value: undefined },
         // Bluesky secrets default to undefined (bsky config is optional)
@@ -77,7 +77,6 @@ describe.concurrent('loadConfig', () => {
             expect(config.discord.applicationId).toBe('app-id-456');
 
             // Planned integrations should be undefined
-            expect(config.caldav).toBeUndefined();
             expect(config.email).toBeUndefined();
             expect(config.box).toBeUndefined();
         });
@@ -306,11 +305,11 @@ describe.concurrent('loadConfig', () => {
             expect(config.email?.sendReservoirRefillRatePerHour).toBe(1);
         });
 
-        test('should load adminDiscordUserId when set', () => {
+        test('should load top-level adminDiscordUserId when email is set', () => {
             const config = loadConfig(emailResources());
 
-            expect(config.email?.adminDiscordUserId).toBe('111111111111111111');
-            expect(config.email?.adminDiscordUserId.length).toBeGreaterThan(0);
+            expect(config.adminDiscordUserId).toBe('111111111111111111');
+            expect(config.adminDiscordUserId.length).toBeGreaterThan(0);
         });
 
         test('should fail validation when wildDuckApiUrl is not set', () => {
@@ -474,6 +473,36 @@ describe('loadConfig - Perch Config', () => {
         const config = loadConfig(resources);
         expect(config.perch?.testMode?.triggerOnStartup).toBe(true);
         expect(config.perch?.testMode?.forceSlot).toBeUndefined();
+    });
+});
+
+describe.concurrent('loadConfig - adminDiscordUserId', () => {
+    test('should throw when AdminDiscordUserId is not set (now required)', () => {
+        const resources = createMockResources({
+            AdminDiscordUserId: { value: undefined },
+        });
+
+        expect(() => loadConfig(resources)).toThrow(/adminDiscordUserId/i);
+    });
+
+    test('should load top-level adminDiscordUserId when AdminDiscordUserId is set', () => {
+        const resources = createMockResources({
+            AdminDiscordUserId: { value: '111111111111111111' },
+        });
+        const config = loadConfig(resources);
+
+        expect(config.adminDiscordUserId).toBe('111111111111111111');
+    });
+
+    test('should load adminDiscordUserId independent of email config', () => {
+        const resources = createMockResources({
+            AdminDiscordUserId: { value: '222222222222222222' },
+            // EmailUser is NOT set — email config will be undefined
+        });
+        const config = loadConfig(resources);
+
+        expect(config.email).toBeUndefined();
+        expect(config.adminDiscordUserId).toBe('222222222222222222');
     });
 });
 
