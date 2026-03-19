@@ -39,7 +39,14 @@
   },
   "sandbox": {
     "enabled": true,
-    "autoAllowBashIfSandboxed": true
+    "autoAllowBashIfSandboxed": true,
+    "filesystem": {
+      "denyWrite": ["./reports/stryker-incremental.json"]
+    },
+    "network": {
+      "allowAllUnixSockets": true,
+      "allowLocalBinding": true
+    }
   },
   "hooks": {
     "PreToolUse": [
