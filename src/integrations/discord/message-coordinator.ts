@@ -407,9 +407,10 @@ export class MessageCoordinator {
             });
             // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
             if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
+                const evictCount = state.pendingMessages.length - MAX_PENDING_MESSAGES;
+                state.pendingMessages.splice(0, evictCount);
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.debug({ evicted: state.pendingMessages.length - MAX_PENDING_MESSAGES, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction' });
-                state.pendingMessages.splice(0, state.pendingMessages.length - MAX_PENDING_MESSAGES);
+                logger.debug({ evicted: evictCount, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (Case 1 push)' });
             }
 
             // Start or reset debounce timer
@@ -441,8 +442,6 @@ export class MessageCoordinator {
                     state.pendingMessages.unshift(...reQueuedOriginals);
                     // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
                     if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
-                        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                        logger.debug({ evicted: state.pendingMessages.length - MAX_PENDING_MESSAGES, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (unshift)' });
                         state.pendingMessages.length = MAX_PENDING_MESSAGES; // Truncate from end (keep re-queued originals at front)
                     }
 
@@ -468,9 +467,9 @@ export class MessageCoordinator {
             });
             // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
             if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.debug({ evicted: state.pendingMessages.length - MAX_PENDING_MESSAGES, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction' });
                 state.pendingMessages.splice(0, state.pendingMessages.length - MAX_PENDING_MESSAGES);
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.debug({ max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (Case 2)' });
             }
 
             // Reset debounce timer

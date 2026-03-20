@@ -43,7 +43,7 @@ export class OutboundApprovalHandler {
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
-        // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent; removing return is masked by the NaN guard on uid below (parts[1] is undefined when length < 2)
         if(parts.length < 2) {
             return;
         }

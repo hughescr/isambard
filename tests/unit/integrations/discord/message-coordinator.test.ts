@@ -4241,7 +4241,9 @@ describe('MessageCoordinator', () => {
 
         it('should cap pendingMessages at 50 when messages arrive during active processing (Case 1)', async () => {
             // Make processor respond to abort quickly so the second call can occur
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            let receivedContextsCase1: DiscordMessageContext[] = [];
+            const slowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+                receivedContextsCase1 = contexts;
                 await new Promise((resolve) => {
                     const t = setTimeout(resolve, 500);
                     abortSignal.addEventListener('abort', () => {
@@ -4263,7 +4265,11 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // Push 60 more messages during active processing (Case 1) — triggers Case 1 eviction
+            // Push 60 more messages during active processing (Case 1) — triggers Case 1 eviction.
+            // With correct code: each push checks the cap incrementally, evicting the oldest.
+            // After all 60 pushes: pendingMessages = [msg-012..msg-061] (50 entries; msg-002..msg-011 dropped)
+            // With BlockStatement mutant (no eviction during push): all 60 accumulate, then the
+            // unshift-path truncation keeps [msg-001..msg-051] — msg-002 would still be present.
             for(let i = 2; i <= 61; i++) {
                 const ctx = { ...mockContext, messageId: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` };
                 const msg = { ...mockMessage, id: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` } as unknown as Message;
@@ -4277,13 +4283,17 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
             await Promise.resolve();
 
-            // The second call should receive at most MAX_PENDING_MESSAGES (50) contexts
-            // (capped at 50 total pending messages)
+            // The second call should receive exactly MAX_PENDING_MESSAGES (50) contexts.
+            // With correct eviction: msg-002..msg-011 are evicted during push (incremental cap),
+            // msg-001 re-queued at front, msg-061 dropped by unshift-path truncation.
             expect(processorMock).toHaveBeenCalledTimes(2);
-            const secondCallArgs = processorMock.mock.calls[1] as unknown[];
-            const contexts = secondCallArgs[0] as DiscordMessageContext[];
-            // pendingMessages was capped at 50, so total contexts ≤ 50
-            expect(contexts.length).toBeLessThanOrEqual(50);
+            const messageIds = receivedContextsCase1.map(ctx => ctx.messageId);
+            expect(messageIds).toHaveLength(50);
+            // msg-002 must NOT be present — it was evicted by the incremental push-cap at Case 1
+            // (if BlockStatement mutant removes the eviction, msg-002 would survive to processWithResume)
+            expect(messageIds).not.toContain('msg-002');
+            // msg-001 (original, re-queued) must be preserved at the front
+            expect(messageIds).toContain('msg-001');
         });
 
         it('should preserve re-queued original messages when unshift causes overflow', async () => {
@@ -4356,6 +4366,104 @@ describe('MessageCoordinator', () => {
             expect(receivedContexts.length).toBeLessThanOrEqual(50);
             // The newest pending message (msg-056) should have been dropped
             expect(messageIds).not.toContain('msg-056');
+        });
+
+        it('should cap pendingMessages at 50 when messages arrive during debounce with no active query (Case 2)', async () => {
+            // Case 2 path: debounce timer is active but no active query (the first query completed
+            // before the debounce expired). Messages arriving in this state go through the Case 2
+            // branch (lines 463-484) which has its own queue-cap logic.
+            //
+            // Setup:
+            // 1. First message → starts processing (first query runs for 50ms)
+            // 2. Second message arrives during processing → Case 1: queued, debounce starts (200ms)
+            // 3. First query completes naturally after 50ms (state.activeQuery cleared), debounce still ticking
+            // 4. 60 more messages arrive → Case 2 (debounce active, no active query): queue capped at 50
+            //
+            // With BlockStatement mutant at line 470: no eviction in Case 2, all 61 messages accumulate
+            // With ArithmeticOperator mutant at line 473 (splice): overshoot removes ALL, only last few survive
+
+            // Re-create coordinator with longer debounce to give time for Case 2 messages
+            coordinator.stop();
+            coordinator = new MessageCoordinator({ debounceMs: 200 });
+
+            let callCount = 0;
+            let receivedContextsCase2: DiscordMessageContext[] = [];
+
+            const case2SlowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+                callCount++;
+                receivedContextsCase2 = contexts;
+                if(callCount === 1) {
+                    // First call: completes naturally after 50ms (well before debounce at 200ms)
+                    await new Promise<void>((resolve) => {
+                        const t = setTimeout(resolve, 50);
+                        abortSignal.addEventListener('abort', () => {
+                            clearTimeout(t);
+                            resolve();
+                        });
+                    });
+                    return {
+                        response:       'First response',
+                        wasInterrupted: abortSignal.aborted,
+                        streamTracker:  new StreamTracker(),
+                    };
+                }
+                // Subsequent calls: complete immediately
+                return {
+                    response:       'Response',
+                    wasInterrupted: false,
+                    streamTracker:  new StreamTracker(),
+                };
+            };
+            coordinator.setProcessor(case2SlowProcessor);
+
+            // Step 1: First message → startProcessing (first query starts)
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Step 2: Second message → Case 1 (active query running, debounce starts at t=10)
+            const msg2Ctx = { ...mockContext, messageId: 'msg-002', content: 'Message 2' };
+            const msg2Msg = { ...mockMessage, id: 'msg-002', content: 'Message 2' } as unknown as Message;
+            coordinator.handleMessage(msg2Ctx, msg2Msg);
+
+            // Step 3: Advance 50ms → first query completes naturally (state.activeQuery cleared)
+            // Debounce (200ms) is still ticking
+            jest.advanceTimersByTime(50);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Step 4: Push 60 messages into Case 2 (debounce active, no active query)
+            // With correct code: incremental eviction caps at 50 (oldest dropped)
+            // With BlockStatement mutant: no eviction, all 60 + msg-002 = 61+ accumulate
+            // With ArithmeticOperator mutant: splice removes everything, only last few survive
+            for(let i = 3; i <= 62; i++) {
+                const ctx = { ...mockContext, messageId: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` };
+                const msg = { ...mockMessage, id: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` } as unknown as Message;
+                coordinator.handleMessage(ctx, msg);
+            }
+
+            // Step 5: Advance past debounce (200ms from msg-002 arrival = t=210 from msg-002)
+            // msg-002 arrived at t=10, debounce fires at t=210, so need 150ms more from t=60
+            jest.advanceTimersByTime(200);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // processWithResume should be called with at most 50 pending messages
+            // (msg-002 + 60 new = 61 total; capped at 50)
+            expect(callCount).toBe(2);
+            const case2MessageIds = receivedContextsCase2.map(ctx => ctx.messageId);
+            // Total must be exactly 50 (capped at 50)
+            expect(case2MessageIds).toHaveLength(50);
+            // Oldest pending message (msg-002) must have been evicted by Case 2 cap
+            // (with BlockStatement mutant, msg-002 would survive)
+            expect(case2MessageIds).not.toContain('msg-002');
+            // Most recent messages should be preserved
+            expect(case2MessageIds).toContain('msg-062');
         });
     });
 });
