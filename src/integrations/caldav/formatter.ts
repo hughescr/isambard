@@ -88,9 +88,16 @@ function formatEventLine(event: CalendarEvent, timezone: string): string {
     } else {
         const startDT   = DateTime.fromJSDate(event.start, { zone: timezone });
         const endDT     = DateTime.fromJSDate(event.end, { zone: timezone });
-        const startTime = startDT.toFormat('h:mm a');
-        const endTime   = endDT.toFormat('h:mm a');
-        line = `- ${startTime} – ${endTime}: ${event.summary}`;
+        const startTime = startDT.toFormat('HH:mm');
+        const endTime   = endDT.toFormat('HH:mm');
+
+        if(timezone === 'UTC') {
+            line = `- ${startTime}–${endTime} UTC: ${event.summary}`;
+        } else {
+            const startUTC = startDT.toUTC().toFormat('HH:mm');
+            const endUTC   = endDT.toUTC().toFormat('HH:mm');
+            line = `- ${startTime}–${endTime} ${timezone} (${startUTC}–${endUTC} UTC): ${event.summary}`;
+        }
     }
 
     // Calendar label

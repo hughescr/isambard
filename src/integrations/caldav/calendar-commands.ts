@@ -1,17 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@hughescr/logger';
 import {
+    ActionRowBuilder,
     ApplicationIntegrationType,
+    ComponentType,
     InteractionContextType,
     MessageFlags,
     REST,
     Routes,
     SlashCommandBuilder,
+    StringSelectMenuBuilder,
     type ChatInputCommandInteraction
 } from 'discord.js';
 import type { CalendarRegistryBackend } from './calendar-registry/backend';
 import { createCalendarServerId } from './calendar-registry/types';
 import type { CalDAVClient } from './client';
+import type { CalendarInfo } from './types';
 
 /**
  * Build the /calendar slash command with subcommands and the 'shared' subcommand group.
@@ -200,6 +204,75 @@ export class CalendarCommandHandler {
         }
     }
 
+    private async selectCalendars(
+        interaction: ChatInputCommandInteraction,
+        calendars:   CalendarInfo[],
+        retryCommand: string
+    ): Promise<CalendarInfo[] | null> {
+        if(calendars.length === 1) {
+            return calendars;
+        }
+
+        const capped   = calendars.slice(0, 25);
+        const customId = `calendar-select-${interaction.id}`;
+        const select   = new StringSelectMenuBuilder()
+            .setCustomId(customId)
+            .setPlaceholder('Select calendars to add')
+            .setMinValues(1)
+            .setMaxValues(capped.length)
+            .addOptions(capped.map((c, i) => ({
+                // Stryker disable next-line MethodExpression: Discord API enforces max 100-char option labels
+                label: c.displayName.slice(0, 100),
+                value: String(i),
+            })));
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+        // Stryker disable next-line StringLiteral: UI prompt text is not behavior-affecting
+        let prompt = `Found ${calendars.length} calendar(s). Select which to add:`;
+        if(calendars.length > 25) {
+            // Stryker disable next-line StringLiteral: UI warning text is not behavior-affecting
+            prompt += `\n⚠️ Only showing the first 25 of ${calendars.length} calendars (Discord limit).`;
+        }
+
+        const message = await interaction.editReply({
+            content:    prompt,
+            components: [row],
+        });
+
+        // Stryker disable BlockStatement: try/catch wraps Discord collector timeout — integration boundary
+        try {
+            // No user filter needed — the reply is ephemeral (only the invoker can see/click it)
+            const response = await message.awaitMessageComponent({
+                componentType: ComponentType.StringSelect,
+                time:          300_000,
+            });
+
+            await response.deferUpdate();
+            const selectedIndices = response.values;
+            // Safe: Discord only returns values we provided (String(0)..String(capped.length-1))
+            return selectedIndices.map(idx => capped[Number(idx)]);
+        } catch (error: unknown) {
+            const isTimeout = error instanceof Error && error.message.includes('reason: time');
+            if(isTimeout) {
+                // Stryker disable next-line StringLiteral: UI timeout message is not behavior-affecting
+                await interaction.editReply({
+                    content:    `Calendar selection timed out. Run \`${retryCommand}\` again to retry.`,
+                    components: [],
+                });
+            } else {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
+                logger.error({ error }, 'Calendar selection failed unexpectedly');
+                // Stryker disable next-line StringLiteral: UI error message is not behavior-affecting
+                await interaction.editReply({
+                    content:    `Calendar selection failed. Run \`${retryCommand}\` again to retry.`,
+                    components: [],
+                });
+            }
+            return null;
+        }
+        // Stryker restore BlockStatement
+    }
+
     private async handleAddServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
         const serverUrl   = interaction.options.getString('server_url') ?? '';
@@ -219,6 +292,11 @@ export class CalendarCommandHandler {
                 return;
             }
 
+            const selected = await this.selectCalendars(interaction, calendars, '/calendar add-server');
+            if(!selected) {
+                return;
+            }
+
             const serverId = createCalendarServerId(randomUUID());
             await this.registry.addServer(userId, {
                 serverId,
@@ -226,21 +304,22 @@ export class CalendarCommandHandler {
                 serverUrl,
                 username,
                 password,
-                calendars: calendars.map(c => ({
+                calendars: selected.map(c => ({
                     calendarPath: c.path,
                     label:        c.displayName,
                 })),
             });
 
-            const calList = calendars.map(c => `  - ${c.displayName}`).join('\n');
+            const calList = selected.map(c => `  - ${c.displayName}`).join('\n');
             await interaction.editReply({
-                content: `Added server "${description}" with ${calendars.length} calendar(s):\n${calList}`,
+                content:    `Added server "${description}" with ${selected.length} calendar(s):\n${calList}`,
+                components: [],
             });
         } catch (error: unknown) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverUrl }, 'Failed to add calendar server');
             const message = error instanceof Error ? error.message : String(error);
-            await interaction.editReply({ content: `Failed to add server: ${message}` });
+            await interaction.editReply({ content: `Failed to add server: ${message}`, components: [] });
         }
         // Stryker restore BlockStatement
     }
@@ -328,6 +407,11 @@ export class CalendarCommandHandler {
                 return;
             }
 
+            const selected = await this.selectCalendars(interaction, calendars, '/calendar shared add-server');
+            if(!selected) {
+                return;
+            }
+
             const serverId = createCalendarServerId(randomUUID());
             await this.registry.addSharedServer({
                 serverId,
@@ -335,21 +419,22 @@ export class CalendarCommandHandler {
                 serverUrl,
                 username,
                 password,
-                calendars: calendars.map(c => ({
+                calendars: selected.map(c => ({
                     calendarPath: c.path,
                     label:        c.displayName,
                 })),
             });
 
-            const calList = calendars.map(c => `  - ${c.displayName}`).join('\n');
+            const calList = selected.map(c => `  - ${c.displayName}`).join('\n');
             await interaction.editReply({
-                content: `Added shared server "${description}" with ${calendars.length} calendar(s):\n${calList}`,
+                content:    `Added shared server "${description}" with ${selected.length} calendar(s):\n${calList}`,
+                components: [],
             });
         } catch (error: unknown) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
             logger.error({ error, serverUrl }, 'Failed to add shared calendar server');
             const message = error instanceof Error ? error.message : String(error);
-            await interaction.editReply({ content: `Failed to add shared server: ${message}` });
+            await interaction.editReply({ content: `Failed to add shared server: ${message}`, components: [] });
         }
         // Stryker restore BlockStatement
     }

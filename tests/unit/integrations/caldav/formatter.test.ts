@@ -28,7 +28,7 @@ describe.concurrent('formatCalendarContext', () => {
             end:     new Date('2026-03-18T17:30:00Z'), // 9:30 AM PT
         });
         const result = formatCalendarContext([event], NOW, TZ);
-        expect(result).toContain('9:00 AM – 9:30 AM: Team Standup [Work]');
+        expect(result).toContain('09:00–09:30 America/Los_Angeles (17:00–17:30 UTC): Team Standup [Work]');
         expect(result).not.toContain('@');
         expect(result).not.toContain('attendee');
     });
@@ -41,7 +41,7 @@ describe.concurrent('formatCalendarContext', () => {
             location: 'Conference Room A',
         });
         const result = formatCalendarContext([event], NOW, TZ);
-        expect(result).toContain('9:00 AM – 10:00 AM: Product Review [Work] @ Conference Room A');
+        expect(result).toContain('09:00–10:00 America/Los_Angeles (17:00–18:00 UTC): Product Review [Work] @ Conference Room A');
     });
 
     it('formats an all-day event', () => {
@@ -223,7 +223,7 @@ describe.concurrent('formatCalendarContext', () => {
         ];
         const result = formatCalendarContext(events, NOW, TZ);
         const allDayPos = result.indexOf('All day:');
-        const timedPos = result.indexOf('12:00 AM');
+        const timedPos = result.indexOf('Timed Event');
         expect(allDayPos).toBeLessThan(timedPos);
     });
 
@@ -256,8 +256,8 @@ describe.concurrent('formatCalendarContext', () => {
         });
         const resultPT = formatCalendarContext([event], NOW, 'America/Los_Angeles');
         const resultET = formatCalendarContext([event], NOW, 'America/New_York');
-        expect(resultPT).toContain('11:00 AM – 12:00 PM');
-        expect(resultET).toContain('2:00 PM – 3:00 PM');
+        expect(resultPT).toContain('11:00–12:00 America/Los_Angeles (19:00–20:00 UTC)');
+        expect(resultET).toContain('14:00–15:00 America/New_York (19:00–20:00 UTC)');
     });
 
     it('omits location, attendees, and status suffixes when fields are absent', () => {
@@ -398,5 +398,26 @@ describe.concurrent('formatCalendarContext', () => {
         const result = formatCalendarContext([event], NOW, TZ);
         expect(result).not.toContain('0 attendee');
         expect(result).not.toContain('attendee');
+    });
+
+    it('shows simple UTC format when timezone is UTC', () => {
+        const event = makeEvent({
+            summary: 'UTC Meeting',
+            start:   new Date('2026-03-18T17:00:00Z'),
+            end:     new Date('2026-03-18T18:00:00Z'),
+        });
+        const result = formatCalendarContext([event], NOW, 'UTC');
+        expect(result).toContain('17:00–18:00 UTC: UTC Meeting [Work]');
+        expect(result).not.toContain('UTC)');
+    });
+
+    it('shows correct IANA timezone name for non-US timezones', () => {
+        const event = makeEvent({
+            summary: 'London Meeting',
+            start:   new Date('2026-03-18T14:00:00Z'), // 14:00 UTC = 14:00 GMT (March 18 is before UK DST switch March 29)
+            end:     new Date('2026-03-18T15:00:00Z'),
+        });
+        const result = formatCalendarContext([event], NOW, 'Europe/London');
+        expect(result).toContain('14:00–15:00 Europe/London (14:00–15:00 UTC)');
     });
 });

@@ -12,10 +12,12 @@ const USER_ID       = 'user-123';
 const OTHER_USER_ID = 'other-user-456';
 
 interface MockInteraction {
-    asChatInput: ChatInputCommandInteraction
-    reply:       Mock<(...args: unknown[]) => Promise<void>>
-    editReply:   Mock<(...args: unknown[]) => Promise<void>>
-    deferReply:  Mock<(...args: unknown[]) => Promise<void>>
+    asChatInput:    ChatInputCommandInteraction
+    reply:          Mock<(...args: unknown[]) => Promise<void>>
+    editReply:      Mock<(...args: unknown[]) => Promise<unknown>>
+    deferReply:     Mock<(...args: unknown[]) => Promise<void>>
+    awaitComponent: Mock<(...args: unknown[]) => Promise<unknown>>
+    deferUpdate:    Mock<(...args: unknown[]) => Promise<void>>
 }
 
 function createMockInteraction(
@@ -25,11 +27,16 @@ function createMockInteraction(
     stringOptions:     Record<string, string | null> = {},
     targetUser?:       { id: string } | null
 ): MockInteraction {
-    const replyMock:     Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
-    const editReplyMock: Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
-    const deferReplyMock: Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
+    const replyMock:          Mock<(...args: unknown[]) => Promise<void>>    = mock(async () => {});
+    const deferReplyMock:     Mock<(...args: unknown[]) => Promise<void>>    = mock(async () => {});
+    const deferUpdateMock:    Mock<(...args: unknown[]) => Promise<void>>    = mock(async () => {});
+    const awaitComponentMock: Mock<(...args: unknown[]) => Promise<unknown>> = mock(async () => ({ values: [], deferUpdate: deferUpdateMock }));
+
+    const mockMessage = { awaitMessageComponent: awaitComponentMock };
+    const editReplyMock: Mock<(...args: unknown[]) => Promise<unknown>> = mock(async () => mockMessage);
 
     const interaction = {
+        id:      'interaction-id-123',
         user:    { id: userId },
         options: {
             getSubcommandGroup: mock(() => subcommandGroup),
@@ -43,10 +50,12 @@ function createMockInteraction(
     } as unknown as ChatInputCommandInteraction;
 
     return {
-        asChatInput: interaction,
-        reply:       replyMock,
-        editReply:   editReplyMock,
-        deferReply:  deferReplyMock,
+        asChatInput:    interaction,
+        reply:          replyMock,
+        editReply:      editReplyMock,
+        deferReply:     deferReplyMock,
+        awaitComponent: awaitComponentMock,
+        deferUpdate:    deferUpdateMock,
     };
 }
 
@@ -327,22 +336,24 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
             { path: '/calendars/work',     displayName: 'Work' },
         ]);
 
-        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'add-server', {
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
             server_url:  'https://caldav.example.com',
             username:    'myuser',
             password:    'mypass',
             description: 'iCloud',
         });
+        awaitComponent.mockResolvedValue({ values: ['0', '1'], deferUpdate: mock(async () => {}) });
         await handler.handle(asChatInput);
 
         expect(mockCaldav.discoverCalendars).toHaveBeenCalledWith('https://caldav.example.com', 'myuser', 'mypass');
         expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
 
-        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
-        expect(replyArg.content).toContain('iCloud');
-        expect(replyArg.content).toContain('2 calendar');
-        expect(replyArg.content).toContain('Personal');
-        expect(replyArg.content).toContain('Work');
+        // Last editReply should be the success message
+        const lastCall = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string };
+        expect(lastCall.content).toContain('iCloud');
+        expect(lastCall.content).toContain('2 calendar');
+        expect(lastCall.content).toContain('Personal');
+        expect(lastCall.content).toContain('Work');
     });
 
     test('replies "No calendars found" when server has no calendars', async () => {
@@ -382,7 +393,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
             { path: '/cal', displayName: 'Calendar' },
         ]);
 
-        const { asChatInput } = createMockInteraction(
+        const { asChatInput, awaitComponent } = createMockInteraction(
             ADMIN_USER_ID, null, 'add-server',
             {
                 server_url:  'https://caldav.example.com',
@@ -392,11 +403,186 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
             },
             { id: OTHER_USER_ID }
         );
+        // Single calendar — auto-add, awaitComponent not called
         await handler.handle(asChatInput);
 
+        expect(awaitComponent).not.toHaveBeenCalled();
         expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
         const [userId] = mockRegistry.addServer.mock.calls[0] as [string, unknown];
         expect(userId).toBe(OTHER_USER_ID);
+    });
+
+    test('presents select menu and stores only selected calendars', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'Calendar A' },
+            { path: '/cal/b', displayName: 'Calendar B' },
+            { path: '/cal/c', displayName: 'Calendar C' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0', '2'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        // First editReply = select menu prompt
+        const promptArg = editReply.mock.calls[0]?.[0] as { content?: string, components?: unknown[] };
+        expect(promptArg.content).toContain('Found 3 calendar(s)');
+        expect(promptArg.components).toBeDefined();
+
+        // addServer called with only selected calendars
+        expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
+        const serverArg = mockRegistry.addServer.mock.calls[0]?.[1] as { calendars: { calendarPath: string }[] };
+        expect(serverArg.calendars).toHaveLength(2);
+        expect(serverArg.calendars.map((c: { calendarPath: string }) => c.calendarPath)).toEqual(['/cal/a', '/cal/c']);
+
+        // Success reply clears the select menu components
+        const successArg = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { components?: unknown[] };
+        expect(successArg.components).toEqual([]);
+    });
+
+    test('handles select menu timeout gracefully', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'A' },
+            { path: '/cal/b', displayName: 'B' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockRejectedValue(new Error('Collector received no interactions before ending with reason: time'));
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.addServer).not.toHaveBeenCalled();
+        const lastCall = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string };
+        expect(lastCall.content).toContain('timed out');
+        expect(lastCall.content).toContain('again to retry');
+    });
+
+    test('handles non-timeout select menu errors with generic message', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'A' },
+            { path: '/cal/b', displayName: 'B' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockRejectedValue(new Error('Unknown component error'));
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.addServer).not.toHaveBeenCalled();
+        const lastCall = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string, components?: unknown[] };
+        expect(lastCall.content).toContain('selection failed');
+        expect(lastCall.content).toContain('again to retry');
+        expect(lastCall.components).toEqual([]);
+    });
+
+    test('auto-adds single calendar without showing select menu', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/only', displayName: 'Only Calendar' },
+        ]);
+
+        const { asChatInput, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        await handler.handle(asChatInput);
+
+        expect(awaitComponent).not.toHaveBeenCalled();
+        expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
+    });
+
+    test('truncates to 25 and warns when more than 25 calendars discovered', async () => {
+        const manyCals = Array.from({ length: 30 }, (_, i) => ({
+            path:        `/cal/${i}`,
+            displayName: `Calendar ${i}`,
+        }));
+        mockCaldav.discoverCalendars.mockResolvedValue(manyCals);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0', '1'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        const promptArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(promptArg.content).toContain('30');
+        expect(promptArg.content).toContain('25');
+    });
+
+    test('does NOT warn when exactly 25 calendars discovered (boundary)', async () => {
+        const exactly25 = Array.from({ length: 25 }, (_, i) => ({
+            path:        `/cal/${i}`,
+            displayName: `Calendar ${i}`,
+        }));
+        mockCaldav.discoverCalendars.mockResolvedValue(exactly25);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        const promptArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(promptArg.content).not.toContain('Only showing the first 25');
+        expect(promptArg.content).not.toContain('Discord limit');
+    });
+
+    test('select menu prompt includes components array with one action row', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'Calendar A' },
+            { path: '/cal/b', displayName: 'Calendar B' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        const promptArg = editReply.mock.calls[0]?.[0] as { content?: string, components?: unknown[] };
+        expect(promptArg.components).toBeDefined();
+        expect(promptArg.components).toHaveLength(1);
+    });
+
+    test('acknowledges select menu interaction with deferUpdate', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/cal/a', displayName: 'A' },
+            { path: '/cal/b', displayName: 'B' },
+        ]);
+
+        const deferUpdateFn: Mock<(...args: unknown[]) => Promise<void>> = mock(async () => {});
+        const { asChatInput, awaitComponent } = createMockInteraction(USER_ID, null, 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'S',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0'], deferUpdate: deferUpdateFn });
+        await handler.handle(asChatInput);
+
+        expect(deferUpdateFn).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -672,16 +858,18 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
             { path: '/shared/holidays', displayName: 'Holidays' },
         ]);
 
-        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
             server_url:  'https://caldav.example.com',
             username:    'admin',
             password:    'pass',
             description: 'Company Shared',
         });
+        // Single calendar — auto-add, no menu
         await handler.handle(asChatInput);
 
+        expect(awaitComponent).not.toHaveBeenCalled();
         expect(mockRegistry.addSharedServer).toHaveBeenCalledTimes(1);
-        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        const replyArg = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Company Shared');
         expect(replyArg.content).toContain('Holidays');
     });
@@ -716,6 +904,60 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to add shared server');
         expect(replyArg.content).toContain('Auth failed');
+    });
+
+    test('shared: presents select menu and stores only selected calendars', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/shared/a', displayName: 'Shared A' },
+            { path: '/shared/b', displayName: 'Shared B' },
+            { path: '/shared/c', displayName: 'Shared C' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Shared Server',
+        });
+        awaitComponent.mockResolvedValue({ values: ['0', '2'], deferUpdate: mock(async () => {}) });
+        await handler.handle(asChatInput);
+
+        // First editReply = select menu prompt
+        const promptArg = editReply.mock.calls[0]?.[0] as { content?: string, components?: unknown[] };
+        expect(promptArg.content).toContain('Found 3 calendar(s)');
+        expect(promptArg.components).toBeDefined();
+
+        // addSharedServer called with only selected calendars
+        expect(mockRegistry.addSharedServer).toHaveBeenCalledTimes(1);
+        const serverArg = mockRegistry.addSharedServer.mock.calls[0]?.[0] as { calendars: { calendarPath: string }[] };
+        expect(serverArg.calendars).toHaveLength(2);
+        expect(serverArg.calendars.map((c: { calendarPath: string }) => c.calendarPath)).toEqual(['/shared/a', '/shared/c']);
+
+        // Success reply clears the select menu components
+        const successArg = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { components?: unknown[] };
+        expect(successArg.components).toEqual([]);
+    });
+
+    test('shared: handles select menu timeout gracefully', async () => {
+        mockCaldav.discoverCalendars.mockResolvedValue([
+            { path: '/shared/a', displayName: 'A' },
+            { path: '/shared/b', displayName: 'B' },
+        ]);
+
+        const { asChatInput, editReply, awaitComponent } = createMockInteraction(ADMIN_USER_ID, 'shared', 'add-server', {
+            server_url:  'https://caldav.example.com',
+            username:    'u',
+            password:    'p',
+            description: 'Shared Server',
+        });
+        awaitComponent.mockRejectedValue(new Error('Collector received no interactions before ending with reason: time'));
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.addSharedServer).not.toHaveBeenCalled();
+        const lastCall = editReply.mock.calls[editReply.mock.calls.length - 1]?.[0] as { content?: string, components?: unknown[] };
+        expect(lastCall.content).toContain('timed out');
+        expect(lastCall.content).toContain('/calendar shared add-server');
+        expect(lastCall.components).toEqual([]);
     });
 });
 
