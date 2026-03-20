@@ -1441,6 +1441,219 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toContain('Post exceeds 300 graphemes');
             expect(mockApproval).not.toHaveBeenCalled();
         });
+
+        test('should auto-resolve root from parent replyRef when rootUri/rootCid omitted (nested reply)', async () => {
+            // Parent post is itself a reply — it has a replyRef pointing to the real root
+            const nestedParent = mockPost({
+                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
+                cid:      'bafyreimiddle',
+                replyRef: {
+                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
+                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
+                },
+            });
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
+
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Deeply nested reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
+                parentCid: 'bafyreimiddle',
+            });
+
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Deeply nested reply',
+                'at://did:plc:abc123/app.bsky.feed.post/middle',
+                'bafyreimiddle',
+                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
+                'bafyreiroot'
+            );
+        });
+
+        test('should pass undefined root when parent has no replyRef (top-level reply)', async () => {
+            // Parent is a top-level post — no replyRef
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => mockPost());
+
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Top-level reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/xyz',
+                parentCid: 'bafyreiabc',
+            });
+
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Top-level reply',
+                'at://did:plc:abc123/app.bsky.feed.post/xyz',
+                'bafyreiabc',
+                undefined,
+                undefined
+            );
+        });
+
+        test('should prefer explicit rootUri/rootCid over parent replyRef', async () => {
+            // Parent has a replyRef, but caller also provides explicit root args
+            const nestedParent = mockPost({
+                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
+                cid:      'bafyreimiddle',
+                replyRef: {
+                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/actualroot', cid: 'bafyreiactualroot' },
+                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original',   cid: 'bafyreioriginal' },
+                },
+            });
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
+
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Reply with explicit root',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
+                parentCid: 'bafyreimiddle',
+                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/explicitroot',
+                rootCid:   'bafyreiexplicit',
+            });
+
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Reply with explicit root',
+                'at://did:plc:abc123/app.bsky.feed.post/middle',
+                'bafyreimiddle',
+                'at://did:plc:abc123/app.bsky.feed.post/explicitroot',
+                'bafyreiexplicit'
+            );
+        });
+
+        test('should ignore partial explicit root (only rootUri provided) and use replyRef for both values', async () => {
+            // Atomic pair: if only rootUri is given (no rootCid), fall back to replyRef for BOTH
+            const nestedParent = mockPost({
+                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
+                cid:      'bafyreimiddle',
+                replyRef: {
+                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
+                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
+                },
+            });
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
+
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Partial root reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
+                parentCid: 'bafyreimiddle',
+                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/partialroot',
+                // rootCid deliberately omitted — incomplete pair should fall back to replyRef entirely
+            });
+
+            // Both root values should come from replyRef, not a mix of explicit rootUri + replyRef rootCid
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Partial root reply',
+                'at://did:plc:abc123/app.bsky.feed.post/middle',
+                'bafyreimiddle',
+                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
+                'bafyreiroot'
+            );
+        });
+
+        test('should ignore partial explicit root (only rootCid provided) and use replyRef for both values', async () => {
+            // Atomic pair: if only rootCid is given (no rootUri), fall back to replyRef for BOTH
+            const nestedParent = mockPost({
+                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
+                cid:      'bafyreimiddle',
+                replyRef: {
+                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
+                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
+                },
+            });
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
+
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Partial root reply',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
+                parentCid: 'bafyreimiddle',
+                rootCid:   'bafyreipartial',
+                // rootUri deliberately omitted — incomplete pair should fall back to replyRef entirely
+            });
+
+            // Both root values should come from replyRef, not a mix of replyRef rootUri + explicit rootCid
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Partial root reply',
+                'at://did:plc:abc123/app.bsky.feed.post/middle',
+                'bafyreimiddle',
+                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
+                'bafyreiroot'
+            );
+        });
+
+        test('should pass undefined root when partial explicit root provided and parent has no replyRef', async () => {
+            // Atomic pair: if only rootUri is given (no rootCid) and parent is a top-level post (no replyRef),
+            // the partial arg is discarded and there is no replyRef to fall back to — both resolved values are undefined
+            const topLevelParent = mockPost({
+                uri: 'at://did:plc:abc123/app.bsky.feed.post/top',
+                cid: 'bafyreitop',
+                // no replyRef — this is a top-level post
+            });
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => topLevelParent);
+
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Partial root, no replyRef',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/top',
+                parentCid: 'bafyreitop',
+                rootUri:   'at://did:plc:abc123/app.bsky.feed.post/partialroot',
+                // rootCid deliberately omitted — incomplete pair discarded; no replyRef to fall back to
+            });
+
+            // Both root values are undefined: partial arg discarded, no replyRef available
+            expect(mockClient.replyToPost).toHaveBeenCalledWith(
+                'Partial root, no replyRef',
+                'at://did:plc:abc123/app.bsky.feed.post/top',
+                'bafyreitop',
+                undefined,
+                undefined
+            );
+        });
+
+        test('should pass resolved root to sendApprovalRequest for non-allowlisted nested replies', async () => {
+            const nestedParent = mockPost({
+                uri:      'at://did:plc:abc123/app.bsky.feed.post/middle',
+                cid:      'bafyreimiddle',
+                replyRef: {
+                    root:   { uri: 'at://did:plc:abc123/app.bsky.feed.post/rootpost', cid: 'bafyreiroot' },
+                    parent: { uri: 'at://did:plc:abc123/app.bsky.feed.post/original', cid: 'bafyreioriginal' },
+                },
+            });
+            (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
+
+            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const handler = getToolHandler(server, 'replyToPost');
+
+            await handler({
+                text:      'Nested reply needing approval',
+                parentUri: 'at://did:plc:abc123/app.bsky.feed.post/middle',
+                parentCid: 'bafyreimiddle',
+            });
+
+            expect(mockApproval).toHaveBeenCalledWith(
+                'Nested reply needing approval',
+                'alice.bsky.social',
+                'at://did:plc:abc123/app.bsky.feed.post/middle',
+                'bafyreimiddle',
+                'at://did:plc:abc123/app.bsky.feed.post/rootpost',
+                'bafyreiroot'
+            );
+        });
     });
 
     // -------------------------------------------------------------------------

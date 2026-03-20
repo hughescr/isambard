@@ -523,6 +523,8 @@ export class BlueskyClient {
             indexedAt:   post.indexedAt,
             // Stryker disable next-line ConditionalExpression: ternary guards optional viewer — truthy/falsy tests both branches
             ...(post.viewer ? { viewer: this.normalizeViewer(post.viewer) } : {}),
+            // Stryker disable next-line ConditionalExpression: ternary guards optional replyRef — truthy/falsy tests both branches
+            ...(record.reply ? { replyRef: { root: { uri: record.reply.root.uri, cid: record.reply.root.cid }, parent: { uri: record.reply.parent.uri, cid: record.reply.parent.cid } } } : {}),
         };
     }
 

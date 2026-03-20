@@ -13,6 +13,15 @@ export interface BskyAuthor {
 }
 
 /**
+ * Reply reference identifying the root and parent of a threaded reply.
+ * Mirrors AT Protocol's ReplyRef from AppBskyFeedPost.
+ */
+export interface BskyReplyRef {
+    root:   { uri: string, cid: string }
+    parent: { uri: string, cid: string }
+}
+
+/**
  * Viewer state reflecting the authenticated user's relationship with a post.
  * Mirrors AT Protocol's ViewerState from AppBskyFeedDefs.
  */
@@ -40,6 +49,7 @@ export interface BskyPost {
     repostCount: number
     indexedAt:   string
     viewer?:     BskyViewerState
+    replyRef?:   BskyReplyRef
 }
 
 /**

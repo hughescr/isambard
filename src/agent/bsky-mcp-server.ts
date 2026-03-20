@@ -371,16 +371,22 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     parentCid: z.string().describe('CID of the post to reply to'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    rootUri:   z.string().optional().describe('AT URI of the root/thread post (defaults to parentUri for top-level replies)'),
+                    rootUri:   z.string().optional().describe('AT URI of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    rootCid:   z.string().optional().describe('CID of the root/thread post (defaults to parentCid for top-level replies)'),
+                    rootCid:   z.string().optional().describe('CID of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        // Fetch parent post to determine the target author
+                        // Fetch parent post to determine the target author and resolve thread root
                         const parentPost   = await client.getPost(args.parentUri);
                         const targetHandle = parentPost.author.handle;
                         const targetDid    = parentPost.author.did;
+
+                        // Auto-resolve root: both explicit args must be present to override auto-resolved root.
+                        // Treating them as an atomic pair prevents mixing a URI from args with a CID from replyRef.
+                        const hasExplicitRoot  = args.rootUri !== undefined && args.rootCid !== undefined;
+                        const resolvedRootUri  = hasExplicitRoot ? args.rootUri : parentPost.replyRef?.root.uri;
+                        const resolvedRootCid  = hasExplicitRoot ? args.rootCid : parentPost.replyRef?.root.cid;
 
                         // Check if replying to own post (always allowed — threading own posts)
                         const isSelfReply = targetHandle === client.ownHandle;
@@ -392,7 +398,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         if(isAllowed) {
                             // Allowlisted — send immediately
-                            const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
+                            const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
                             const rateLimitWarning = buildRateLimitWarning();
                             rateLimiter?.increment();
                             // Stryker disable next-line StringLiteral: success message is informational only
@@ -403,7 +409,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         await client.validatePostText(args.text);
                         if(sendApprovalRequest) {
                             try {
-                                await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, args.rootUri, args.rootCid);
+                                await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
                                 // Stryker disable next-line StringLiteral: success message is informational only
                                 return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
                             } catch (error) {

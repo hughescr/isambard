@@ -148,6 +148,34 @@ const POST_VIEW_NO_COUNTS = {
     indexedAt: '2026-03-07T12:00:01.000Z',
 };
 
+const ROOT_POST_VIEW = {
+    uri:         'at://did:plc:author123/app.bsky.feed.post/root000',
+    cid:         'bafyroot000',
+    author:      AUTHOR_BASIC,
+    record:      POST_RECORD,
+    replyCount:  5,
+    likeCount:   10,
+    repostCount: 2,
+    indexedAt:   '2026-03-07T11:59:00.000Z',
+};
+
+const REPLY_REF = {
+    root:   { uri: ROOT_POST_VIEW.uri,  cid: ROOT_POST_VIEW.cid },
+    parent: { uri: POST_VIEW.uri,       cid: POST_VIEW.cid },
+};
+
+const POST_RECORD_WITH_REPLY = {
+    ...POST_RECORD,
+    reply: REPLY_REF,
+};
+
+const POST_VIEW_WITH_REPLY_REF = {
+    ...POST_VIEW,
+    uri:    'at://did:plc:author123/app.bsky.feed.post/reply123',
+    cid:    'bafyreply123',
+    record: POST_RECORD_WITH_REPLY,
+};
+
 const FEED_VIEW_POST = {
     post: POST_VIEW,
 };
@@ -455,6 +483,17 @@ describe.concurrent('BlueskyClient', () => {
             expect(result.items[0].reply?.root).toMatchObject({ uri: POST_VIEW.uri });
         });
 
+        test('includes replyRef in feed item post when post record has a reply field', async () => {
+            const feedItemWithReplyRefPost = { post: POST_VIEW_WITH_REPLY_REF };
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [feedItemWithReplyRefPost], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items[0].post.replyRef).toEqual({
+                root:   { uri: ROOT_POST_VIEW.uri, cid: ROOT_POST_VIEW.cid },
+                parent: { uri: POST_VIEW.uri,      cid: POST_VIEW.cid },
+            });
+        });
+
         test('omits reply when reply.parent is a NotFoundPost', async () => {
             const feedItemWithNotFound = {
                 post:  POST_VIEW,
@@ -627,6 +666,23 @@ describe.concurrent('BlueskyClient', () => {
             mockGetPosts.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyError);
+        });
+
+        test('returns replyRef when post record has a reply field', async () => {
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_VIEW_WITH_REPLY_REF] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW_WITH_REPLY_REF.uri);
+            expect(post.replyRef).toEqual({
+                root:   { uri: ROOT_POST_VIEW.uri, cid: ROOT_POST_VIEW.cid },
+                parent: { uri: POST_VIEW.uri,      cid: POST_VIEW.cid },
+            });
+        });
+
+        test('returns no replyRef for a top-level post (no reply field in record)', async () => {
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_VIEW] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.replyRef).toBeUndefined();
         });
     });
 
