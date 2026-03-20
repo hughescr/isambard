@@ -43,6 +43,10 @@ export class OutboundApprovalHandler {
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent
+        if(parts.length < 2) {
+            return;
+        }
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -50,9 +54,7 @@ export class OutboundApprovalHandler {
             return;
         }
 
-        // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
-        const uid = Number.parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr, 10);
         if(Number.isNaN(uid)) {
             return;
         }
@@ -101,6 +103,10 @@ export class OutboundApprovalHandler {
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent
+        if(parts.length < 2) {
+            return;
+        }
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -109,9 +115,7 @@ export class OutboundApprovalHandler {
             return;
         }
 
-        // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
-        const uid = Number.parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr, 10);
         if(Number.isNaN(uid)) {
             return;
         }
@@ -153,6 +157,10 @@ export class OutboundApprovalHandler {
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent
+        if(parts.length < 2) {
+            return;
+        }
         const prefix = parts[0];
         const uidStr = parts[1];
 
@@ -161,9 +169,7 @@ export class OutboundApprovalHandler {
             return;
         }
 
-        // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
-        const uid = Number.parseInt(uidStr ?? '', 10);
+        const uid = Number.parseInt(uidStr, 10);
         if(Number.isNaN(uid)) {
             return;
         }

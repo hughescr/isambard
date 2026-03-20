@@ -175,11 +175,22 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(deps.client.replyToPost).not.toHaveBeenCalled();
         });
 
-        test('should return early when uuid is missing', async () => {
+        test('should return early when uuid is missing (no colon in customId)', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
-            // customId with no colon means parts[1] is undefined
+            // customId with no colon — parts.length < 2 guard fires
             const { interaction, deferUpdate } = makeButtonInteraction('bsky-send-approve');
+
+            await handler.handleButton(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+        });
+
+        test('should return early when uuid is empty string (colon with no value)', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            // customId with colon but empty uuid — parts[1] is '' which is falsy
+            const { interaction, deferUpdate } = makeButtonInteraction('bsky-send-approve:');
 
             await handler.handleButton(interaction);
 
@@ -557,10 +568,21 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(deferUpdate).not.toHaveBeenCalled();
         });
 
-        test('should return early when uuid is missing', async () => {
+        test('should return early when uuid is missing (no colon in customId)', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeModalInteraction('bsky-send-reject-reason');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+        });
+
+        test('should return early when uuid is empty string (colon with no value)', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            // colon present but uuid is empty — !uuid guard fires
+            const { interaction, deferUpdate } = makeModalInteraction('bsky-send-reject-reason:');
 
             await handler.handleModalSubmit(interaction);
 
@@ -640,10 +662,20 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(replyArg.components).toHaveLength(0);
         });
 
-        test('should return early for bsky-dm-reject-reason when uuid is missing', async () => {
+        test('should return early for bsky-dm-reject-reason when uuid is missing (no colon)', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeModalInteraction('bsky-dm-reject-reason');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+        });
+
+        test('should return early for bsky-dm-reject-reason when uuid is empty string', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeModalInteraction('bsky-dm-reject-reason:');
 
             await handler.handleModalSubmit(interaction);
 

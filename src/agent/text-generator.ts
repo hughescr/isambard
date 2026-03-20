@@ -19,11 +19,25 @@ let tmpDirPromise: Promise<string> | null = null;
  *
  * This is a process-lifetime singleton: once created, the same directory is reused
  * for all generateText calls. In tests, only the first call executes mkdtemp.
+ *
+ * On failure, the cached promise is cleared so the next call will retry.
  */
 function getTmpDir(): Promise<string> {
     // Stryker disable next-line AssignmentOperator: nullish assign — lazy-init sentinel
-    tmpDirPromise ??= mkdtemp(path.join(tmpdir(), 'isambard-textgen-'));
+    tmpDirPromise ??= mkdtemp(path.join(tmpdir(), 'isambard-textgen-')).catch((err: unknown) => {
+        tmpDirPromise = null;
+        throw err;
+    });
     return tmpDirPromise;
+}
+
+/**
+ * Resets the cached temp directory promise.
+ * Only for use in tests — allows testing the retry-on-failure behavior.
+ * @internal
+ */
+export function resetTmpDirForTesting(): void {
+    tmpDirPromise = null;
 }
 
 // Default timeout for text generation calls

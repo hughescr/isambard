@@ -308,21 +308,9 @@ export class WildDuckClient {
 
     /**
      * Search emails using WildDuck API.
-     * Retries once on 401 by re-authenticating.
      */
     async search(params: WildDuckSearchParams): Promise<WildDuckSearchResult[]> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doSearch(params);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                // Re-authenticate once and retry
-                await this.authenticate();
-                return this.doSearch(params);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doSearch(params));
     }
 
     /**
@@ -346,211 +334,85 @@ export class WildDuckClient {
 
     /**
      * Retrieve all email addresses for the current user.
-     * Retries once on 401 by re-authenticating.
      */
     async getUserAddresses(): Promise<WildDuckAddress[]> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doGetUserAddresses();
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doGetUserAddresses();
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doGetUserAddresses());
     }
 
     /**
      * Upload a message to a mailbox.
-     * Retries once on 401 by re-authenticating.
      */
     async uploadMessage(mailboxPath: string, payload: WildDuckUploadPayload): Promise<number> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doUploadMessage(mailboxPath, payload);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doUploadMessage(mailboxPath, payload);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doUploadMessage(mailboxPath, payload));
     }
 
     /**
      * Submit a stored draft message for delivery.
-     * Retries once on 401 by re-authenticating.
      */
     async submitMessage(mailboxPath: string, uid: number): Promise<void> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            await this.doSubmitMessage(mailboxPath, uid);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                await this.doSubmitMessage(mailboxPath, uid);
-                return;
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        await this.withAuthRetry(() => this.doSubmitMessage(mailboxPath, uid));
     }
 
     /**
      * Update metadata on an existing message.
-     * Retries once on 401 by re-authenticating.
      */
     async updateMessageMetadata(mailboxPath: string, uid: number, metadata: Record<string, unknown>): Promise<void> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            await this.doUpdateMessageMetadata(mailboxPath, uid, metadata);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                await this.doUpdateMessageMetadata(mailboxPath, uid, metadata);
-                return;
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        await this.withAuthRetry(() => this.doUpdateMessageMetadata(mailboxPath, uid, metadata));
     }
 
     /**
      * Update flags on an existing message (add and/or remove).
-     * Retries once on 401 by re-authenticating.
      */
     async updateMessageFlags(mailboxPath: string, uid: number, options: { addFlags?: string[], removeFlags?: string[] }): Promise<void> {
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: early return when no flags to update — no-op is correct
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: early return when no flags to update — no-op is correct
         if(!options.addFlags?.length && !options.removeFlags?.length) {
             return;
         }
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            await this.doUpdateMessageFlags(mailboxPath, uid, options);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                await this.doUpdateMessageFlags(mailboxPath, uid, options);
-                return;
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        await this.withAuthRetry(() => this.doUpdateMessageFlags(mailboxPath, uid, options));
     }
 
     /**
      * Delete a message by UID.
-     * Retries once on 401 by re-authenticating.
      */
     async deleteMessage(mailboxPath: string, uid: number): Promise<void> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            await this.doDeleteMessage(mailboxPath, uid);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                await this.doDeleteMessage(mailboxPath, uid);
-                return;
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        await this.withAuthRetry(() => this.doDeleteMessage(mailboxPath, uid));
     }
 
     /**
      * Move a message from one mailbox to another.
-     * Retries once on 401 by re-authenticating.
      */
     async moveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<void> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            await this.doMoveMessage(sourceMailbox, uid, destMailbox);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                await this.doMoveMessage(sourceMailbox, uid, destMailbox);
-                return;
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        await this.withAuthRetry(() => this.doMoveMessage(sourceMailbox, uid, destMailbox));
     }
 
     /**
      * List messages in a mailbox with optional filtering.
-     * Retries once on 401 by re-authenticating.
      */
     async listMessages(mailbox: string, options?: { unseen?: boolean, limit?: number, order?: 'asc' | 'desc' }): Promise<WildDuckMessageSummary[]> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doListMessages(mailbox, options);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doListMessages(mailbox, options);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doListMessages(mailbox, options));
     }
 
     /**
      * Retrieve a full message with body and headers, mapped to WildDuckEmailMetadata.
      * Attachments array is always empty — use attachmentMeta for lazy fetching.
      * Returns null if the message is not found (404).
-     * Retries once on 401 by re-authenticating.
      */
     async getFullMessage(mailboxPath: string, uid: number): Promise<WildDuckEmailMetadata | null> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doGetFullMessage(mailboxPath, uid);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doGetFullMessage(mailboxPath, uid);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doGetFullMessage(mailboxPath, uid));
     }
 
     /**
      * Download attachment data as a Buffer.
-     * Retries once on 401 by re-authenticating.
      */
     async getAttachment(mailboxPath: string, messageUid: number, attachmentId: string): Promise<Buffer> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doGetAttachment(mailboxPath, messageUid, attachmentId);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doGetAttachment(mailboxPath, messageUid, attachmentId);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doGetAttachment(mailboxPath, messageUid, attachmentId));
     }
 
     /**
      * Get mailbox message counts (total and unseen).
-     * Retries once on 401 by re-authenticating.
      */
     async getMailboxCounts(mailboxPath: string): Promise<{ total: number, unseen: number }> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doGetMailboxCounts(mailboxPath);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doGetMailboxCounts(mailboxPath);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doGetMailboxCounts(mailboxPath));
     }
 
     /**
@@ -579,25 +441,28 @@ export class WildDuckClient {
     /**
      * Retrieve a message by UID.
      * Returns null if the message is not found (404).
-     * Retries once on 401 by re-authenticating.
      */
     async getMessage(mailboxPath: string, uid: number): Promise<WildDuckMessage | null> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            return await this.doGetMessage(mailboxPath, uid);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                return this.doGetMessage(mailboxPath, uid);
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        return this.withAuthRetry(() => this.doGetMessage(mailboxPath, uid));
     }
 
     // ---------------------------------------------------------------------------
     // Private helpers
     // ---------------------------------------------------------------------------
+
+    // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
+    private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
+        try {
+            return await fn();
+        } catch (err) {
+            if(err instanceof WildDuckAuthError) {
+                await this.authenticate();
+                return fn();
+            }
+            throw err;
+        }
+    }
+    // Stryker restore BlockStatement
 
     private async authenticate(): Promise<void> {
         const response = await this.makeRequest<AuthResponse>('/authenticate', {
@@ -643,18 +508,7 @@ export class WildDuckClient {
     }
 
     private async createMailbox(path: string): Promise<void> {
-        // Stryker disable BlockStatement: try-catch with re-auth retry - inner structure is essential
-        try {
-            await this.doCreateMailbox(path);
-        } catch (err) {
-            if(err instanceof WildDuckAuthError) {
-                await this.authenticate();
-                await this.doCreateMailbox(path);
-                return;
-            }
-            throw err;
-        }
-        // Stryker restore BlockStatement
+        await this.withAuthRetry(() => this.doCreateMailbox(path));
     }
 
     private async doCreateMailbox(path: string): Promise<void> {

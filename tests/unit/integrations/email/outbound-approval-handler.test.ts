@@ -113,6 +113,17 @@ describe('OutboundApprovalHandler', () => {
             expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
         });
 
+        test('should return early for malformed customId with no colon', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeButtonInteraction('email-send-approve');
+
+            await handler.handleButton(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+            expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
+        });
+
         test('should return early for invalid UID', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
@@ -386,6 +397,17 @@ describe('OutboundApprovalHandler', () => {
             expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
         });
 
+        test('should return early for malformed customId with no colon', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeModalInteraction('email-send-reject-reason');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+            expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+        });
+
         test('should return early for invalid UID', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
@@ -509,6 +531,17 @@ describe('OutboundApprovalHandler', () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, deferUpdate } = makeSelectMenuInteraction('email-other-select:42', []);
+
+            await handler.handleSelectMenu(interaction);
+
+            expect(deferUpdate).not.toHaveBeenCalled();
+            expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
+        });
+
+        test('should return early for malformed customId with no colon', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, deferUpdate } = makeSelectMenuInteraction('email-allowlist-select', []);
 
             await handler.handleSelectMenu(interaction);
 

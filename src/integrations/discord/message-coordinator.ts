@@ -24,6 +24,8 @@ import type { Message } from 'discord.js';
 import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
 
+const MAX_PENDING_MESSAGES = 50;
+
 /** Result from processing messages */
 export interface ProcessResult {
     response:       string | null
@@ -403,6 +405,12 @@ export class MessageCoordinator {
                 context,
                 discordMessage,
             });
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
+            if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.debug({ evicted: state.pendingMessages.length - MAX_PENDING_MESSAGES, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction' });
+                state.pendingMessages.splice(0, state.pendingMessages.length - MAX_PENDING_MESSAGES);
+            }
 
             // Start or reset debounce timer
             // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op
@@ -431,6 +439,12 @@ export class MessageCoordinator {
                         discordMessage: null,
                     }));
                     state.pendingMessages.unshift(...reQueuedOriginals);
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
+                    if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
+                        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                        logger.debug({ evicted: state.pendingMessages.length - MAX_PENDING_MESSAGES, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction (unshift)' });
+                        state.pendingMessages.length = MAX_PENDING_MESSAGES; // Truncate from end (keep re-queued originals at front)
+                    }
 
                     // Wait for the interrupted processing to complete, then start processing with resume
                     void processingPromise.finally(() => {
@@ -452,6 +466,12 @@ export class MessageCoordinator {
                 context,
                 discordMessage,
             });
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: queue cap boundary — equivalent mutant (> vs >=) produces identical behavior in practice
+            if(state.pendingMessages.length > MAX_PENDING_MESSAGES) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.debug({ evicted: state.pendingMessages.length - MAX_PENDING_MESSAGES, max: MAX_PENDING_MESSAGES, msg: 'MessageCoordinator: queue cap eviction' });
+                state.pendingMessages.splice(0, state.pendingMessages.length - MAX_PENDING_MESSAGES);
+            }
 
             // Reset debounce timer
             clearTimeout(state.debounceTimer);

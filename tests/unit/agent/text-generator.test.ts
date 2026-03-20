@@ -7,7 +7,8 @@ import {
     mockGenerateText,
     mockGenerateTextWithSystemPrompt,
     originalGenerateText,
-    originalGenerateTextWithSystemPrompt
+    originalGenerateTextWithSystemPrompt,
+    resetTmpDirForTesting
 } from '../../setup';
 
 /**
@@ -373,6 +374,61 @@ describe('generateText', () => {
 
             expect(result).toBe('');
         });
+    });
+});
+
+describe('getTmpDir cached-rejection behavior', () => {
+    beforeEach(() => {
+        // Reset text-generator mocks to call through to real implementations
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
+
+        // Reset the singleton so mkdtemp will be called fresh each test
+        resetTmpDirForTesting();
+
+        mockQuery.mockReset();
+        mockQuery.mockImplementation(() => makeQueryGenerator('Hello'));
+    });
+
+    test('resetTmpDirForTesting clears cached tmpDirPromise so mkdtemp is called again', async () => {
+        // Populate tmpDirPromise with a successful call
+        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}first`);
+        await generateText('Test prompt');
+        expect(mockFsPromises.mkdtemp).toHaveBeenCalledTimes(1);
+
+        // After resetting, mkdtemp should be called again on the next generateText call
+        resetTmpDirForTesting();
+        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}second`);
+        await generateText('Test prompt');
+        expect(mockFsPromises.mkdtemp).toHaveBeenCalledTimes(1);
+    });
+
+    test('should not cache a rejected mkdtemp promise — retry succeeds on second call', async () => {
+        let callCount = 0;
+        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => {
+            callCount++;
+            if(callCount === 1) {
+                throw new Error('EACCES: permission denied, mkdtemp');
+            }
+            return `${prefix}mock-retry`;
+        });
+
+        // First call: mkdtemp fails → generateText should reject
+        const firstCallError = await generateText('Test prompt', { timeoutMs: 0 }).catch((err: unknown) => err);
+        expect(firstCallError).toBeInstanceOf(Error);
+        expect((firstCallError as Error).message).toBe('EACCES: permission denied, mkdtemp');
+
+        // The rejected promise must NOT be cached — tmpDirPromise should be null now
+        // Second call: mkdtemp succeeds → generateText should succeed
+        const result = await generateText('Test prompt', { timeoutMs: 0 });
+
+        expect(result).toBe('Hello');
+        expect(callCount).toBe(2);
     });
 });
 

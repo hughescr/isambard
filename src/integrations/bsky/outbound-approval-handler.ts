@@ -42,6 +42,10 @@ export class BskyOutboundApprovalHandler {
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — customId may lack colon separator; BlockStatement equivalent — downstream !uuid guard produces same result for undefined uuid
+        if(parts.length < 2) {
+            return;
+        }
         const prefix = parts[0];
         const uuid   = parts[1];
 
@@ -69,33 +73,7 @@ export class BskyOutboundApprovalHandler {
 
         // Stryker disable BlockStatement: try-catch wraps button handler - error handling
         try {
-            switch(prefix) {
-                case 'bsky-send-approve': {
-                    await this.handleApprove(interaction);
-                    break;
-                }
-                case 'bsky-send-approveallowlist': {
-                    await this.handleApproveAllowlist(interaction);
-                    break;
-                }
-                case 'bsky-send-reject': {
-                    await this.handleReject(interaction);
-                    break;
-                }
-                case 'bsky-dm-approve': {
-                    await this.handleDMApprove(interaction);
-                    break;
-                }
-                case 'bsky-dm-approveallowlist': {
-                    await this.handleDMApproveAllowlist(interaction);
-                    break;
-                }
-                case 'bsky-dm-reject': {
-                    await this.handleReject(interaction, 'bsky-dm-reject-reason', 'Reject Bluesky DM');
-                    break;
-                }
-                // No default needed — knownPrefixes guard ensures only known prefixes reach this switch
-            }
+            await this.dispatchButton(prefix, interaction);
         } catch (err) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uuid, prefix, msg: 'Bsky approval button handler failed' });
@@ -121,8 +99,43 @@ export class BskyOutboundApprovalHandler {
         // Stryker restore BlockStatement
     }
 
+    private async dispatchButton(prefix: string, interaction: ButtonInteraction): Promise<void> {
+        switch(prefix) {
+            case 'bsky-send-approve': {
+                await this.handleApprove(interaction);
+                break;
+            }
+            case 'bsky-send-approveallowlist': {
+                await this.handleApproveAllowlist(interaction);
+                break;
+            }
+            case 'bsky-send-reject': {
+                await this.handleReject(interaction);
+                break;
+            }
+            case 'bsky-dm-approve': {
+                await this.handleDMApprove(interaction);
+                break;
+            }
+            case 'bsky-dm-approveallowlist': {
+                await this.handleDMApproveAllowlist(interaction);
+                break;
+            }
+            case 'bsky-dm-reject': {
+                await this.handleReject(interaction, 'bsky-dm-reject-reason', 'Reject Bluesky DM');
+                break;
+            }
+            // No default needed — knownPrefixes guard ensures only known prefixes reach this switch
+        }
+    }
+
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
+        // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent; BlockStatement equivalent — downstream !uuid guard produces same result for undefined uuid
+        if(parts.length < 2) {
+            return;
+        }
+        // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement
         const prefix = parts[0];
         const uuid   = parts[1];
 

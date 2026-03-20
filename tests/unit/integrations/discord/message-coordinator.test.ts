@@ -4232,4 +4232,130 @@ describe('MessageCoordinator', () => {
             expect(onProcessingEnd.mock.calls[1]?.[0]).toEqual({ wasInterrupted: true, willResume: true });
         });
     });
+
+    describe('Queue Cap', () => {
+        beforeEach(() => {
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(processorMock);
+        });
+
+        it('should cap pendingMessages at 50 when messages arrive during active processing (Case 1)', async () => {
+            // Make processor respond to abort quickly so the second call can occur
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+                await new Promise((resolve) => {
+                    const t = setTimeout(resolve, 500);
+                    abortSignal.addEventListener('abort', () => {
+                        clearTimeout(t);
+                        resolve(undefined);
+                    });
+                });
+                return {
+                    response:       'Slow response',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  new StreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(slowProcessor);
+
+            // Start first message processing
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Push 60 more messages during active processing (Case 1) — triggers Case 1 eviction
+            for(let i = 2; i <= 61; i++) {
+                const ctx = { ...mockContext, messageId: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` };
+                const msg = { ...mockMessage, id: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` } as unknown as Message;
+                coordinator.handleMessage(ctx, msg);
+            }
+
+            // Advance past debounce (100ms) — aborts first call and triggers processWithResume
+            jest.advanceTimersByTime(150);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // The second call should receive at most MAX_PENDING_MESSAGES (50) contexts
+            // (capped at 50 total pending messages)
+            expect(processorMock).toHaveBeenCalledTimes(2);
+            const secondCallArgs = processorMock.mock.calls[1] as unknown[];
+            const contexts = secondCallArgs[0] as DiscordMessageContext[];
+            // pendingMessages was capped at 50, so total contexts ≤ 50
+            expect(contexts.length).toBeLessThanOrEqual(50);
+        });
+
+        it('should preserve re-queued original messages when unshift causes overflow', async () => {
+            // Setup: Make processor respond to abort immediately, trigger an interrupt via debounce
+            // with enough pending messages so that unshift causes overflow.
+            // Verify: re-queued originals at front are preserved; newest pending messages are dropped.
+
+            let callCount = 0;
+            let receivedContexts: DiscordMessageContext[] = [];
+
+            const overflowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+                callCount++;
+                receivedContexts = contexts;
+
+                if(callCount === 1) {
+                    // Run until aborted (abort fires immediately when debounce fires)
+                    await new Promise((resolve) => {
+                        const t = setTimeout(resolve, 500);
+                        abortSignal.addEventListener('abort', () => {
+                            clearTimeout(t);
+                            resolve(undefined);
+                        });
+                    });
+                    return {
+                        response:       null,
+                        wasInterrupted: abortSignal.aborted,
+                        streamTracker:  new StreamTracker(),
+                    };
+                }
+                return {
+                    response:       'Resume response',
+                    wasInterrupted: false,
+                    streamTracker:  new StreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(overflowProcessor);
+
+            // Start processing with the first message (this becomes the "original" that gets re-queued on interrupt)
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Queue 55 pending messages during active processing — Case 1 eviction caps at 50
+            // After eviction: pendingMessages = [msg-012..msg-056] (50 entries; msg-002..msg-011 dropped as oldest)
+            for(let i = 2; i <= 56; i++) {
+                const ctx = { ...mockContext, messageId: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` };
+                const msg = { ...mockMessage, id: `msg-${String(i).padStart(3, '0')}`, content: `Message ${i}` } as unknown as Message;
+                coordinator.handleMessage(ctx, msg);
+            }
+
+            // Advance past debounce (100ms) — fires the interrupt which:
+            // 1. Aborts the first call
+            // 2. Unshifts re-queued original (msg-001) at front: [msg-001] + [msg-012..msg-056] = 51 total
+            // 3. Truncates to 50: drops msg-056 (newest), keeps msg-001 (original at front)
+            jest.advanceTimersByTime(150);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(callCount).toBe(2);
+
+            // The re-queued original (msg-001) must be preserved at front
+            const messageIds = receivedContexts.map(ctx => ctx.messageId);
+            expect(messageIds).toContain('msg-001');
+            // Total contexts must not exceed the cap
+            expect(receivedContexts.length).toBeLessThanOrEqual(50);
+            // The newest pending message (msg-056) should have been dropped
+            expect(messageIds).not.toContain('msg-056');
+        });
+    });
 });

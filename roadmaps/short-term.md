@@ -26,6 +26,10 @@
 - Unified search and filtering
 - Integration with perch time for richer autonomous content
 
+## Tech Debt: TypeScript Strictness
+
+- Enable `noUncheckedIndexedAccess` in `tsconfig.json` to get compile-time safety for array/object index access. Will require fixing all sites where TypeScript infers `T | undefined` for array element access.
+
 ## Next: Calendar Access (Read-Only)
 
 ### CalDAV Connection

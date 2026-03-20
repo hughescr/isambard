@@ -185,7 +185,9 @@ const originalGenerateText = realTextGeneratorModule.generateText;
 const originalGenerateTextWithSystemPrompt = realTextGeneratorModule.generateTextWithSystemPrompt;
 
 // Export the captured original functions for tests that need to restore call-through
+// Also export resetTmpDirForTesting so tests can reset the singleton without going through the mock
 export { originalGenerateText, originalGenerateTextWithSystemPrompt };
+export const resetTmpDirForTesting = realTextGeneratorModule.resetTmpDirForTesting;
 
 // Create controllable mocks that DEFAULT to calling real implementations
 // Tests that need to override (like presence-flow.test.ts) can mockImplementation()
