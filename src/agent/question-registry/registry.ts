@@ -47,7 +47,7 @@ export class QuestionRegistry {
             });
         }
 
-        // Stryker disable all: BlockStatement mutations break Promise executor flow causing test timeouts
+        // Stryker disable BlockStatement: BlockStatement mutations break Promise executor flow causing test timeouts
         return new Promise<QuestionResult>((resolve) => {
             const pendingQuestion: PendingQuestion = {
                 ...question,
@@ -88,7 +88,7 @@ export class QuestionRegistry {
             });
             // Stryker restore all
         });
-        // Stryker restore all
+        // Stryker restore BlockStatement
     }
 
     /**

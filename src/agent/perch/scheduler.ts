@@ -199,13 +199,13 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
      */
     // Stryker disable next-line BlockStatement: Internal scheduling function - tested via behavior
     function scheduleNextTrigger(): void {
-        // Stryker disable all: Cleanup code - tested via behavior
+        // Stryker disable ConditionalExpression,BlockStatement: Cleanup guard — timer null check; behavior identical if no timer pending
         // Clear any existing timeout
         if(schedulerTimeout) {
             clearTimeout(schedulerTimeout);
             schedulerTimeout = null;
         }
-        // Stryker restore all
+        // Stryker restore ConditionalExpression,BlockStatement
 
         const { delayMs, nextTime } = getNextTriggerDelay();
         lastScheduledTime = nextTime;

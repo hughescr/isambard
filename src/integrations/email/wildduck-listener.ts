@@ -162,7 +162,7 @@ export class WildDuckListener {
                     processed: maxEmailsPerPoll,
                     msg:       'Email batch cap reached; remaining emails will be processed next poll',
                 });
-                // Stryker enable ObjectLiteral,StringLiteral
+                // Stryker restore ObjectLiteral,StringLiteral
             }
 
             for(const summary of toProcess) {

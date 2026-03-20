@@ -146,7 +146,6 @@ export function createMessageSummarizer(options: SummarizerOptions): MessageSumm
                 return [];
             }
 
-            // Stryker disable next-line ArithmeticOperator,MethodExpression: batch slicing — tests use single batch (messages.length <= batchSize) so slice boundaries and arithmetic are equivalent
             const batches = Array.from({ length: Math.ceil(messages.length / batchSize) }, (_, i) => messages.slice(i * batchSize, (i + 1) * batchSize));
             const limit = pLimit(maxConcurrent);
 

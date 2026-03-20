@@ -10,7 +10,6 @@
  * - Rate limit errors are permanent (Discord.js auto-retries with proper retry-after)
  * - All other Discord errors are permanent (invalid input, permissions, etc.)
  */
-import { RateLimitError } from '@/errors';
 import { retryAsync, type ErrorClassification, type ErrorClassifier, type RetryPolicy, type RetryDeps  } from '@/utils';
 
 export interface DiscordRetryOptions {
@@ -49,16 +48,8 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
         }
     }
 
-    // Rate limit errors are permanent (Discord.js handles retry internally)
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Rate limit error classification
-    if(error instanceof RateLimitError) {
-        return {
-            category: 'permanent',
-            message,
-        };
-    }
-
-    // All other errors are permanent (invalid input, permissions, etc.)
+    // All other errors are permanent (invalid input, permissions, rate limits, etc.)
+    // Rate limits are also permanent here because Discord.js handles retry internally.
     return {
         category: 'permanent',
         message,

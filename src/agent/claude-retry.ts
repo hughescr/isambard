@@ -100,7 +100,7 @@ function classifyHttpStatusError(error: object): ErrorClassification | undefined
     }
 
     // Client errors (4xx except 429) - permanent
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: HTTP status boundary check is fully tested
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: HTTP 4xx boundary — returns permanent, same as default fallthrough for out-of-range status; boundary values not distinctly observable
     if(status >= 400 && status < 500) {
         return { category: 'permanent', message };
     }

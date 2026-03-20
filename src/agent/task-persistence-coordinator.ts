@@ -61,11 +61,12 @@ export function createTaskPersistenceCoordinator(
 
                 if(!previousSessionId) {
                     // No previous session - just store the new one
-                    /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                    /* istanbul ignore next - logging only */ // Stryker disable all: logging only — object literal and string values not logic to test
                     logger.debug({
                         newSessionId,
                         msg: 'No previous session found, starting fresh',
                     });
+                    // Stryker restore all
                     await backend.setCurrentSessionId(validatedNewSessionId);
                     return false;
                 }
@@ -77,31 +78,34 @@ export function createTaskPersistenceCoordinator(
                 await backend.setCurrentSessionId(validatedNewSessionId);
 
                 if(copied) {
-                    /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                    /* istanbul ignore next - logging only */ // Stryker disable all: logging only — object literal and string values not logic to test
                     logger.info({
                         previousSessionId,
                         newSessionId,
                         msg: 'Task persistence complete - tasks copied to new session',
                     });
+                    // Stryker restore all
                 } else {
-                    /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                    /* istanbul ignore next - logging only */ // Stryker disable all: logging only — object literal and string values not logic to test
                     logger.debug({
                         previousSessionId,
                         newSessionId,
                         msg: 'Task persistence complete - no tasks to copy',
                     });
+                    // Stryker restore all
                 }
 
                 return copied;
             } catch (error) {
                 // Task persistence is optional - log and continue
                 const errorMsg = error instanceof Error ? error.message : String(error);
-                /* istanbul ignore next - logging only */ // Stryker disable next-line all
+                /* istanbul ignore next - logging only */ // Stryker disable all: logging only — object literal and string values not logic to test
                 logger.warn({
                     newSessionId,
                     error: errorMsg,
                     msg:   'Task persistence failed (continuing with fresh session)',
                 });
+                // Stryker restore all
                 return false;
             }
         },

@@ -50,7 +50,7 @@ export class ResponseRouter {
         const { shouldSend, content } = processResponse(response);
 
         // For DM or regular message processing, use origin channel
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - falls through to same result via !wellKnownType path
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for dm/processing_message — without this guard, would fall through to wellKnown lookup which returns same result when originChannelId is defined
         if(sessionType === 'dm' || sessionType === 'processing_message') {
             if(!originChannelId) {
                 throw new Error(`originChannelId is required for session type: ${sessionType}`);
@@ -113,7 +113,7 @@ export class ResponseRouter {
      * Useful for logging or preview.
      */
     async getTargetChannel(sessionType: SessionType, originChannelId: ChannelId | undefined): Promise<ChannelId> {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant - falls through to same result via !wellKnownType path
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for dm/processing_message — without this guard, would fall through to wellKnown lookup which returns same result when originChannelId is defined
         if(sessionType === 'dm' || sessionType === 'processing_message') {
             if(!originChannelId) {
                 throw new Error(`originChannelId is required for session type: ${sessionType}`);

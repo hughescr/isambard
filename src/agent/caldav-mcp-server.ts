@@ -81,7 +81,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                             return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
                         }
 
-                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Zod default doesn't apply when handler called directly in tests
+                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Zod .default(7) makes type non-optional, but handler is called directly in tests without schema processing
                         const days   = args.days ?? 7;
                         const now    = new Date();
                         const end    = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);

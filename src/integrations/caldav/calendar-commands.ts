@@ -110,7 +110,7 @@ export async function registerCalendarCommand(botToken: string, applicationId: s
         // Stryker restore ObjectLiteral,StringLiteral
         // Continue — command registration failure is non-fatal
     }
-    // Stryker enable BlockStatement
+    // Stryker restore BlockStatement
 }
 
 /**
@@ -242,7 +242,7 @@ export class CalendarCommandHandler {
             const message = error instanceof Error ? error.message : String(error);
             await interaction.editReply({ content: `Failed to add server: ${message}` });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleList(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
@@ -266,7 +266,7 @@ export class CalendarCommandHandler {
             logger.error({ error, userId }, 'Failed to list calendars');
             await interaction.editReply({ content: 'Failed to list calendars.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleRemoveServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
@@ -284,7 +284,7 @@ export class CalendarCommandHandler {
             logger.error({ error, serverId }, 'Failed to remove server');
             await interaction.editReply({ content: 'Failed to remove server.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleRemoveCalendar(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
@@ -306,7 +306,7 @@ export class CalendarCommandHandler {
             logger.error({ error, serverId, calendarPath }, 'Failed to remove calendar');
             await interaction.editReply({ content: 'Failed to remove calendar.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleSharedAddServer(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -351,7 +351,7 @@ export class CalendarCommandHandler {
             const message = error instanceof Error ? error.message : String(error);
             await interaction.editReply({ content: `Failed to add shared server: ${message}` });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleSharedList(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -375,7 +375,7 @@ export class CalendarCommandHandler {
             logger.error({ error }, 'Failed to list shared calendars');
             await interaction.editReply({ content: 'Failed to list shared calendars.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleSharedRemoveServer(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -393,7 +393,7 @@ export class CalendarCommandHandler {
             logger.error({ error, serverId }, 'Failed to remove shared server');
             await interaction.editReply({ content: 'Failed to remove shared server.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleSharedRemoveCalendar(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -413,6 +413,6 @@ export class CalendarCommandHandler {
             logger.error({ error, serverId, calendarPath }, 'Failed to remove shared calendar');
             await interaction.editReply({ content: 'Failed to remove shared calendar.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 }

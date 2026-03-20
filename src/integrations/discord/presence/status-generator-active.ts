@@ -75,6 +75,7 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
             return '';
         }
     }
+    // Stryker restore ConditionalExpression,StringLiteral
 }
 
 /**

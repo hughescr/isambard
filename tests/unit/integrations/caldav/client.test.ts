@@ -294,7 +294,7 @@ describe('CalDAVClient.getEvents', () => {
 
         // Only the VEVENT should be extracted — VTIMEZONE and VCALENDAR must be skipped
         expect(result).toHaveLength(1);
-        expect(result[0]!.uid).toBe('event-uid-1');
+        expect(result[0].uid).toBe('event-uid-1');
     });
 
     test('skips calendar paths not found in fetched calendars', async () => {

@@ -477,30 +477,23 @@ async function handlePendingQuestion(
         return false;
     }
 
-    // If unrelated, send polite reply and keep question pending
-    // Stryker disable next-line ConditionalExpression: Exhaustive branch - always true here since answer/interruption returned above
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- exhaustive: only 'unrelated' remains after answer/interruption handled above
-    if(classification === 'unrelated') {
-        // Stryker disable all: Logger debug object
-        logger.debug({
-            questionId: pendingQuestion.questionId,
-            msg:        'Message classified as unrelated, question still pending',
-        });
-        // Stryker restore all
-        await withDiscordRetry(
-            async () => {
-                await message.reply({
-                    content: "I'm not sure if this message is for me. If you'd like my help, please @mention me!",
-                });
-            },
-            // Stryker disable next-line StringLiteral: Operation name for logging only
-            'replyToUnrelatedMessage'
-        );
-        return true; // Early return - don't continue processing
-    }
-
-    // Stryker disable next-line BooleanLiteral: TypeScript requires return but logically unreachable
-    return false;
+    // Unrelated — send polite reply and keep question pending
+    // Stryker disable all: Logger debug object
+    logger.debug({
+        questionId: pendingQuestion.questionId,
+        msg:        'Message classified as unrelated, question still pending',
+    });
+    // Stryker restore all
+    await withDiscordRetry(
+        async () => {
+            await message.reply({
+                content: "I'm not sure if this message is for me. If you'd like my help, please @mention me!",
+            });
+        },
+        // Stryker disable next-line StringLiteral: Operation name for logging only
+        'replyToUnrelatedMessage'
+    );
+    return true; // Early return - don't continue processing
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {

@@ -290,5 +290,5 @@ async function registerAllowlistCommand(botToken: string, applicationId: string)
         // Stryker restore ObjectLiteral,StringLiteral
         // Continue — command registration failure is non-fatal
     }
-    // Stryker enable BlockStatement
+    // Stryker restore BlockStatement
 }

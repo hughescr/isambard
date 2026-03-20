@@ -70,7 +70,7 @@ export class EmailProcessor {
                 `Failed to move allowlist-bypassed email (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
             );
-            // Stryker enable StringLiteral,ObjectLiteral
+            // Stryker restore StringLiteral,ObjectLiteral
         }
         // Stryker restore BlockStatement
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Log message content is not behavior-affecting
@@ -82,7 +82,7 @@ export class EmailProcessor {
             allowlistBypassed: true,
             msg:               'Email routed (allowlist bypass)',
         });
-        // Stryker enable ObjectLiteral,StringLiteral,BooleanLiteral
+        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         return {
             verdict:           null,
             destinationFolder: EmailFolder.CleanInbox,
@@ -96,11 +96,12 @@ export class EmailProcessor {
         try {
             verdict = await this.classifier.classify(email);
         } catch (err) {
-            // Stryker disable next-line StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
+            // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
                 `Classification failed (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address }
             );
+            // Stryker restore StringLiteral,ObjectLiteral
         }
         // Stryker restore BlockStatement
 
@@ -110,11 +111,12 @@ export class EmailProcessor {
         try {
             await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, destination);
         } catch (err) {
-            // Stryker disable next-line StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
+            // Stryker disable StringLiteral,ObjectLiteral: Error message content is not behavior-affecting
             throw new EmailProcessingError(
                 `Failed to move email (uid=${email.uid}, destination=${destination}): ${err instanceof Error ? err.message : String(err)}`,
                 { uid: email.uid, from: email.from.address, destination }
             );
+            // Stryker restore StringLiteral,ObjectLiteral
         }
         // Stryker restore BlockStatement
 
@@ -130,7 +132,7 @@ export class EmailProcessor {
             destination,
             msg:        'Email routed',
         });
-        // Stryker enable ObjectLiteral,StringLiteral
+        // Stryker restore ObjectLiteral,StringLiteral
 
         return {
             verdict,

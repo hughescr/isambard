@@ -302,7 +302,7 @@ export class BskyOutboundApprovalHandler {
         const fields = embed.fields;
 
         const convoId           = fields.find(f => f.name === 'Conversation ID')?.value;
-        // Stryker disable next-line ConditionalExpression: equivalent mutant — Recipients field is always first in the embed; find(f => true) returns the same field
+        // Stryker disable next-line ConditionalExpression: Equivalent mutant — find() returns the unique matching field regardless of position; mutating predicate to true returns the same result when Recipients is the only match
         const recipientsValue   = fields.find(f => f.name === 'Recipients')?.value;
         let recipientHandles: string[] = [];
         if(recipientsValue) {

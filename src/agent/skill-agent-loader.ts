@@ -39,9 +39,9 @@ async function copyDirectory(sourceDir: string, destDir: string): Promise<void> 
                 const content = await readFile(sourcePath); // eslint-disable-line no-await-in-loop -- sequential: read then write fallback
                 await writeFile(destPath, content); // eslint-disable-line no-await-in-loop -- sequential: write depends on prior read result
             }
-            // Stryker enable BlockStatement
+            // Stryker restore BlockStatement
         }
-        // Stryker enable ConditionalExpression
+        // Stryker restore ConditionalExpression
     }
 }
 
@@ -64,7 +64,7 @@ async function clearDirectory(dirPath: string): Promise<void> {
             throw error;
         }
     }
-    // Stryker enable BlockStatement,ObjectLiteral,BooleanLiteral,ConditionalExpression,EqualityOperator,StringLiteral
+    // Stryker restore BlockStatement,ObjectLiteral,BooleanLiteral,ConditionalExpression,EqualityOperator,StringLiteral
 }
 
 /**
@@ -117,7 +117,7 @@ export async function syncAgentsAndSkills(
             throw error;
         }
     }
-    // Stryker enable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
+    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
 
     // Process skills directory
     // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral — filesystem I/O with ENOENT graceful degradation when source skills directory is absent
@@ -150,5 +150,5 @@ export async function syncAgentsAndSkills(
             throw error;
         }
     }
-    // Stryker enable BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
+    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,StringLiteral,ObjectLiteral,BooleanLiteral
 }

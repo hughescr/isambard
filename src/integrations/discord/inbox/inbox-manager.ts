@@ -252,7 +252,6 @@ export class InboxManager {
                 // Stryker disable next-line ConditionalExpression,EqualityOperator: Guard clause - equivalent when empty (filter produces [] either way, inner guard catches 0-length)
                 if(response.messages.length > 0) {
                     // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format
-                    // Stryker disable next-line BooleanLiteral,LogicalOperator,ConditionalExpression,EqualityOperator,MethodExpression: No test exercises botUserId filtering path - L-class (no test sets botUserId and verifies filter)
                     const filteredMessages = response.messages.filter(msg => !this.botUserId || msg.author.id !== this.botUserId);
                     const unreadMessages: UnreadMessage[] = filteredMessages.map(msg => ({
                         id:          msg.id,

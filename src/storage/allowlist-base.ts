@@ -19,7 +19,7 @@ export interface AllowlistConfig {
     name:       string
 }
 
-// Stryker disable all: abstract base class — template method hooks tested only via subclasses
+// Stryker disable all: Abstract base class — concrete methods tested via EmailAllowlist and BskyAllowlist subclass tests
 export abstract class DynamoAllowlist<TEntry> {
     protected readonly docClient: DynamoDBDocumentClient;
     protected readonly tableName: string;

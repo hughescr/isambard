@@ -175,7 +175,7 @@ export class AllowlistCommandHandler {
             logger.error({ err, msg: 'Failed to list allowlist entries' });
             await interaction.editReply({ content: 'Failed to list allowlist entries.' });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleAdd(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -225,7 +225,7 @@ export class AllowlistCommandHandler {
             logger.error({ err, address, msg: 'Failed to add to allowlist' });
             await interaction.editReply({ content: `Failed to add ${address} to allowlist.` });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 
     private async handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -251,6 +251,6 @@ export class AllowlistCommandHandler {
             logger.error({ err, address, msg: 'Failed to remove from allowlist' });
             await interaction.editReply({ content: `Failed to remove ${address} from allowlist.` });
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 }

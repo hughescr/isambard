@@ -35,7 +35,7 @@ export class EmailClassifier {
                 { from: email.from.address, subject: email.subject }
             );
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
 
         if(rawText === '') {
             // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
@@ -61,7 +61,7 @@ export class EmailClassifier {
             reason:     verdict.reason,
             msg:        'Email classified',
         });
-        // Stryker enable ObjectLiteral,StringLiteral
+        // Stryker restore ObjectLiteral,StringLiteral
 
         return verdict;
     }
@@ -70,6 +70,7 @@ export class EmailClassifier {
      * Build the user message from email metadata.
      */
     private buildUserMessage(email: EmailMetadata): string {
+        // Stryker disable next-line StringLiteral: Address formatting for LLM prompt is cosmetic
         const toAddresses = email.to.map(addr => (addr.name ? `${addr.name} <${addr.address}>` : addr.address)).join(', ');
 
         const fromHeader = email.from.name
@@ -122,6 +123,6 @@ export class EmailClassifier {
             }
             return null;
         }
-        // Stryker enable BlockStatement
+        // Stryker restore BlockStatement
     }
 }

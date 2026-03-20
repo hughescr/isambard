@@ -568,6 +568,170 @@ describe('InboxManager', () => {
             expect(summaryArg.failCount).toBe(1);
         });
 
+        test('should filter out bot messages when botUserId is set via setBotUserId', async () => {
+            const botUserId = createUserId('bot-user-999');
+
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannel,
+            });
+
+            // Set bot user ID after construction (like the real bot does after clientReady)
+            managerWithChannel.setBotUserId(botUserId);
+
+            const checkpoint: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+                updatedAt:  nowIso,
+            };
+
+            // Return three messages: one from a user, one from the bot, one from another user
+            const mockMessages = [
+                {
+                    id:          '111',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user1'), username: 'alice', displayName: 'Alice' },
+                    content:     'Hello from Alice',
+                    timestamp:   nowIso,
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+                {
+                    id:          '222',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: botUserId, username: 'bot', displayName: 'Bot' },
+                    content:     'Response from bot',
+                    timestamp:   nowIso,
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+                {
+                    id:          '333',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user2'), username: 'bob', displayName: 'Bob' },
+                    content:     'Hello from Bob',
+                    timestamp:   nowIso,
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+            ];
+
+            mockCheckpointManager.load = mock(async () => checkpoint);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: mockMessages,
+                metadata: {
+                    totalFound: mockMessages.length,
+                    timeRange:  {
+                        start: mockMessages[0].timestamp,
+                        end:   mockMessages[2].timestamp,
+                    },
+                },
+            }));
+
+            const total = await managerWithChannel.loadUnread();
+
+            // Only the 2 non-bot messages should be loaded
+            expect(total).toBe(2);
+
+            const messages = managerWithChannel.getChannelMessages(channelId);
+            expect(messages).toHaveLength(2);
+
+            // Non-bot messages are present
+            expect(messages.find(m => m.id === '111')).toBeDefined();
+            expect(messages.find(m => m.id === '333')).toBeDefined();
+
+            // Bot message is filtered out
+            expect(messages.find(m => m.id === '222')).toBeUndefined();
+        });
+
+        test('should not filter any messages when botUserId is not set', async () => {
+            // Create mock registry with one unmuted channel
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [{
+                    channelId,
+                    channelName: '#test-channel',
+                    guildId,
+                    isMuted:     false,
+                }]),
+            } as unknown as ChannelRegistryManager;
+
+            // Manager created without botUserId
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannel,
+            });
+
+            const checkpoint: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+                updatedAt:  nowIso,
+            };
+
+            const mockMessages = [
+                {
+                    id:          '111',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('user1'), username: 'alice', displayName: 'Alice' },
+                    content:     'Hello from Alice',
+                    timestamp:   nowIso,
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+                {
+                    id:          '222',
+                    channelId,
+                    guildId:     null,
+                    author:      { id: createUserId('some-bot'), username: 'bot', displayName: 'Bot' },
+                    content:     'Could be a bot message',
+                    timestamp:   nowIso,
+                    attachments: [],
+                    embeds:      [],
+                    reactions:   [],
+                },
+            ];
+
+            mockCheckpointManager.load = mock(async () => checkpoint);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: mockMessages,
+                metadata: {
+                    totalFound: mockMessages.length,
+                    timeRange:  {
+                        start: mockMessages[0].timestamp,
+                        end:   mockMessages[1].timestamp,
+                    },
+                },
+            }));
+
+            const total = await managerWithChannel.loadUnread();
+
+            // All messages kept when no botUserId is set
+            expect(total).toBe(2);
+        });
+
         test('should handle empty message results', async () => {
             // Create mock registry with one unmuted channel
             const mockRegistryWithChannel = {

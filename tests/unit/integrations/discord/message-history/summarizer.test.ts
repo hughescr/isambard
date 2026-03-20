@@ -482,6 +482,47 @@ describe('createMessageSummarizer', () => {
             expect(promptArg).toContain('[alice] Hello everyone\n[bob] How is the project going?');
         });
 
+        test('should slice messages into correct batches with proper boundaries', async () => {
+            // Use batchSize=3 and 7 messages to create 3 batches: [0,1,2], [3,4,5], [6]
+            // This verifies i * batchSize and (i + 1) * batchSize arithmetic
+            const messages = Array.from({ length: 7 }, (_, i) =>
+                createMockSearchResult({
+                    id:             `10000000000000000${i}`,
+                    content:        `Message content ${i}`,
+                    authorUsername: `user${i}`,
+                    timestamp:      `2025-01-15T${String(10 + i).padStart(2, '0')}:00:00.000Z`,
+                }));
+
+            const summarizer = createMessageSummarizer({});
+            await summarizer.summarizeMessageBatch(messages, 3);
+
+            // 7 / 3 = ceil(2.33) = 3 batches, so generateText called 3 times
+            expect(mockGenerateText).toHaveBeenCalledTimes(3);
+
+            // Batch 0: messages[0..2], Batch 1: messages[3..5], Batch 2: messages[6]
+            // Verify each batch prompt contains exactly the right messages
+            const call0 = mockGenerateText.mock.calls[0]?.[0];
+            const call1 = mockGenerateText.mock.calls[1]?.[0];
+            const call2 = mockGenerateText.mock.calls[2]?.[0];
+
+            // First batch: messages 0, 1, 2 (indices 0 * 3 to 1 * 3)
+            expect(call0).toContain('Message content 0');
+            expect(call0).toContain('Message content 1');
+            expect(call0).toContain('Message content 2');
+            expect(call0).not.toContain('Message content 3');
+
+            // Second batch: messages 3, 4, 5 (indices 1 * 3 to 2 * 3)
+            expect(call1).toContain('Message content 3');
+            expect(call1).toContain('Message content 4');
+            expect(call1).toContain('Message content 5');
+            expect(call1).not.toContain('Message content 0');
+            expect(call1).not.toContain('Message content 6');
+
+            // Third batch: message 6 only (indices 2 * 3 to 3 * 3, but only 7 total)
+            expect(call2).toContain('Message content 6');
+            expect(call2).not.toContain('Message content 5');
+        });
+
         test('should sort messages by timestamp for start/end timestamps', async () => {
             // Messages provided out of order
             const messages = [
