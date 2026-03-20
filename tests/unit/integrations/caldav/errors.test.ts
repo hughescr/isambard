@@ -4,7 +4,8 @@ import { ErrorCode } from '@/errors/codes';
 import {
     CaldavError,
     CaldavAuthError,
-    CaldavFetchError
+    CaldavFetchError,
+    CaldavTimeoutError
 } from '@/integrations/caldav/errors';
 
 describe.concurrent('CaldavError', () => {
@@ -107,6 +108,38 @@ describe.concurrent('CaldavFetchError', () => {
     });
 });
 
+describe.concurrent('CaldavTimeoutError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new CaldavTimeoutError('Timeout');
+        expect(error).toBeInstanceOf(CaldavTimeoutError);
+        expect(error).toBeInstanceOf(CaldavError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name and code', () => {
+        const error = new CaldavTimeoutError('Timeout');
+        expect(error.name).toBe('CaldavTimeoutError');
+        expect(error.code).toBe(ErrorCode.CALDAV_TIMEOUT_ERROR);
+    });
+
+    test('should preserve message', () => {
+        const error = new CaldavTimeoutError('CalDAV operation timed out after 15000ms: connect');
+        expect(error.message).toBe('CalDAV operation timed out after 15000ms: connect');
+    });
+
+    test('should support context', () => {
+        const context = { timeoutMs: 15_000, operation: 'connect' };
+        const error = new CaldavTimeoutError('Timed out', context);
+        expect(error.context).toEqual(context);
+    });
+
+    test('should have no context when not provided', () => {
+        const error = new CaldavTimeoutError('Timed out');
+        expect(error.context).toBeUndefined();
+    });
+});
+
 describe.concurrent('Error instanceof cross-checks', () => {
     test('CaldavAuthError is not CaldavFetchError', () => {
         const error = new CaldavAuthError('Auth failed');
@@ -126,6 +159,26 @@ describe.concurrent('Error instanceof cross-checks', () => {
     test('CaldavError is not CaldavFetchError', () => {
         const error = new CaldavError('Base error');
         expect(error instanceof CaldavFetchError).toBe(false);
+    });
+
+    test('CaldavTimeoutError is not CaldavAuthError', () => {
+        const error = new CaldavTimeoutError('Timed out');
+        expect(error instanceof CaldavAuthError).toBe(false);
+    });
+
+    test('CaldavTimeoutError is not CaldavFetchError', () => {
+        const error = new CaldavTimeoutError('Timed out');
+        expect(error instanceof CaldavFetchError).toBe(false);
+    });
+
+    test('CaldavAuthError is not CaldavTimeoutError', () => {
+        const error = new CaldavAuthError('Auth failed');
+        expect(error instanceof CaldavTimeoutError).toBe(false);
+    });
+
+    test('CaldavFetchError is not CaldavTimeoutError', () => {
+        const error = new CaldavFetchError('Fetch failed');
+        expect(error instanceof CaldavTimeoutError).toBe(false);
     });
 });
 

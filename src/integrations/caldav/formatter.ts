@@ -91,20 +91,30 @@ function formatTimeRange(start: Date, end: Date, zone: string): string {
     return `${startTime}–${endTime} ${abbr}`;
 }
 
-function buildTimeSuffix(event: CalendarEvent, izzyTimezone: string): string {
-    if(izzyTimezone === 'UTC') {
+function buildTimeSuffix(event: CalendarEvent, displayTimezone: string): string {
+    // Collect all relevant timezones, deduplicate, preserve order.
+    // Primary display timezone is already shown by formatEventLine, so skip it.
+    const seen = new Set<string>([displayTimezone]);
+    const suffixZones: string[] = [];
+
+    // Event's native timezone (from iCal data)
+    const eventTz = event.timezone;
+    if(eventTz && !seen.has(eventTz)) {
+        suffixZones.push(eventTz);
+        seen.add(eventTz);
+    }
+
+    // UTC as reference
+    if(!seen.has('UTC')) {
+        suffixZones.push('UTC');
+    }
+
+    if(suffixZones.length === 0) {
         return '';
     }
-    const suffixes: string[] = [];
-    const eventTz = event.timezone;
-    if(eventTz && eventTz !== izzyTimezone) {
-        suffixes.push(formatTimeRange(event.start, event.end, eventTz));
-    }
-    if(eventTz !== 'UTC') {
-        suffixes.push(formatTimeRange(event.start, event.end, 'UTC'));
-    }
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: suffixes is never empty here — UTC is always pushed when izzyTimezone !== 'UTC' and eventTz !== 'UTC'; the else branch is unreachable
-    return suffixes.length > 0 ? ` (${suffixes.join(' / ')})` : '';
+
+    const parts = suffixZones.map(tz => formatTimeRange(event.start, event.end, tz));
+    return ` (${parts.join(' / ')})`;
 }
 
 function formatEventLine(event: CalendarEvent, izzyTimezone: string): string {

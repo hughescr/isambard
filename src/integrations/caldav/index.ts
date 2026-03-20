@@ -1,5 +1,5 @@
 export type { CalendarInfo, CalendarEvent } from './types';
-export { CaldavError, CaldavAuthError, CaldavFetchError } from './errors';
+export { CaldavError, CaldavAuthError, CaldavFetchError, CaldavTimeoutError } from './errors';
 export { CalDAVClient } from './client';
 export { formatCalendarContext } from './formatter';
 export * from './calendar-registry';

@@ -473,6 +473,51 @@ describe.concurrent('formatCalendarContext', () => {
         expect(result).toContain('- 17:00–18:00 UTC: Zulu Event [Work]');
     });
 
+    it('shows event native timezone suffix when izzyTimezone is UTC and event has a non-UTC timezone', () => {
+        // Bug fix: when izzyTimezone=UTC but event has America/Los_Angeles, show the event's native TZ
+        // 22:00 UTC = 14:00 PST (UTC-8)
+        const event = makeEvent({
+            summary:  'Pacific Event',
+            start:    new Date('2026-03-18T22:00:00Z'), // 14:00 PST
+            end:      new Date('2026-03-18T23:45:00Z'), // 15:45 PST
+            timezone: 'America/Los_Angeles',
+        });
+        const result = formatCalendarContext([event], NOW, 'UTC');
+        // Primary display is in UTC
+        expect(result).toContain('22:00–23:45 UTC');
+        // Suffix shows event's native timezone
+        expect(result).toContain('(14:00–15:45 PST)');
+    });
+
+    it('shows no suffix when izzyTimezone is UTC and event has no timezone', () => {
+        // When izzyTimezone=UTC and event has no timezone property, no suffix needed
+        const event = makeEvent({
+            summary: 'No TZ UTC Event',
+            start:   new Date('2026-03-18T17:00:00Z'),
+            end:     new Date('2026-03-18T18:00:00Z'),
+        });
+        const result = formatCalendarContext([event], NOW, 'UTC');
+        expect(result).toContain('- 17:00–18:00 UTC: No TZ UTC Event [Work]');
+        // No suffix parenthetical
+        const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
+        expect(eventLine).not.toContain('(');
+    });
+
+    it('shows no suffix when izzyTimezone is UTC and event timezone is also UTC', () => {
+        // When izzyTimezone=UTC and event.timezone=UTC, no suffix — they are identical
+        const event = makeEvent({
+            summary:  'Explicit UTC Event',
+            start:    new Date('2026-03-18T17:00:00Z'),
+            end:      new Date('2026-03-18T18:00:00Z'),
+            timezone: 'UTC',
+        });
+        const result = formatCalendarContext([event], NOW, 'UTC');
+        expect(result).toContain('- 17:00–18:00 UTC: Explicit UTC Event [Work]');
+        // No suffix parenthetical
+        const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
+        expect(eventLine).not.toContain('(');
+    });
+
     it('does not duplicate UTC when event source timezone is UTC', () => {
         // Event stored in UTC — should show UTC once (as event TZ), not twice
         const event = makeEvent({

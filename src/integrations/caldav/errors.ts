@@ -20,3 +20,10 @@ export class CaldavFetchError extends CaldavError {
         this.name = 'CaldavFetchError';
     }
 }
+
+export class CaldavTimeoutError extends CaldavError {
+    constructor(message: string, context?: Record<string, unknown>) {
+        super(message, ErrorCode.CALDAV_TIMEOUT_ERROR, context);
+        this.name = 'CaldavTimeoutError';
+    }
+}

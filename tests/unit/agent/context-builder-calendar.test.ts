@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarServerEntry } from '../../../src/integrations/caldav';
+import { CaldavAuthError, CaldavTimeoutError } from '../../../src/integrations/caldav/errors';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 import { mockLogger } from '../../setup';
@@ -117,7 +118,7 @@ describe('createContextBuilder calendar context injection', () => {
             expect(result).not.toContain('## Calendar');
         });
 
-        test('should handle errors gracefully and return without calendar section for perch', async () => {
+        test('should return calendar unavailable message on error for perch', async () => {
             setupBackendMocks();
 
             mockCalendarRegistry.listRegisteredUserIds = mock(async () => {
@@ -134,7 +135,7 @@ describe('createContextBuilder calendar context injection', () => {
             // Should not throw
             const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
 
-            expect(result).not.toContain('## Calendar');
+            expect(result).toContain('[Calendar unavailable: DynamoDB scan error]');
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({ error: expect.any(Error) }),
                 'Failed to load perch calendar context'
@@ -238,6 +239,60 @@ describe('createContextBuilder calendar context injection', () => {
 
             expect(result).toContain('## Calendar');
             expect(result).toContain('UTC perch event');
+        });
+
+        test('should return timeout-specific message on CaldavTimeoutError for perch', async () => {
+            setupBackendMocks();
+
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => {
+                throw new CaldavTimeoutError('CalDAV operation timed out after 10000ms: fetchCalendars', { timeoutMs: 10_000, operation: 'fetchCalendars' });
+            });
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toContain('[Calendar unavailable: connection to calendar server timed out after 10000ms]');
+        });
+
+        test('should return auth-specific message on CaldavAuthError for perch', async () => {
+            setupBackendMocks();
+
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => {
+                throw new CaldavAuthError('Auth failed');
+            });
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toContain('[Calendar unavailable: authentication failed for calendar server]');
+        });
+
+        test('should return generic message for non-Error thrown value for perch', async () => {
+            setupBackendMocks();
+
+            mockCalendarRegistry.listRegisteredUserIds = mock(async () => {
+                throw 42; // non-Error value — testing String(error) branch
+            });
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildPerchContext(new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toContain('[Calendar unavailable: 42]');
         });
     });
 
@@ -388,7 +443,7 @@ describe('createContextBuilder calendar context injection', () => {
             expect(hotStatePos).toBeGreaterThan(calendarPos);
         });
 
-        test('should catch and log errors from calendar loading and not include section', async () => {
+        test('should return calendar unavailable message on calendar loading error', async () => {
             setupBackendMocks();
 
             mockCalendarRegistry.getAllCalendars = mock(async () => {
@@ -405,7 +460,7 @@ describe('createContextBuilder calendar context injection', () => {
             // Should not throw
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
-            expect(result).not.toContain('## Calendar');
+            expect(result).toContain('[Calendar unavailable: DynamoDB timeout]');
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId: 'user123',
@@ -414,7 +469,7 @@ describe('createContextBuilder calendar context injection', () => {
             );
         });
 
-        test('should catch and log errors from getContextEvents and not include section', async () => {
+        test('should return calendar unavailable message on getContextEvents error', async () => {
             setupBackendMocks();
 
             mockCalDAVClient.getContextEvents = mock(async () => {
@@ -431,13 +486,67 @@ describe('createContextBuilder calendar context injection', () => {
             // Should not throw
             const result = await contextBuilder.buildUserMessagePrefix('user123');
 
-            expect(result).not.toContain('## Calendar');
+            expect(result).toContain('[Calendar unavailable: CalDAV connection failed]');
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({
                     userId: 'user123',
                 }),
                 'Failed to load calendar context'
             );
+        });
+
+        test('should return timeout-specific message on CaldavTimeoutError', async () => {
+            setupBackendMocks();
+
+            mockCalendarRegistry.getAllCalendars = mock(async () => {
+                throw new CaldavTimeoutError('CalDAV operation timed out after 15000ms: connect', { timeoutMs: 15_000, operation: 'connect' });
+            });
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('[Calendar unavailable: connection to calendar server timed out after 15000ms]');
+        });
+
+        test('should return auth-specific message on CaldavAuthError', async () => {
+            setupBackendMocks();
+
+            mockCalendarRegistry.getAllCalendars = mock(async () => {
+                throw new CaldavAuthError('Auth failed', { serverUrl: 'https://cal.example.com' });
+            });
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('[Calendar unavailable: authentication failed for calendar server]');
+        });
+
+        test('should return generic message for non-Error thrown value', async () => {
+            setupBackendMocks();
+
+            mockCalendarRegistry.getAllCalendars = mock(async () => {
+                throw 'string error'; // non-Error value — testing String(error) branch
+            });
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('[Calendar unavailable: string error]');
         });
 
         test('should pass userTimezone to formatCalendarContext when provided', async () => {
@@ -466,7 +575,7 @@ describe('createContextBuilder calendar context injection', () => {
             expect(result).toContain('All day event');
         });
 
-        test('should use UTC as default timezone when userTimezone is not provided', async () => {
+        test('should use server local timezone as default when userTimezone is not provided', async () => {
             setupBackendMocks();
 
             mockCalDAVClient.getContextEvents = mock(async () => [{

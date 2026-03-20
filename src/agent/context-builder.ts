@@ -8,7 +8,7 @@
 import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 import type { BlueskyClient } from '@/integrations/bsky';
-import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent } from '@/integrations/caldav';
+import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
 
@@ -246,6 +246,25 @@ async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Prom
 }
 
 /**
+ * Classify a caught error into a human-readable reason string for calendar unavailability messages.
+ */
+function classifyCalendarError(error: unknown): string {
+    if(error instanceof CaldavTimeoutError) {
+        const timeoutMs = error.context?.timeoutMs;
+        // Stryker disable next-line ConditionalExpression,StringLiteral: fallback for missing timeoutMs context — defensive only
+        const timeoutStr = typeof timeoutMs === 'number' ? String(timeoutMs) : 'unknown';
+        return `connection to calendar server timed out after ${timeoutStr}ms`;
+    }
+    if(error instanceof CaldavAuthError) {
+        return 'authentication failed for calendar server';
+    }
+    if(error instanceof Error) {
+        return error.message;
+    }
+    return String(error);
+}
+
+/**
  * Class-based context builder for managing agent memory context
  */
 export class ContextBuilderImpl implements ContextBuilder {
@@ -376,14 +395,13 @@ export class ContextBuilderImpl implements ContextBuilder {
                 return undefined;
             }
 
-            // Stryker disable next-line StringLiteral: UTC fallback timezone is configuration — display difference only
-            const timezone = userTimezone ?? 'UTC';
+            const timezone = resolveTimezone(userTimezone);
             return formatCalendarContext(events, now, timezone);
         } catch (error) {
             logger.warn({ error, userId }, 'Failed to load calendar context');
+            return `[Calendar unavailable: ${classifyCalendarError(error)}]`;
         }
         // Stryker restore BlockStatement
-        return undefined;
     }
 
     /**
@@ -425,9 +443,9 @@ export class ContextBuilderImpl implements ContextBuilder {
             return formatCalendarContext(allEvents, now, resolveTimezone());
         } catch (error) {
             logger.warn({ error }, 'Failed to load perch calendar context');
+            return `[Calendar unavailable: ${classifyCalendarError(error)}]`;
         }
         // Stryker restore BlockStatement
-        return undefined;
     }
 
     /**

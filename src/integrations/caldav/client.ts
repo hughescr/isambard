@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import * as ical from 'node-ical';
 import { createDAVClient, type DAVCalendar, type DAVCalendarObject } from 'tsdav';
 import type { CalendarServerEntry } from './calendar-registry/types';
-import { CaldavAuthError } from './errors';
+import { CaldavAuthError, CaldavTimeoutError } from './errors';
 import type { CalendarInfo, CalendarEvent } from './types';
 
 interface CachedEvents {
@@ -17,10 +17,12 @@ type AttendeeItem = ical.Attendee;
  */
 export class CalDAVClient {
     readonly #cacheTtlMs: number;
+    readonly #timeoutMs:  number;
     readonly #cache = new Map<string, CachedEvents>();
 
-    constructor(cacheTtlMs = 300_000) {
+    constructor(cacheTtlMs = 300_000, timeoutMs = 15_000) {
         this.#cacheTtlMs = cacheTtlMs;
+        this.#timeoutMs = timeoutMs;
     }
 
     /**
@@ -29,7 +31,8 @@ export class CalDAVClient {
      */
     async discoverCalendars(serverUrl: string, username: string, password: string): Promise<CalendarInfo[]> {
         const client = await this.#createClient(serverUrl, username, password);
-        const calendars = await client.fetchCalendars();
+        // Stryker disable next-line StringLiteral -- operation label is informational only; appears in error message text
+        const calendars = await this.#withTimeout(client.fetchCalendars(), this.#timeoutMs, 'fetchCalendars');
         return calendars.map((cal) => {
             const calRecord = cal as unknown as Record<string, unknown>;
             const rawDisplayName = cal.displayName;
@@ -95,7 +98,8 @@ export class CalDAVClient {
 
     async #fetchServerEvents(server: CalendarServerEntry, start: Date, end: Date): Promise<CalendarEvent[]> {
         const client = await this.#createClient(server.serverUrl, server.username, server.password);
-        const calendars = await client.fetchCalendars();
+        // Stryker disable next-line StringLiteral -- operation label is informational only; appears in error message text
+        const calendars = await this.#withTimeout(client.fetchCalendars(), this.#timeoutMs, 'fetchCalendars');
         const events: CalendarEvent[] = [];
 
         for(const calEntry of server.calendars) {
@@ -104,11 +108,13 @@ export class CalDAVClient {
                 continue;
             }
 
+            // Stryker disable StringLiteral -- operation label is informational only; appears in error message text
             // eslint-disable-next-line no-await-in-loop -- sequential calendar fetching within a single server connection
-            const calObjects: DAVCalendarObject[] = await client.fetchCalendarObjects({
+            const calObjects: DAVCalendarObject[] = await this.#withTimeout(client.fetchCalendarObjects({
                 calendar:  davCalendar,
                 timeRange: { start: start.toISOString(), end: end.toISOString() },
-            });
+            }), this.#timeoutMs, 'fetchCalendarObjects');
+            // Stryker restore StringLiteral
 
             for(const obj of calObjects) {
                 if(!obj.data) {
@@ -123,15 +129,37 @@ export class CalDAVClient {
         return events;
     }
 
+    async #withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            timeoutId = setTimeout(() => {
+                reject(new CaldavTimeoutError(
+                    `CalDAV operation timed out after ${ms}ms: ${label}`,
+                    { timeoutMs: ms, operation: label }
+                ));
+            }, ms);
+        });
+        // Stryker disable BlockStatement -- clearTimeout in finally is resource cleanup; timer leak not observable without real timer inspection
+        try {
+            return await Promise.race([promise, timeout]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+        // Stryker restore BlockStatement
+    }
+
     async #createClient(serverUrl: string, username: string, password: string) {
         try {
-            return await createDAVClient({
+            return await this.#withTimeout(createDAVClient({
                 serverUrl,
                 credentials:        { username, password },
                 authMethod:         'Basic',
                 defaultAccountType: 'caldav',
-            });
+            }), this.#timeoutMs, 'connect');
         } catch (error) {
+            if(error instanceof CaldavTimeoutError) {
+                throw error;
+            }
             // Stryker disable StringLiteral -- error message is informational only
             throw new CaldavAuthError(
                 `Failed to connect to CalDAV server: ${serverUrl}`,

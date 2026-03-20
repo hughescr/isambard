@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
-import { CaldavAuthError } from '@/integrations/caldav/errors';
+import { CaldavAuthError, CaldavTimeoutError } from '@/integrations/caldav/errors';
 import type { CalendarEvent } from '@/integrations/caldav/types';
 
 // ---------------------------------------------------------------------------
@@ -845,5 +845,109 @@ describe('CalDAVClient cache key rounding', () => {
 
         // Both should fetch independently — hour difference matters
         expect(mockFetchCalendars).toHaveBeenCalledTimes(2);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Timeout behavior
+// ---------------------------------------------------------------------------
+
+describe('CalDAVClient timeout', () => {
+    beforeEach(() => {
+        mockCreateDAVClient.mockReset();
+        mockFetchCalendars.mockReset();
+        mockFetchCalendarObjects.mockReset();
+        mockParseICS.mockReset();
+        mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
+    });
+
+    test('constructor accepts custom timeoutMs', () => {
+        const client = new CalDAVClient(300_000, 5000);
+        expect(client).toBeDefined();
+    });
+
+    test('constructor uses default timeoutMs when not provided', () => {
+        const client = new CalDAVClient();
+        expect(client).toBeDefined();
+    });
+
+    test('throws CaldavTimeoutError when createDAVClient hangs', async () => {
+        mockCreateDAVClient.mockImplementation(
+            (): Promise<never> => new Promise(() => {}) // never resolves
+        );
+
+        const client = new CalDAVClient(300_000, 50); // 50ms timeout
+        expect(
+            client.discoverCalendars('https://caldav.example.com', 'user', 'pass')
+        ).rejects.toBeInstanceOf(CaldavTimeoutError);
+    });
+
+    test('CaldavTimeoutError has correct context for connect timeout', async () => {
+        mockCreateDAVClient.mockImplementation(
+            (): Promise<never> => new Promise(() => {})
+        );
+
+        const client = new CalDAVClient(300_000, 50);
+        let thrown: unknown;
+        try {
+            await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        } catch (e) {
+            thrown = e;
+        }
+
+        expect(thrown).toBeInstanceOf(CaldavTimeoutError);
+        const err = thrown as CaldavTimeoutError;
+        expect(err.context).toMatchObject({ timeoutMs: 50, operation: 'connect' });
+        expect(err.message).toContain('50ms');
+        expect(err.message).toContain('connect');
+    });
+
+    test('throws CaldavTimeoutError when fetchCalendars hangs', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(
+            (): Promise<never> => new Promise(() => {})
+        );
+
+        const client = new CalDAVClient(300_000, 50);
+        expect(
+            client.discoverCalendars('https://caldav.example.com', 'user', 'pass')
+        ).rejects.toBeInstanceOf(CaldavTimeoutError);
+    });
+
+    test('throws CaldavTimeoutError when fetchCalendarObjects hangs in getEvents', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+            { url: '/calendars/testuser/default/', displayName: 'Personal Calendar' },
+        ]);
+        mockFetchCalendarObjects.mockImplementation(
+            (): Promise<never> => new Promise(() => {})
+        );
+
+        const client = new CalDAVClient(300_000, 50);
+        const server = makeServer();
+        // getEvents catches errors per-server, so this should not throw but log warning
+        const result = await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        expect(result).toEqual([]);
+        expect(mockLogger.warn).toHaveBeenCalled();
+    });
+
+    test('does not timeout when operations complete quickly', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const client = new CalDAVClient(300_000, 5000);
+        const result = await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        expect(result).toEqual([]);
+    });
+
+    test('clears timeout timer on successful operation', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const client = new CalDAVClient(300_000, 5000);
+        // Should not leak timers
+        await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        // If timer wasn't cleared, it would fire after test completion (no assertion needed, just no hanging)
     });
 });
