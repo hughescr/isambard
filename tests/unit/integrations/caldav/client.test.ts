@@ -757,6 +757,40 @@ describe('CalDAVClient event extraction', () => {
         expect(events[0]?.start).toBeInstanceOf(Date);
         expect(events[0]?.end).toBeInstanceOf(Date);
     });
+
+    // --- timezone extraction ---
+
+    test('extracts timezone from start.tz for timed events', async () => {
+        const startWithTz = Object.assign(new Date('2025-06-15T14:00:00.000Z'), { tz: 'America/New_York' });
+        const events = await extractEvents([
+            makeVEvent({ start: startWithTz, datetype: 'date-time' }),
+        ]);
+        expect(events[0]?.timezone).toBe('America/New_York');
+    });
+
+    test('timezone is undefined when start has no tz property', async () => {
+        const events = await extractEvents([makeVEvent()]);
+        expect(events[0]?.timezone).toBeUndefined();
+    });
+
+    test('timezone is undefined for all-day events even if start.tz is present', async () => {
+        const startWithTz = Object.assign(new Date('2025-06-15'), { tz: 'America/New_York', dateOnly: true as const });
+        const events = await extractEvents([
+            makeVEvent({ start: startWithTz, datetype: 'date-time' }),
+        ]);
+        // isAllDay is true due to dateOnly, so timezone must be suppressed
+        expect(events[0]?.isAllDay).toBe(true);
+        expect(events[0]?.timezone).toBeUndefined();
+    });
+
+    test('timezone is undefined for date-type all-day events', async () => {
+        const startWithTz = Object.assign(new Date('2025-06-15T00:00:00.000Z'), { tz: 'America/Los_Angeles' });
+        const events = await extractEvents([
+            makeVEvent({ start: startWithTz, datetype: 'date' }),
+        ]);
+        expect(events[0]?.isAllDay).toBe(true);
+        expect(events[0]?.timezone).toBeUndefined();
+    });
 });
 
 // ---------------------------------------------------------------------------

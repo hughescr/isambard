@@ -10,7 +10,7 @@ import type { SummarizeEventBatchesFn } from './event-summarizer';
 import type { BlueskyClient } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent } from '@/integrations/caldav';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
-import { formatShortRelativeTime, formatTimeHeader } from '@/utils';
+import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
 
 /** Minimal interface for retrieving message metadata from WildDuck */
 export interface WildDuckService {
@@ -388,7 +388,7 @@ export class ContextBuilderImpl implements ContextBuilder {
 
     /**
      * Build the calendar context section for all registered users (for perch sessions).
-     * Loads all users' calendars and merges their events, using UTC as the display timezone.
+     * Loads all users' calendars and merges their events, using Izzy's local timezone.
      * Returns formatted calendar section string, or undefined if no service, no users, or no events.
      */
     async #buildPerchCalendarSection(now: Date = new Date()): Promise<string | undefined> {
@@ -422,8 +422,7 @@ export class ContextBuilderImpl implements ContextBuilder {
                 return undefined;
             }
 
-            // Stryker disable next-line StringLiteral: UTC timezone for perch is configuration — display difference only
-            return formatCalendarContext(allEvents, now, 'UTC');
+            return formatCalendarContext(allEvents, now, resolveTimezone());
         } catch (error) {
             logger.warn({ error }, 'Failed to load perch calendar context');
         }

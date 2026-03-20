@@ -559,6 +559,17 @@ const TIMEZONE_OFFSETS: Record<string, number> = {
     'Pacific/Auckland':    13,
 };
 
+// Short timezone abbreviations for mock (fixed, no DST — matches test fixture offsets above)
+const TIMEZONE_ABBRS: Record<string, string> = {
+    UTC:                   'UTC',
+    'America/Los_Angeles': 'PST',
+    'America/New_York':    'EST',
+    'Europe/London':       'GMT',
+    'Asia/Tokyo':          'JST',
+    'Pacific/Kwajalein':   'MHT',
+    'Pacific/Auckland':    'NZDT',
+};
+
 // @ts-expect-error -- Mocking global
 Intl.DateTimeFormat = class MockDateTimeFormat {
     private options:  Intl.DateTimeFormatOptions;
@@ -610,6 +621,15 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         if(this.options.hour && !this.options.minute && !this.options.second) {
             return [
                 { type: 'hour', value: String(d.getUTCHours()).padStart(2, '0') },
+            ];
+        }
+
+        // Handle timeZoneName: 'short' formatting (used by Luxon for ZZZZ format token)
+        if(this.options.timeZoneName === 'short') {
+            const tz = this.options.timeZone ?? 'UTC';
+            const abbr = TIMEZONE_ABBRS[tz] ?? `GMT${this.tzOffset >= 0 ? '+' : ''}${this.tzOffset}`;
+            return [
+                { type: 'timeZoneName', value: abbr },
             ];
         }
 

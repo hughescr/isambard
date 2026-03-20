@@ -23,4 +23,5 @@ export interface CalendarEvent {
     calendarLabel: string    // Which calendar this came from
     status?:       'confirmed' | 'tentative' | 'cancelled'
     recurrenceId?: string    // For recurring event instances
+    timezone?:     string    // IANA timezone from the calendar source (e.g. 'America/New_York'); undefined for floating/all-day events
 }

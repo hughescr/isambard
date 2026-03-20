@@ -152,6 +152,9 @@ export class CalDAVClient {
             // We've confirmed type === 'VEVENT' above
             const vevent = component as unknown as ical.VEvent;
 
+            const isAllDay = this.#isAllDay(vevent);
+            const startTz = (vevent.start as unknown as Record<string, unknown>).tz as string | undefined;
+
             events.push({
                 uid:          vevent.uid,
                 summary:      this.#extractParameterValue(vevent.summary) ?? '(No title)',
@@ -160,10 +163,11 @@ export class CalDAVClient {
                 location:     this.#extractParameterValue(vevent.location) ?? undefined,
                 description:  this.#extractParameterValue(vevent.description) ?? undefined,
                 attendees:    this.#extractAttendees(vevent),
-                isAllDay:     this.#isAllDay(vevent),
+                isAllDay,
                 calendarLabel,
                 status:       this.#normalizeStatus(vevent.status),
                 recurrenceId: vevent.recurrenceid ? String(vevent.recurrenceid) : undefined,
+                timezone:     isAllDay ? undefined : startTz,
             });
         }
 

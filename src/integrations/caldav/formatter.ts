@@ -80,24 +80,42 @@ function formatDayLabel(dayDT: DateTime, todayStart: DateTime): string {
     return `${dayName} ${dateStr}`;
 }
 
-function formatEventLine(event: CalendarEvent, timezone: string): string {
+function formatTimeRange(start: Date, end: Date, zone: string): string {
+    const startDT = DateTime.fromJSDate(start, { zone });
+    const endDT   = DateTime.fromJSDate(end, { zone });
+    // Stryker disable StringLiteral: format strings are cosmetic display detail
+    const startTime = startDT.toFormat('HH:mm');
+    const endTime   = endDT.toFormat('HH:mm');
+    const abbr      = startDT.toFormat('ZZZZ');
+    // Stryker restore StringLiteral
+    return `${startTime}–${endTime} ${abbr}`;
+}
+
+function buildTimeSuffix(event: CalendarEvent, izzyTimezone: string): string {
+    if(izzyTimezone === 'UTC') {
+        return '';
+    }
+    const suffixes: string[] = [];
+    const eventTz = event.timezone;
+    if(eventTz && eventTz !== izzyTimezone) {
+        suffixes.push(formatTimeRange(event.start, event.end, eventTz));
+    }
+    if(eventTz !== 'UTC') {
+        suffixes.push(formatTimeRange(event.start, event.end, 'UTC'));
+    }
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: suffixes is never empty here — UTC is always pushed when izzyTimezone !== 'UTC' and eventTz !== 'UTC'; the else branch is unreachable
+    return suffixes.length > 0 ? ` (${suffixes.join(' / ')})` : '';
+}
+
+function formatEventLine(event: CalendarEvent, izzyTimezone: string): string {
     let line: string;
 
     if(event.isAllDay) {
         line = `- All day: ${event.summary}`;
     } else {
-        const startDT   = DateTime.fromJSDate(event.start, { zone: timezone });
-        const endDT     = DateTime.fromJSDate(event.end, { zone: timezone });
-        const startTime = startDT.toFormat('HH:mm');
-        const endTime   = endDT.toFormat('HH:mm');
-
-        if(timezone === 'UTC') {
-            line = `- ${startTime}–${endTime} UTC: ${event.summary}`;
-        } else {
-            const startUTC = startDT.toUTC().toFormat('HH:mm');
-            const endUTC   = endDT.toUTC().toFormat('HH:mm');
-            line = `- ${startTime}–${endTime} ${timezone} (${startUTC}–${endUTC} UTC): ${event.summary}`;
-        }
+        const izzyRange = formatTimeRange(event.start, event.end, izzyTimezone);
+        const suffix    = buildTimeSuffix(event, izzyTimezone);
+        line = `- ${izzyRange}${suffix}: ${event.summary}`;
     }
 
     // Calendar label

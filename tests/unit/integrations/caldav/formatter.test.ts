@@ -5,6 +5,7 @@ import { type CalendarEvent } from '@/integrations/caldav/types';
 const TZ = 'America/Los_Angeles';
 
 // Reference: 'now' is Tuesday 2026-03-18 at 10:00 AM Pacific (18:00 UTC)
+// Test mock uses fixed offsets: LA=UTC-8 (PST), ET=UTC-5 (EST)
 const NOW = new Date('2026-03-18T18:00:00Z');
 
 function makeEvent(overrides: Partial<CalendarEvent> & Pick<CalendarEvent, 'summary' | 'start' | 'end'>): CalendarEvent {
@@ -21,14 +22,16 @@ describe.concurrent('formatCalendarContext', () => {
         expect(formatCalendarContext([], NOW, TZ)).toBe('');
     });
 
-    it('formats a single timed event with time, label, and no extras', () => {
+    it('formats a single timed event with 24h time, TZ abbreviation, and UTC suffix', () => {
         const event = makeEvent({
             summary: 'Team Standup',
-            start:   new Date('2026-03-18T17:00:00Z'), // 9:00 AM PT
-            end:     new Date('2026-03-18T17:30:00Z'), // 9:30 AM PT
+            start:   new Date('2026-03-18T17:00:00Z'), // 09:00 PST
+            end:     new Date('2026-03-18T17:30:00Z'), // 09:30 PST
         });
         const result = formatCalendarContext([event], NOW, TZ);
-        expect(result).toContain('09:00–09:30 America/Los_Angeles (17:00–17:30 UTC): Team Standup [Work]');
+        expect(result).toContain('09:00–09:30 PST');
+        expect(result).toContain('(17:00–17:30 UTC)');
+        expect(result).toContain('Team Standup [Work]');
         expect(result).not.toContain('@');
         expect(result).not.toContain('attendee');
     });
@@ -36,15 +39,17 @@ describe.concurrent('formatCalendarContext', () => {
     it('formats a single timed event with location', () => {
         const event = makeEvent({
             summary:  'Product Review',
-            start:    new Date('2026-03-18T17:00:00Z'), // 9:00 AM PT
-            end:      new Date('2026-03-18T18:00:00Z'), // 10:00 AM PT
+            start:    new Date('2026-03-18T17:00:00Z'), // 09:00 PST
+            end:      new Date('2026-03-18T18:00:00Z'), // 10:00 PST
             location: 'Conference Room A',
         });
         const result = formatCalendarContext([event], NOW, TZ);
-        expect(result).toContain('09:00–10:00 America/Los_Angeles (17:00–18:00 UTC): Product Review [Work] @ Conference Room A');
+        expect(result).toContain('09:00–10:00 PST');
+        expect(result).toContain('(17:00–18:00 UTC)');
+        expect(result).toContain('Product Review [Work] @ Conference Room A');
     });
 
-    it('formats an all-day event', () => {
+    it('formats an all-day event without time or timezone info', () => {
         const event = makeEvent({
             summary:       "Craig's Birthday",
             start:         new Date('2026-03-18T08:00:00Z'), // all-day, local start
@@ -54,20 +59,21 @@ describe.concurrent('formatCalendarContext', () => {
         });
         const result = formatCalendarContext([event], NOW, TZ);
         expect(result).toContain("All day: Craig's Birthday [Personal]");
-        expect(result).not.toContain('AM');
-        expect(result).not.toContain('PM');
+        expect(result).not.toContain('PST');
+        expect(result).not.toContain('UTC');
+        expect(result).not.toContain(':00');
     });
 
     it('groups multiple events on the same day under one header', () => {
         const events = [
             makeEvent({
                 summary: 'Morning Standup',
-                start:   new Date('2026-03-18T16:00:00Z'), // 8:00 AM PT
+                start:   new Date('2026-03-18T16:00:00Z'), // 08:00 PST
                 end:     new Date('2026-03-18T16:30:00Z'),
             }),
             makeEvent({
                 summary: 'Afternoon Sync',
-                start:   new Date('2026-03-18T21:00:00Z'), // 1:00 PM PT
+                start:   new Date('2026-03-18T21:00:00Z'), // 13:00 PST
                 end:     new Date('2026-03-18T21:30:00Z'),
             }),
         ];
@@ -82,12 +88,12 @@ describe.concurrent('formatCalendarContext', () => {
         const events = [
             makeEvent({
                 summary: 'Monday Meeting',
-                start:   new Date('2026-03-17T17:00:00Z'), // yesterday PT
+                start:   new Date('2026-03-17T17:00:00Z'), // yesterday PST
                 end:     new Date('2026-03-17T18:00:00Z'),
             }),
             makeEvent({
                 summary: 'Tuesday Meeting',
-                start:   new Date('2026-03-18T17:00:00Z'), // today PT
+                start:   new Date('2026-03-18T17:00:00Z'), // today PST
                 end:     new Date('2026-03-18T18:00:00Z'),
             }),
         ];
@@ -101,7 +107,7 @@ describe.concurrent('formatCalendarContext', () => {
     it('shows "Yesterday" label for one day before today', () => {
         const event = makeEvent({
             summary: 'Yesterday Event',
-            start:   new Date('2026-03-17T17:00:00Z'), // Tue Mar 17 in LA (UTC-8 in test mock)
+            start:   new Date('2026-03-17T17:00:00Z'),
             end:     new Date('2026-03-17T18:00:00Z'),
         });
         const result = formatCalendarContext([event], NOW, TZ);
@@ -111,7 +117,7 @@ describe.concurrent('formatCalendarContext', () => {
     it('shows "Today" label for today', () => {
         const event = makeEvent({
             summary: 'Today Event',
-            start:   new Date('2026-03-18T17:00:00Z'), // Wed Mar 18 in LA (UTC-8 in test mock)
+            start:   new Date('2026-03-18T17:00:00Z'),
             end:     new Date('2026-03-18T18:00:00Z'),
         });
         const result = formatCalendarContext([event], NOW, TZ);
@@ -121,7 +127,7 @@ describe.concurrent('formatCalendarContext', () => {
     it('shows "Tomorrow" label for one day after today', () => {
         const event = makeEvent({
             summary: 'Tomorrow Event',
-            start:   new Date('2026-03-19T17:00:00Z'), // Thu Mar 19 in LA (UTC-8 in test mock)
+            start:   new Date('2026-03-19T17:00:00Z'),
             end:     new Date('2026-03-19T18:00:00Z'),
         });
         const result = formatCalendarContext([event], NOW, TZ);
@@ -131,7 +137,7 @@ describe.concurrent('formatCalendarContext', () => {
     it('shows "DayName Mon D" for days beyond tomorrow', () => {
         const event = makeEvent({
             summary: 'Future Event',
-            start:   new Date('2026-03-20T17:00:00Z'), // Fri Mar 20 in LA (UTC-8 in test mock)
+            start:   new Date('2026-03-20T17:00:00Z'),
             end:     new Date('2026-03-20T18:00:00Z'),
         });
         const result = formatCalendarContext([event], NOW, TZ);
@@ -211,7 +217,7 @@ describe.concurrent('formatCalendarContext', () => {
         const events = [
             makeEvent({
                 summary: 'Timed Event',
-                start:   new Date('2026-03-18T08:00:00Z'), // early morning PT
+                start:   new Date('2026-03-18T08:00:00Z'), // 00:00 PST (early morning)
                 end:     new Date('2026-03-18T09:00:00Z'),
             }),
             makeEvent({
@@ -223,7 +229,7 @@ describe.concurrent('formatCalendarContext', () => {
         ];
         const result = formatCalendarContext(events, NOW, TZ);
         const allDayPos = result.indexOf('All day:');
-        const timedPos = result.indexOf('Timed Event');
+        const timedPos = result.indexOf('00:00');
         expect(allDayPos).toBeLessThan(timedPos);
     });
 
@@ -231,12 +237,12 @@ describe.concurrent('formatCalendarContext', () => {
         const events = [
             makeEvent({
                 summary: 'Late Event',
-                start:   new Date('2026-03-18T23:00:00Z'), // 3:00 PM PT
+                start:   new Date('2026-03-18T23:00:00Z'), // 15:00 PST
                 end:     new Date('2026-03-18T23:30:00Z'),
             }),
             makeEvent({
                 summary: 'Early Event',
-                start:   new Date('2026-03-18T16:00:00Z'), // 8:00 AM PT
+                start:   new Date('2026-03-18T16:00:00Z'), // 08:00 PST
                 end:     new Date('2026-03-18T16:30:00Z'),
             }),
         ];
@@ -247,17 +253,17 @@ describe.concurrent('formatCalendarContext', () => {
     });
 
     it('displays times in the specified timezone', () => {
-        // Test mock uses fixed offsets: LA=UTC-8, ET=UTC-5 (no DST adjustment)
-        // 19:00 UTC → 11:00 AM LA (UTC-8), 2:00 PM ET (UTC-5)
+        // Test mock uses fixed offsets: LA=UTC-8 (PST), ET=UTC-5 (EST)
+        // 19:00 UTC → 11:00 PST (UTC-8), 14:00 EST (UTC-5)
         const event = makeEvent({
             summary: 'Morning Call',
-            start:   new Date('2026-03-18T19:00:00Z'), // 11:00 AM LA, 2:00 PM ET
-            end:     new Date('2026-03-18T20:00:00Z'), // 12:00 PM LA, 3:00 PM ET
+            start:   new Date('2026-03-18T19:00:00Z'), // 11:00 PST, 14:00 EST
+            end:     new Date('2026-03-18T20:00:00Z'), // 12:00 PST, 15:00 EST
         });
         const resultPT = formatCalendarContext([event], NOW, 'America/Los_Angeles');
         const resultET = formatCalendarContext([event], NOW, 'America/New_York');
-        expect(resultPT).toContain('11:00–12:00 America/Los_Angeles (19:00–20:00 UTC)');
-        expect(resultET).toContain('14:00–15:00 America/New_York (19:00–20:00 UTC)');
+        expect(resultPT).toContain('11:00–12:00 PST');
+        expect(resultET).toContain('14:00–15:00 EST');
     });
 
     it('omits location, attendees, and status suffixes when fields are absent', () => {
@@ -316,7 +322,7 @@ describe.concurrent('formatCalendarContext', () => {
         // With the correct timezone, it must group under Mar 18
         const event = makeEvent({
             summary: 'Late Night Event',
-            start:   new Date('2026-03-19T05:00:00Z'), // Mar 18 10:00 PM PT, Mar 19 UTC
+            start:   new Date('2026-03-19T05:00:00Z'), // Mar 18 21:00 PST, Mar 19 UTC
             end:     new Date('2026-03-19T06:00:00Z'),
         });
         const result = formatCalendarContext([event], NOW, TZ);
@@ -343,23 +349,23 @@ describe.concurrent('formatCalendarContext', () => {
         const events = [
             makeEvent({
                 summary: 'Timed Late',
-                start:   new Date('2026-03-18T17:00:00Z'), // 9:00 AM PT
+                start:   new Date('2026-03-18T17:00:00Z'), // 09:00 PST
                 end:     new Date('2026-03-18T18:00:00Z'),
             }),
             makeEvent({
                 summary:  'All Day A',
-                start:    new Date('2026-03-18T12:00:00Z'), // all-day, 4:00 AM PT
+                start:    new Date('2026-03-18T12:00:00Z'), // all-day, 04:00 PST
                 end:      new Date('2026-03-19T12:00:00Z'),
                 isAllDay: true,
             }),
             makeEvent({
                 summary: 'Timed Early',
-                start:   new Date('2026-03-18T09:00:00Z'), // 1:00 AM PT — same local day, BEFORE All Day A's 12:00Z
+                start:   new Date('2026-03-18T09:00:00Z'), // 01:00 PST — same local day, BEFORE All Day A's 12:00Z
                 end:     new Date('2026-03-18T10:00:00Z'),
             }),
             makeEvent({
                 summary:  'All Day B',
-                start:    new Date('2026-03-18T22:00:00Z'), // all-day, 2:00 PM PT — later than timed events
+                start:    new Date('2026-03-18T22:00:00Z'), // all-day, 14:00 PST — later than timed events
                 end:      new Date('2026-03-19T22:00:00Z'),
                 isAllDay: true,
             }),
@@ -400,24 +406,104 @@ describe.concurrent('formatCalendarContext', () => {
         expect(result).not.toContain('attendee');
     });
 
-    it('shows simple UTC format when timezone is UTC', () => {
+    // --- Multi-timezone display ---
+
+    it('shows only local+UTC for event with no source timezone', () => {
+        // No timezone property on the event — should show izzy TZ and UTC
         const event = makeEvent({
-            summary: 'UTC Meeting',
+            summary: 'No TZ Event',
+            start:   new Date('2026-03-18T17:00:00Z'), // 09:00 PST
+            end:     new Date('2026-03-18T18:00:00Z'), // 10:00 PST
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain('09:00–10:00 PST');
+        expect(result).toContain('(17:00–18:00 UTC)');
+        // Event line should have exactly one parenthetical (the UTC suffix only)
+        const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
+        expect((eventLine.match(/\(/g) ?? []).length).toBe(1);
+    });
+
+    it('shows local + event TZ + UTC when event has a different source timezone', () => {
+        // Event created in America/New_York (EST = UTC-5), displayed in America/Los_Angeles (PST = UTC-8)
+        // 17:00 UTC = 09:00 PST, = 12:00 EST
+        const event = makeEvent({
+            summary:  'East Coast Meeting',
+            start:    new Date('2026-03-18T17:00:00Z'), // 09:00 PST, 12:00 EST
+            end:      new Date('2026-03-18T18:00:00Z'), // 10:00 PST, 13:00 EST
+            timezone: 'America/New_York',
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        // Izzy's local time
+        expect(result).toContain('09:00–10:00 PST');
+        // Event's source timezone
+        expect(result).toContain('12:00–13:00 EST');
+        // UTC
+        expect(result).toContain('17:00–18:00 UTC');
+        // Format: local (eventTZ / UTC)
+        expect(result).toContain('(12:00–13:00 EST / 17:00–18:00 UTC)');
+    });
+
+    it('shows only local+UTC when event source timezone equals izzy timezone', () => {
+        // Event timezone same as Izzy's — no need to show event TZ separately
+        const event = makeEvent({
+            summary:  'Same TZ Event',
+            start:    new Date('2026-03-18T17:00:00Z'), // 09:00 PST
+            end:      new Date('2026-03-18T18:00:00Z'), // 10:00 PST
+            timezone: 'America/Los_Angeles',             // same as izzyTimezone
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain('09:00–10:00 PST');
+        expect(result).toContain('(17:00–18:00 UTC)');
+        // Event line should have exactly one parenthetical (UTC only, no event TZ duplicate)
+        const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
+        expect((eventLine.match(/\(/g) ?? []).length).toBe(1);
+        // No duplicate PST in parens
+        expect(result).not.toContain('(09:00');
+    });
+
+    it('shows only UTC when izzyTimezone is UTC (no duplicate)', () => {
+        // UTC context: no extra suffix needed — just show UTC
+        const event = makeEvent({
+            summary: 'Zulu Event',
             start:   new Date('2026-03-18T17:00:00Z'),
             end:     new Date('2026-03-18T18:00:00Z'),
         });
         const result = formatCalendarContext([event], NOW, 'UTC');
-        expect(result).toContain('17:00–18:00 UTC: UTC Meeting [Work]');
-        expect(result).not.toContain('UTC)');
+        // Event line must be exactly this format with no extra suffix
+        expect(result).toContain('- 17:00–18:00 UTC: Zulu Event [Work]');
     });
 
-    it('shows correct IANA timezone name for non-US timezones', () => {
+    it('does not duplicate UTC when event source timezone is UTC', () => {
+        // Event stored in UTC — should show UTC once (as event TZ), not twice
         const event = makeEvent({
-            summary: 'London Meeting',
-            start:   new Date('2026-03-18T14:00:00Z'), // 14:00 UTC = 14:00 GMT (March 18 is before UK DST switch March 29)
-            end:     new Date('2026-03-18T15:00:00Z'),
+            summary:  'Zulu Meeting',
+            start:    new Date('2026-03-18T17:00:00Z'), // 09:00 PST, 17:00 UTC
+            end:      new Date('2026-03-18T18:00:00Z'), // 10:00 PST, 18:00 UTC
+            timezone: 'UTC',
         });
-        const result = formatCalendarContext([event], NOW, 'Europe/London');
-        expect(result).toContain('14:00–15:00 Europe/London (14:00–15:00 UTC)');
+        const result = formatCalendarContext([event], NOW, TZ);
+        // Izzy's local time shown
+        expect(result).toContain('09:00–10:00 PST');
+        // UTC is the event source timezone, so it appears once in the parenthetical
+        expect(result).toContain('(17:00–18:00 UTC)');
+        // UTC must appear exactly once (not twice) in the event line
+        const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
+        const utcCount = (eventLine.match(/UTC/g) ?? []).length;
+        expect(utcCount).toBe(1);
+    });
+
+    it('all-day events show no timezone info regardless of event.timezone', () => {
+        const event = makeEvent({
+            summary:  'All Day TZ Test',
+            start:    new Date('2026-03-18T08:00:00Z'),
+            end:      new Date('2026-03-19T08:00:00Z'),
+            isAllDay: true,
+            timezone: 'America/New_York',
+        });
+        const result = formatCalendarContext([event], NOW, TZ);
+        expect(result).toContain('All day: All Day TZ Test');
+        expect(result).not.toContain('PST');
+        expect(result).not.toContain('EST');
+        expect(result).not.toContain('UTC');
     });
 });
