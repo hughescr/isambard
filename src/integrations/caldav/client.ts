@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import * as ical from 'node-ical';
+import { expandRecurringEvent } from 'node-ical';
 import { createDAVClient, type DAVCalendar, type DAVCalendarObject } from 'tsdav';
 import type { CalendarServerEntry } from './calendar-registry/types';
 import { CaldavAuthError, CaldavTimeoutError } from './errors';
@@ -121,7 +122,7 @@ export class CalDAVClient {
                     continue;
                 }
                 const parsed = ical.sync.parseICS(obj.data as string);
-                const extracted = this.#extractEvents(parsed, calEntry.label);
+                const extracted = this.#extractEvents(parsed, calEntry.label, start, end);
                 events.push(...extracted);
             }
         }
@@ -169,7 +170,7 @@ export class CalDAVClient {
         }
     }
 
-    #extractEvents(parsed: ical.CalendarResponse, calendarLabel: string): CalendarEvent[] {
+    #extractEvents(parsed: ical.CalendarResponse, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEvent[] {
         const events: CalendarEvent[] = [];
 
         for(const [, component] of Object.entries(parsed)) {
@@ -180,26 +181,56 @@ export class CalDAVClient {
             // We've confirmed type === 'VEVENT' above
             const vevent = component as unknown as ical.VEvent;
 
-            const isAllDay = this.#isAllDay(vevent);
-            const startTz = (vevent.start as unknown as Record<string, unknown>).tz as string | undefined;
+            // Stryker disable next-line LogicalOperator -- both rrule and recurrences indicate a recurring event; either alone is sufficient
+            if(vevent.rrule || vevent.recurrences) {
+                events.push(...this.#expandRecurringVEvent(vevent, calendarLabel, rangeStart, rangeEnd));
+                continue;
+            }
 
-            events.push({
-                uid:          vevent.uid,
-                summary:      this.#extractParameterValue(vevent.summary) ?? '(No title)',
-                start:        vevent.start instanceof Date ? vevent.start : new Date(String(vevent.start)),
-                end:          vevent.end instanceof Date ? vevent.end : new Date(String(vevent.end)),
-                location:     this.#extractParameterValue(vevent.location) ?? undefined,
-                description:  this.#extractParameterValue(vevent.description) ?? undefined,
-                attendees:    this.#extractAttendees(vevent),
-                isAllDay,
-                calendarLabel,
-                status:       this.#normalizeStatus(vevent.status),
-                recurrenceId: vevent.recurrenceid ? String(vevent.recurrenceid) : undefined,
-                timezone:     isAllDay ? undefined : startTz,
-            });
+            events.push(this.#buildCalendarEvent(vevent, vevent.start, vevent.end, this.#isAllDay(vevent), calendarLabel));
         }
 
         return events;
+    }
+
+    #expandRecurringVEvent(vevent: ical.VEvent, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEvent[] {
+        let instances: ical.EventInstance[];
+        try {
+            instances = expandRecurringEvent(vevent, { from: rangeStart, to: rangeEnd, expandOngoing: true });
+        } catch (error) {
+            // Stryker disable next-line StringLiteral -- log message is informational only
+            logger.warn({ error, uid: vevent.uid }, 'Failed to expand recurring event, skipping');
+            return [];
+        }
+
+        if(instances.length === 0) {
+            // Stryker disable next-line StringLiteral -- debug message is informational only
+            logger.debug({ uid: vevent.uid, summary: vevent.summary }, 'Recurring event had rrule/recurrences but produced no instances in range');
+            return [];
+        }
+
+        return instances.map((instance) => {
+            const instanceVEvent = instance.event;
+            return this.#buildCalendarEvent(instanceVEvent, instance.start, instance.end, instance.isFullDay, calendarLabel);
+        });
+    }
+
+    #buildCalendarEvent(vevent: ical.VEvent, start: ical.DateWithTimeZone | undefined, end: ical.DateWithTimeZone | undefined, isAllDay: boolean, calendarLabel: string): CalendarEvent {
+        const startTz = (start as unknown as Record<string, unknown> | undefined)?.tz as string | undefined;
+        return {
+            uid:          vevent.uid,
+            summary:      this.#extractParameterValue(vevent.summary) ?? '(No title)',
+            start:        start instanceof Date ? start : new Date(String(start)),
+            end:          end instanceof Date ? end : new Date(String(end)),
+            location:     this.#extractParameterValue(vevent.location) ?? undefined,
+            description:  this.#extractParameterValue(vevent.description) ?? undefined,
+            attendees:    this.#extractAttendees(vevent),
+            isAllDay,
+            calendarLabel,
+            status:       this.#normalizeStatus(vevent.status),
+            recurrenceId: vevent.recurrenceid ? String(vevent.recurrenceid) : undefined,
+            timezone:     isAllDay ? undefined : startTz,
+        };
     }
 
     #extractParameterValue(value: ical.ParameterValue | undefined): string | undefined {

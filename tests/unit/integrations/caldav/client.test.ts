@@ -29,11 +29,24 @@ mock.module('tsdav', () => ({
 
 const mockParseICS = mock((_body: string): Record<string, unknown> => ({}));
 
+interface MockEventInstance {
+    start:       Date
+    end:         Date
+    summary:     string
+    isFullDay:   boolean
+    isRecurring: boolean
+    isOverride:  boolean
+    event:       Record<string, unknown>
+}
+
+const mockExpandRecurringEvent = mock((_event: Record<string, unknown>, _options: Record<string, unknown>): MockEventInstance[] => ([]));
+
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
 mock.module('node-ical', () => ({
     sync: {
         parseICS: mockParseICS,
     },
+    expandRecurringEvent: mockExpandRecurringEvent,
 }));
 
 // ---------------------------------------------------------------------------
@@ -85,6 +98,25 @@ function makeVEvent(overrides: Record<string, unknown> = {}): Record<string, unk
     };
 }
 
+// Module-level helper used by event extraction and recurring expansion tests
+async function extractEvents(vevents: Record<string, unknown>[]): Promise<CalendarEvent[]> {
+    mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+    mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+        makeDAVCalendar(),
+    ]);
+    mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+        makeCalendarObject('ics'),
+    ]);
+    const parsed: Record<string, unknown> = {};
+    for(const vevent of vevents) {
+        parsed[vevent.uid as string] = vevent;
+    }
+    mockParseICS.mockImplementation((): Record<string, unknown> => parsed);
+
+    const client = new CalDAVClient();
+    return client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+}
+
 // ---------------------------------------------------------------------------
 // discoverCalendars
 // ---------------------------------------------------------------------------
@@ -95,6 +127,8 @@ describe('CalDAVClient.discoverCalendars', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
@@ -196,6 +230,8 @@ describe('CalDAVClient.getEvents', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
@@ -394,6 +430,8 @@ describe('CalDAVClient cache', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
@@ -490,6 +528,8 @@ describe('CalDAVClient.getContextEvents', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
@@ -554,27 +594,11 @@ describe('CalDAVClient event extraction', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
-
-    async function extractEvents(vevents: Record<string, unknown>[]): Promise<CalendarEvent[]> {
-        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
-        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
-            makeDAVCalendar(),
-        ]);
-        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
-            makeCalendarObject('ics'),
-        ]);
-        const parsed: Record<string, unknown> = {};
-        for(const vevent of vevents) {
-            parsed[vevent.uid as string] = vevent;
-        }
-        mockParseICS.mockImplementation((): Record<string, unknown> => parsed);
-
-        const client = new CalDAVClient();
-        return client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
-    }
 
     test('extracts basic VEVENT fields', async () => {
         const events = await extractEvents([makeVEvent()]);
@@ -803,6 +827,8 @@ describe('CalDAVClient cache key rounding', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
@@ -858,6 +884,8 @@ describe('CalDAVClient timeout', () => {
         mockFetchCalendars.mockReset();
         mockFetchCalendarObjects.mockReset();
         mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
     });
@@ -949,5 +977,280 @@ describe('CalDAVClient timeout', () => {
         // Should not leak timers
         await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
         // If timer wasn't cleared, it would fire after test completion (no assertion needed, just no hanging)
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Recurring event expansion
+// ---------------------------------------------------------------------------
+
+describe('CalDAVClient recurring event expansion', () => {
+    beforeEach(() => {
+        mockCreateDAVClient.mockReset();
+        mockFetchCalendars.mockReset();
+        mockFetchCalendarObjects.mockReset();
+        mockParseICS.mockReset();
+        mockExpandRecurringEvent.mockReset();
+        mockLogger.debug.mockClear();
+        mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
+    });
+
+    test('non-recurring events (no rrule) are returned unchanged', async () => {
+        const vevent = makeVEvent({ uid: 'no-rrule', summary: 'One-off meeting' });
+        const events = await extractEvents([vevent]);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.uid).toBe('no-rrule');
+        expect(events[0]?.summary).toBe('One-off meeting');
+        expect(mockExpandRecurringEvent).not.toHaveBeenCalled();
+    });
+
+    test('recurring event with rrule produces expanded instances with correct occurrence dates', async () => {
+        const masterStart = new Date('2025-02-23T14:00:00.000Z');
+        const masterEnd   = new Date('2025-02-23T15:00:00.000Z');
+        const occurrenceStart = new Date('2025-06-15T14:00:00.000Z');
+        const occurrenceEnd   = new Date('2025-06-15T15:00:00.000Z');
+
+        const masterEvent = makeVEvent({
+            uid:     'recurring-uid',
+            summary: 'Weekly Meeting',
+            start:   masterStart,
+            end:     masterEnd,
+            rrule:   { freq: 'WEEKLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       occurrenceStart,
+                end:         occurrenceEnd,
+                summary:     'Weekly Meeting',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  false,
+                event:       masterEvent,
+            },
+        ]);
+
+        const events = await extractEvents([masterEvent]);
+        expect(mockExpandRecurringEvent).toHaveBeenCalledTimes(1);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.uid).toBe('recurring-uid');
+        expect(events[0]?.start).toEqual(occurrenceStart);
+        expect(events[0]?.end).toEqual(occurrenceEnd);
+        expect(events[0]?.summary).toBe('Weekly Meeting');
+    });
+
+    test('recurring event produces multiple instances within the range', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'weekly-uid',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        const instance1Start = new Date('2025-06-15T10:00:00.000Z');
+        const instance2Start = new Date('2025-06-16T10:00:00.000Z');
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       instance1Start,
+                end:         new Date('2025-06-15T11:00:00.000Z'),
+                summary:     'Weekly Event',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  false,
+                event:       masterEvent,
+            },
+            {
+                start:       instance2Start,
+                end:         new Date('2025-06-16T11:00:00.000Z'),
+                summary:     'Weekly Event',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  false,
+                event:       masterEvent,
+            },
+        ]);
+
+        const events = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(2);
+        expect(events[0]?.start).toEqual(instance1Start);
+        expect(events[1]?.start).toEqual(instance2Start);
+    });
+
+    test('recurring event expansion passes start and end date range to expandRecurringEvent', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'range-check-uid',
+            rrule: { freq: 'DAILY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => []);
+
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+        mockParseICS.mockImplementation((): Record<string, unknown> => ({ 'range-check-uid': masterEvent }));
+
+        const queryStart = new Date('2025-06-10T00:00:00.000Z');
+        const queryEnd   = new Date('2025-06-20T00:00:00.000Z');
+
+        const client = new CalDAVClient();
+        await client.getEvents([makeServer()], queryStart, queryEnd);
+
+        expect(mockExpandRecurringEvent).toHaveBeenCalledWith(
+            masterEvent,
+            expect.objectContaining({ from: queryStart, to: queryEnd, expandOngoing: true })
+        );
+    });
+
+    test('recurring event override uses override event data for summary and location', async () => {
+        const masterEvent = makeVEvent({
+            uid:      'override-uid',
+            summary:  'Original Summary',
+            location: 'Original Room',
+            rrule:    { freq: 'WEEKLY', interval: 1 },
+        });
+
+        const overrideEvent = makeVEvent({
+            uid:          'override-uid',
+            summary:      'Rescheduled Meeting',
+            location:     'New Room',
+            recurrenceid: new Date('2025-06-15T14:00:00.000Z'),
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       new Date('2025-06-16T14:00:00.000Z'),
+                end:         new Date('2025-06-16T15:00:00.000Z'),
+                summary:     'Rescheduled Meeting',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  true,
+                event:       overrideEvent,
+            },
+        ]);
+
+        const events = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.summary).toBe('Rescheduled Meeting');
+        expect(events[0]?.location).toBe('New Room');
+        expect(events[0]?.recurrenceId).toBe(String(overrideEvent.recurrenceid));
+    });
+
+    test('all-day recurring events use isFullDay from EventInstance', async () => {
+        const masterEvent = makeVEvent({
+            uid:      'allday-recurring',
+            datetype: 'date',
+            start:    new Date('2025-01-01'),
+            end:      new Date('2025-01-02'),
+            rrule:    { freq: 'YEARLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       new Date('2025-06-15'),
+                end:         new Date('2025-06-16'),
+                summary:     'Annual Event',
+                isFullDay:   true,
+                isRecurring: true,
+                isOverride:  false,
+                event:       masterEvent,
+            },
+        ]);
+
+        const events = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.isAllDay).toBe(true);
+        expect(events[0]?.timezone).toBeUndefined();
+    });
+
+    test('error in expandRecurringEvent is caught and logged, event skipped gracefully', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'error-uid',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Expansion failed');
+        });
+
+        const events = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(0);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ error: expect.any(Error) }),
+            expect.stringContaining('recurring')
+        );
+    });
+
+    test('timezone is extracted from instance.start.tz for timed recurring instances', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'tz-recurring',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        const instanceStart = Object.assign(new Date('2025-06-15T14:00:00.000Z'), { tz: 'America/Chicago' });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       instanceStart,
+                end:         new Date('2025-06-15T15:00:00.000Z'),
+                summary:     'Recurring TZ Event',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  false,
+                event:       masterEvent,
+            },
+        ]);
+
+        const events = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.timezone).toBe('America/Chicago');
+    });
+
+    test('recurring event that produces zero instances is silently excluded and logs debug', async () => {
+        const masterEvent = makeVEvent({
+            uid:     'no-instances-uid',
+            summary: 'Far Future Recurring',
+            rrule:   { freq: 'DAILY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => []);
+
+        const events = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(0);
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+            expect.objectContaining({ uid: 'no-instances-uid' }),
+            expect.stringContaining('no instances in range')
+        );
+    });
+
+    test('vevent with recurrences but no rrule triggers expansion path', async () => {
+        const overrideEvent = makeVEvent({
+            uid:          'recurrences-only-uid',
+            summary:      'Override Instance',
+            recurrenceid: new Date('2025-06-15T14:00:00.000Z'),
+        });
+
+        const masterEvent = makeVEvent({
+            uid:         'recurrences-only-uid',
+            summary:     'Master Event',
+            recurrences: { '2025-06-15T14:00:00.000Z': overrideEvent },
+            // no rrule
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       new Date('2025-06-15T14:00:00.000Z'),
+                end:         new Date('2025-06-15T15:00:00.000Z'),
+                summary:     'Override Instance',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  true,
+                event:       overrideEvent,
+            },
+        ]);
+
+        const events = await extractEvents([masterEvent]);
+        expect(mockExpandRecurringEvent).toHaveBeenCalledTimes(1);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.summary).toBe('Override Instance');
     });
 });
