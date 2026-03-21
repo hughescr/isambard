@@ -31,10 +31,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.79",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
     "@atproto/api": "^0.19.4",
-    "@aws-sdk/client-dynamodb": "^3.1012.0",
-    "@aws-sdk/lib-dynamodb": "^3.1012.0",
+    "@aws-sdk/client-dynamodb": "^3.1014.0",
+    "@aws-sdk/lib-dynamodb": "^3.1014.0",
     "@discordjs/builders": "^1.13.1",
     "@hughescr/logger": "^2.10.0",
     "@sapphire/snowflake": "^3.5.5",
@@ -51,7 +51,7 @@
     "p-limit": "^7.3.0",
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",
-    "sst": "^4.3.9",
+    "sst": "^4.5.1",
     "tsdav": "^2.1.8",
     "zod": "^4.3.6"
   },
@@ -70,14 +70,14 @@
     "@types/remove-markdown": "^0.3.4",
     "@types/semver": "^7.7.1",
     "aws-sdk-client-mock": "^4.1.0",
-    "eslint": "^10.0.3",
+    "eslint": "^10.1.0",
     "eslint-formatter-overview": "^2.0.0",
     "eslint-formatter-unix": "^9.0.1",
     "eslint-import-resolver-typescript": "^4.4.4",
-    "eslint-plugin-boundaries": "^6.0.0",
+    "eslint-plugin-boundaries": "^6.0.1",
     "eslint-plugin-package-json": "^0.91.0",
     "jscpd": "^4.0.8",
-    "knip": "^5.88.0",
+    "knip": "^6.0.1",
     "typescript": "^5.9.3"
   },
   "trustedDependencies": [
