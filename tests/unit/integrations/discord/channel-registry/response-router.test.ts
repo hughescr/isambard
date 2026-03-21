@@ -5,7 +5,7 @@ import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/ch
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 import type { SessionType } from '../../../../../src/integrations/discord/state/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
-import { WellKnownChannelNotFoundError } from '@/errors';
+import { WellKnownChannelNotFoundError } from '@/errors/discord';
 
 describe('ResponseRouter', () => {
     let router: ResponseRouter;

@@ -9,7 +9,7 @@ import {
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { ItemNotFoundError, ValidationError } from '@/errors';
+import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { ErrorCode } from '@/errors';
+import { ErrorCode } from '@/errors/codes';
 import {
     DISCORD_EPOCH,
     timestampToSnowflake,

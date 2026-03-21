@@ -36,7 +36,7 @@ interface ChannelMetadata {
 /**
  * Options for creating an InboxManager.
  */
-export interface InboxManagerOptions {
+interface InboxManagerOptions {
     /** Checkpoint manager for loading/saving read positions */
     checkpointManager:    CheckpointManager
     /** Message search service for fetching historical messages */

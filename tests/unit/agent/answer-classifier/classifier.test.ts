@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { AnswerClassifier } from '@/agent/answer-classifier/classifier';
 import type { MessageToClassify, ClassificationResult } from '@/agent/answer-classifier/types';
-import type { PendingQuestion } from '@/agent/question-registry';
+import type { PendingQuestion } from '@/agent/question-registry/types';
 import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 
 describe('AnswerClassifier', () => {

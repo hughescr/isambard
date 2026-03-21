@@ -21,7 +21,7 @@ import pLimit from 'p-limit';
 /** Function type for concurrency limiting (p-limit signature) */
 export type LimitFunction = <T>(fn: () => PromiseLike<T>) => Promise<T>;
 
-export interface DiscordRateLimiterOptions {
+interface DiscordRateLimiterOptions {
     /** Maximum concurrent sends across all channels (default: 5) */
     globalConcurrency?: number
     /** Optional logger for debugging */

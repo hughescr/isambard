@@ -1,19 +1,12 @@
 export type {
     QuestionOption,
-    QuestionState,
     PendingQuestion,
-    QuestionAnswer,
-    QuestionResult
+    QuestionAnswer
 } from './types';
 
 export {
-    questionOptionSchema,
-    questionStateSchema
+    questionOptionSchema
 } from './types';
-
-export type {
-    QuestionRegistryConfig
-} from './registry';
 
 export {
     QuestionRegistry

@@ -6,7 +6,7 @@ import type { TaskCleanupProcessor } from '@/agent/task-cleanup-processor';
 import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';
 import type { TaskPersistenceCoordinator } from '@/agent/task-persistence-coordinator';
 import type { DynamoDBConfig, ReconciliationConfig } from '@/config/schemas';
-import type { ReconciliationScheduler } from '@/storage/memory-tool/reconciliation';
+import type { ReconciliationScheduler } from '@/storage/memory-tool/reconciliation/scheduler';
 
 describe('createStorageLayer', () => {
     let spies: ReturnType<typeof spyOn>[];

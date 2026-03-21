@@ -3,7 +3,7 @@ import type { Logger } from '@hughescr/logger';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
 import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { PerchConfig } from '@/agent/perch/types';
-import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state';
+import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state/types';
 
 // Mock logger
 function createMockLogger(): Logger {

@@ -5,15 +5,9 @@
  * handling interruptions, and tracking completion.
  */
 
-export { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
-export type { CatchUpResumedOptions } from './prompts';
 export type {
     CatchUpSessionRunner,
-    CatchUpSessionRunnerDeps,
     CatchUpCompletionSignal,
-    CatchUpInProgressSignal,
-    RunAgentSessionOptions,
-    AgentSessionResult,
-    InterruptingMessage
+    CatchUpInProgressSignal
 } from './session-runner';
 export { createCatchUpSessionRunner } from './session-runner';

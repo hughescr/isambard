@@ -12,7 +12,7 @@ import { type MemoryToolBackend, type MemoryPath, createMemoryPath } from '@/sto
 /**
  * Options for creating a BskyCheckpointManager.
  */
-export interface BskyCheckpointManagerOptions {
+interface BskyCheckpointManagerOptions {
     backend: MemoryToolBackend
 }
 

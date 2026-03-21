@@ -1,7 +1,7 @@
 import { type RetryDeps, type RetryPolicy, retryPolicySchema } from './types';
 
 // Stryker disable all: Default fallback for incomplete DI - used in production only
-export const defaultDeps: RetryDeps = {
+const defaultDeps: RetryDeps = {
     sleep:  (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     now:    () => Date.now(),
     logger: {

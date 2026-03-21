@@ -8,7 +8,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 
-export interface AllowlistConfig {
+interface AllowlistConfig {
     /** DynamoDB partition key for this allowlist */
     pk:         string
     /** Sort key prefix for entries (e.g., 'ADDR#', 'HANDLE#') */

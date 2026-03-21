@@ -80,8 +80,6 @@ export const channelSummarySchema = z
     })
     .describe('Summary of unread messages in a Discord channel');
 
-export type ChannelSummary = z.infer<typeof channelSummarySchema>;
-
 /**
  * Message metadata schema.
  * Lightweight metadata for message selection in channel summaries.
@@ -99,8 +97,6 @@ export const messageMetadataSchema = z
         sizeChars: z.number().int().min(0, 'Size cannot be negative'),
     })
     .describe('Lightweight message metadata for selection');
-
-export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
 
 /**
  * Channel summary response schema.

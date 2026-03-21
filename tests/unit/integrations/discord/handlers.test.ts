@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Client, Message, Collection, Attachment } from 'discord.js';
 import { mockLogger, createMockBotStateManager } from '../../../setup';
-import type { PerchSessionRunner } from '@/agent/perch';
-import type { CatchUpSessionRunner } from '@/integrations/discord/catchup';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { PerchSessionRunner } from '@/agent/perch/session-runner';
+import type { CatchUpSessionRunner } from '@/integrations/discord/catchup/session-runner';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import {
     createReadyHandler,
     createErrorHandler,
@@ -11,7 +11,7 @@ import {
     extractAttachmentMetadata
 } from '@/integrations/discord/handlers';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
-import type { BotStateManager } from '@/integrations/discord/state';
+import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createChannelId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
 
 // Helper to create a mock coordinator for tests

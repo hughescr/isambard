@@ -151,14 +151,14 @@ export function toMessageContext(context: DiscordMessageContext): MessageContext
 /**
  * Maps Discord message contexts to platform-agnostic message contexts for the agent.
  */
-export function toMessageContexts(contexts: DiscordMessageContext[]): MessageContext[] {
+function toMessageContexts(contexts: DiscordMessageContext[]): MessageContext[] {
     return contexts.map(ctx => toMessageContext(ctx));
 }
 
 /**
  * Maps Discord fetched images to platform-agnostic image format for the agent.
  */
-export function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
+function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
     return images.map(img => ({
         filename:     img.filename,
         mediaType:    img.mediaType,

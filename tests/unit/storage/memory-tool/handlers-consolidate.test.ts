@@ -3,7 +3,7 @@ import { mockLogger } from '../../../setup';
 import {
     PathAlreadyExistsError,
     InvalidPathError
-} from '@/errors';
+} from '@/errors/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import {
     create,

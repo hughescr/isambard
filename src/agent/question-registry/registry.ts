@@ -2,10 +2,6 @@ import { logger } from '@hughescr/logger';
 import type { PendingQuestion, QuestionAnswer, QuestionResult } from './types';
 import type { ChannelId } from '@/agent/types';
 
-export interface QuestionRegistryConfig {
-    defaultTimeoutMs?: number  // Default: 300000 (5 minutes)
-}
-
 interface StoredQuestion {
     question: PendingQuestion
     timer:    NodeJS.Timeout

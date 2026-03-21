@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mockLogger } from '../../setup';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
 describe('createContextLayer', () => {
     let spies: ReturnType<typeof spyOn>[];

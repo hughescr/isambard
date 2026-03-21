@@ -14,10 +14,6 @@ import {
     extractLayerFromPath
 } from './types';
 
-// Re-export types for public API
-export type { CreateMemoryToolItemInput, UpdateMemoryToolItemInput } from './backend-core';
-export type { ListOptions, ListResult, ScoredMemoryItem } from './backend-query';
-
 /**
  * Memory tool backend facade that delegates to specialized modules.
  * Provides a unified API for all memory tool operations.

@@ -7,7 +7,7 @@ import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 
-export interface ReviewHandlerDeps {
+interface ReviewHandlerDeps {
     wildDuckClient:     WildDuckClient
     allowlist:          EmailAllowlist
     adminDiscordUserId: string

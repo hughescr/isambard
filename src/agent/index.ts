@@ -4,31 +4,25 @@
  * Provides Claude agent creation, memory MCP server, context building, and plugin loading.
  */
 
-export { createClaudeAgent, type ClaudeAgent, type ClaudeAgentOptions, extractToolUses, redactSensitiveArgs } from './agent';
-export { createContextBuilder, ContextBuilderImpl, formatMemoryPreview, type ContextBuilder, type ContextBuilderOptions, type RecentEventsResult, type EmailService, type WildDuckService, type BskyDMService, type CalendarService } from './context-builder';
+export { createClaudeAgent, type ClaudeAgent, extractToolUses, redactSensitiveArgs } from './agent';
+export { createContextBuilder, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from './context-builder';
 export { EventDeltaTracker } from './event-delta-tracker';
-export { summarizeEventBatches, type EventBatchSummary, type SummarizeEventBatchesFn } from './event-summarizer';
+export { summarizeEventBatches } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
-export { createDiscordMCPServer, setConversationContext, clearConversationContext, type DiscordMCPServerContext, type DiscordMCPServerOptions } from './discord-mcp-server';
-export { loadPlugins, type PluginsConfig } from './plugin-loader';
-export type { MessageContext, PlatformImage, AgentStreamEvent, ChannelId, UserId, OperationalMode, AgentStateChange, AgentStateManager, InterruptingMessageDetails, MCPChannelInfo, MCPChannelRegistry, MCPDMTracker, MCPMessageSearchService, MCPMessageSplitter, MCPQuestionButtonBuilder, MCPRetryHelper, MCPUnreadMessage, MCPMessageMetadata, MCPUnreadOverview, MCPChannelSummaryResponse, MCPInboxManager, MCPInboxStateManager } from './types';
-export { channelIdSchema, userIdSchema, createChannelId, createUserId, isChannelId, isUserId } from './types';
+export { createDiscordMCPServer, setConversationContext, clearConversationContext } from './discord-mcp-server';
+export { loadPlugins } from './plugin-loader';
+export type { MessageContext, PlatformImage, AgentStreamEvent } from './types';
 
-/** @internal */
-export { buildMultimodalContent, hasImages, type ContentBlock, type TextContentBlock, type ImageContentBlock } from './multimodal-message-builder';
-
-export { createTaskDirectoryCopier, getTaskDirectoryPath, type TaskDirectoryCopier, type TaskDirectoryCopierOptions } from './task-directory-copier';
-export { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator, type TaskPersistenceCoordinatorOptions } from './task-persistence-coordinator';
-export { createTaskCleanupProcessor, type TaskCleanupProcessor, type TaskCleanupProcessorOptions, type TaskCleanupResult, type TaskCleanupDeps } from './task-cleanup-processor';
-export { createTaskListReader, type TaskListReader } from './task-list-reader';
-// Re-export SdkPluginConfig from SDK for consumers of this module
-export type { SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
+export { createTaskDirectoryCopier } from './task-directory-copier';
+export { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './task-persistence-coordinator';
+export { createTaskCleanupProcessor } from './task-cleanup-processor';
+export { createTaskListReader } from './task-list-reader';
 
 // Question Registry
-export { QuestionRegistry, questionOptionSchema, questionStateSchema, type QuestionOption, type QuestionState, type PendingQuestion, type QuestionAnswer, type QuestionResult, type QuestionRegistryConfig } from './question-registry';
+export { QuestionRegistry, type QuestionOption, type QuestionAnswer } from './question-registry';
 
 // Answer Classifier
-export { AnswerClassifier, classifyWithHaiku, classificationResultSchema, type ClassificationResult, type MessageToClassify, type ClassifierConfig } from './answer-classifier';
+export { AnswerClassifier, classifyWithHaiku } from './answer-classifier';
 
 // Perch
 export * from './perch';
@@ -40,10 +34,10 @@ export { cleanupAllStaleSessions } from './session-cleanup';
 export { syncAgentsAndSkills } from './skill-agent-loader';
 
 // Text Generator
-export { generateText, generateTextWithSystemPrompt, type TextGeneratorOptions } from './text-generator';
+export { generateText, generateTextWithSystemPrompt } from './text-generator';
 
 // Email MCP Server
-export { createEmailMCPServer, type EmailMCPServerOptions, type RestrictedMailboxNotification } from './email-mcp-server';
+export { createEmailMCPServer } from './email-mcp-server';
 
 // Inbox MCP Server
 export { createInboxMCPServer } from './inbox-mcp-server';
@@ -52,16 +46,13 @@ export { createInboxMCPServer } from './inbox-mcp-server';
 export { createBskyMCPServer } from './bsky-mcp-server';
 
 // CalDAV MCP Server
-export { createCaldavMCPServer, type CaldavMCPServerOptions } from './caldav-mcp-server';
+export { createCaldavMCPServer } from './caldav-mcp-server';
 
 // Wikipedia MCP Server
 export { createWikipediaMCPServer } from './wikipedia-mcp-server';
-
-// MCP Helpers
-export { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
 
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 
 // Resume Prompt Builder
-export { buildResumePrompt, type ResumeContext } from './resume-prompt-builder';
+export { type ResumeContext } from './resume-prompt-builder';

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { MessageFlags, type ButtonInteraction, type Message, type User, type InteractionResponse } from 'discord.js';
-import type { PendingQuestion } from '@/agent/question-registry';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
+import type { PendingQuestion } from '@/agent/question-registry/types';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
 import { type ChannelId, type UserId, createUserId  } from '@/integrations/discord/types';
 

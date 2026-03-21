@@ -4,7 +4,7 @@ import { type MemoryPath, extractLayerFromPath  } from './types';
 /**
  * DynamoDB key structure for MemoryTool items using filesystem-like organization
  */
-export interface MemoryToolKeys {
+interface MemoryToolKeys {
     /** Primary Key: DIR#{parentPath} - groups files by directory */
     PK:     string
     /** Sort Key: FILE#{filename} - identifies file within directory */

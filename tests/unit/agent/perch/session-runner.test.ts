@@ -10,7 +10,7 @@ import {
     type InterruptingMessage
 } from '@/agent/perch/session-runner';
 import type { PerchConfig } from '@/agent/perch/types';
-import type { BotStateManager, BotState, PerchingModeContext } from '@/integrations/discord/state';
+import type { BotStateManager, BotState, PerchingModeContext } from '@/integrations/discord/state/types';
 import { type ChannelId } from '@/integrations/discord/types';
 import { createMemoryPath, createContentType } from '@/storage/memory-tool/types';
 

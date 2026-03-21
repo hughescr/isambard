@@ -5,7 +5,7 @@ import { type MemoryToolBackend, type MemoryPath, createMemoryPath  } from '@/st
 /**
  * Options for creating a CheckpointManager.
  */
-export interface CheckpointManagerOptions {
+interface CheckpointManagerOptions {
     backend: MemoryToolBackend
 }
 

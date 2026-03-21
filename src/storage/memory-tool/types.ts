@@ -154,19 +154,3 @@ export function extractLayerFromPath(path: MemoryPath): LayerName | null {
 
     return result.success ? result.data : null;
 }
-
-/**
- * Metadata for layered memory organization.
- * Enables prioritization, access tracking, and relationship mapping.
- */
-/* Stryker disable ObjectLiteral,MethodExpression: Zod schema definition with defaults — config defaults are not behavioral */
-export const layeredMemoryMetadataSchema = z.object({
-    layer:        layerNameSchema,
-    importance:   z.number().int().min(1).max(10).default(5),
-    lastAccessed: z.iso.datetime().optional(),
-    accessCount:  z.number().int().min(0).default(0),
-    relatedPaths: z.array(memoryPathSchema).default([]),
-});
-/* Stryker restore ObjectLiteral,MethodExpression */
-
-export type LayeredMemoryMetadata = z.infer<typeof layeredMemoryMetadataSchema>;

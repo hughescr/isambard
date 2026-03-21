@@ -8,7 +8,7 @@
 
 import { describe, test, expect, mock } from 'bun:test';
 import type { Client } from 'discord.js';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import { setupChannelCleanupHandlers } from '@/integrations/discord/setup/event-handler-setup';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';

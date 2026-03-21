@@ -24,8 +24,6 @@ export const calendarEntrySchema = z.object({
     label:        z.string().min(1),
 });
 
-export type CalendarEntry = z.infer<typeof calendarEntrySchema>;
-
 // Server entry with credentials and calendars
 export const calendarServerEntrySchema = z.object({
     serverId:    calendarServerIdSchema,

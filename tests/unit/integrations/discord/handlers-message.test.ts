@@ -1,16 +1,17 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
-import type { AnswerClassifier } from '@/agent/answer-classifier';
+import type { AnswerClassifier } from '@/agent/answer-classifier/classifier';
 import type { ClassificationResult } from '@/agent/answer-classifier/types';
-import type { PerchSessionRunner } from '@/agent/perch';
-import type { QuestionRegistry } from '@/agent/question-registry';
+import type { PerchSessionRunner } from '@/agent/perch/session-runner';
+import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
-import type { ChannelRegistryManager, DMTracker } from '@/integrations/discord/channel-registry';
+import type { DMTracker } from '@/integrations/discord/channel-registry/dm-tracker';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import { createMessageHandler } from '@/integrations/discord/handlers';
-import type { InboxManager } from '@/integrations/discord/inbox';
+import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
-import type { BotStateManager } from '@/integrations/discord/state';
+import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
 // Note: We don't need to mock the rate limiter module because:
 // 1. The rate limiter internally calls message.reply() which we mock in tests

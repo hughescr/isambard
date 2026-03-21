@@ -2,15 +2,17 @@ import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:
 import type { Client } from 'discord.js';
 import { mockLogger } from '../../setup';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
-import type { QuestionRegistry } from '@/agent/question-registry';
+import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { MCPServersOptions } from '@/app/mcp-servers';
-import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import type { InboxManager } from '@/integrations/discord/inbox';
+import type { BskyAllowlist } from '@/integrations/bsky/allowlist';
+import { BskyCheckpointManager } from '@/integrations/bsky/checkpoint/checkpoint-manager';
+import type { BlueskyClient } from '@/integrations/bsky/client';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
+import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
-import type { BotStateManager } from '@/integrations/discord/state';
-import type { SendRateLimiter } from '@/integrations/email';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { BotStateManager } from '@/integrations/discord/state/types';
+import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
+import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
 

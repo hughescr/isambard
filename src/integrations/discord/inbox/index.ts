@@ -11,37 +11,8 @@
  * - Types: Zod schemas for checkpoints, messages, and summaries
  */
 
-// Types
-export {
-    discordChannelCheckpointSchema,
-    type DiscordChannelCheckpoint,
-    unreadMessageSchema,
-    type UnreadMessage,
-    channelSummarySchema,
-    type ChannelSummary,
-    messageMetadataSchema,
-    type MessageMetadata,
-    channelSummaryResponseSchema,
-    type ChannelSummaryResponse,
-    unreadOverviewSchema,
-    type UnreadOverview
-} from './types';
-
-// Configuration
-export {
-    inboxConfigSchema,
-    type InboxConfig,
-    DEFAULT_INBOX_CONFIG
-} from './config';
-
 // Checkpoint Manager
-export {
-    CheckpointManager,
-    type CheckpointManagerOptions
-} from './checkpoint-manager';
+export { CheckpointManager } from './checkpoint-manager';
 
 // Inbox Manager
-export {
-    InboxManager,
-    type InboxManagerOptions
-} from './inbox-manager';
+export { InboxManager } from './inbox-manager';

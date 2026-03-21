@@ -7,7 +7,7 @@ import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './
 /**
  * Configuration for ChannelRegistryManager.
  */
-export interface ChannelRegistryManagerConfig {
+interface ChannelRegistryManagerConfig {
     /** Backend for DynamoDB operations */
     backend:     ChannelRegistryBackend
     /** Home guild ID for proactive sessions */

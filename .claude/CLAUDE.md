@@ -317,6 +317,8 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Retry Logic with Exponential Backoff** for network resilience (Claude API, DynamoDB, Discord)
 - **Error Classification** for intelligent retry decisions
 - **Module Boundary Enforcement** with eslint-plugin-boundaries for architectural import rules
+- **Barrel Export Policy** — barrel `index.ts` files conservatively export only the public API that other modules need. Do not over-export; each module controls its cross-module API surface via the barrel. Run `bun dead-code` (knip) to verify no unused exports accumulate.
+- **Import Conventions** — production code crosses module boundaries only via barrel imports (`@/agent`, `@/integrations/discord`). Tests may import directly from source files (`@/agent/perch/schedule`, `@/integrations/discord/state/types`) to access internal implementation details without inflating barrel exports.
 - **@internal JSDoc Tags** for marking implementation-only exports
 - **Per-Tag Atomic Counters** replacing centralized tag registry for race-condition-free tag counting
 - **Sigmoid Memory Scoring** — `sigmoidScore()` combines access frequency with recency decay for state memory prioritization in `getAutoLoadItems`

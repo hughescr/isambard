@@ -12,10 +12,6 @@ import { z } from 'zod';
 // ============================================================================
 
 export {
-    reconciliationBackoffSchema,
-    type ReconciliationBackoff,
-    reconciliationTestModeSchema,
-    type ReconciliationTestMode,
     reconciliationConfigSchema,
     type ReconciliationConfig
 } from '@/config';
@@ -28,10 +24,8 @@ export {
  * Phase identifier for reconciliation job
  */
 /* Stryker disable StringLiteral: Enum values are configuration */
-export const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB', 'phaseC']);
+const reconciliationPhaseSchema = z.enum(['phaseA', 'phaseB', 'phaseC']);
 /* Stryker restore StringLiteral */
-
-export type ReconciliationPhase = z.infer<typeof reconciliationPhaseSchema>;
 
 /**
  * Runtime state for reconciliation job

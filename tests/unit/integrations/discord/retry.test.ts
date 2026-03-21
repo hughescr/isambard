@@ -10,7 +10,7 @@
 
 import { describe, expect, test, mock } from 'bun:test';
 import { originalWithDiscordRetry as withDiscordRetry, originalClassifyDiscordError as classifyDiscordError } from '../../../setup';
-import { RateLimitError } from '@/errors';
+import { RateLimitError } from '@/errors/discord';
 import type { RetryDeps } from '@/utils/retry/types';
 
 describe('classifyDiscordError', () => {

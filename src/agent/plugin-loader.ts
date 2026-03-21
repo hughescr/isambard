@@ -9,14 +9,14 @@ import { z } from 'zod';
 /**
  * Schema for plugins.json configuration file.
  */
-export const PluginsConfigSchema = z.object({
+const PluginsConfigSchema = z.object({
     // Stryker disable next-line ArrayDeclaration: Default values tested via missing field tests (lines 576-612 in test file)
     externalPaths: z.array(z.string()).default([]),
     // Stryker disable next-line ArrayDeclaration: Default values tested via missing field tests (lines 576-612 in test file)
     marketplace:   z.array(z.string()).default([]),
 });
 
-export type PluginsConfig = z.infer<typeof PluginsConfigSchema>;
+type PluginsConfig = z.infer<typeof PluginsConfigSchema>;
 
 /**
  * Resolves a path, expanding ~ to the home directory.

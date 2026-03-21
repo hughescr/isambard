@@ -30,7 +30,7 @@ import { formatShortRelativeTime } from '@/utils';
  * Validates and converts a string path to a MemoryPath
  * @throws InvalidPathError if path is invalid
  */
-export function validatePath(path: string): MemoryPath {
+function validatePath(path: string): MemoryPath {
     try {
         return memoryPathSchema.parse(path);
     } catch (error) {
@@ -54,7 +54,7 @@ export function formatLineNumbers(content: string): string {
 /**
  * Detects content type from file path extension
  */
-export function detectContentType(path: string): ContentType {
+function detectContentType(path: string): ContentType {
     if(path.endsWith('.md')) {
         return 'text/markdown';
     }

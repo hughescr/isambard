@@ -120,7 +120,7 @@ export type IdleModeContext = Record<string, never>;
 /**
  * Zod schema for idle mode context.
  */
-export const idleModeContextSchema = z.object({}).strict();
+const idleModeContextSchema = z.object({}).strict();
 
 /**
  * Details about a message that interrupted a catch-up session.
@@ -164,22 +164,10 @@ export interface CatchingUpModeContext {
 }
 
 /**
- * Zod schema for interrupting message details.
- */
-// Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
-export const interruptingMessageDetailsSchema = z.object({
-    channelId:   channelIdSchema,
-    author:      z.string(),
-    channelName: z.string(),
-    content:     z.string(),
-});
-// Stryker restore ObjectLiteral
-
-/**
  * Zod schema for catching_up mode context.
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
-export const catchingUpModeContextSchema = z.object({
+const catchingUpModeContextSchema = z.object({
     viewedChannels:      z.set(channelIdSchema),
     sessionId:           z.string().nullable(),
     startedAt:           z.date(),
@@ -216,7 +204,7 @@ export interface ProcessingMessageModeContext {
  * Zod schema for processing_message mode context.
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
-export const processingMessageModeContextSchema = z.object({
+const processingMessageModeContextSchema = z.object({
     channelId:   channelIdSchema,
     userMessage: z.string(),
     sessionId:   z.string().nullable(),
@@ -248,7 +236,7 @@ export interface PerchingModeContext {
  * Zod schema for perching mode context.
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
-export const perchingModeContextSchema = z.object({
+const perchingModeContextSchema = z.object({
     activityType: z.string(),
     sessionId:    z.string().nullable(),
 });

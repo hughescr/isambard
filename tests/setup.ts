@@ -253,7 +253,6 @@ import * as realDiscordRetry from '@/integrations/discord/retry';
 // Capture original functions before mock.module
 const originalWithDiscordRetry = realDiscordRetry.withDiscordRetry;
 const originalClassifyDiscordError = realDiscordRetry.classifyDiscordError;
-const originalDiscordErrorClassifier = realDiscordRetry.discordErrorClassifier;
 
 // Export original for tests that need real behavior
 export { originalWithDiscordRetry, originalClassifyDiscordError };
@@ -272,9 +271,8 @@ export const mockWithDiscordRetry = mock(async <T>(
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
 mock.module('@/integrations/discord/retry', () => ({
-    withDiscordRetry:       mockWithDiscordRetry,
-    classifyDiscordError:   originalClassifyDiscordError,
-    discordErrorClassifier: originalDiscordErrorClassifier,
+    withDiscordRetry:     mockWithDiscordRetry,
+    classifyDiscordError: originalClassifyDiscordError,
 }));
 
 // Mock heic-convert with mutable indirection for per-test customization

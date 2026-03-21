@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from 'bun:test';
 import type { Client, TextChannel, Message, Collection, User } from 'discord.js';
-import { ErrorCode } from '@/errors';
+import { ErrorCode } from '@/errors/codes';
 import {
     createMessageFetcher,
     ChannelNotAccessibleError,

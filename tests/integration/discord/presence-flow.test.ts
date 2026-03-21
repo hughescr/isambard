@@ -14,7 +14,7 @@ import { PresenceManager } from '@/integrations/discord/presence/manager';
 import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
-import type { BotStateManager } from '@/integrations/discord/state';
+import type { BotStateManager } from '@/integrations/discord/state/types';
 import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
 // Import shared mocks from setup.ts (already registered via mock.module in preload)
 

@@ -7,8 +7,8 @@ import { createCatchUpSessionRunner,
     type AgentSessionResult,
     type InterruptingMessage
 } from '@/integrations/discord/catchup/session-runner';
-import type { InboxManager } from '@/integrations/discord/inbox';
-import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state';
+import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
+import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state/types';
 import { createChannelId, type ChannelId } from '@/integrations/discord/types';
 
 describe('CatchUpSessionRunner', () => {

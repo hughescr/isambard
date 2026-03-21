@@ -10,7 +10,7 @@ export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
  * Standard IMAP flags per RFC 6154.
  */
 // Stryker disable StringLiteral,ObjectLiteral: specialUse flag strings and folder values are IMAP RFC 6154 configuration
-export const SPECIAL_USE_FLAGS: Record<string, string> = {
+const SPECIAL_USE_FLAGS: Record<string, string> = {
     '\\Inbox':   'INBOX',
     '\\Sent':    'Sent Mail',
     '\\Drafts':  'Drafts',
@@ -61,7 +61,7 @@ export interface WildDuckSearchResult {
     date:    string
 }
 
-export interface WildDuckClientOptions {
+interface WildDuckClientOptions {
     /** Base URL e.g. 'https://wildduck-api.example.com' */
     url:               string
     /** Username for authentication */
@@ -90,12 +90,12 @@ export interface WildDuckAttachmentMeta {
  * EmailMetadata extended with WildDuck attachment metadata for lazy fetch.
  * Attachments array is empty (data not fetched); use attachmentMeta for IDs.
  */
-export interface WildDuckEmailMetadata extends EmailMetadata {
+interface WildDuckEmailMetadata extends EmailMetadata {
     /** WildDuck attachment metadata (IDs + names) for lazy fetching */
     attachmentMeta: WildDuckAttachmentMeta[]
 }
 
-export interface WildDuckAddress {
+interface WildDuckAddress {
     id:      string
     address: string
     name:    string
@@ -103,7 +103,7 @@ export interface WildDuckAddress {
     tags:    string[]
 }
 
-export interface WildDuckMessageReference {
+interface WildDuckMessageReference {
     action:  'reply' | 'replyAll'
     mailbox: string
     id:      number
@@ -115,7 +115,7 @@ export interface WildDuckAttachment {
     content:     string
 }
 
-export interface WildDuckUploadPayload {
+interface WildDuckUploadPayload {
     from:             { name?: string, address: string }
     to?:              { name?: string, address: string }[]
     cc?:              { name?: string, address: string }[]
@@ -129,7 +129,7 @@ export interface WildDuckUploadPayload {
     replacePrevious?: { mailbox: string, id: number }
 }
 
-export interface WildDuckMessage {
+interface WildDuckMessage {
     id:        number
     subject?:  string
     from?:     { address: string, name?: string }

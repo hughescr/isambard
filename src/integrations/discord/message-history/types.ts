@@ -203,5 +203,3 @@ export const searchParamsSchema = z
         limit:     z.number().int().positive().max(100).default(10),
     })
     .describe('Parameters for searching Discord message history');
-
-export type SearchParams = z.infer<typeof searchParamsSchema>;

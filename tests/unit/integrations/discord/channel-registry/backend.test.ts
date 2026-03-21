@@ -8,7 +8,7 @@ import {
     DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { ItemNotFoundError, ValidationError } from '@/errors';
+import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { ChannelRegistryBackend } from '@/integrations/discord/channel-registry/backend';
 import { type ChannelMetadata, type ChannelStorageRecord, WELL_KNOWN_CHANNELS  } from '@/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';

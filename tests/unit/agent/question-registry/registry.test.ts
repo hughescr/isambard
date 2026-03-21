@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from 'bun:test';
-import type { PendingQuestion, QuestionAnswer } from '@/agent/question-registry';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
+import type { PendingQuestion, QuestionAnswer } from '@/agent/question-registry/types';
 import type { ChannelId, UserId } from '@/integrations/discord/types';
 
 describe('QuestionRegistry', () => {

@@ -7,14 +7,14 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { mockLogger } from '../../setup';
 import type { DiscordConfig } from '@/config/schemas';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
-import type { InboxManager } from '@/integrations/discord/inbox';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
+import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
-import type { BotStateManager } from '@/integrations/discord/state';
+import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createGuildId } from '@/integrations/discord/types';
-import type { MemoryToolBackend } from '@/storage/memory-tool';
+import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
 describe('createDiscordInfrastructure', () => {
     let spies: ReturnType<typeof spyOn>[];

@@ -14,10 +14,11 @@
 
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type { Message, TextChannel, Client, DMChannel } from 'discord.js';
-import { type ResponseRouter, WellKnownChannelNotFoundError  } from '@/integrations/discord/channel-registry';
+import { WellKnownChannelNotFoundError } from '@/errors/discord';
+import type { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { sendResponse } from '@/integrations/discord/response-sender';
-import type { BotStateManager } from '@/integrations/discord/state';
+import type { BotStateManager } from '@/integrations/discord/state/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
 describe('sendResponse', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from 'bun:test';
 import { mockGenerateText } from '../../../setup';
 import { classifyWithHaiku } from '@/agent/answer-classifier/haiku-classifier';
 import type { MessageToClassify } from '@/agent/answer-classifier/types';
-import type { PendingQuestion } from '@/agent/question-registry';
+import type { PendingQuestion } from '@/agent/question-registry/types';
 import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 
 describe('classifyWithHaiku', () => {

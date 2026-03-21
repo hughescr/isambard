@@ -132,13 +132,3 @@ export interface PerchSchedulerState {
     /** When the deferred trigger fired */
     pendingTriggerTime?: Date
 }
-
-/**
- * Zod schema for PerchSchedulerState validation.
- */
-// Stryker disable next-line all: Static Zod schema configuration
-export const PerchSchedulerStateSchema = z.object({
-    perchPending:       z.boolean(),
-    pendingSlot:        PerchSlotSchema.optional(),
-    pendingTriggerTime: z.date().optional(),
-});

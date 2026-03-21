@@ -14,7 +14,8 @@ import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/confi
 import { createApp, type App } from '@/index';
 import * as discordBot from '@/integrations/discord/bot';
 import type { DiscordBot } from '@/integrations/discord/bot';
-import * as channelRegistryModule from '@/integrations/discord/channel-registry';
+import * as channelRegistryBackendModule from '@/integrations/discord/channel-registry/backend';
+import * as channelRegistryManagerModule from '@/integrations/discord/channel-registry/manager';
 import { createGuildId } from '@/integrations/discord/types';
 import * as dynamoClient from '@/storage/client';
 
@@ -101,10 +102,10 @@ describe('Bot Lifecycle Integration', () => {
             getAllChannels:     mock(() => []),
         };
         // @ts-expect-error - Mocking class constructor
-        const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockReturnValue(mockChannelRegistryBackend as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>);
+        const backendSpy = spyOn(channelRegistryBackendModule, 'ChannelRegistryBackend').mockReturnValue(mockChannelRegistryBackend as unknown as InstanceType<typeof channelRegistryBackendModule.ChannelRegistryBackend>);
         spies.push(backendSpy);
         // @ts-expect-error - Mocking class constructor
-        const managerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockReturnValue(mockChannelRegistryManager as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>);
+        const managerSpy = spyOn(channelRegistryManagerModule, 'ChannelRegistryManager').mockReturnValue(mockChannelRegistryManager as unknown as InstanceType<typeof channelRegistryManagerModule.ChannelRegistryManager>);
         spies.push(managerSpy);
     });
 

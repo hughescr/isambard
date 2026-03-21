@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockLogger } from '../../../../setup';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry';
+import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
 import { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';

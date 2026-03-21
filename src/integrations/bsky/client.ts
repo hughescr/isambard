@@ -41,7 +41,7 @@ const BSKY_MAX_GRAPHEME_LENGTH = 300;
 // Stryker disable next-line ArithmeticOperator: Bluesky DM character limit is a fixed protocol constant
 const BSKY_DM_MAX_GRAPHEME_LENGTH = 1000;
 
-export interface BlueskyClientOptions {
+interface BlueskyClientOptions {
     handle:      string
     appPassword: string
     serviceUrl?: string

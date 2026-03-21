@@ -60,7 +60,7 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
  * Discord-specific error classifier instance.
  * Use this classifier when calling retryAsync for Discord operations.
  */
-export const discordErrorClassifier: ErrorClassifier = classifyDiscordError;
+const discordErrorClassifier: ErrorClassifier = classifyDiscordError;
 
 /**
  * Retry a Discord operation with exponential backoff.

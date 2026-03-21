@@ -3,7 +3,7 @@ import { resolveTimezone } from '@/utils';
 
 // Log level enum schema
 // Stryker disable next-line StringLiteral: Log level enum values are configuration
-export const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
+const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error']);
 
 // App config: nodeEnv (enum), logLevel (default 'info'), port (coerced number)
 export const appConfigSchema = z.object({
@@ -143,7 +143,7 @@ export const perchConfigSchema = z.object({
  * Backoff configuration for exponential retry
  */
 /* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
-export const reconciliationBackoffSchema = z.object({
+const reconciliationBackoffSchema = z.object({
     /** Base delay in milliseconds for exponential backoff */
     baseDelayMs: z.number().int().positive().default(100),
     /** Maximum number of retry attempts */
@@ -151,21 +151,17 @@ export const reconciliationBackoffSchema = z.object({
 });
 /* Stryker restore BooleanLiteral,ArithmeticOperator */
 
-export type ReconciliationBackoff = z.infer<typeof reconciliationBackoffSchema>;
-
 /**
  * Test mode configuration for manual triggering
  */
 /* Stryker disable BooleanLiteral: Default values are configuration */
-export const reconciliationTestModeSchema = z.object({
+const reconciliationTestModeSchema = z.object({
     /** Whether to trigger reconciliation immediately on startup */
     triggerOnStartup: z.boolean().optional(),
     /** Run only once instead of on interval (for testing) */
     runOnce:          z.boolean().optional(),
 });
 /* Stryker restore BooleanLiteral */
-
-export type ReconciliationTestMode = z.infer<typeof reconciliationTestModeSchema>;
 
 /**
  * Configuration for tag index reconciliation job
@@ -207,13 +203,8 @@ export const configSchema = z.object({
 });
 
 // Type exports
-export type LogLevel = z.infer<typeof logLevelSchema>;
-export type AppConfig = z.infer<typeof appConfigSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
-export type BoxConfig = z.infer<typeof boxConfigSchema>;
-export type BskyConfig = z.infer<typeof bskyConfigSchema>;
 export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
-export type PerchConfigInput = z.infer<typeof perchConfigSchema>;
 export type Config = z.infer<typeof configSchema>;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { sigmoidScore, DEFAULT_SIGMOID_PARAMS, type SigmoidParams  } from '@/storage/memory-tool';
+import { sigmoidScore, DEFAULT_SIGMOID_PARAMS, type SigmoidParams  } from '@/storage/memory-tool/sigmoid';
 
 describe.concurrent('sigmoidScore', () => {
     describe('frequency scoring at t=0', () => {

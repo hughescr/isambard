@@ -11,34 +11,21 @@ export { ErrorCode } from './codes';
 export { IsambardError } from './base';
 
 export {
-    StorageError,
     ItemNotFoundError,
     ValidationError,
     DynamoTimeoutError,
-    MemoryToolError,
     PathNotFoundError,
     PathAlreadyExistsError,
     InvalidPathError,
     TextNotFoundError,
-    ContentTooLargeError,
     TextNotUniqueError,
-    InvalidLineNumberError,
-    ReconciliationError,
-    ReconciliationThrottledError
+    InvalidLineNumberError
 } from './storage';
 
 export {
-    DiscordError,
-    InvalidTokenError,
-    PermissionError,
-    ChannelNotFoundByIdError,
     ChannelNotAccessibleError,
-    RateLimitError,
     MessageFetchError,
     InvalidSnowflakeError,
-    ChannelRegistryError,
-    ChannelNotFoundByNameError,
-    AmbiguousChannelError,
     WellKnownChannelNotFoundError,
     PresenceError,
     StatusGenerationError,

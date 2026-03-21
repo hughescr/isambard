@@ -18,7 +18,7 @@ export interface RoutingResult {
     fallbackReason?: string
 }
 
-export interface ResponseRouterConfig {
+interface ResponseRouterConfig {
     manager: ChannelRegistryManager
 }
 

@@ -6,13 +6,13 @@ import { EmailProcessingError } from '@/integrations/email/errors';
 import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
-export interface EmailProcessorDeps {
+interface EmailProcessorDeps {
     allowlist:      EmailAllowlist
     classifier:     EmailClassifier
     wildDuckClient: WildDuckClient
 }
 
-export interface ProcessEmailCallbacks {
+interface ProcessEmailCallbacks {
     /** Called when an email is classified as 'safe' but sender is not on allowlist — used for Discord admin notification */
     onSafe?:   (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
     /** Called when an email is classified as 'uncertain' — used for Discord review embed */
@@ -21,7 +21,7 @@ export interface ProcessEmailCallbacks {
     onUnsafe?: (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
 }
 
-export interface ProcessingResult {
+interface ProcessingResult {
     verdict:           ClassifierVerdict | null
     destinationFolder: string
     allowlistBypassed: boolean
