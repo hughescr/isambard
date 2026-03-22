@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { Client, DMChannel } from 'discord.js';
 // eslint-disable-next-line lodash-es/suggest-native-alternatives -- noop is used as a mock function, not a no-op return value
 import { noop } from 'lodash-es';
-import { DMTracker, formatDMChannelName, isDMChannelName } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
+import { DMTracker, formatDMChannelName, isDMChannelName, type ResolvedUser, type UserResolveResult } from '../../../../../src/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '../../../../../src/integrations/discord/channel-registry/manager';
 import { createChannelId, createUserId } from '../../../../../src/integrations/discord/types';
 
@@ -482,6 +482,241 @@ describe('DMTracker', () => {
 
             const upsertCall = (mockManager.upsertChannel as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
             expect(upsertCall.channelName).toBe('@alice_123');
+        });
+    });
+
+    describe('resolveUserByName', () => {
+        interface MockMemberUser {
+            id:           string
+            username:     string
+            tag:          string
+            displayName?: string
+        }
+
+        interface MockMember {
+            user:        MockMemberUser
+            displayName: string
+            nickname:    string | null
+        }
+
+        function makeMockMembers(members: MockMember[]): Map<string, MockMember> & { find: (predicate: (m: MockMember) => boolean) => MockMember | undefined } {
+            const map = new Map(members.map(m => [m.user.id, m])) as Map<string, MockMember> & { find: (predicate: (m: MockMember) => boolean) => MockMember | undefined };
+            map.find = (predicate: (m: MockMember) => boolean): MockMember | undefined => {
+                for(const member of map.values()) {
+                    if(predicate(member)) {
+                        return member;
+                    }
+                }
+                return undefined;
+            };
+            return map;
+        }
+
+        function makeMockGuild(members: MockMember[]): { members: { fetch: ReturnType<typeof mock> } } {
+            return {
+                members: {
+                    fetch: mock(async () => makeMockMembers(members)),
+                },
+            };
+        }
+
+        beforeEach(() => {
+            tracker = new DMTracker(mockManager, mockClient);
+        });
+
+        test('should resolve exact username match', async () => {
+            const userId = '111111111';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'craig', tag: 'craig#0000' },
+                displayName: 'Craig',
+                nickname:    null,
+            }];
+            const guild = makeMockGuild(members);
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [guild]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('craig');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.username).toBe('craig');
+            expect(resolved.user.displayName).toBe('Craig');
+            expect(resolved.user.nickname).toBeNull();
+            // userId should be present but it's a UserId branded type
+            expect(typeof resolved.user.userId).toBe('string');
+            // Verify fetch called with correct search parameters
+            expect(guild.members.fetch).toHaveBeenCalledWith({ query: 'craig', limit: 10 });
+        });
+
+        test('should resolve case-insensitive displayName match', async () => {
+            const userId = '222222222';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'hughescr', tag: 'hughescr#0000' },
+                displayName: 'Craig',
+                nickname:    null,
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('craig');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.username).toBe('hughescr');
+            expect(resolved.user.displayName).toBe('Craig');
+        });
+
+        test('should resolve nickname match', async () => {
+            const userId = '333333333';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'bob_smith', tag: 'bob_smith#0000' },
+                displayName: 'Bob',
+                nickname:    'Bobby',
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('bobby');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.username).toBe('bob_smith');
+            expect(resolved.user.nickname).toBe('Bobby');
+        });
+
+        test('should resolve tag match', async () => {
+            const userId = '444444444';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'alice', tag: 'alice#1234' },
+                displayName: 'Alice',
+                nickname:    null,
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('alice#1234');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.username).toBe('alice');
+        });
+
+        test('should return ambiguous when multiple distinct users match', async () => {
+            const members: MockMember[] = [
+                {
+                    user:        { id: '555555555', username: 'craig_a', tag: 'craig_a#0000' },
+                    displayName: 'Craig A',
+                    nickname:    'Craig',
+                },
+                {
+                    user:        { id: '666666666', username: 'craig_b', tag: 'craig_b#0000' },
+                    displayName: 'Craig B',
+                    nickname:    'Craig',
+                },
+            ];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('Craig');
+
+            expect(result.status).toBe('ambiguous');
+            const ambiguous = result as Extract<UserResolveResult, { status: 'ambiguous' }>;
+            expect(ambiguous.matches).toHaveLength(2);
+            // Ambiguous matches must NOT contain userId
+            for(const match of ambiguous.matches) {
+                expect(Object.keys(match)).not.toContain('userId');
+            }
+            expect(ambiguous.matches[0].username).toBe('craig_a');
+            expect(ambiguous.matches[1].username).toBe('craig_b');
+        });
+
+        test('should return not_found when no members match', async () => {
+            const members: MockMember[] = [{
+                user:        { id: '777777777', username: 'zoe', tag: 'zoe#0000' },
+                displayName: 'Zoe',
+                nickname:    null,
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('nobody');
+
+            expect(result.status).toBe('not_found');
+        });
+
+        test('should deduplicate same user found in multiple guilds', async () => {
+            const userId = '888888888';
+            const member: MockMember = {
+                user:        { id: userId, username: 'craig', tag: 'craig#0000' },
+                displayName: 'Craig',
+                nickname:    null,
+            };
+            // Same user appears in two guilds
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild([member]), makeMockGuild([member])]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('craig');
+
+            // Should resolve to single user, not ambiguous
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            expect(resolved.user.username).toBe('craig');
+        });
+
+        test('should return not_found when guilds cache is empty', async () => {
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => []) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('anyone');
+
+            expect(result.status).toBe('not_found');
+        });
+
+        test('should not create DM channel — resolveUserByName has no side effects', async () => {
+            const userId = '999999999';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'craig', tag: 'craig#0000' },
+                displayName: 'Craig',
+                nickname:    null,
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+            mockManager.upsertChannel = mock(() => Promise.resolve());
+
+            await tracker.resolveUserByName('craig');
+
+            // Must NOT have called upsertChannel or users.fetch (no DM creation)
+            expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+        });
+
+        test('should produce resolved user with correct ResolvedUser shape', async () => {
+            const userId = '101010101';
+            const members: MockMember[] = [{
+                user:        { id: userId, username: 'dana', tag: 'dana#0000' },
+                displayName: 'Dana',
+                nickname:    'D',
+            }];
+            mockClient.guilds = {
+                cache: { values: mock((): unknown[] => [makeMockGuild(members)]) },
+            } as unknown as typeof mockClient.guilds;
+
+            const result = await tracker.resolveUserByName('D');
+
+            expect(result.status).toBe('resolved');
+            const resolved = result as Extract<UserResolveResult, { status: 'resolved' }>;
+            const user: ResolvedUser = resolved.user;
+            expect(user.username).toBe('dana');
+            expect(user.displayName).toBe('Dana');
+            expect(user.nickname).toBe('D');
         });
     });
 });

@@ -3,6 +3,24 @@ import { type ChannelId, type UserId, createChannelId, createUserId  } from '../
 import type { ChannelRegistryManager } from './manager';
 
 /**
+ * Information about a resolved Discord user (without internal Discord ID).
+ */
+export interface ResolvedUser {
+    userId:      UserId
+    username:    string
+    displayName: string
+    nickname:    string | null
+}
+
+/**
+ * Result of attempting to resolve a human-readable name to a Discord user.
+ */
+export type UserResolveResult
+    = | { status: 'resolved',  user: ResolvedUser                      }
+      | { status: 'ambiguous', matches: Omit<ResolvedUser, 'userId'>[] }
+      | { status: 'not_found'                                          };
+
+/**
  * Formats a DM channel name from a username.
  * @example formatDMChannelName("alice") → "@alice"
  */
@@ -97,6 +115,58 @@ export class DMTracker {
 
         // User not found in any guild
         return null;
+    }
+
+    /**
+     * Resolves a human-readable name to a Discord user without side effects.
+     * Searches all guilds for members matching the name across username, tag,
+     * displayName, and nickname (case-insensitive).
+     *
+     * @param name - Name to search for (e.g., "Craig", "hughescr")
+     * @returns Resolution result: resolved (single match), ambiguous (multiple), or not_found
+     */
+    async resolveUserByName(name: string): Promise<UserResolveResult> {
+        const lowerName = name.toLowerCase();
+        const lowerEq = (n: string): boolean => n.toLowerCase() === lowerName;
+        const matchedById = new Map<string, ResolvedUser>();
+
+        for(const guild of this.client.guilds.cache.values()) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API, collect all matches across guilds
+            const members = await guild.members.fetch({ query: name, limit: 10 });
+
+            for(const member of members.values()) {
+                const isMatch = lowerEq(member.user.username)
+                  || lowerEq(member.user.tag)
+                  || lowerEq(member.displayName)
+                  || (member.nickname !== null && lowerEq(member.nickname));
+
+                if(isMatch && !matchedById.has(member.user.id)) {
+                    matchedById.set(member.user.id, {
+                        userId:      createUserId(member.user.id),
+                        username:    member.user.username,
+                        displayName: member.displayName,
+                        nickname:    member.nickname ?? null,
+                    });
+                }
+            }
+        }
+
+        if(matchedById.size === 0) {
+            return { status: 'not_found' };
+        }
+
+        if(matchedById.size === 1) {
+            const [user] = matchedById.values();
+            return { status: 'resolved', user };
+        }
+
+        // Multiple matches — omit userId to prevent Izzy from seeing Discord IDs
+        const matches = [...matchedById.values()].map(({ username, displayName, nickname }) => ({
+            username,
+            displayName,
+            nickname,
+        }));
+        return { status: 'ambiguous', matches };
     }
 
     /**

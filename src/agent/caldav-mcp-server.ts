@@ -5,9 +5,19 @@ import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult } from './mcp-helpers';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 
+/**
+ * Result of resolving a user name to a Discord user ID.
+ * Mirrors UserResolveResult from DMTracker without importing from the discord module.
+ */
+export type UserResolveResult
+    = | { status: 'resolved',  user: { userId: string, username: string, displayName: string, nickname: string | null } }
+      | { status: 'ambiguous', matches: Omit<{ userId: string, username: string, displayName: string, nickname: string | null }, 'userId'>[] }
+      | { status: 'not_found' };
+
 export interface CaldavMCPServerOptions {
-    client:   CalDAVClient
-    registry: CalendarRegistryBackend
+    client:       CalDAVClient
+    registry:     CalendarRegistryBackend
+    resolveUser?: (name: string) => Promise<UserResolveResult>
 }
 
 /**
@@ -18,11 +28,46 @@ export interface CaldavMCPServerOptions {
  * - Getting upcoming events over the next N days
  * - Listing calendars configured for a user
  *
- * This server resolves userId → calendar records → CalDAV fetch internally,
- * so the agent never sees raw CalDAV URLs or credentials.
+ * This server resolves human-readable user names to Discord user IDs internally,
+ * then resolves userId → calendar records → CalDAV fetch,
+ * so the agent never sees raw CalDAV URLs, credentials, or Discord user IDs.
  */
 export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
-    const { client, registry } = options;
+    const { client, registry, resolveUser } = options;
+
+    /**
+     * Resolves a user name to a Discord user ID for registry lookup.
+     * Returns either the resolved userId string, or a CallToolResult to return to the agent.
+     */
+    async function resolveUserId(user: string): Promise<string | CallToolResult> {
+        if(!resolveUser) {
+            // No resolver provided (e.g., in tests) — use raw input
+            return user;
+        }
+        const result = await resolveUser(user);
+        switch(result.status) {
+            case 'resolved': {
+                return result.user.userId;
+            }
+            case 'ambiguous': {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                return mcpJsonResult({
+                    error:   'ambiguous_user',
+                    // Stryker disable next-line StringLiteral: error message is informational only
+                    message: `Multiple users match "${user}". Please be more specific.`,
+                    matches: result.matches,
+                });
+            }
+            case 'not_found': {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                return mcpJsonResult({
+                    error:   'user_not_found',
+                    // Stryker disable next-line StringLiteral: error message is informational only
+                    message: `No user found matching "${user}".`,
+                });
+            }
+        }
+    }
 
     return createSdkMcpServer({
         name:    'caldav',
@@ -33,7 +78,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'Get calendar events for a user in a specific date range. Returns events from all calendars associated with the user plus shared/public calendars.',
                 {
                     // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
-                    userId:    z.string().min(1).describe('Discord user ID to look up calendars for'),
+                    user:      z.string().min(1).describe("Person's name to look up calendars for (e.g., 'Craig')"),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     startDate: z.string().describe('Start date in ISO 8601 format (e.g., 2026-03-18)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -41,7 +86,11 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const servers = await registry.getAllCalendars(args.userId);
+                        const resolved = await resolveUserId(args.user);
+                        if(typeof resolved !== 'string') {
+                            return resolved; // MCP result (ambiguous or not_found)
+                        }
+                        const servers = await registry.getAllCalendars(resolved);
                         if(servers.length === 0) {
                             return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
                         }
@@ -57,7 +106,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                         });
                     } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: log context is informational only
-                        logger.error({ error, userId: args.userId }, 'Failed to get calendar events');
+                        logger.error({ error, user: args.user }, 'Failed to get calendar events');
                         return mcpErrorResult(error);
                     }
                 },
@@ -70,13 +119,17 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'Get upcoming calendar events for a user over the next N days. Convenience wrapper that defaults to 7 days.',
                 {
                     // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
-                    userId: z.string().min(1).describe('Discord user ID to look up calendars for'),
+                    user: z.string().min(1).describe("Person's name to look up calendars for (e.g., 'Craig')"),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    days:   z.number().int().positive().optional().default(7).describe('Number of days to look ahead (default: 7)'),
+                    days: z.number().int().positive().optional().default(7).describe('Number of days to look ahead (default: 7)'),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const servers = await registry.getAllCalendars(args.userId);
+                        const resolved = await resolveUserId(args.user);
+                        if(typeof resolved !== 'string') {
+                            return resolved; // MCP result (ambiguous or not_found)
+                        }
+                        const servers = await registry.getAllCalendars(resolved);
                         if(servers.length === 0) {
                             return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
                         }
@@ -97,7 +150,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                         });
                     } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: log context is informational only
-                        logger.error({ error, userId: args.userId }, 'Failed to get upcoming events');
+                        logger.error({ error, user: args.user }, 'Failed to get upcoming events');
                         return mcpErrorResult(error);
                     }
                 },
@@ -110,11 +163,15 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 'List all calendar labels configured for a user. Shows calendar names grouped by server, without exposing URLs or credentials.',
                 {
                     // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
-                    userId: z.string().min(1).describe('Discord user ID to list calendars for'),
+                    user: z.string().min(1).describe("Person's name to list calendars for (e.g., 'Craig')"),
                 },
                 async (args): Promise<CallToolResult> => {
                     try {
-                        const servers = await registry.getAllCalendars(args.userId);
+                        const resolved = await resolveUserId(args.user);
+                        if(typeof resolved !== 'string') {
+                            return resolved; // MCP result (ambiguous or not_found)
+                        }
+                        const servers = await registry.getAllCalendars(resolved);
                         if(servers.length === 0) {
                             return mcpJsonResult({ calendars: [], message: 'No calendars configured for this user' });
                         }
@@ -130,7 +187,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                         return mcpJsonResult({ calendars });
                     } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: log context is informational only
-                        logger.error({ error, userId: args.userId }, 'Failed to list user calendars');
+                        logger.error({ error, user: args.user }, 'Failed to list user calendars');
                         return mcpErrorResult(error);
                     }
                 },

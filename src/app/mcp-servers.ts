@@ -209,8 +209,9 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
 
     const caldavMcpServer = options.caldavClient && options.caldavRegistry
         ? createCaldavMCPServer({
-            client:   options.caldavClient,
-            registry: options.caldavRegistry,
+            client:      options.caldavClient,
+            registry:    options.caldavRegistry,
+            resolveUser: name => dmTracker.resolveUserByName(name),
         })
         : undefined;
 

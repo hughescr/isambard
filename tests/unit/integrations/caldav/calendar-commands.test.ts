@@ -11,6 +11,9 @@ const ADMIN_USER_ID = '423276934781468692';
 const USER_ID       = 'user-123';
 const OTHER_USER_ID = 'other-user-456';
 
+// Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
+const TEST_SERVER_UUID = '550e8400-e29b-41d4-a716-446655440001' as `${string}-${string}-${string}-${string}-${string}`;
+
 interface MockInteraction {
     asChatInput:    ChatInputCommandInteraction
     reply:          Mock<(...args: unknown[]) => Promise<void>>
@@ -672,6 +675,20 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
     let mockCaldav:   ReturnType<typeof createMockCaldavClient>;
     let handler:      CalendarCommandHandler;
 
+    const testServerRecord = {
+        userId:    USER_ID,
+        createdAt: '',
+        updatedAt: '',
+        servers:   [{
+            serverId:    TEST_SERVER_UUID,
+            description: 'iCloud',
+            serverUrl:   'https://caldav.icloud.com',
+            username:    'user@icloud.com',
+            password:    'secret',
+            calendars:   [{ calendarPath: '/cal/home', label: 'Home' }],
+        }],
+    };
+
     beforeEach(() => {
         mockRegistry = createMockRegistry();
         mockCaldav   = createMockCaldavClient();
@@ -682,36 +699,132 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
         );
     });
 
-    test('removes server and replies with success', async () => {
+    test('removes server by exact UUID and replies with success', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
         mockRegistry.removeServer.mockResolvedValue(true);
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: TEST_SERVER_UUID,
         });
         await handler.handle(asChatInput);
 
-        expect(mockRegistry.removeServer).toHaveBeenCalledWith(USER_ID, 'aabbccdd-1111-2222-3333-444455556666');
+        expect(mockRegistry.removeServer).toHaveBeenCalledWith(USER_ID, TEST_SERVER_UUID);
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Removed server');
+        expect(replyArg.content).toContain('iCloud');
+        expect(replyArg.content).toContain(TEST_SERVER_UUID);
+    });
+
+    test('removes server by description name and replies with success', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+        mockRegistry.removeServer.mockResolvedValue(true);
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
+            server_id: 'icloud',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeServer).toHaveBeenCalledWith(USER_ID, TEST_SERVER_UUID);
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Removed server');
     });
 
-    test('replies "not found" when server does not exist', async () => {
-        mockRegistry.removeServer.mockResolvedValue(false);
+    test('replies "not found" when server does not match any entry', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: 'nonexistent-server',
         });
         await handler.handle(asChatInput);
 
+        expect(mockRegistry.removeServer).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('not found');
     });
 
-    test('handles remove-server error gracefully', async () => {
-        mockRegistry.removeServer.mockRejectedValue(new Error('Write failed'));
+    test('replies "No calendars configured" when user has no record', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(null);
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: 'iCloud',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeServer).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No calendars configured');
+    });
+
+    test('replies "No calendars configured" when user has empty servers', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue({ userId: USER_ID, createdAt: '', updatedAt: '', servers: [] });
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
+            server_id: 'iCloud',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeServer).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No calendars configured');
+    });
+
+    test('replies ambiguity error when description matches multiple servers', async () => {
+        const ambigRecord = {
+            userId:    USER_ID,
+            createdAt: '',
+            updatedAt: '',
+            servers:   [
+                {
+                    serverId:    TEST_SERVER_UUID,
+                    description: 'iCloud',
+                    serverUrl:   'https://caldav.icloud.com',
+                    username:    'user1',
+                    password:    'pass1',
+                    calendars:   [{ calendarPath: '/cal/personal', label: 'Personal' }],
+                },
+                {
+                    // Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
+                    serverId:    '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`,
+                    description: 'iCloud',
+                    serverUrl:   'https://caldav.icloud.com',
+                    username:    'user2',
+                    password:    'pass2',
+                    calendars:   [{ calendarPath: '/cal/work', label: 'Work' }],
+                },
+            ],
+        };
+        mockRegistry.getUserRecord.mockResolvedValue(ambigRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
+            server_id: 'icloud',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeServer).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Multiple servers match');
+        expect(replyArg.content).toContain('icloud');
+    });
+
+    test('replies "already removed" when removeServer returns false (race condition)', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+        // removeServer returns false (default mock), simulating concurrent deletion
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
+            server_id: TEST_SERVER_UUID,
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeServer).toHaveBeenCalledWith(USER_ID, TEST_SERVER_UUID);
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('Server was already removed.');
+    });
+
+    test('handles remove-server error gracefully', async () => {
+        mockRegistry.getUserRecord.mockRejectedValue(new Error('Write failed'));
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-server', {
+            server_id: TEST_SERVER_UUID,
         });
         await handler.handle(asChatInput);
 
@@ -720,22 +833,24 @@ describe('CalendarCommandHandler - /calendar remove-server', () => {
     });
 
     test('admin can remove another user\'s server via user option', async () => {
+        const otherUserRecord = { ...testServerRecord, userId: OTHER_USER_ID };
+        mockRegistry.getUserRecord.mockResolvedValue(otherUserRecord);
         mockRegistry.removeServer.mockResolvedValue(true);
 
         const { asChatInput } = createMockInteraction(
             ADMIN_USER_ID, null, 'remove-server',
-            { server_id: 'aabbccdd-1111-2222-3333-444455556666' },
+            { server_id: TEST_SERVER_UUID },
             { id: OTHER_USER_ID }
         );
         await handler.handle(asChatInput);
 
-        expect(mockRegistry.removeServer).toHaveBeenCalledWith(OTHER_USER_ID, 'aabbccdd-1111-2222-3333-444455556666');
+        expect(mockRegistry.removeServer).toHaveBeenCalledWith(OTHER_USER_ID, TEST_SERVER_UUID);
     });
 
     test('non-admin cannot remove another user\'s server via user option', async () => {
         const { asChatInput, editReply } = createMockInteraction(
             USER_ID, null, 'remove-server',
-            { server_id: 'aabbccdd-1111-2222-3333-444455556666' },
+            { server_id: TEST_SERVER_UUID },
             { id: OTHER_USER_ID }
         );
         await handler.handle(asChatInput);
@@ -753,6 +868,23 @@ describe('CalendarCommandHandler - /calendar remove-calendar', () => {
     let mockCaldav:   ReturnType<typeof createMockCaldavClient>;
     let handler:      CalendarCommandHandler;
 
+    const testServerRecord = {
+        userId:    USER_ID,
+        createdAt: '',
+        updatedAt: '',
+        servers:   [{
+            serverId:    TEST_SERVER_UUID,
+            description: 'iCloud',
+            serverUrl:   'https://caldav.icloud.com',
+            username:    'user@icloud.com',
+            password:    'secret',
+            calendars:   [
+                { calendarPath: '/calendars/home',   label: 'Home' },
+                { calendarPath: '/calendars/family', label: 'Family' },
+            ],
+        }],
+    };
+
     beforeEach(() => {
         mockRegistry = createMockRegistry();
         mockCaldav   = createMockCaldavClient();
@@ -763,38 +895,144 @@ describe('CalendarCommandHandler - /calendar remove-calendar', () => {
         );
     });
 
-    test('removes calendar and replies with success', async () => {
+    test('removes calendar by exact path and replies with success', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
         mockRegistry.removeCalendar.mockResolvedValue(true);
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/calendars/home',
         });
         await handler.handle(asChatInput);
 
-        expect(mockRegistry.removeCalendar).toHaveBeenCalledWith(USER_ID, 'aabbccdd-1111-2222-3333-444455556666', '/calendars/home');
+        expect(mockRegistry.removeCalendar).toHaveBeenCalledWith(USER_ID, TEST_SERVER_UUID, '/calendars/home');
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Removed calendar');
+        expect(replyArg.content).toContain('Home');
     });
 
-    test('replies "not found" when calendar does not exist', async () => {
-        mockRegistry.removeCalendar.mockResolvedValue(false);
+    test('removes calendar by label name and replies with success', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+        mockRegistry.removeCalendar.mockResolvedValue(true);
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: 'family',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeCalendar).toHaveBeenCalledWith(USER_ID, TEST_SERVER_UUID, '/calendars/family');
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Removed calendar');
+        expect(replyArg.content).toContain('Family');
+    });
+
+    test('replies "not found" when calendar path does not match any entry', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/calendars/nonexistent',
         });
         await handler.handle(asChatInput);
 
+        expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('not found');
     });
 
-    test('handles remove-calendar error gracefully', async () => {
-        mockRegistry.removeCalendar.mockRejectedValue(new Error('Write failed'));
+    test('replies "not found" when server does not match', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
 
         const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     'nonexistent-server',
+            calendar_path: '/calendars/home',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('not found');
+    });
+
+    test('replies "No calendars configured" when user has no record', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(null);
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
+            server_id:     'iCloud',
+            calendar_path: 'Home',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No calendars configured');
+    });
+
+    test('replies "No calendars configured" when user has empty servers array', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue({ userId: USER_ID, createdAt: '', updatedAt: '', servers: [] });
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
+            server_id:     'iCloud',
+            calendar_path: 'Home',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No calendars configured');
+    });
+
+    test('replies ambiguity error when calendar label matches multiple entries', async () => {
+        const ambigRecord = {
+            userId:    USER_ID,
+            createdAt: '',
+            updatedAt: '',
+            servers:   [{
+                serverId:    TEST_SERVER_UUID,
+                description: 'iCloud',
+                serverUrl:   'https://caldav.icloud.com',
+                username:    'user',
+                password:    'pass',
+                calendars:   [
+                    { calendarPath: '/cal/home-1', label: 'Home' },
+                    { calendarPath: '/cal/home-2', label: 'Home' },
+                ],
+            }],
+        };
+        mockRegistry.getUserRecord.mockResolvedValue(ambigRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: 'home',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Multiple calendars match');
+    });
+
+    test('replies "already removed" when removeCalendar returns false (race condition)', async () => {
+        mockRegistry.getUserRecord.mockResolvedValue(testServerRecord);
+        // removeCalendar returns false (default mock), simulating concurrent deletion
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: '/calendars/home',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeCalendar).toHaveBeenCalledWith(USER_ID, TEST_SERVER_UUID, '/calendars/home');
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('Calendar was already removed.');
+    });
+
+    test('handles remove-calendar error gracefully', async () => {
+        mockRegistry.getUserRecord.mockRejectedValue(new Error('Write failed'));
+
+        const { asChatInput, editReply } = createMockInteraction(USER_ID, null, 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/calendars/home',
         });
         await handler.handle(asChatInput);
@@ -804,26 +1042,28 @@ describe('CalendarCommandHandler - /calendar remove-calendar', () => {
     });
 
     test('admin can remove another user\'s calendar via user option', async () => {
+        const otherUserRecord = { ...testServerRecord, userId: OTHER_USER_ID };
+        mockRegistry.getUserRecord.mockResolvedValue(otherUserRecord);
         mockRegistry.removeCalendar.mockResolvedValue(true);
 
         const { asChatInput } = createMockInteraction(
             ADMIN_USER_ID, null, 'remove-calendar',
             {
-                server_id:     'aabbccdd-1111-2222-3333-444455556666',
+                server_id:     TEST_SERVER_UUID,
                 calendar_path: '/calendars/home',
             },
             { id: OTHER_USER_ID }
         );
         await handler.handle(asChatInput);
 
-        expect(mockRegistry.removeCalendar).toHaveBeenCalledWith(OTHER_USER_ID, 'aabbccdd-1111-2222-3333-444455556666', '/calendars/home');
+        expect(mockRegistry.removeCalendar).toHaveBeenCalledWith(OTHER_USER_ID, TEST_SERVER_UUID, '/calendars/home');
     });
 
     test('non-admin cannot remove another user\'s calendar via user option', async () => {
         const { asChatInput, editReply } = createMockInteraction(
             USER_ID, null, 'remove-calendar',
             {
-                server_id:     'aabbccdd-1111-2222-3333-444455556666',
+                server_id:     TEST_SERVER_UUID,
                 calendar_path: '/calendars/home',
             },
             { id: OTHER_USER_ID }
@@ -1048,6 +1288,20 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
     let mockCaldav:   ReturnType<typeof createMockCaldavClient>;
     let handler:      CalendarCommandHandler;
 
+    const sharedServerRecord = {
+        userId:    'SHARED',
+        createdAt: '',
+        updatedAt: '',
+        servers:   [{
+            serverId:    TEST_SERVER_UUID,
+            description: 'Holidays',
+            serverUrl:   'https://caldav.example.com',
+            username:    'admin',
+            password:    'pass',
+            calendars:   [{ calendarPath: '/shared/holidays', label: 'Holidays' }],
+        }],
+    };
+
     beforeEach(() => {
         mockRegistry = createMockRegistry();
         mockCaldav   = createMockCaldavClient();
@@ -1058,34 +1312,77 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
         );
     });
 
-    test('admin removes shared server and replies with success', async () => {
+    test('admin removes shared server by exact UUID and replies with success', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
         mockRegistry.removeSharedServer.mockResolvedValue(true);
 
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: TEST_SERVER_UUID,
         });
         await handler.handle(asChatInput);
 
-        expect(mockRegistry.removeSharedServer).toHaveBeenCalledWith('aabbccdd-1111-2222-3333-444455556666');
+        expect(mockRegistry.removeSharedServer).toHaveBeenCalledWith(TEST_SERVER_UUID);
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Removed shared server');
+        expect(replyArg.content).toContain('Holidays');
+    });
+
+    test('admin removes shared server by description name', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+        mockRegistry.removeSharedServer.mockResolvedValue(true);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
+            server_id: 'holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedServer).toHaveBeenCalledWith(TEST_SERVER_UUID);
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Removed shared server');
     });
 
-    test('replies "not found" when shared server does not exist', async () => {
-        mockRegistry.removeSharedServer.mockResolvedValue(false);
+    test('replies "not found" when shared server does not match any entry', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
 
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: 'nonexistent',
         });
         await handler.handle(asChatInput);
 
+        expect(mockRegistry.removeSharedServer).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('not found');
     });
 
+    test('replies "No shared calendars configured" when no shared record exists', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(null);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
+            server_id: 'Holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedServer).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No shared calendars configured');
+    });
+
+    test('replies "No shared calendars configured" when shared record has empty servers', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue({ userId: 'SHARED', createdAt: '', updatedAt: '', servers: [] });
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
+            server_id: 'Holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedServer).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No shared calendars configured');
+    });
+
     test('non-admin cannot remove shared server', async () => {
         const { asChatInput, editReply } = createMockInteraction(USER_ID, 'shared', 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: TEST_SERVER_UUID,
         });
         await handler.handle(asChatInput);
 
@@ -1094,11 +1391,25 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
         expect(replyArg.content).toContain('Only the admin can manage shared calendars');
     });
 
-    test('handles shared remove-server error gracefully', async () => {
-        mockRegistry.removeSharedServer.mockRejectedValue(new Error('Write failed'));
+    test('replies "already removed" when removeSharedServer returns false (race condition)', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+        // removeSharedServer returns false (default mock), simulating concurrent deletion
 
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
-            server_id: 'aabbccdd-1111-2222-3333-444455556666',
+            server_id: TEST_SERVER_UUID,
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedServer).toHaveBeenCalledWith(TEST_SERVER_UUID);
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('Shared server was already removed.');
+    });
+
+    test('handles shared remove-server error gracefully', async () => {
+        mockRegistry.getSharedRecord.mockRejectedValue(new Error('Write failed'));
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
+            server_id: TEST_SERVER_UUID,
         });
         await handler.handle(asChatInput);
 
@@ -1148,6 +1459,23 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
     let mockCaldav:   ReturnType<typeof createMockCaldavClient>;
     let handler:      CalendarCommandHandler;
 
+    const sharedServerRecord = {
+        userId:    'SHARED',
+        createdAt: '',
+        updatedAt: '',
+        servers:   [{
+            serverId:    TEST_SERVER_UUID,
+            description: 'Holidays',
+            serverUrl:   'https://caldav.example.com',
+            username:    'admin',
+            password:    'pass',
+            calendars:   [
+                { calendarPath: '/shared/holidays', label: 'Holidays' },
+                { calendarPath: '/shared/birthdays', label: 'Birthdays' },
+            ],
+        }],
+    };
+
     beforeEach(() => {
         mockRegistry = createMockRegistry();
         mockCaldav   = createMockCaldavClient();
@@ -1158,36 +1486,83 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
         );
     });
 
-    test('admin removes shared calendar and replies with success', async () => {
+    test('admin removes shared calendar by exact path and replies with success', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
         mockRegistry.removeSharedCalendar.mockResolvedValue(true);
 
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/shared/holidays',
         });
         await handler.handle(asChatInput);
 
-        expect(mockRegistry.removeSharedCalendar).toHaveBeenCalledWith('aabbccdd-1111-2222-3333-444455556666', '/shared/holidays');
+        expect(mockRegistry.removeSharedCalendar).toHaveBeenCalledWith(TEST_SERVER_UUID, '/shared/holidays');
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Removed shared calendar');
+        expect(replyArg.content).toContain('Holidays');
     });
 
-    test('replies "not found" when shared calendar does not exist', async () => {
-        mockRegistry.removeSharedCalendar.mockResolvedValue(false);
+    test('admin removes shared calendar by label name', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+        mockRegistry.removeSharedCalendar.mockResolvedValue(true);
 
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: 'birthdays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedCalendar).toHaveBeenCalledWith(TEST_SERVER_UUID, '/shared/birthdays');
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Removed shared calendar');
+        expect(replyArg.content).toContain('Birthdays');
+    });
+
+    test('replies "not found" when shared calendar path does not match', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/shared/nonexistent',
         });
         await handler.handle(asChatInput);
 
+        expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('not found');
     });
 
+    test('replies "No shared calendars configured" when no shared record exists', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(null);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: '/shared/holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No shared calendars configured');
+    });
+
+    test('replies "No shared calendars configured" when shared record has empty servers', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue({ userId: 'SHARED', createdAt: '', updatedAt: '', servers: [] });
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: '/shared/holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('No shared calendars configured');
+    });
+
     test('non-admin cannot remove shared calendar', async () => {
         const { asChatInput, editReply } = createMockInteraction(USER_ID, 'shared', 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/shared/holidays',
         });
         await handler.handle(asChatInput);
@@ -1197,11 +1572,26 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
         expect(replyArg.content).toContain('Only the admin can manage shared calendars');
     });
 
-    test('handles shared remove-calendar error gracefully', async () => {
-        mockRegistry.removeSharedCalendar.mockRejectedValue(new Error('Write failed'));
+    test('replies "already removed" when removeSharedCalendar returns false (race condition)', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+        // removeSharedCalendar returns false (default mock), simulating concurrent deletion
 
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
-            server_id:     'aabbccdd-1111-2222-3333-444455556666',
+            server_id:     TEST_SERVER_UUID,
+            calendar_path: '/shared/holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedCalendar).toHaveBeenCalledWith(TEST_SERVER_UUID, '/shared/holidays');
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toBe('Shared calendar was already removed.');
+    });
+
+    test('handles shared remove-calendar error gracefully', async () => {
+        mockRegistry.getSharedRecord.mockRejectedValue(new Error('Write failed'));
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
+            server_id:     TEST_SERVER_UUID,
             calendar_path: '/shared/holidays',
         });
         await handler.handle(asChatInput);

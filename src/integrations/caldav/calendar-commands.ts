@@ -13,8 +13,10 @@ import {
     type ChatInputCommandInteraction
 } from 'discord.js';
 import type { CalendarRegistryBackend } from './calendar-registry/backend';
+import { resolveCalendar, resolveServer } from './calendar-registry/resolve';
 import { createCalendarServerId } from './calendar-registry/types';
 import type { CalDAVClient } from './client';
+import { AmbiguousCalendarMatchError } from './errors';
 import type { CalendarInfo } from './types';
 
 /**
@@ -47,14 +49,14 @@ export function buildCalendarCommand(): SlashCommandBuilder {
         .addSubcommand(sub => sub
             .setName('remove-server')
             .setDescription('Remove a CalDAV server and all its calendars')
-            .addStringOption(opt => opt.setName('server_id').setDescription('Server ID to remove').setRequired(true))
+            .addStringOption(opt => opt.setName('server_id').setDescription('Server name or ID').setRequired(true))
             .addUserOption(opt => opt.setName('user').setDescription('User to remove from (admin only)').setRequired(false))
         )
         .addSubcommand(sub => sub
             .setName('remove-calendar')
             .setDescription('Remove a single calendar from a server')
-            .addStringOption(opt => opt.setName('server_id').setDescription('Server ID').setRequired(true))
-            .addStringOption(opt => opt.setName('calendar_path').setDescription('Calendar path to remove').setRequired(true))
+            .addStringOption(opt => opt.setName('server_id').setDescription('Server name or ID').setRequired(true))
+            .addStringOption(opt => opt.setName('calendar_path').setDescription('Calendar name or path').setRequired(true))
             .addUserOption(opt => opt.setName('user').setDescription('User to remove from (admin only)').setRequired(false))
         )
         .addSubcommandGroup(group => group
@@ -75,13 +77,13 @@ export function buildCalendarCommand(): SlashCommandBuilder {
             .addSubcommand(sub => sub
                 .setName('remove-server')
                 .setDescription('Remove a shared server (admin only)')
-                .addStringOption(opt => opt.setName('server_id').setDescription('Server ID to remove').setRequired(true))
+                .addStringOption(opt => opt.setName('server_id').setDescription('Server name or ID').setRequired(true))
             )
             .addSubcommand(sub => sub
                 .setName('remove-calendar')
                 .setDescription('Remove a shared calendar (admin only)')
-                .addStringOption(opt => opt.setName('server_id').setDescription('Server ID').setRequired(true))
-                .addStringOption(opt => opt.setName('calendar_path').setDescription('Calendar path to remove').setRequired(true))
+                .addStringOption(opt => opt.setName('server_id').setDescription('Server name or ID').setRequired(true))
+                .addStringOption(opt => opt.setName('calendar_path').setDescription('Calendar name or path').setRequired(true))
             )
         ) as SlashCommandBuilder;
 }
@@ -350,17 +352,39 @@ export class CalendarCommandHandler {
 
     private async handleRemoveServer(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - server_id is required
-        const serverId = interaction.options.getString('server_id') ?? '';
+        const serverInput = interaction.options.getString('server_id') ?? '';
 
         // Stryker disable BlockStatement: try/catch is integration boundary
         try {
-            const removed = await this.registry.removeServer(userId, serverId);
+            const record = await this.registry.getUserRecord(userId);
+            if(!record || record.servers.length === 0) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'No calendars configured.' });
+                return;
+            }
+            const server = resolveServer(record.servers, serverInput);
+            if(!server) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: `Server "${serverInput}" not found.` });
+                return;
+            }
+            const removed = await this.registry.removeServer(userId, server.serverId);
+            if(!removed) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'Server was already removed.' });
+                return;
+            }
+            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
-                content: removed ? `Removed server ${serverId}.` : `Server ${serverId} not found.`,
+                content: `Removed server "${server.description}" (${server.serverId}).`,
             });
         } catch (error: unknown) {
+            if(error instanceof AmbiguousCalendarMatchError) {
+                await interaction.editReply({ content: error.message });
+                return;
+            }
             // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
-            logger.error({ error, serverId }, 'Failed to remove server');
+            logger.error({ error, serverInput }, 'Failed to remove server');
             await interaction.editReply({ content: 'Failed to remove server.' });
         }
         // Stryker restore BlockStatement
@@ -368,21 +392,47 @@ export class CalendarCommandHandler {
 
     private async handleRemoveCalendar(interaction: ChatInputCommandInteraction, userId: string): Promise<void> {
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const serverId     = interaction.options.getString('server_id') ?? '';
+        const serverInput   = interaction.options.getString('server_id') ?? '';
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const calendarPath = interaction.options.getString('calendar_path') ?? '';
+        const calendarInput = interaction.options.getString('calendar_path') ?? '';
 
         // Stryker disable BlockStatement: try/catch is integration boundary
         try {
-            const removed = await this.registry.removeCalendar(userId, serverId, calendarPath);
+            const record = await this.registry.getUserRecord(userId);
+            if(!record || record.servers.length === 0) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'No calendars configured.' });
+                return;
+            }
+            const server = resolveServer(record.servers, serverInput);
+            if(!server) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: `Server "${serverInput}" not found.` });
+                return;
+            }
+            const calendar = resolveCalendar(server, calendarInput);
+            if(!calendar) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'Calendar not found.' });
+                return;
+            }
+            const removed = await this.registry.removeCalendar(userId, server.serverId, calendar.calendarPath);
+            if(!removed) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'Calendar was already removed.' });
+                return;
+            }
+            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
-                content: removed
-                    ? `Removed calendar ${calendarPath} from server ${serverId}.`
-                    : 'Calendar not found.',
+                content: `Removed calendar "${calendar.label}" (${calendar.calendarPath}) from server "${server.description}".`,
             });
         } catch (error: unknown) {
+            if(error instanceof AmbiguousCalendarMatchError) {
+                await interaction.editReply({ content: error.message });
+                return;
+            }
             // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
-            logger.error({ error, serverId, calendarPath }, 'Failed to remove calendar');
+            logger.error({ error, serverInput, calendarInput }, 'Failed to remove calendar');
             await interaction.editReply({ content: 'Failed to remove calendar.' });
         }
         // Stryker restore BlockStatement
@@ -465,17 +515,39 @@ export class CalendarCommandHandler {
 
     private async handleSharedRemoveServer(interaction: ChatInputCommandInteraction): Promise<void> {
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - server_id is required
-        const serverId = interaction.options.getString('server_id') ?? '';
+        const serverInput = interaction.options.getString('server_id') ?? '';
 
         // Stryker disable BlockStatement: try/catch is integration boundary
         try {
-            const removed = await this.registry.removeSharedServer(serverId);
+            const record = await this.registry.getSharedRecord();
+            if(!record || record.servers.length === 0) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'No shared calendars configured.' });
+                return;
+            }
+            const server = resolveServer(record.servers, serverInput);
+            if(!server) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: `Shared server "${serverInput}" not found.` });
+                return;
+            }
+            const removed = await this.registry.removeSharedServer(server.serverId);
+            if(!removed) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'Shared server was already removed.' });
+                return;
+            }
+            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
-                content: removed ? `Removed shared server ${serverId}.` : `Shared server ${serverId} not found.`,
+                content: `Removed shared server "${server.description}" (${server.serverId}).`,
             });
         } catch (error: unknown) {
+            if(error instanceof AmbiguousCalendarMatchError) {
+                await interaction.editReply({ content: error.message });
+                return;
+            }
             // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
-            logger.error({ error, serverId }, 'Failed to remove shared server');
+            logger.error({ error, serverInput }, 'Failed to remove shared server');
             await interaction.editReply({ content: 'Failed to remove shared server.' });
         }
         // Stryker restore BlockStatement
@@ -483,19 +555,47 @@ export class CalendarCommandHandler {
 
     private async handleSharedRemoveCalendar(interaction: ChatInputCommandInteraction): Promise<void> {
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const serverId     = interaction.options.getString('server_id') ?? '';
+        const serverInput   = interaction.options.getString('server_id') ?? '';
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - options are required
-        const calendarPath = interaction.options.getString('calendar_path') ?? '';
+        const calendarInput = interaction.options.getString('calendar_path') ?? '';
 
         // Stryker disable BlockStatement: try/catch is integration boundary
         try {
-            const removed = await this.registry.removeSharedCalendar(serverId, calendarPath);
+            const record = await this.registry.getSharedRecord();
+            if(!record || record.servers.length === 0) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'No shared calendars configured.' });
+                return;
+            }
+            const server = resolveServer(record.servers, serverInput);
+            if(!server) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: `Shared server "${serverInput}" not found.` });
+                return;
+            }
+            const calendar = resolveCalendar(server, calendarInput);
+            if(!calendar) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'Shared calendar not found.' });
+                return;
+            }
+            const removed = await this.registry.removeSharedCalendar(server.serverId, calendar.calendarPath);
+            if(!removed) {
+                // Stryker disable next-line StringLiteral: user-facing message is informational
+                await interaction.editReply({ content: 'Shared calendar was already removed.' });
+                return;
+            }
+            // Stryker disable next-line StringLiteral: user-facing success message is informational
             await interaction.editReply({
-                content: removed ? `Removed shared calendar ${calendarPath}.` : 'Shared calendar not found.',
+                content: `Removed shared calendar "${calendar.label}" (${calendar.calendarPath}).`,
             });
         } catch (error: unknown) {
+            if(error instanceof AmbiguousCalendarMatchError) {
+                await interaction.editReply({ content: error.message });
+                return;
+            }
             // Stryker disable next-line ObjectLiteral,StringLiteral: log content is not behavior-affecting
-            logger.error({ error, serverId, calendarPath }, 'Failed to remove shared calendar');
+            logger.error({ error, serverInput, calendarInput }, 'Failed to remove shared calendar');
             await interaction.editReply({ content: 'Failed to remove shared calendar.' });
         }
         // Stryker restore BlockStatement

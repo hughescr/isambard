@@ -27,3 +27,19 @@ export class CaldavTimeoutError extends CaldavError {
         this.name = 'CaldavTimeoutError';
     }
 }
+
+export class AmbiguousCalendarMatchError extends CaldavError {
+    constructor(
+        public readonly entityType: 'server' | 'calendar',
+        public readonly input: string,
+        public readonly matches: { id: string, label: string }[]
+    ) {
+        const matchList = matches.map(m => `"${m.label}" (${m.id})`).join(', ');
+        super(
+            `Multiple ${entityType}s match "${input}": ${matchList}. Please use the exact ID.`,
+            ErrorCode.CALDAV_AMBIGUOUS_MATCH,
+            { entityType, input, matches }
+        );
+        this.name = 'AmbiguousCalendarMatchError';
+    }
+}

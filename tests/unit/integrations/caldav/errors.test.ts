@@ -2,6 +2,7 @@ import { describe, test, expect, spyOn } from 'bun:test';
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import {
+    AmbiguousCalendarMatchError,
     CaldavError,
     CaldavAuthError,
     CaldavFetchError,
@@ -179,6 +180,69 @@ describe.concurrent('Error instanceof cross-checks', () => {
     test('CaldavFetchError is not CaldavTimeoutError', () => {
         const error = new CaldavFetchError('Fetch failed');
         expect(error instanceof CaldavTimeoutError).toBe(false);
+    });
+});
+
+describe.concurrent('AmbiguousCalendarMatchError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new AmbiguousCalendarMatchError('server', 'apple', []);
+        expect(error).toBeInstanceOf(AmbiguousCalendarMatchError);
+        expect(error).toBeInstanceOf(CaldavError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name and code', () => {
+        const error = new AmbiguousCalendarMatchError('server', 'apple', []);
+        expect(error.name).toBe('AmbiguousCalendarMatchError');
+        expect(error.code).toBe(ErrorCode.CALDAV_AMBIGUOUS_MATCH);
+    });
+
+    test('should format message with server entity type and match list', () => {
+        const matches = [
+            { id: 'uuid-1', label: 'Apple iCloud' },
+            { id: 'uuid-2', label: 'Apple Work' },
+        ];
+        const error = new AmbiguousCalendarMatchError('server', 'apple', matches);
+        expect(error.message).toBe(
+            'Multiple servers match "apple": "Apple iCloud" (uuid-1), "Apple Work" (uuid-2). Please use the exact ID.'
+        );
+    });
+
+    test('should format message with calendar entity type', () => {
+        const matches = [
+            { id: '/cal/home', label: 'Home Calendar' },
+            { id: '/cal/home2', label: 'Home Work' },
+        ];
+        const error = new AmbiguousCalendarMatchError('calendar', 'home', matches);
+        expect(error.message).toBe(
+            'Multiple calendars match "home": "Home Calendar" (/cal/home), "Home Work" (/cal/home2). Please use the exact ID.'
+        );
+    });
+
+    test('should store entityType, input, and matches as public properties', () => {
+        const matches = [{ id: 'uuid-1', label: 'Apple' }];
+        const error = new AmbiguousCalendarMatchError('server', 'apple', matches);
+        expect(error.entityType).toBe('server');
+        expect(error.input).toBe('apple');
+        expect(error.matches).toEqual(matches);
+    });
+
+    test('should store context with entityType, input, and matches', () => {
+        const matches = [{ id: 'uuid-1', label: 'Apple' }];
+        const error = new AmbiguousCalendarMatchError('server', 'apple', matches);
+        expect(error.context).toEqual({ entityType: 'server', input: 'apple', matches });
+    });
+
+    test('should handle empty matches array', () => {
+        const error = new AmbiguousCalendarMatchError('server', 'test', []);
+        expect(error.message).toBe('Multiple servers match "test": . Please use the exact ID.');
+        expect(error.matches).toEqual([]);
+    });
+
+    test('should not be instanceof CaldavAuthError', () => {
+        const error = new AmbiguousCalendarMatchError('server', 'x', []);
+        expect(error instanceof CaldavAuthError).toBe(false);
     });
 });
 
