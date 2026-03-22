@@ -267,7 +267,7 @@ function classifyCalendarError(error: unknown): string {
 /**
  * Class-based context builder for managing agent memory context
  */
-export class ContextBuilderImpl implements ContextBuilder {
+class ContextBuilderImpl implements ContextBuilder {
     readonly #backend:                 MemoryToolBackend;
     readonly #maxIdentityChars:        number;
     readonly #maxStateFullItems:       number;

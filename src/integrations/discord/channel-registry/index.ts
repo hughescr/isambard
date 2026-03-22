@@ -21,7 +21,6 @@ export { ChannelRegistryManager } from './manager';
 
 // DM tracker
 export { DMTracker } from './dm-tracker';
-export type { ResolvedUser, UserResolveResult } from './dm-tracker';
 
 // Resolve
 export { resolveChannelId } from './resolve';

@@ -344,7 +344,7 @@ sst secret set PerchEnabled true
 ### Starting the Scheduler
 
 ```typescript
-import { createPerchScheduler } from '@/agent/perch';
+import { createPerchScheduler } from '@/agent/perch/scheduler';
 
 const scheduler = createPerchScheduler({
   stateManager,
@@ -369,7 +369,7 @@ scheduler.start();
 ### Running a Session
 
 ```typescript
-import { createPerchSessionRunner } from '@/agent/perch';
+import { createPerchSessionRunner } from '@/agent/perch/session-runner';
 
 const runner = createPerchSessionRunner({
   stateManager,

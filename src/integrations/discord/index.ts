@@ -33,7 +33,6 @@ export {
     DMTracker,
     resolveChannelId
 } from './channel-registry';
-export type { ResolvedUser, UserResolveResult } from './channel-registry';
 
 // Inbox (no conflicts — safe for export *)
 export * from './inbox';
