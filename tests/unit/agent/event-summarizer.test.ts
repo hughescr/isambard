@@ -177,13 +177,7 @@ describe('event-summarizer', () => {
                 createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00Z`, `Event ${i}`)
             );
 
-            mockGenerateText.mockImplementation(async () => {
-                // Small delay to ensure batches are processed
-                await new Promise((resolve) => {
-                    setTimeout(resolve, 10);
-                });
-                return 'Mock summary';
-            });
+            mockGenerateText.mockImplementation(async () => 'Mock summary');
 
             const result = await summarizeEventBatches(events, 3, now);
 

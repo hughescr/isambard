@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
 import { CaldavAuthError, CaldavTimeoutError } from '@/integrations/caldav/errors';
@@ -60,6 +60,14 @@ const { CalDAVClient } = await import('@/integrations/caldav/client');
 // ---------------------------------------------------------------------------
 
 const BASE_DATE = new Date('2025-06-15T12:00:00.000Z');
+
+/** Flush the microtask queue N times to let async chains progress without advancing fake timers. */
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
 
 function makeServer(overrides: Partial<CalendarServerEntry> = {}): CalendarServerEntry {
     return {
@@ -196,7 +204,7 @@ describe('CalDAVClient.discoverCalendars', () => {
         });
 
         const client = new CalDAVClient();
-        expect(
+        await expect(
             client.discoverCalendars('https://bad.example.com', 'user', 'pass')
         ).rejects.toBeInstanceOf(CaldavAuthError);
     });
@@ -888,6 +896,11 @@ describe('CalDAVClient timeout', () => {
         mockLogger.debug.mockClear();
         mockLogger.error.mockClear();
         mockLogger.warn.mockClear();
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     test('constructor accepts custom timeoutMs', () => {
@@ -906,9 +919,9 @@ describe('CalDAVClient timeout', () => {
         );
 
         const client = new CalDAVClient(300_000, 50); // 50ms timeout
-        expect(
-            client.discoverCalendars('https://caldav.example.com', 'user', 'pass')
-        ).rejects.toBeInstanceOf(CaldavTimeoutError);
+        const promise = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        jest.advanceTimersByTime(50);
+        expect(promise).rejects.toBeInstanceOf(CaldavTimeoutError);
     });
 
     test('CaldavTimeoutError has correct context for connect timeout', async () => {
@@ -917,9 +930,11 @@ describe('CalDAVClient timeout', () => {
         );
 
         const client = new CalDAVClient(300_000, 50);
+        const promise = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        jest.advanceTimersByTime(50);
         let thrown: unknown;
         try {
-            await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+            await promise;
         } catch (e) {
             thrown = e;
         }
@@ -938,9 +953,12 @@ describe('CalDAVClient timeout', () => {
         );
 
         const client = new CalDAVClient(300_000, 50);
-        expect(
-            client.discoverCalendars('https://caldav.example.com', 'user', 'pass')
-        ).rejects.toBeInstanceOf(CaldavTimeoutError);
+        const promise = client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        // Drain microtasks to let createDAVClient resolve and its withTimeout chain complete,
+        // so that discoverCalendars reaches the fetchCalendars withTimeout and registers its timer
+        await drainMicrotasks(10);
+        jest.advanceTimersByTime(50);
+        expect(promise).rejects.toBeInstanceOf(CaldavTimeoutError);
     });
 
     test('throws CaldavTimeoutError when fetchCalendarObjects hangs in getEvents', async () => {
@@ -955,7 +973,12 @@ describe('CalDAVClient timeout', () => {
         const client = new CalDAVClient(300_000, 50);
         const server = makeServer();
         // getEvents catches errors per-server, so this should not throw but log warning
-        const result = await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const resultPromise = client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        // Drain microtasks to let createDAVClient and fetchCalendars resolve through their withTimeout chains
+        // before fetchCalendarObjects withTimeout registers its timer
+        await drainMicrotasks(20);
+        jest.advanceTimersByTime(50);
+        const result = await resultPromise;
         expect(result).toEqual([]);
         expect(mockLogger.warn).toHaveBeenCalled();
     });

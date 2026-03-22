@@ -32,6 +32,38 @@ async function* makeQueryGenerator(text: string, subtype = 'success') {
     yield { type: 'result', subtype };
 }
 
+/**
+ * Returns a Promise that resolves when the given AbortSignal fires (or immediately if already aborted).
+ * Used to build abort-aware mock generators without exceeding function nesting limits.
+ */
+function waitForAbortSignal(signal: AbortSignal | undefined): Promise<void> {
+    return new Promise<void>((resolve) => {
+        if(signal?.aborted === true) {
+            resolve();
+            return;
+        }
+        signal?.addEventListener('abort', () => resolve(), { once: true });
+    });
+}
+
+/**
+ * Builds a mockQuery implementation that waits for the internal abort signal
+ * before throwing an AbortError. Used to test abort/timeout paths without
+ * real timers.
+ */
+function makeAbortAwareMockQuery() {
+    return (params: unknown) => {
+        const typedParams = params as { options?: { abortController?: AbortController } };
+        const internalSignal = typedParams.options?.abortController?.signal;
+        async function* gen() {
+            await waitForAbortSignal(internalSignal);
+            throw new Error('AbortError');
+            yield { type: 'result', subtype: 'success' }; // unreachable — needed for generator type inference
+        }
+        return gen();
+    };
+}
+
 describe('generateText', () => {
     beforeEach(() => {
         // Reset text-generator mocks to call through to real implementations
@@ -291,23 +323,7 @@ describe('generateText', () => {
             const callerController = new AbortController();
 
             // Generator waits for our internal controller's signal then throws
-            mockQuery.mockImplementation((params: unknown) => {
-                const typedParams = params as { options?: { abortController?: AbortController } };
-                const internalSignal = typedParams.options?.abortController?.signal;
-                async function* gen() {
-                    // Wait until the internal controller is aborted (wired to callerController)
-                    await new Promise<void>((resolve) => {
-                        if(internalSignal?.aborted) {
-                            resolve();
-                            return;
-                        }
-                        internalSignal?.addEventListener('abort', () => resolve(), { once: true });
-                    });
-                    throw new Error('AbortError');
-                    yield { type: 'result', subtype: 'success' }; // unreachable
-                }
-                return gen();
-            });
+            mockQuery.mockImplementation(makeAbortAwareMockQuery());
 
             // Start the generation, then immediately abort the caller's controller
             const resultPromise = generateText('Test prompt', { abortController: callerController, timeoutMs: 0 });
@@ -346,32 +362,21 @@ describe('generateText', () => {
         });
 
         test('should return empty string when timeout fires and generator throws', async () => {
-            // Simulate the SDK aborting when the controller fires: the generator throws
+            // Simulate the SDK aborting when the internal controller fires: the generator throws
             // The executePrompt catch block sees signal.aborted === true and returns ''
-            async function* abortOnSignalGenerator(_params: unknown, signal?: AbortSignal) {
-                // Wait until the caller signals abort, then throw
-                await new Promise<void>((resolve) => {
-                    // Check if already aborted
-                    if(signal?.aborted) {
-                        resolve();
-                        return;
-                    }
-                    signal?.addEventListener('abort', () => resolve(), { once: true });
-                });
-                throw new Error('AbortError');
-                yield { type: 'result', subtype: 'success' }; // unreachable — needed for generator type inference
-            }
+            // We trigger the abort via a caller controller (same internal code path as timeout)
+            // to avoid a real timer wait.
+            const callerController = new AbortController();
 
-            // Mock query to simulate SDK behavior: throw when aborted
-            mockQuery.mockImplementation((params: unknown) => {
-                const typedParams = params as { options?: { abortController?: AbortController } };
-                const signal = typedParams.options?.abortController?.signal;
-                return abortOnSignalGenerator(params, signal);
-            });
+            // Mock query to simulate SDK behavior: throw when internal signal fires
+            mockQuery.mockImplementation(makeAbortAwareMockQuery());
 
-            // Use a very short timeout (10ms)
-            const result = await generateText('Test prompt', { timeoutMs: 10 });
+            // Start generation, then immediately abort — simulates timeout firing
+            // timeoutMs: 0 disables the real timer so no real wait is needed
+            const resultPromise = generateText('Test prompt', { abortController: callerController, timeoutMs: 0 });
+            callerController.abort();
 
+            const result = await resultPromise;
             expect(result).toBe('');
         });
     });

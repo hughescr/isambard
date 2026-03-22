@@ -31,9 +31,7 @@ describe('safeAsyncHandler', () => {
         wrapped();
 
         // Give the async handler a chance to run
-        await new Promise((resolve) => {
-            setTimeout(resolve, 0);
-        });
+        await Promise.resolve();
 
         expect(handlerMock).toHaveBeenCalledTimes(1);
     });
@@ -49,9 +47,7 @@ describe('safeAsyncHandler', () => {
         wrapped();
 
         // Give the async rejection a chance to be caught
-        await new Promise((resolve) => {
-            setTimeout(resolve, 0);
-        });
+        await Promise.resolve();
 
         expect(errorMock).toHaveBeenCalledTimes(1);
         const [_message, meta] = errorMock.mock.calls[0];
@@ -67,9 +63,7 @@ describe('safeAsyncHandler', () => {
         const wrapped = safeAsyncHandler(handler, logger);
         wrapped();
 
-        await new Promise((resolve) => {
-            setTimeout(resolve, 0);
-        });
+        await Promise.resolve();
 
         expect(errorMock).toHaveBeenCalledTimes(1);
         const [_message, meta] = errorMock.mock.calls[0];
@@ -87,9 +81,7 @@ describe('safeAsyncHandler', () => {
         // Should not throw synchronously
         expect(() => wrapped()).not.toThrow();
 
-        await new Promise((resolve) => {
-            setTimeout(resolve, 0);
-        });
+        await Promise.resolve();
     });
 
     test('passes through all arguments to the wrapped handler', async () => {
@@ -99,9 +91,7 @@ describe('safeAsyncHandler', () => {
         const wrapped = safeAsyncHandler(handlerMock, logger);
         wrapped('hello', 42);
 
-        await new Promise((resolve) => {
-            setTimeout(resolve, 0);
-        });
+        await Promise.resolve();
 
         expect(handlerMock).toHaveBeenCalledWith('hello', 42);
     });
@@ -113,9 +103,7 @@ describe('safeAsyncHandler', () => {
         const wrapped = safeAsyncHandler(handlerMock, logger);
         wrapped('SIGTERM');
 
-        await new Promise((resolve) => {
-            setTimeout(resolve, 0);
-        });
+        await Promise.resolve();
 
         expect(handlerMock).toHaveBeenCalledWith('SIGTERM');
     });
@@ -131,9 +119,7 @@ describe('safeAsyncHandler', () => {
             const wrapped = safeAsyncHandler(handler, logger, 'SIGINT handler');
             wrapped();
 
-            await new Promise((resolve) => {
-                setTimeout(resolve, 0);
-            });
+            await Promise.resolve();
 
             expect(errorMock).toHaveBeenCalledTimes(1);
             const [message, _meta] = errorMock.mock.calls[0];
@@ -150,9 +136,7 @@ describe('safeAsyncHandler', () => {
             const wrapped = safeAsyncHandler(handler, logger);
             wrapped();
 
-            await new Promise((resolve) => {
-                setTimeout(resolve, 0);
-            });
+            await Promise.resolve();
 
             expect(errorMock).toHaveBeenCalledTimes(1);
             const [message, _meta] = errorMock.mock.calls[0];

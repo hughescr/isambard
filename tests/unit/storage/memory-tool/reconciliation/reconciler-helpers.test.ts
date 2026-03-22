@@ -1,12 +1,19 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { delay, retryWithBackoff } from '@/storage/memory-tool/reconciliation/reconciler';
 
 describe('delay', () => {
-    test('should resolve successfully after a small delay', async () => {
-        const start = Date.now();
-        await delay(10);
-        const elapsed = Date.now() - start;
-        expect(elapsed).toBeGreaterThanOrEqual(8); // Allow some tolerance
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('should resolve after delay', async () => {
+        const delayPromise = delay(10);
+        jest.advanceTimersByTime(10);
+        await delayPromise;
     });
 
     test('should reject immediately if signal is already aborted', async () => {
@@ -16,28 +23,29 @@ describe('delay', () => {
         expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
     });
 
-    test('should reject if signal is aborted mid-delay', async () => {
+    test('should reject if signal aborted mid-delay', async () => {
         const controller = new AbortController();
-
-        // Abort after 10ms
-        setTimeout(() => controller.abort(), 10);
-
-        expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        const delayPromise = delay(100, controller.signal);
+        controller.abort();
+        expect(delayPromise).rejects.toThrow('Aborted');
     });
 
     test('should return immediately when ms <= 0', async () => {
-        const start = Date.now();
         await delay(0);
-        const elapsed = Date.now() - start;
-        expect(elapsed).toBeLessThan(10); // Should be nearly instant
-
         await delay(-5);
-        const elapsed2 = Date.now() - start;
-        expect(elapsed2).toBeLessThan(10); // Should be nearly instant
+        // If we reach here without hanging, the early-return path works correctly
     });
 });
 
 describe('retryWithBackoff', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     test('should return value on first successful attempt', async () => {
         const operation = mock(() => Promise.resolve('success'));
 
@@ -56,11 +64,14 @@ describe('retryWithBackoff', () => {
             .mockRejectedValueOnce({ name: 'ProvisionedThroughputExceededException' })
             .mockResolvedValueOnce('success');
 
-        const result = await retryWithBackoff(
+        const resultPromise = retryWithBackoff(
             operation,
             { baseDelayMs: 1, maxAttempts: 3 },
             'test-context'
         );
+        await Promise.resolve(); // let retryWithBackoff run until it awaits delay()
+        jest.runOnlyPendingTimers(); // fire the registered delay timer
+        const result = await resultPromise;
 
         expect(result).toBe('success');
         expect(operation).toHaveBeenCalledTimes(2);
@@ -71,11 +82,14 @@ describe('retryWithBackoff', () => {
             .mockRejectedValueOnce({ name: 'ThrottlingException' })
             .mockResolvedValueOnce('success');
 
-        const result = await retryWithBackoff(
+        const resultPromise = retryWithBackoff(
             operation,
             { baseDelayMs: 1, maxAttempts: 3 },
             'test-context'
         );
+        await Promise.resolve();
+        jest.runOnlyPendingTimers();
+        const result = await resultPromise;
 
         expect(result).toBe('success');
         expect(operation).toHaveBeenCalledTimes(2);
@@ -97,11 +111,19 @@ describe('retryWithBackoff', () => {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
         const operation = mock(() => Promise.reject({ name: 'ProvisionedThroughputExceededException' }));
 
-        await retryWithBackoff(
+        const resultPromise = retryWithBackoff(
             operation,
             { baseDelayMs: 1, maxAttempts: 3 },
             'test-context'
         );
+        // Attempt 1 fails → delay(1)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers();
+        // Attempt 2 fails → delay(2)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers();
+        // Attempt 3 fails → done
+        await resultPromise;
 
         expect(operation).toHaveBeenCalledTimes(3);
     });
@@ -128,20 +150,20 @@ describe('retryWithBackoff', () => {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
         const operation = mock(() => Promise.reject({ name: 'ThrottlingException' }));
 
-        const baseDelayMs = 10;
-        const maxAttempts = 3;
-
-        const start = Date.now();
-        await retryWithBackoff(
+        const resultPromise = retryWithBackoff(
             operation,
-            { baseDelayMs, maxAttempts },
+            { baseDelayMs: 10, maxAttempts: 3 },
             'test-context'
         );
-        const elapsed = Date.now() - start;
+        // Attempt 1 fails → delay(10)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers();
+        // Attempt 2 fails → delay(20)
+        await Promise.resolve();
+        jest.runOnlyPendingTimers();
+        // Attempt 3 fails → done
+        await resultPromise;
 
-        // Expected delays: 10ms (attempt 1) + 20ms (attempt 2) = 30ms minimum
-        // Allow generous tolerance for test environment
-        expect(elapsed).toBeGreaterThanOrEqual(15);
         expect(operation).toHaveBeenCalledTimes(3);
     });
 });

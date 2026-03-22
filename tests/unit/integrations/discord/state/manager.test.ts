@@ -3,7 +3,7 @@
  * Following TDD: these tests are written first and will fail until the implementation is complete.
  */
 
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, jest } from 'bun:test';
 import { BotStateManagerImpl, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
 import { TransitionError } from '@/integrations/discord/state/transitions';
 import { type StateChange, type CatchingUpModeContext } from '@/integrations/discord/state/types';
@@ -356,20 +356,23 @@ describe('BotStateManager', () => {
     });
 
     describe('Throttle Logic', () => {
-        it('should return true when enough time has passed after recordPresenceUpdate', (done) => {
-            manager = new BotStateManagerImpl({ logger: mockLogger, updateThrottleMs: 50 });
-            manager.start();
+        it('should return true when enough time has passed after recordPresenceUpdate', () => {
+            jest.useFakeTimers();
+            try {
+                manager = new BotStateManagerImpl({ logger: mockLogger, updateThrottleMs: 50 });
+                manager.start();
 
-            manager.recordPresenceUpdate();
+                manager.recordPresenceUpdate();
 
-            // Immediately after recording update, should not need update
-            expect(manager.shouldUpdatePresence()).toBe(false);
+                // Immediately after recording update, should not need update
+                expect(manager.shouldUpdatePresence()).toBe(false);
 
-            // After throttle period, should allow update
-            setTimeout(() => {
+                // After throttle period, should allow update
+                jest.advanceTimersByTime(60);
                 expect(manager.shouldUpdatePresence()).toBe(true);
-                done();
-            }, 60);
+            } finally {
+                jest.useRealTimers();
+            }
         });
 
         it('should use default throttle of 12000ms', () => {

@@ -28,6 +28,16 @@ Target: 100% mutation score (break threshold in stryker.conf.mjs). If mutants su
 
 **Sandbox Note**: `reports/stryker-incremental.json` is protected by `denyWrite` in project sandbox settings. Run mutation testing with `dangerouslyDisableSandbox: true` so Stryker can update its incremental cache.
 
+### Test Performance Anti-Patterns
+Since Stryker runs each test potentially hundreds of times, even small per-test overhead compounds dramatically. Every test should target <1ms execution. Avoid these patterns:
+
+1. **Real wall-clock delays** — Never use `Date.now()` elapsed time assertions or `setTimeout` with real timers in tests. Always use `jest.useFakeTimers()` + `jest.advanceTimersByTime()`.
+2. **`setTimeout(resolve, 0)` for microtask flushing** — Use `await Promise.resolve()` instead (nanoseconds vs 1-4ms macrotask minimum).
+3. **Dynamic `await import()` per test** — Import modules once at file scope with `import * as mod from '...'`, then `spyOn(mod, 'fn')` in each test. Dynamic imports trigger ESM re-evaluation (~50ms each).
+4. **`done` callback + real `setTimeout`** — Use fake timers: `jest.advanceTimersByTime(N)` instead of waiting real milliseconds.
+5. **Real delays in mock implementations** — Mock implementations should resolve immediately (`async () => 'result'`), not `await new Promise(r => setTimeout(r, 10))`.
+6. **Unawaited `.rejects` assertions** — Bun correctly handles these (unlike Jest), but `await` triggers the `no-confusing-void-expression` lint rule, so leave them unawaited.
+
 ### Codex Consultation
 Consult Codex for:
 - Architectural decisions
