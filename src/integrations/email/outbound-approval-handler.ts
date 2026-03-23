@@ -140,8 +140,9 @@ export class OutboundApprovalHandler {
             await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
 
             const updatedEmbed = new EmbedBuilder()
-                // Stryker disable next-line StringLiteral,TemplateLiteral: UI label is configuration
-                .setTitle(`Rejected: ${reason}`)
+                // Stryker disable next-line StringLiteral: UI label is configuration
+                .setTitle('Rejected')
+                .setDescription(reason)
                 .setColor(RED);
 
             await interaction.editReply({

@@ -220,6 +220,15 @@ export class BskyOutboundApprovalHandler {
                 if(embed) {
                     const rejectionItem = this.extractRejectionItem(prefix, embed, reason);
                     await this.rejectionBackend.recordRejection(rejectionItem);
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                    logger.info({
+                        type:   rejectionItem.type,
+                        reason,
+                        target: rejectionItem.type === 'dm' ? rejectionItem.recipientHandles.join(', ') : rejectionItem.targetHandle,
+                        // Stryker disable next-line MethodExpression: log truncation is cosmetic, not behavioral
+                        text:   rejectionItem.text.slice(0, 100),
+                        msg:    'Bsky post rejected by admin',
+                    });
                 }
             } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -228,8 +237,9 @@ export class BskyOutboundApprovalHandler {
             // Stryker restore BlockStatement
 
             const updatedEmbed = new EmbedBuilder()
-                // Stryker disable next-line StringLiteral,TemplateLiteral: UI label is configuration
-                .setTitle(`Rejected: ${reason}`)
+                // Stryker disable next-line StringLiteral: UI label is configuration
+                .setTitle('Rejected')
+                .setDescription(reason)
                 .setColor(RED);
 
             await interaction.editReply({

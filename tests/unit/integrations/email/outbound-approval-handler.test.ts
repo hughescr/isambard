@@ -468,7 +468,7 @@ describe('OutboundApprovalHandler', () => {
             expect(deps.wildDuckClient.getMessage).not.toHaveBeenCalled();
         });
 
-        test('should show "Rejected: {reason}" in embed after reject', async () => {
+        test('should show "Rejected" title with reason in description after reject', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Off topic');
@@ -476,11 +476,13 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             const replyArg = editReply.mock.calls[0]?.[0] as {
-                embeds:     unknown[]
+                embeds:     { data: { title: string, description: string } }[]
                 components: unknown[]
             };
             expect(replyArg.embeds).toHaveLength(1);
             expect(replyArg.components).toHaveLength(0);
+            expect(replyArg.embeds[0]?.data?.title).toBe('Rejected');
+            expect(replyArg.embeds[0]?.data?.description).toBe('Off topic');
         });
 
         test('should use "No reason given" when reason is empty', async () => {
