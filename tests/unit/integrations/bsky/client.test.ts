@@ -40,6 +40,20 @@ const mockGetMessages        = mock(async (): Promise<{ data: { messages: unknow
 const mockSendMessage        = mock(async (): Promise<{ data: unknown }> => ({ data: {} }));
 const mockUpdateRead         = mock(async (): Promise<{ data: unknown }> => ({ data: {} }));
 
+const mockWithProxy = mock(() => ({
+    chat: {
+        bsky: {
+            convo: {
+                listConvos:         mockListConvos,
+                getConvoForMembers: mockGetConvoForMembers,
+                getMessages:        mockGetMessages,
+                sendMessage:        mockSendMessage,
+                updateRead:         mockUpdateRead,
+            },
+        },
+    },
+}));
+
 // RichText mock state — tests can override these per-test via mockRichTextState
 const mockDetectFacets = mock(async (): Promise<void> => undefined);
 
@@ -61,18 +75,6 @@ mock.module('@atproto/api', () => ({
             },
         };
 
-        chat = {
-            bsky: {
-                convo: {
-                    listConvos:         mockListConvos,
-                    getConvoForMembers: mockGetConvoForMembers,
-                    getMessages:        mockGetMessages,
-                    sendMessage:        mockSendMessage,
-                    updateRead:         mockUpdateRead,
-                },
-            },
-        };
-
         login             = mockLogin;
         getTimeline       = mockGetTimeline;
         getAuthorFeed     = mockGetAuthorFeed;
@@ -84,6 +86,7 @@ mock.module('@atproto/api', () => ({
         deleteFollow            = mockDeleteFollow;
         updateSeenNotifications = mockUpdateSeen;
         post                    = mockAgentPost;
+        withProxy               = mockWithProxy;
     },
     RichText: class MockRichText {
         detectFacets = mockDetectFacets;
@@ -239,6 +242,22 @@ describe.concurrent('BlueskyClient', () => {
         mockGetMessages.mockReset();
         mockSendMessage.mockReset();
         mockUpdateRead.mockReset();
+        mockWithProxy.mockReset();
+        mockWithProxy.mockImplementation(() => ({
+            chat: {
+                bsky: {
+                    convo: {
+                        listConvos:         mockListConvos,
+                        getConvoForMembers: mockGetConvoForMembers,
+                        getMessages:        mockGetMessages,
+                        sendMessage:        mockSendMessage,
+                        updateRead:         mockUpdateRead,
+                    },
+                },
+            },
+        }));
+        // Default login resolves successfully; individual tests may override with mockResolvedValueOnce
+        mockLogin.mockResolvedValue({});
         mockRichTextState.graphemeLength = 10;
         mockRichTextState.text           = 'Hello Bluesky!';
         mockRichTextState.facets         = undefined;
@@ -315,6 +334,37 @@ describe.concurrent('BlueskyClient', () => {
             mockLogin.mockRejectedValueOnce('string error');
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.login()).rejects.toBeInstanceOf(BskyError);
+        });
+
+        test('configures chat proxy after successful login', async () => {
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            expect(mockWithProxy).toHaveBeenCalledWith('bsky_chat', 'did:web:api.bsky.chat');
+        });
+
+        test('throws BskyError when chat method called before login', () => {
+            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            expect(uninitializedClient.listConversations()).rejects.toThrow('Chat not available');
+        });
+
+        test('getConversationForMembers re-throws BskyError unchanged when called before login', () => {
+            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            expect(uninitializedClient.getConversationForMembers(['did:plc:test'])).rejects.toThrow('Chat not available');
+        });
+
+        test('getMessages re-throws BskyError unchanged when called before login', () => {
+            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            expect(uninitializedClient.getMessages('convo-id')).rejects.toThrow('Chat not available');
+        });
+
+        test('sendDirectMessage re-throws BskyError unchanged when called before login', () => {
+            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            expect(uninitializedClient.sendDirectMessage('convo-id', 'hello')).rejects.toThrow('Chat not available');
+        });
+
+        test('markConversationRead re-throws BskyError unchanged when called before login', () => {
+            const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
+            expect(uninitializedClient.markConversationRead('convo-id')).rejects.toThrow('Chat not available');
         });
     });
 
@@ -1504,6 +1554,7 @@ describe.concurrent('BlueskyClient', () => {
                 data: { convos: [CONVO_VIEW], cursor: 'next-cursor' },
             });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.listConversations(10, 'prev-cursor');
             expect(mockListConvos).toHaveBeenCalledWith({ limit: 10, cursor: 'prev-cursor', readState: undefined, status: undefined });
             expect(result.cursor).toBe('next-cursor');
@@ -1522,6 +1573,7 @@ describe.concurrent('BlueskyClient', () => {
                 data: { convos: [CONVO_VIEW] },
             });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.listConversations();
             const member = result.conversations[0]?.members[0];
             expect(member).toMatchObject({
@@ -1537,6 +1589,7 @@ describe.concurrent('BlueskyClient', () => {
                 data: { convos: [CONVO_VIEW] },
             });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.listConversations();
             expect(result.conversations[0]?.lastMessage).toMatchObject({
                 id:        'msg-001',
@@ -1552,6 +1605,7 @@ describe.concurrent('BlueskyClient', () => {
                 data: { convos: [{ ...CONVO_VIEW, lastMessage: DELETED_MESSAGE_VIEW }] },
             });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.listConversations();
             expect(result.conversations[0]?.lastMessage).toBeUndefined();
         });
@@ -1559,6 +1613,7 @@ describe.concurrent('BlueskyClient', () => {
         test('handles empty conversations list', async () => {
             mockListConvos.mockResolvedValueOnce({ data: { convos: [] } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.listConversations();
             expect(result.conversations).toEqual([]);
             expect(result.cursor).toBeUndefined();
@@ -1567,6 +1622,7 @@ describe.concurrent('BlueskyClient', () => {
         test('maps 401 to BskyAuthError', async () => {
             mockListConvos.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.listConversations();
@@ -1579,6 +1635,7 @@ describe.concurrent('BlueskyClient', () => {
         test('maps generic errors to BskyError', async () => {
             mockListConvos.mockRejectedValueOnce(makeXRPCError(500, 'InternalError', 'Server error'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.listConversations();
@@ -1597,6 +1654,7 @@ describe.concurrent('BlueskyClient', () => {
         test('passes member DIDs to API', async () => {
             mockGetConvoForMembers.mockResolvedValueOnce({ data: { convo: CONVO_VIEW } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             await client.getConversationForMembers(['did:plc:member1', 'did:plc:member2']);
             expect(mockGetConvoForMembers).toHaveBeenCalledWith({ members: ['did:plc:member1', 'did:plc:member2'] });
         });
@@ -1604,6 +1662,7 @@ describe.concurrent('BlueskyClient', () => {
         test('returns normalized conversation', async () => {
             mockGetConvoForMembers.mockResolvedValueOnce({ data: { convo: CONVO_VIEW } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.getConversationForMembers(['did:plc:member1']);
             expect(result).toMatchObject({ id: 'convo-001', unreadCount: 2 });
         });
@@ -1611,6 +1670,7 @@ describe.concurrent('BlueskyClient', () => {
         test('maps errors to BskyError', async () => {
             mockGetConvoForMembers.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.getConversationForMembers(['did:plc:member1']);
@@ -1631,6 +1691,7 @@ describe.concurrent('BlueskyClient', () => {
                 data: { messages: [MESSAGE_VIEW], cursor: 'msg-cursor' },
             });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.getMessages('convo-001', 20, 'prev-cursor');
             expect(mockGetMessages).toHaveBeenCalledWith({ convoId: 'convo-001', limit: 20, cursor: 'prev-cursor' });
             expect(result.cursor).toBe('msg-cursor');
@@ -1647,6 +1708,7 @@ describe.concurrent('BlueskyClient', () => {
                 data: { messages: [MESSAGE_VIEW, DELETED_MESSAGE_VIEW] },
             });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.getMessages('convo-001');
             expect(result.messages).toHaveLength(1);
             expect(result.messages[0]?.id).toBe('msg-001');
@@ -1655,6 +1717,7 @@ describe.concurrent('BlueskyClient', () => {
         test('handles empty messages list', async () => {
             mockGetMessages.mockResolvedValueOnce({ data: { messages: [] } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.getMessages('convo-001');
             expect(result.messages).toEqual([]);
             expect(result.cursor).toBeUndefined();
@@ -1663,6 +1726,7 @@ describe.concurrent('BlueskyClient', () => {
         test('maps errors to BskyError', async () => {
             mockGetMessages.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.getMessages('convo-001');
@@ -1683,6 +1747,7 @@ describe.concurrent('BlueskyClient', () => {
             mockRichTextState.facets = [{ index: { byteStart: 0, byteEnd: 5 }, features: [] }];
             mockSendMessage.mockResolvedValueOnce({ data: MESSAGE_VIEW });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.sendDirectMessage('convo-001', 'Hello Alice!');
             expect(mockSendMessage).toHaveBeenCalledWith({
                 convoId: 'convo-001',
@@ -1697,6 +1762,7 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyValidationError when text exceeds 1000 graphemes', async () => {
             mockRichTextState.graphemeLength = 1001;
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.sendDirectMessage('convo-001', 'x'.repeat(1001));
@@ -1712,6 +1778,7 @@ describe.concurrent('BlueskyClient', () => {
             mockRichTextState.text   = 'x'.repeat(1000);
             mockSendMessage.mockResolvedValueOnce({ data: MESSAGE_VIEW });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             const result = await client.sendDirectMessage('convo-001', 'x'.repeat(1000));
             expect(result).toBeDefined();
             expect(mockSendMessage).toHaveBeenCalledTimes(1);
@@ -1721,6 +1788,7 @@ describe.concurrent('BlueskyClient', () => {
             mockRichTextState.graphemeLength = 10;
             mockSendMessage.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.sendDirectMessage('convo-001', 'Hello!');
@@ -1739,6 +1807,7 @@ describe.concurrent('BlueskyClient', () => {
         test('calls updateRead with convoId', async () => {
             mockUpdateRead.mockResolvedValueOnce({ data: {} });
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             await client.markConversationRead('convo-001');
             expect(mockUpdateRead).toHaveBeenCalledWith({ convoId: 'convo-001' });
         });
@@ -1746,6 +1815,7 @@ describe.concurrent('BlueskyClient', () => {
         test('maps errors to BskyError', async () => {
             mockUpdateRead.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Unauthorized'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
             let thrownError: unknown;
             try {
                 await client.markConversationRead('convo-001');

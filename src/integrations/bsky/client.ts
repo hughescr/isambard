@@ -52,6 +52,7 @@ interface BlueskyClientOptions {
  */
 export class BlueskyClient {
     private readonly agent:       AtpAgent;
+    private          chatAgent:   AtpAgent | undefined;
     private readonly handle:      string;
     private readonly appPassword: string;
 
@@ -75,10 +76,23 @@ export class BlueskyClient {
     async login(): Promise<void> {
         try {
             await this.agent.login({ identifier: this.handle, password: this.appPassword });
+            // Stryker disable next-line StringLiteral: chat service DID is AT Protocol configuration
+            this.chatAgent = this.agent.withProxy('bsky_chat', 'did:web:api.bsky.chat');
         } catch (err: unknown) {
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Login failed');
         }
+    }
+
+    /**
+     * Returns the chat-proxied agent, or throws if login() has not been called.
+     */
+    private requireChatAgent(): AtpAgent {
+        if(!this.chatAgent) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw new BskyError('Chat not available — call login() first');
+        }
+        return this.chatAgent;
     }
 
     /**
@@ -396,12 +410,15 @@ export class BlueskyClient {
         status?:    string
     ): Promise<{ conversations: BskyConversation[], cursor?: string }> {
         try {
-            const response = await this.agent.chat.bsky.convo.listConvos({ limit, cursor, readState, status });
+            const response = await this.requireChatAgent().chat.bsky.convo.listConvos({ limit, cursor, readState, status });
             return {
                 conversations: response.data.convos.map(convo => this.normalizeConversation(convo)),
                 cursor:        response.data.cursor,
             };
         } catch (err: unknown) {
+            if(err instanceof BskyError) {
+                throw err;
+            }
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to list conversations');
         }
@@ -412,9 +429,12 @@ export class BlueskyClient {
      */
     async getConversationForMembers(memberDids: string[]): Promise<BskyConversation> {
         try {
-            const response = await this.agent.chat.bsky.convo.getConvoForMembers({ members: memberDids });
+            const response = await this.requireChatAgent().chat.bsky.convo.getConvoForMembers({ members: memberDids });
             return this.normalizeConversation(response.data.convo);
         } catch (err: unknown) {
+            if(err instanceof BskyError) {
+                throw err;
+            }
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to get conversation for members');
         }
@@ -429,7 +449,7 @@ export class BlueskyClient {
         cursor?: string
     ): Promise<{ messages: BskyDirectMessage[], cursor?: string }> {
         try {
-            const response = await this.agent.chat.bsky.convo.getMessages({ convoId, limit, cursor });
+            const response = await this.requireChatAgent().chat.bsky.convo.getMessages({ convoId, limit, cursor });
             return {
                 messages: response.data.messages
                     .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
@@ -437,6 +457,9 @@ export class BlueskyClient {
                 cursor: response.data.cursor,
             };
         } catch (err: unknown) {
+            if(err instanceof BskyError) {
+                throw err;
+            }
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to get messages');
         }
@@ -449,13 +472,13 @@ export class BlueskyClient {
     async sendDirectMessage(convoId: string, text: string): Promise<BskyDirectMessage> {
         try {
             const rt = await this.buildValidatedDMRichText(text);
-            const response = await this.agent.chat.bsky.convo.sendMessage({
+            const response = await this.requireChatAgent().chat.bsky.convo.sendMessage({
                 convoId,
                 message: { text: rt.text, facets: rt.facets },
             });
             return this.normalizeMessage(response.data);
         } catch (err: unknown) {
-            if(err instanceof BskyValidationError) {
+            if(err instanceof BskyError) {
                 throw err;
             }
             // Stryker disable next-line StringLiteral: error message is informational only
@@ -468,8 +491,11 @@ export class BlueskyClient {
      */
     async markConversationRead(convoId: string): Promise<void> {
         try {
-            await this.agent.chat.bsky.convo.updateRead({ convoId });
+            await this.requireChatAgent().chat.bsky.convo.updateRead({ convoId });
         } catch (err: unknown) {
+            if(err instanceof BskyError) {
+                throw err;
+            }
             // Stryker disable next-line StringLiteral: error message is informational only
             throw this.mapError(err, 'Failed to mark conversation as read');
         }
