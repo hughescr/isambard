@@ -177,7 +177,7 @@ export async function createApp(): Promise<App> {
         config.adminDiscordUserId
     );
 
-    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService);
+    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend);
     const mcpServers = createMCPServers({
         memoryBackend:             storage.memoryBackend,
         messageSearchService:      discordInfra.messageSearchService,
@@ -193,6 +193,7 @@ export async function createApp(): Promise<App> {
         bskyRateLimiter:           bskySetup?.rateLimiter,
         bskySendApprovalRequest:   bskySetup?.sendApprovalRequest,
         bskySendDMApprovalRequest: bskySetup?.sendDMApprovalRequest,
+        bskyRejectionBackend:      bskySetup?.rejectionBackend,
         caldavClient,
         caldavRegistry,
     });

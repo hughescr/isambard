@@ -7,7 +7,7 @@
 
 import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
-import type { BlueskyClient } from '@/integrations/bsky';
+import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
@@ -52,9 +52,10 @@ export interface ContextBuilderOptions {
     maxEventItemMaxChars?:  number              // Default: 2000 (per-item cap for full-content event items)
     maxEventBatchSize?:     number              // Default: 10
     summarizeEventBatches?: SummarizeEventBatchesFn  // Optional DI for event summarization
-    emailService?:          EmailService        // Optional email service for perch inbox section
-    bskyDMService?:         BskyDMService       // Optional Bluesky DM service for perch DM section
-    calendarService?:       CalendarService     // Optional calendar service for context injection
+    emailService?:          EmailService           // Optional email service for perch inbox section
+    bskyDMService?:         BskyDMService          // Optional Bluesky DM service for perch DM section
+    bskyRejectionBackend?:  BskyRejectionBackend   // Optional Bluesky rejection backend for perch rejection section
+    calendarService?:       CalendarService        // Optional calendar service for context injection
 }
 
 export interface ContextBuilder {
@@ -280,6 +281,7 @@ class ContextBuilderImpl implements ContextBuilder {
     readonly #summarizeEventBatchesFn: SummarizeEventBatchesFn | undefined;
     readonly #emailService:            EmailService | undefined;
     readonly #bskyDMService:           BskyDMService | undefined;
+    readonly #bskyRejectionBackend:    BskyRejectionBackend | undefined;
     readonly #calendarService:         CalendarService | undefined;
 
     constructor(options: ContextBuilderOptions) {
@@ -294,6 +296,7 @@ class ContextBuilderImpl implements ContextBuilder {
         this.#summarizeEventBatchesFn = options.summarizeEventBatches;
         this.#emailService = options.emailService;
         this.#bskyDMService = options.bskyDMService;
+        this.#bskyRejectionBackend = options.bskyRejectionBackend;
         this.#calendarService = options.calendarService;
 
         this.#maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
@@ -577,6 +580,55 @@ class ContextBuilderImpl implements ContextBuilder {
         return undefined;
     }
 
+    /**
+     * Build the rejected Bluesky posts/DMs section for perch context.
+     * Returns formatted section string, or undefined if no rejections or backend unavailable.
+     */
+    async #buildBskyRejectedPostsSection(): Promise<string | undefined> {
+        if(!this.#bskyRejectionBackend) {
+            return undefined;
+        }
+        // Stryker disable BlockStatement: try-catch guards bsky rejection errors from breaking perch context
+        try {
+            const items = await this.#bskyRejectionBackend.listRejections();
+            if(items.length === 0) {
+                return undefined;
+            }
+
+            // Stryker disable StringLiteral,MethodExpression: rejection formatting template strings are cosmetic UI text
+            const lines = items.map((item) => {
+                if(item.type === 'reply') {
+                    return [
+                        `- **Reply rejected** (${item.rejectedAt})`,
+                        `  Reason: ${item.reason}`,
+                        `  To: @${item.targetHandle}`,
+                        `  parentUri: ${item.parentUri}`,
+                        `  parentCid: ${item.parentCid}`,
+                        item.rootUri ? `  rootUri: ${item.rootUri}` : undefined,
+                        item.rootCid ? `  rootCid: ${item.rootCid}` : undefined,
+                        `  Text: ${item.text}`,
+                    ].filter(Boolean).join('\n');
+                }
+                return [
+                    `- **DM rejected** (${item.rejectedAt})`,
+                    `  Reason: ${item.reason}`,
+                    `  Recipients: ${JSON.stringify(item.recipientHandles)}`,
+                    `  convoId: ${item.convoId}`,
+                    `  Text: ${item.text}`,
+                ].join('\n');
+            });
+            // Stryker restore StringLiteral,MethodExpression
+
+            // Stryker disable next-line StringLiteral: section header and instructions are cosmetic UI text
+            return `## Rejected Bluesky Posts/DMs\nYour admin rejected the following outbound posts or DMs. Reflect on each rejection reason — it's feedback to help you calibrate. Sometimes the right response is to revise the content and try again; other times, the lesson is that this wasn't the right moment or context to post at all. After reflecting, use \`clearRejection\` or \`clearAllRejections\` to acknowledge.\n\n${lines.join('\n\n')}`;
+        } catch (err) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err, msg: 'Failed to load rejected Bluesky posts context' });
+        }
+        // Stryker restore BlockStatement
+        return undefined;
+    }
+
     async loadCoreIdentity(): Promise<string> {
         logger.debug({ msg: 'Loading core identity...' });
 
@@ -801,7 +853,7 @@ class ContextBuilderImpl implements ContextBuilder {
         return `${sections.join('\n\n')}\n\n`;
     }
 
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- perch context aggregates 7 optional sections (time, state, events, calendar, inbox, rejected drafts, bsky DMs); each section adds one branch
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- perch context aggregates 8 optional sections (time, state, events, calendar, inbox, rejected drafts, bsky DMs, bsky rejections); each section adds one branch
     async buildPerchContext(now: Date = new Date()): Promise<string> {
         // 1. Time header (no user timezone for perch)
         // Stryker disable next-line ArrayDeclaration: Equivalent - time header is always first element
@@ -871,6 +923,13 @@ class ContextBuilderImpl implements ContextBuilder {
         const bskyDMSection = await this.#buildBskyDMSection();
         if(bskyDMSection) {
             sections.push(bskyDMSection);
+        }
+
+        // 8. Rejected Bluesky posts/DMs (admin rejections awaiting agent review)
+        // Stryker disable next-line ConditionalExpression,BlockStatement: optional section guard
+        const bskyRejectedSection = await this.#buildBskyRejectedPostsSection();
+        if(bskyRejectedSection) {
+            sections.push(bskyRejectedSection);
         }
 
         // Stryker disable next-line StringLiteral: Cosmetic trailing newlines for context formatting

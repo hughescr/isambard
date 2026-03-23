@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
 import type { BskyAllowlist, BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
+import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integrations/bsky/rejection-backend';
 import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import type { SendRateLimiter } from '../../../src/integrations/email';
 import { textContent } from '../../setup';
@@ -126,6 +127,9 @@ describe.concurrent('createBskyMCPServer', () => {
             ['listConversations',    'List Bluesky direct message conversations'],
             ['getDirectMessages',    'Get direct messages with specific Bluesky users. Automatically marks the conversation as read.'],
             ['sendDirectMessage',    'Send a direct message to Bluesky users. If recipients are on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.'],
+            ['listRejectedPosts',    'List Bluesky posts and DMs that were rejected by admin. Shows rejection reason and all parameters needed to retry with revised content.'],
+            ['clearRejection',       'Clear a specific rejected post/DM after reviewing it. Use the rejectedAt timestamp from listRejectedPosts.'],
+            ['clearAllRejections',   'Clear all rejected posts/DMs after reviewing them.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -145,9 +149,10 @@ describe.concurrent('createBskyMCPServer', () => {
             ['unfollow',          ['actor']],
             ['sendPost',          ['text']],
             ['replyToPost',       ['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']],
-            ['listConversations', ['limit', 'cursor', 'readState', 'status']],
-            ['getDirectMessages', ['recipients', 'limit', 'cursor']],
-            ['sendDirectMessage', ['recipients', 'text']],
+            ['listConversations',  ['limit', 'cursor', 'readState', 'status']],
+            ['getDirectMessages',  ['recipients', 'limit', 'cursor']],
+            ['sendDirectMessage',  ['recipients', 'text']],
+            ['clearRejection',     ['rejectedAt']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
             const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -2109,6 +2114,206 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('DM text exceeds 1000 graphemes');
             expect(sendDMApprovalRequest).not.toHaveBeenCalled();
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // listRejectedPosts tool
+    // -------------------------------------------------------------------------
+
+    describe('listRejectedPosts tool', () => {
+        const mockRejectionBackend = {
+            listRejections:  mock(async (): Promise<BskyRejectionItem[]> => []),
+            deleteRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            clearAll:        mock(async (): Promise<number> => 0),
+            recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+        } as unknown as BskyRejectionBackend;
+
+        test('should return items as JSON when rejections exist', async () => {
+            const rejectedItem: BskyRejectionItem = {
+                type:         'reply',
+                text:         'My revised reply',
+                targetHandle: 'alice.bsky.social',
+                parentUri:    'at://did:plc:abc123/app.bsky.feed.post/xyz',
+                parentCid:    'bafyreiabc',
+                reason:       'Too aggressive',
+                rejectedAt:   '2026-01-01T00:00:00.000Z',
+            };
+            (mockRejectionBackend.listRejections as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<BskyRejectionItem[]> => [rejectedItem]
+            );
+
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
+            const handler = getToolHandler(server, 'listRejectedPosts');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            const parsed = JSON.parse(textContent(result.content[0])) as BskyRejectionItem[];
+            expect(parsed).toHaveLength(1);
+            expect(parsed[0].type).toBe('reply');
+        });
+
+        test('should return text message when no rejections exist', async () => {
+            (mockRejectionBackend.listRejections as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<BskyRejectionItem[]> => []
+            );
+
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
+            const handler = getToolHandler(server, 'listRejectedPosts');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('No rejected posts or DMs pending review.');
+        });
+
+        test('should return error when rejectionBackend is not configured', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listRejectedPosts');
+
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Rejection tracking is not configured');
+        });
+
+        test('should return error result when backend throws', async () => {
+            const throwingBackend = {
+                listRejections:  mock(async (): Promise<BskyRejectionItem[]> => { throw new Error('DynamoDB unavailable'); }),
+                deleteRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+                clearAll:        mock(async (): Promise<number> => 0),
+                recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            } as unknown as BskyRejectionBackend;
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: throwingBackend });
+            const handler = getToolHandler(server, 'listRejectedPosts');
+
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // clearRejection tool
+    // -------------------------------------------------------------------------
+
+    describe('clearRejection tool', () => {
+        const mockRejectionBackend = {
+            listRejections:  mock(async (): Promise<BskyRejectionItem[]> => []),
+            deleteRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            clearAll:        mock(async (): Promise<number> => 0),
+            recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+        } as unknown as BskyRejectionBackend;
+
+        test('should call deleteRejection with the provided timestamp', async () => {
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
+            const handler = getToolHandler(server, 'clearRejection');
+
+            const result = await handler({ rejectedAt: '2026-01-01T00:00:00.000Z' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockRejectionBackend.deleteRejection).toHaveBeenCalledWith('2026-01-01T00:00:00.000Z');
+            expect(textContent(result.content[0])).toContain('2026-01-01T00:00:00.000Z');
+        });
+
+        test('should return error when rejectionBackend is not configured', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'clearRejection');
+
+            const result = await handler({ rejectedAt: '2026-01-01T00:00:00.000Z' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Rejection tracking is not configured');
+        });
+
+        test('should return error result when backend throws', async () => {
+            const throwingBackend = {
+                listRejections:  mock(async (): Promise<BskyRejectionItem[]> => []),
+                deleteRejection: mock(async (): Promise<void> => { throw new Error('DynamoDB unavailable'); }),
+                clearAll:        mock(async (): Promise<number> => 0),
+                recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            } as unknown as BskyRejectionBackend;
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: throwingBackend });
+            const handler = getToolHandler(server, 'clearRejection');
+
+            const result = await handler({ rejectedAt: '2026-01-01T00:00:00.000Z' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // clearAllRejections tool
+    // -------------------------------------------------------------------------
+
+    describe('clearAllRejections tool', () => {
+        const mockRejectionBackend = {
+            listRejections:  mock(async (): Promise<BskyRejectionItem[]> => []),
+            deleteRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            clearAll:        mock(async (): Promise<number> => 3),
+            recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+        } as unknown as BskyRejectionBackend;
+
+        test('should call clearAll and return count-based success message for multiple items', async () => {
+            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => 3);
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
+            const handler = getToolHandler(server, 'clearAllRejections');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Cleared 3 rejections.');
+        });
+
+        test('should use singular form when exactly one rejection is cleared', async () => {
+            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => 1);
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
+            const handler = getToolHandler(server, 'clearAllRejections');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('Cleared 1 rejection.');
+        });
+
+        test('should return no-op message when count is zero', async () => {
+            (mockRejectionBackend.clearAll as ReturnType<typeof mock>).mockImplementation(async (): Promise<number> => 0);
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
+            const handler = getToolHandler(server, 'clearAllRejections');
+
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            expect(textContent(result.content[0])).toBe('No rejections to clear.');
+        });
+
+        test('should return error when rejectionBackend is not configured', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'clearAllRejections');
+
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Rejection tracking is not configured');
+        });
+
+        test('should return error result when backend throws', async () => {
+            const throwingBackend = {
+                listRejections:  mock(async (): Promise<BskyRejectionItem[]> => []),
+                deleteRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+                clearAll:        mock(async (): Promise<number> => { throw new Error('DynamoDB unavailable'); }),
+                recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
+            } as unknown as BskyRejectionBackend;
+            const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: throwingBackend });
+            const handler = getToolHandler(server, 'clearAllRejections');
+
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');
         });
     });
 });

@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
-import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem } from '@/integrations/bsky';
+import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend } from '@/integrations/bsky';
 import type { SendRateLimiter } from '@/integrations/email';
 
 /** Shared pagination schema fields for feed tools that support checkpointing. */
@@ -58,6 +58,7 @@ export interface BskyMCPServerOptions {
     checkpointManager?:   BskyCheckpointManager
     rateLimiter?:         SendRateLimiter
     allowlist?:           BskyAllowlist
+    rejectionBackend?:    BskyRejectionBackend
     sendApprovalRequest?: (text: string, targetHandle: string, parentUri: string, parentCid: string,
         rootUri?: string, rootCid?: string) => Promise<void>
     sendDMApprovalRequest?: (text: string, targetHandles: string[], convoId: string) => Promise<void>
@@ -576,6 +577,83 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 },
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Send Direct Message', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
+            ),
+
+            tool(
+                'listRejectedPosts',
+                // Stryker disable next-line StringLiteral: tool description is configuration
+                'List Bluesky posts and DMs that were rejected by admin. Shows rejection reason and all parameters needed to retry with revised content.',
+                {},
+                async (): Promise<CallToolResult> => {
+                    try {
+                        if(!options.rejectionBackend) {
+                            // Stryker disable next-line StringLiteral: error message is informational only
+                            return mcpErrorResult('Rejection tracking is not configured');
+                        }
+                        const items = await options.rejectionBackend.listRejections();
+                        if(items.length === 0) {
+                            // Stryker disable next-line StringLiteral: result message is informational only
+                            return mcpTextResult('No rejected posts or DMs pending review.');
+                        }
+                        return mcpJsonResult(items);
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'List Rejected Posts', readOnlyHint: true, idempotentHint: true } }
+            ),
+
+            tool(
+                'clearRejection',
+                // Stryker disable next-line StringLiteral: tool description is configuration
+                'Clear a specific rejected post/DM after reviewing it. Use the rejectedAt timestamp from listRejectedPosts.',
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    rejectedAt: z.string().describe('ISO timestamp of the rejection to clear (from listRejectedPosts)'),
+                },
+                async (input): Promise<CallToolResult> => {
+                    try {
+                        if(!options.rejectionBackend) {
+                            // Stryker disable next-line StringLiteral: error message is informational only
+                            return mcpErrorResult('Rejection tracking is not configured');
+                        }
+                        await options.rejectionBackend.deleteRejection(input.rejectedAt);
+                        // Stryker disable next-line StringLiteral: result message is informational only
+                        return mcpTextResult(`Cleared rejection from ${input.rejectedAt}`);
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Clear Rejection', readOnlyHint: false, destructiveHint: true, idempotentHint: true } }
+            ),
+
+            tool(
+                'clearAllRejections',
+                // Stryker disable next-line StringLiteral: tool description is configuration
+                'Clear all rejected posts/DMs after reviewing them.',
+                {},
+                async (): Promise<CallToolResult> => {
+                    try {
+                        if(!options.rejectionBackend) {
+                            // Stryker disable next-line StringLiteral: error message is informational only
+                            return mcpErrorResult('Rejection tracking is not configured');
+                        }
+                        const count = await options.rejectionBackend.clearAll();
+                        // Stryker disable next-line ConditionalExpression: zero-count guard — informational message branch
+                        if(count === 0) {
+                            // Stryker disable next-line StringLiteral: result message is informational only
+                            return mcpTextResult('No rejections to clear.');
+                        }
+                        // Stryker disable next-line StringLiteral,ConditionalExpression: plural suffix and count guard are informational only
+                        return mcpTextResult(`Cleared ${count} rejection${count === 1 ? '' : 's'}.`);
+                    } catch (error) {
+                        return mcpErrorResult(error);
+                    }
+                },
+                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
+                { annotations: { title: 'Clear All Rejections', readOnlyHint: false, destructiveHint: true, idempotentHint: false } }
             ),
         ],
     });

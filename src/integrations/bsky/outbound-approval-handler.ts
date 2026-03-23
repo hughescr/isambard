@@ -3,13 +3,15 @@ import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
 import type { BskyAllowlist } from '@/integrations/bsky/allowlist';
 import type { BlueskyClient } from '@/integrations/bsky/client';
+import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 
 export interface BskyOutboundApprovalHandlerDeps {
-    client:    BlueskyClient
-    allowlist: BskyAllowlist
+    client:           BlueskyClient
+    allowlist:        BskyAllowlist
+    rejectionBackend: BskyRejectionBackend
 }
 
 /**
@@ -32,12 +34,67 @@ export interface BskyOutboundApprovalHandlerDeps {
  * Discord channel-level ACL is the enforcement boundary.
  */
 export class BskyOutboundApprovalHandler {
-    private readonly client:    BlueskyClient;
-    private readonly allowlist: BskyAllowlist;
+    private readonly client:           BlueskyClient;
+    private readonly allowlist:        BskyAllowlist;
+    private readonly rejectionBackend: BskyRejectionBackend;
 
     constructor(deps: BskyOutboundApprovalHandlerDeps) {
-        this.client    = deps.client;
-        this.allowlist = deps.allowlist;
+        this.client           = deps.client;
+        this.allowlist        = deps.allowlist;
+        this.rejectionBackend = deps.rejectionBackend;
+    }
+
+    private parseRecipientHandles(fields: { name: string, value: string }[]): string[] {
+        // Stryker disable next-line ConditionalExpression: Equivalent mutant — find() returns the unique matching field regardless of position
+        const recipientsValue = fields.find(f => f.name === 'Recipients')?.value;
+        if(!recipientsValue) {
+            // Stryker disable next-line ArrayDeclaration: empty array return — defensive fallback untestable without malformed embed
+            return [];
+        }
+        // Stryker disable BlockStatement: try-catch guards JSON.parse from malformed embed fields
+        try {
+            return JSON.parse(recipientsValue) as string[];
+        } catch{
+            // Stryker disable next-line ArrayDeclaration: empty array return in catch — malformed JSON fallback path not covered
+            return [];
+        }
+        // Stryker restore BlockStatement
+    }
+
+    private extractRejectionItem(prefix: string, embed: { description?: string | null, fields?: { name: string, value: string }[] }, reason: string): BskyRejectionItem {
+        // Stryker disable next-line StringLiteral: '' fallback for null/undefined description is defensive configuration
+        const text       = embed.description ?? '';
+        const fields     = embed.fields ?? [];
+        // Stryker disable next-line StringLiteral: ISO timestamp format is convention
+        const rejectedAt = new Date().toISOString();
+
+        // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
+        if(prefix === 'bsky-dm-reject-reason') {
+            return {
+                type:             'dm',
+                text,
+                recipientHandles: this.parseRecipientHandles(fields),
+                // Stryker disable next-line StringLiteral: '' fallback for missing field is defensive configuration
+                convoId:          fields.find(f => f.name === 'Conversation ID')?.value ?? '',
+                reason,
+                rejectedAt,
+            };
+        }
+
+        return {
+            type:         'reply',
+            text,
+            // Stryker disable next-line StringLiteral,ConditionalExpression: '' fallback for missing field is defensive configuration; find() predicate is configuration
+            targetHandle: fields.find(f => f.name === 'Replying to')?.value ?? '',
+            // Stryker disable next-line StringLiteral: '' fallback for missing field is defensive configuration
+            parentUri:    fields.find(f => f.name === 'Parent URI')?.value ?? '',
+            // Stryker disable next-line StringLiteral: '' fallback for missing field is defensive configuration
+            parentCid:    fields.find(f => f.name === 'Parent CID')?.value ?? '',
+            rootUri:      fields.find(f => f.name === 'Root URI')?.value,
+            rootCid:      fields.find(f => f.name === 'Root CID')?.value,
+            reason,
+            rejectedAt,
+        };
     }
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -155,6 +212,20 @@ export class BskyOutboundApprovalHandler {
             // Stryker disable next-line StringLiteral: field customId is configuration
             // Use || so an empty reason field stores 'No reason given' instead of empty string
             const reason = interaction.fields.getTextInputValue('reject-reason') || 'No reason given';
+
+            // Best-effort: persist rejection for agent feedback
+            // Stryker disable BlockStatement: try-catch wraps best-effort rejection persistence
+            try {
+                const embed = interaction.message?.embeds[0];
+                if(embed) {
+                    const rejectionItem = this.extractRejectionItem(prefix, embed, reason);
+                    await this.rejectionBackend.recordRejection(rejectionItem);
+                }
+            } catch (error) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ err: error, msg: 'Failed to persist bsky rejection' });
+            }
+            // Stryker restore BlockStatement
 
             const updatedEmbed = new EmbedBuilder()
                 // Stryker disable next-line StringLiteral,TemplateLiteral: UI label is configuration

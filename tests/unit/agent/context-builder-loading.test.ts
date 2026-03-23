@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder } from '../../../src/agent/context-builder';
 import type { BlueskyClient } from '../../../src/integrations/bsky';
+import type { BskyRejectionBackend } from '../../../src/integrations/bsky/rejection-backend';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
 import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -3247,6 +3248,148 @@ describe('createContextBuilder loading methods', () => {
             expect(result).toContain('## Bluesky DMs');
             expect(result).toContain('You have 5 DMs');
             expect(result).toContain('5 in the conversation with someone.bsky.social');
+        });
+
+        // -------------------------------------------------------------------
+        // Rejected Bluesky posts/DMs section (bskyRejectionBackend DI)
+        // -------------------------------------------------------------------
+
+        test('should include rejected Bluesky section when rejections exist', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockRejectionBackend = {
+                listRejections: mock(async (): Promise<BskyRejectionBackend['listRejections'] extends () => Promise<infer T> ? T : never> => [{
+                    type:         'reply' as const,
+                    text:         'Great post!',
+                    targetHandle: 'someone.bsky.social',
+                    parentUri:    'at://parent',
+                    parentCid:    'bafyreparent',
+                    reason:       'Too generic',
+                    rejectedAt:   '2026-03-22T15:30:00.000Z',
+                }]),
+            } as unknown as BskyRejectionBackend;
+
+            const builder = createContextBuilder({
+                backend,
+                bskyRejectionBackend: mockRejectionBackend,
+            });
+
+            const result = await builder.buildPerchContext();
+
+            expect(result).toContain('## Rejected Bluesky Posts/DMs');
+            expect(result).toContain('Too generic');
+            expect(result).toContain('someone.bsky.social');
+            expect(result).toContain('at://parent');
+        });
+
+        test('should omit rejected Bluesky section when no rejections', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockRejectionBackend = {
+                listRejections: mock(async () => []),
+            } as unknown as BskyRejectionBackend;
+
+            const builder = createContextBuilder({
+                backend,
+                bskyRejectionBackend: mockRejectionBackend,
+            });
+
+            const result = await builder.buildPerchContext();
+
+            expect(result).not.toContain('Rejected Bluesky');
+        });
+
+        test('should omit rejected Bluesky section when backend not configured', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const builder = createContextBuilder({ backend });
+
+            const result = await builder.buildPerchContext();
+
+            expect(result).not.toContain('Rejected Bluesky');
+        });
+
+        test('should omit rejected Bluesky section when listRejections throws', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockRejectionBackend = {
+                listRejections: mock(async () => { throw new Error('DynamoDB timeout'); }),
+            } as unknown as BskyRejectionBackend;
+
+            const builder = createContextBuilder({
+                backend,
+                bskyRejectionBackend: mockRejectionBackend,
+            });
+
+            const result = await builder.buildPerchContext();
+
+            expect(result).not.toContain('Rejected Bluesky');
+        });
+
+        test('should include DM rejection with recipients and convoId', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockRejectionBackend = {
+                listRejections: mock(async () => [{
+                    type:             'dm' as const,
+                    text:             'Hey there',
+                    recipientHandles: ['alice.bsky.social'],
+                    convoId:          'convo-123',
+                    reason:           'Not appropriate',
+                    rejectedAt:       '2026-03-22T16:00:00.000Z',
+                }]),
+            } as unknown as BskyRejectionBackend;
+
+            const builder = createContextBuilder({
+                backend,
+                bskyRejectionBackend: mockRejectionBackend,
+            });
+
+            const result = await builder.buildPerchContext();
+
+            expect(result).toContain('DM rejected');
+            expect(result).toContain('alice.bsky.social');
+            expect(result).toContain('convo-123');
+        });
+
+        test('should include rootUri and rootCid when present in reply rejection', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+
+            const mockRejectionBackend = {
+                listRejections: mock(async () => [{
+                    type:         'reply' as const,
+                    text:         'Great post!',
+                    targetHandle: 'someone.bsky.social',
+                    parentUri:    'at://parent',
+                    parentCid:    'bafyreparent',
+                    rootUri:      'at://root',
+                    rootCid:      'bafyreroot',
+                    reason:       'Off topic',
+                    rejectedAt:   '2026-03-22T15:30:00.000Z',
+                }]),
+            } as unknown as BskyRejectionBackend;
+
+            const builder = createContextBuilder({
+                backend,
+                bskyRejectionBackend: mockRejectionBackend,
+            });
+
+            const result = await builder.buildPerchContext();
+
+            expect(result).toContain('rootUri: at://root');
+            expect(result).toContain('rootCid: bafyreroot');
         });
     });
 });

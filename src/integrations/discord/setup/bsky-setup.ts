@@ -4,6 +4,7 @@ import type { Client } from 'discord.js';
 import {
     BskyAllowlist,
     BskyOutboundApprovalHandler,
+    BskyRejectionBackend,
     buildBskyApprovalEmbed,
     type BlueskyClient
 } from '@/integrations/bsky';
@@ -27,6 +28,7 @@ export interface BskySetupOptions {
 export interface BskySetupResult {
     allowlist:               BskyAllowlist
     rateLimiter:             SendRateLimiter
+    rejectionBackend:        BskyRejectionBackend
     outboundApprovalHandler: BskyOutboundApprovalHandler
     /** sendApprovalRequest callback for MCP server integration */
     sendApprovalRequest: (
@@ -68,6 +70,9 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     // Create and load allowlist from DynamoDB into memory cache
     const allowlist = new BskyAllowlist(docClient, tableName);
     await allowlist.load();
+
+    // Create rejection backend for persisting admin-rejected posts/DMs
+    const rejectionBackend = new BskyRejectionBackend(docClient, tableName);
 
     // Create rate limiter for outbound Bluesky posts
     // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
@@ -148,6 +153,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({
         client: bskyClient,
         allowlist,
+        rejectionBackend,
     });
 
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -157,6 +163,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     return {
         allowlist,
         rateLimiter,
+        rejectionBackend,
         outboundApprovalHandler,
         sendApprovalRequest,
         sendDMApprovalRequest,

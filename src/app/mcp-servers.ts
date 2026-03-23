@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, type QuestionRegistry  } from '@/agent';
-import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { SendRateLimiter } from '@/integrations/email';
@@ -90,6 +90,11 @@ export interface MCPServersOptions {
      * Optional callback to request admin approval for an outbound Bluesky DM.
      */
     bskySendDMApprovalRequest?: (text: string, targetHandles: string[], convoId: string) => Promise<void>
+
+    /**
+     * Optional Bluesky rejection backend for rejected post tracking.
+     */
+    bskyRejectionBackend?: BskyRejectionBackend
 
     /**
      * Optional CalDAV client for calendar integration.
@@ -204,6 +209,7 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
             allowlist:             options.bskyAllowlist,
             sendApprovalRequest:   options.bskySendApprovalRequest,
             sendDMApprovalRequest: options.bskySendDMApprovalRequest,
+            rejectionBackend:      options.bskyRejectionBackend,
         })
         : undefined;
 

@@ -4,6 +4,9 @@ export { createDynamoDBClient } from './client';
 // Allowlist base
 export { DynamoAllowlist } from './allowlist-base';
 
+// Base repository
+export { BaseRepository } from './repositories/base';
+
 // Task Session
 export { TaskSessionBackend, createSessionId, type SessionId } from './task-session';
 
