@@ -599,7 +599,7 @@ class ContextBuilderImpl implements ContextBuilder {
             const lines = items.map((item) => {
                 if(item.type === 'reply') {
                     return [
-                        `- **Reply rejected** (${item.rejectedAt})`,
+                        `- **Reply rejected** (${item.rejectedAt}) uuid: ${item.uuid}`,
                         `  Reason: ${item.reason}`,
                         `  To: @${item.targetHandle}`,
                         `  parentUri: ${item.parentUri}`,
@@ -610,7 +610,7 @@ class ContextBuilderImpl implements ContextBuilder {
                     ].filter(Boolean).join('\n');
                 }
                 return [
-                    `- **DM rejected** (${item.rejectedAt})`,
+                    `- **DM rejected** (${item.rejectedAt}) uuid: ${item.uuid}`,
                     `  Reason: ${item.reason}`,
                     `  Recipients: ${JSON.stringify(item.recipientHandles)}`,
                     `  convoId: ${item.convoId}`,

@@ -10,8 +10,12 @@ import * as loggerModule from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { BskyRejectionBackend, type BskyRejectedReply, type BskyRejectedDM } from '@/integrations/bsky/rejection-backend';
 
+const REPLY_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
+const DM_UUID    = 'bbbbbbbb-1111-4222-8333-444444444444';
+
 const REPLY_ITEM: BskyRejectedReply = {
     type:         'reply',
+    uuid:         REPLY_UUID,
     text:         'Great post!',
     targetHandle: 'someone.bsky.social',
     parentUri:    'at://did:plc:test/app.bsky.feed.post/parent123',
@@ -28,6 +32,7 @@ const REPLY_ITEM_WITH_ROOT: BskyRejectedReply = {
 
 const DM_ITEM: BskyRejectedDM = {
     type:             'dm',
+    uuid:             DM_UUID,
     text:             'Hey, want to collaborate?',
     recipientHandles: ['alice.bsky.social', 'bob.bsky.social'],
     convoId:          'convo-abc123',
@@ -65,8 +70,9 @@ describe('BskyRejectionBackend', () => {
             const item = calls[0].args[0].input.Item!;
             expect(item).toMatchObject({
                 PK:           'BSKY#REJECTED',
-                SK:           'REJECTION#2026-03-22T15:30:00.000Z',
+                SK:           `REJECTION#${REPLY_UUID}`,
                 type:         'reply',
+                uuid:         REPLY_UUID,
                 text:         'Great post!',
                 targetHandle: 'someone.bsky.social',
                 parentUri:    'at://did:plc:test/app.bsky.feed.post/parent123',
@@ -90,8 +96,9 @@ describe('BskyRejectionBackend', () => {
             const item = calls[0].args[0].input.Item!;
             expect(item).toMatchObject({
                 PK:               'BSKY#REJECTED',
-                SK:               'REJECTION#2026-03-22T16:00:00.000Z',
+                SK:               `REJECTION#${DM_UUID}`,
                 type:             'dm',
+                uuid:             DM_UUID,
                 text:             'Hey, want to collaborate?',
                 recipientHandles: ['alice.bsky.social', 'bob.bsky.social'],
                 convoId:          'convo-abc123',
@@ -121,7 +128,7 @@ describe('BskyRejectionBackend', () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [{
                     PK: 'BSKY#REJECTED',
-                    SK: 'REJECTION#2026-03-22T15:30:00.000Z',
+                    SK: `REJECTION#${REPLY_UUID}`,
                     ...REPLY_ITEM,
                 }],
             });
@@ -139,7 +146,7 @@ describe('BskyRejectionBackend', () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [{
                     PK: 'BSKY#REJECTED',
-                    SK: 'REJECTION#2026-03-22T16:00:00.000Z',
+                    SK: `REJECTION#${DM_UUID}`,
                     ...DM_ITEM,
                 }],
             });
@@ -160,14 +167,42 @@ describe('BskyRejectionBackend', () => {
             expect(results).toEqual([]);
         });
 
-        test('queries with ScanIndexForward false (newest first)', async () => {
+        test('sorts results newest first by rejectedAt (client-side)', async () => {
+            const OLDER_UUID = '33333333-1111-4222-8333-444444444444';
+            const NEWER_UUID = '44444444-1111-4222-8333-444444444444';
+            const olderItem: BskyRejectedReply = {
+                ...REPLY_ITEM,
+                uuid:       OLDER_UUID,
+                rejectedAt: '2026-03-21T10:00:00.000Z',
+            };
+            const newerItem: BskyRejectedDM = {
+                ...DM_ITEM,
+                uuid:       NEWER_UUID,
+                rejectedAt: '2026-03-22T16:00:00.000Z',
+            };
+            // Return in ascending order (older first) — sort must reverse this
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${OLDER_UUID}`, ...olderItem },
+                    { PK: 'BSKY#REJECTED', SK: `REJECTION#${NEWER_UUID}`, ...newerItem },
+                ],
+            });
+
+            const results = await backend.listRejections();
+
+            expect(results).toHaveLength(2);
+            expect(results[0]?.rejectedAt).toBe('2026-03-22T16:00:00.000Z');
+            expect(results[1]?.rejectedAt).toBe('2026-03-21T10:00:00.000Z');
+        });
+
+        test('does not pass ScanIndexForward to query (client-side sort)', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listRejections();
 
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(1);
-            expect(calls[0].args[0].input.ScanIndexForward).toBe(false);
+            expect(calls[0].args[0].input.ScanIndexForward).toBeUndefined();
         });
 
         test('queries with correct PK', async () => {
@@ -183,10 +218,10 @@ describe('BskyRejectionBackend', () => {
     });
 
     describe('deleteRejection', () => {
-        test('deletes with correct PK and SK', async () => {
+        test('deletes with correct PK and SK using uuid', async () => {
             ddbMock.on(DeleteCommand).resolves({});
 
-            await backend.deleteRejection('2026-03-22T15:30:00.000Z');
+            await backend.deleteRejection(REPLY_UUID);
 
             const calls = ddbMock.commandCalls(DeleteCommand);
             expect(calls).toHaveLength(1);
@@ -194,7 +229,7 @@ describe('BskyRejectionBackend', () => {
                 TableName: 'TestTable',
                 Key:       {
                     PK: 'BSKY#REJECTED',
-                    SK: 'REJECTION#2026-03-22T15:30:00.000Z',
+                    SK: `REJECTION#${REPLY_UUID}`,
                 },
             });
         });
@@ -214,8 +249,8 @@ describe('BskyRejectionBackend', () => {
         test('deletes all items via BatchWriteCommand and returns count', async () => {
             ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T15:30:00.000Z' },
-                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' },
+                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#cccccccc-1111-4222-8333-444444444444' },
+                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#dddddddd-1111-4222-8333-444444444444' },
                 ],
             });
             ddbMock.on(BatchWriteCommand).resolves({});
@@ -228,8 +263,8 @@ describe('BskyRejectionBackend', () => {
             expect(batchCalls[0].args[0].input).toEqual({
                 RequestItems: {
                     TestTable: [
-                        { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T15:30:00.000Z' } } },
-                        { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' } } },
+                        { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#cccccccc-1111-4222-8333-444444444444' } } },
+                        { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#dddddddd-1111-4222-8333-444444444444' } } },
                     ],
                 },
             });
@@ -239,7 +274,7 @@ describe('BskyRejectionBackend', () => {
             // 26 items should produce 2 batch calls: 25 + 1
             const items = Array.from({ length: 26 }, (_, i) => ({
                 PK: 'BSKY#REJECTED',
-                SK: `REJECTION#2026-03-22T${String(i).padStart(2, '0')}:00:00.000Z`,
+                SK: `REJECTION#cccccccc-${String(i).padStart(4, '0')}-4222-8333-444444444444`,
             }));
             ddbMock.on(QueryCommand).resolves({ Items: items });
             ddbMock.on(BatchWriteCommand).resolves({});
@@ -259,8 +294,8 @@ describe('BskyRejectionBackend', () => {
 
             ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T15:30:00.000Z' },
-                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' },
+                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#eeeeeeee-1111-4222-8333-444444444444' },
+                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#ffffffff-1111-4222-8333-444444444444' },
                 ],
             });
 
@@ -268,7 +303,7 @@ describe('BskyRejectionBackend', () => {
             ddbMock.on(BatchWriteCommand).resolves({
                 UnprocessedItems: {
                     TestTable: [
-                        { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' } } },
+                        { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#ffffffff-1111-4222-8333-444444444444' } } },
                     ],
                 },
             });
@@ -301,8 +336,8 @@ describe('BskyRejectionBackend', () => {
 
             ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T15:30:00.000Z' },
-                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' },
+                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#11111111-1111-4222-8333-444444444444' },
+                    { PK: 'BSKY#REJECTED', SK: 'REJECTION#22222222-1111-4222-8333-444444444444' },
                 ],
             });
 
@@ -311,7 +346,7 @@ describe('BskyRejectionBackend', () => {
                 .resolvesOnce({
                     UnprocessedItems: {
                         TestTable: [
-                            { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' } } },
+                            { DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#22222222-1111-4222-8333-444444444444' } } },
                         ],
                     },
                 })
@@ -337,7 +372,7 @@ describe('BskyRejectionBackend', () => {
             const retryTable = batchCalls[1].args[0].input.RequestItems?.TestTable;
             expect(retryTable).toHaveLength(1);
             expect(retryTable![0]).toEqual({
-                DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#2026-03-22T16:00:00.000Z' } },
+                DeleteRequest: { Key: { PK: 'BSKY#REJECTED', SK: 'REJECTION#22222222-1111-4222-8333-444444444444' } },
             });
         });
     });

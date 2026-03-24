@@ -128,7 +128,7 @@ describe.concurrent('createBskyMCPServer', () => {
             ['getDirectMessages',    'Get direct messages with specific Bluesky users. Automatically marks the conversation as read.'],
             ['sendDirectMessage',    'Send a direct message to Bluesky users. If recipients are on the allowlist, sends immediately. Otherwise, requests admin approval via Discord.'],
             ['listRejectedPosts',    'List Bluesky posts and DMs that were rejected by admin. Shows rejection reason and all parameters needed to retry with revised content.'],
-            ['clearRejection',       'Clear a specific rejected post/DM after reviewing it. Use the rejectedAt timestamp from listRejectedPosts.'],
+            ['clearRejection',       'Clear a specific rejected post/DM after reviewing it. Use the uuid from listRejectedPosts.'],
             ['clearAllRejections',   'Clear all rejected posts/DMs after reviewing them.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
             const server = createBskyMCPServer({ client: mockClient });
@@ -152,7 +152,7 @@ describe.concurrent('createBskyMCPServer', () => {
             ['listConversations',  ['limit', 'cursor', 'readState', 'status']],
             ['getDirectMessages',  ['recipients', 'limit', 'cursor']],
             ['sendDirectMessage',  ['recipients', 'text']],
-            ['clearRejection',     ['rejectedAt']],
+            ['clearRejection',     ['uuid']],
         ])('should have %s tool with correct input schema fields', (toolName, expectedFields) => {
             const server = createBskyMCPServer({ client: mockClient });
             const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -2132,6 +2132,7 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should return items as JSON when rejections exist', async () => {
             const rejectedItem: BskyRejectionItem = {
                 type:         'reply',
+                uuid:         'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
                 text:         'My revised reply',
                 targetHandle: 'alice.bsky.social',
                 parentUri:    'at://did:plc:abc123/app.bsky.feed.post/xyz',
@@ -2207,22 +2208,22 @@ describe.concurrent('createBskyMCPServer', () => {
             recordRejection: mock(async (): Promise<void> => { /* intentionally empty */ }),
         } as unknown as BskyRejectionBackend;
 
-        test('should call deleteRejection with the provided timestamp', async () => {
+        test('should call deleteRejection with the provided uuid', async () => {
             const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: mockRejectionBackend });
             const handler = getToolHandler(server, 'clearRejection');
 
-            const result = await handler({ rejectedAt: '2026-01-01T00:00:00.000Z' });
+            const result = await handler({ uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
 
             expect(result.isError).toBeUndefined();
-            expect(mockRejectionBackend.deleteRejection).toHaveBeenCalledWith('2026-01-01T00:00:00.000Z');
-            expect(textContent(result.content[0])).toContain('2026-01-01T00:00:00.000Z');
+            expect(mockRejectionBackend.deleteRejection).toHaveBeenCalledWith('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+            expect(textContent(result.content[0])).toContain('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
         });
 
         test('should return error when rejectionBackend is not configured', async () => {
             const server  = createBskyMCPServer({ client: mockClient });
             const handler = getToolHandler(server, 'clearRejection');
 
-            const result = await handler({ rejectedAt: '2026-01-01T00:00:00.000Z' });
+            const result = await handler({ uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('Rejection tracking is not configured');
@@ -2238,7 +2239,7 @@ describe.concurrent('createBskyMCPServer', () => {
             const server  = createBskyMCPServer({ client: mockClient, rejectionBackend: throwingBackend });
             const handler = getToolHandler(server, 'clearRejection');
 
-            const result = await handler({ rejectedAt: '2026-01-01T00:00:00.000Z' });
+            const result = await handler({ uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');

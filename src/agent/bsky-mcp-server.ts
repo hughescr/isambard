@@ -607,10 +607,10 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
             tool(
                 'clearRejection',
                 // Stryker disable next-line StringLiteral: tool description is configuration
-                'Clear a specific rejected post/DM after reviewing it. Use the rejectedAt timestamp from listRejectedPosts.',
+                'Clear a specific rejected post/DM after reviewing it. Use the uuid from listRejectedPosts.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    rejectedAt: z.string().describe('ISO timestamp of the rejection to clear (from listRejectedPosts)'),
+                    uuid: z.uuid().describe('UUID of the rejection to clear (from listRejectedPosts)'),
                 },
                 async (input): Promise<CallToolResult> => {
                     try {
@@ -618,9 +618,9 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             // Stryker disable next-line StringLiteral: error message is informational only
                             return mcpErrorResult('Rejection tracking is not configured');
                         }
-                        await options.rejectionBackend.deleteRejection(input.rejectedAt);
+                        await options.rejectionBackend.deleteRejection(input.uuid);
                         // Stryker disable next-line StringLiteral: result message is informational only
-                        return mcpTextResult(`Cleared rejection from ${input.rejectedAt}`);
+                        return mcpTextResult(`Cleared rejection ${input.uuid}`);
                     } catch (error) {
                         return mcpErrorResult(error);
                     }

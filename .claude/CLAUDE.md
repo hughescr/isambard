@@ -234,7 +234,7 @@ AT Protocol client for feeds, posts, DMs, and social graph:
 - `src/integrations/bsky/allowlist.ts` - Recipient allowlist management for outbound posts and DMs
 - `src/integrations/bsky/review-embed-builder.ts` - Discord embed builder for reply and DM approval requests with type discriminator
 - `src/integrations/bsky/outbound-approval-handler.ts` - Discord button/modal approval workflow for outbound Bluesky replies and DMs (bsky-send-* and bsky-dm-* prefixes). Persists rejection data to `BskyRejectionBackend` for agent feedback.
-- `src/integrations/bsky/rejection-backend.ts` - `BskyRejectionBackend` DynamoDB backend (PK=`BSKY#REJECTED`, SK=`REJECTION#{timestamp}`) storing admin-rejected posts/DMs with all MCP tool retry parameters. 30-day TTL. Discriminated union: reply (text, targetHandle, parentUri, parentCid, rootUri, rootCid) vs DM (text, recipientHandles, convoId).
+- `src/integrations/bsky/rejection-backend.ts` - `BskyRejectionBackend` DynamoDB backend (PK=`BSKY#REJECTED`, SK=`REJECTION#{uuid}`) storing admin-rejected posts/DMs with all MCP tool retry parameters. 30-day TTL. Discriminated union: reply (text, targetHandle, parentUri, parentCid, rootUri, rootCid) vs DM (text, recipientHandles, convoId).
 - `src/integrations/bsky/checkpoint/` - Feed and notification progress tracking for idempotent feed consumption
   - `types.ts` - `BskyFeedCheckpoint`, `BskyNotificationCheckpoint` Zod schemas with processed URI tracking
   - `checkpoint-manager.ts` - `BskyCheckpointManager` class persisting feed/notification checkpoints in memory tool backend

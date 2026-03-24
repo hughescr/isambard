@@ -34,7 +34,10 @@ function makeButtonInteraction(customId: string, userId: string = ADMIN_USER_ID)
     return { interaction, deferUpdate, editReply, reply, showModal };
 }
 
-function makeModalInteraction(customId: string, reason = 'Not appropriate'): {
+function makeModalInteraction(customId: string, reason = 'Not appropriate', messageData?: {
+    embeds?:     unknown[]
+    components?: unknown[]
+}): {
     interaction: ModalSubmitInteraction
     deferUpdate: ReturnType<typeof mock>
     editReply:   ReturnType<typeof mock>
@@ -43,7 +46,10 @@ function makeModalInteraction(customId: string, reason = 'Not appropriate'): {
     const editReply   = mock(async () => ({}));
     const interaction = {
         customId,
-        user:   { id: ADMIN_USER_ID },
+        user:    { id: ADMIN_USER_ID },
+        message: messageData
+            ? { embeds: messageData.embeds ?? [], components: messageData.components ?? [{ type: 1, components: [] }] }
+            : undefined,
         fields: {
             getTextInputValue: mock((_fieldId: string) => reason),
         },
@@ -418,7 +424,7 @@ describe('OutboundApprovalHandler', () => {
             expect(deferUpdate).not.toHaveBeenCalled();
         });
 
-        test('should deferUpdate, call updateMessageMetadata with reason, set flag via wildDuck, update embed', async () => {
+        test('should deferUpdate, call updateMessageMetadata with reason, set flag via wildDuck, update embed, log info', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, deferUpdate, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
@@ -433,6 +439,12 @@ describe('OutboundApprovalHandler', () => {
             expect((updateArgs?.[2] as Record<string, unknown>)?.reason).toBe('Not appropriate');
             expect(deps.wildDuckClient.updateMessageFlags).toHaveBeenCalledWith('Drafts', 42, { addFlags: ['SendRejectedByAdmin'] });
             expect(editReply).toHaveBeenCalledTimes(1);
+            expect(mockLogger.info).toHaveBeenCalledTimes(1);
+            const infoArg = (mockLogger.info as ReturnType<typeof mock>).mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(infoArg.uid).toBe(42);
+            expect(infoArg.reason).toBe('Not appropriate');
+            expect(infoArg.discordUpdated).toBe(true);
+            expect(infoArg.msg).toBe('Discord admin rejected outbound email');
         });
 
         test('should include rejectedAt timestamp in updateMessageMetadata call', async () => {
@@ -516,15 +528,63 @@ describe('OutboundApprovalHandler', () => {
             expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
         });
 
-        test('should log error if updateMessageMetadata fails', async () => {
+        test('should log error and show error embed with original buttons when updateMessageMetadata fails', async () => {
             const deps = makeDeps();
             (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck error'));
             const handler = new OutboundApprovalHandler(deps);
-            const { interaction } = makeModalInteraction('email-send-reject-reason:42');
+            const originalComponents = [{ type: 1, components: [] }];
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate', {
+                embeds:     [{ data: { title: 'Pending Approval', description: 'please approve' } }],
+                components: originalComponents,
+            });
 
             await handler.handleModalSubmit(interaction);
 
-            expect(mockLogger.error).toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to persist email rejection to WildDuck — Discord message left active for retry',
+            }));
+            // Should NOT update Discord to "Rejected"
+            expect(mockLogger.info).not.toHaveBeenCalled();
+            // editReply called with error embed appended + original buttons
+            expect(editReply).toHaveBeenCalledTimes(1);
+            const replyArg = editReply.mock.calls[0]?.[0] as {
+                embeds:     unknown[]
+                components: unknown[]
+            };
+            expect(replyArg.embeds.length).toBeGreaterThan(0);
+            const lastEmbed = replyArg.embeds[replyArg.embeds.length - 1] as { data: { title: string } };
+            expect(lastEmbed?.data?.title).toContain('Rejection failed');
+            expect(replyArg.components).toBe(originalComponents);
+        });
+
+        test('should log error twice when WildDuck fails and error editReply also fails', async () => {
+            const deps = makeDeps();
+            (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck error'));
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42');
+            editReply.mockRejectedValue(new Error('Discord also down'));
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(mockLogger.error).toHaveBeenCalledTimes(2);
+        });
+
+        test('should log warn and info with discordUpdated:false when editReply fails after WildDuck persist succeeds', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
+            editReply.mockRejectedValue(new Error('Discord timeout'));
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to update Discord embed after email rejection',
+            }));
+            expect(mockLogger.info).toHaveBeenCalledTimes(1);
+            const infoArg = (mockLogger.info as ReturnType<typeof mock>).mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(infoArg.discordUpdated).toBe(false);
+            expect(infoArg.msg).toBe('Discord admin rejected outbound email');
+            expect(mockLogger.error).not.toHaveBeenCalled();
         });
     });
 

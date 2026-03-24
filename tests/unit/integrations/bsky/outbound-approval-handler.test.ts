@@ -86,6 +86,7 @@ function makeButtonInteraction(customId: string, embedOpts: {
 function makeModalInteraction(customId: string, reason = 'Not appropriate', embedData?: {
     description?: string
     fields?:      { name: string, value: string, inline?: boolean }[]
+    components?:  unknown[]
 }): {
     interaction: ModalSubmitInteraction
     deferUpdate: ReturnType<typeof mock>
@@ -101,6 +102,7 @@ function makeModalInteraction(customId: string, reason = 'Not appropriate', embe
                     description: embedData.description ?? POST_TEXT,
                     fields:      embedData.fields ?? makeEmbedFields(),
                 }],
+                components: embedData.components ?? [{ type: 1, components: [] }],
             }
             : undefined,
         fields: {
@@ -612,7 +614,11 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should deferUpdate and update embed with rejection reason', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
-            const { interaction, deferUpdate, editReply } = makeModalInteraction(`bsky-send-reject-reason:${TEST_UUID}`, 'Not appropriate');
+            const { interaction, deferUpdate, editReply } = makeModalInteraction(
+                `bsky-send-reject-reason:${TEST_UUID}`,
+                'Not appropriate',
+                { description: POST_TEXT, fields: makeEmbedFields() }
+            );
 
             await handler.handleModalSubmit(interaction);
 
@@ -623,7 +629,11 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should NOT call replyToPost after rejection', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
-            const { interaction } = makeModalInteraction(`bsky-send-reject-reason:${TEST_UUID}`, 'Not appropriate');
+            const { interaction } = makeModalInteraction(
+                `bsky-send-reject-reason:${TEST_UUID}`,
+                'Not appropriate',
+                { description: POST_TEXT, fields: makeEmbedFields() }
+            );
 
             await handler.handleModalSubmit(interaction);
 
@@ -633,7 +643,11 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should show "Rejected" title with reason in description after modal submit', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
-            const { interaction, editReply } = makeModalInteraction(`bsky-send-reject-reason:${TEST_UUID}`, 'Off topic');
+            const { interaction, editReply } = makeModalInteraction(
+                `bsky-send-reject-reason:${TEST_UUID}`,
+                'Off topic',
+                { description: POST_TEXT, fields: makeEmbedFields() }
+            );
 
             await handler.handleModalSubmit(interaction);
 
@@ -647,7 +661,11 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should use "No reason given" when reason is empty', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
-            const { interaction, editReply } = makeModalInteraction(`bsky-send-reject-reason:${TEST_UUID}`, '');
+            const { interaction, editReply } = makeModalInteraction(
+                `bsky-send-reject-reason:${TEST_UUID}`,
+                '',
+                { description: POST_TEXT, fields: makeEmbedFields() }
+            );
 
             expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
 
@@ -673,7 +691,17 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should process bsky-dm-reject-reason modal and show rejection embed', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
-            const { interaction, deferUpdate, editReply } = makeModalInteraction(`bsky-dm-reject-reason:${TEST_UUID}`, 'Not appropriate');
+            const { interaction, deferUpdate, editReply } = makeModalInteraction(
+                `bsky-dm-reject-reason:${TEST_UUID}`,
+                'Not appropriate',
+                {
+                    description: DM_TEXT,
+                    fields:      [
+                        { name: 'Recipients',      value: JSON.stringify([DM_HANDLE_ALICE]) },
+                        { name: 'Conversation ID', value: DM_CONVO_ID },
+                    ],
+                }
+            );
 
             await handler.handleModalSubmit(interaction);
 
@@ -704,7 +732,7 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(deferUpdate).not.toHaveBeenCalled();
         });
 
-        test('should persist reply rejection to backend', async () => {
+        test('should persist reply rejection to backend with uuid from customId', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction(
@@ -718,6 +746,7 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(deps.rejectionBackend.recordRejection).toHaveBeenCalledTimes(1);
             const recorded = (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mock.calls[0][0];
             expect(recorded.type).toBe('reply');
+            expect(recorded.uuid).toBe(TEST_UUID);
             expect(recorded.text).toBe(POST_TEXT);
             expect(recorded.targetHandle).toBe(TEST_HANDLE);
             expect(recorded.parentUri).toBe(PARENT_URI);
@@ -726,7 +755,7 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(recorded.rejectedAt).toBeDefined();
         });
 
-        test('should persist DM rejection to backend', async () => {
+        test('should persist DM rejection to backend with uuid from customId', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
             const { interaction } = makeModalInteraction(
@@ -746,6 +775,7 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(deps.rejectionBackend.recordRejection).toHaveBeenCalledTimes(1);
             const recorded = (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mock.calls[0][0];
             expect(recorded.type).toBe('dm');
+            expect(recorded.uuid).toBe(TEST_UUID);
             expect(recorded.text).toBe(DM_TEXT);
             expect(recorded.recipientHandles).toEqual([DM_HANDLE_ALICE, DM_HANDLE_BOB]);
             expect(recorded.convoId).toBe(DM_CONVO_ID);
@@ -769,7 +799,8 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(infoArg.reason).toBe('Too aggressive');
             expect(infoArg.target).toBe(TEST_HANDLE);
             expect(infoArg.text).toBe(POST_TEXT);
-            expect(infoArg.msg).toBe('Bsky post rejected by admin');
+            expect(infoArg.discordUpdated).toBe(true);
+            expect(infoArg.msg).toBe('Discord admin rejected Bluesky post request');
         });
 
         test('should log info with rejection details after successful DM rejection', async () => {
@@ -795,10 +826,11 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(infoArg.reason).toBe('Not appropriate');
             expect(infoArg.target).toBe(`${DM_HANDLE_ALICE}, ${DM_HANDLE_BOB}`);
             expect(infoArg.text).toBe(DM_TEXT);
-            expect(infoArg.msg).toBe('Bsky post rejected by admin');
+            expect(infoArg.discordUpdated).toBe(true);
+            expect(infoArg.msg).toBe('Discord admin rejected Bluesky post request');
         });
 
-        test('should not log info when rejection persistence fails', async () => {
+        test('should not log info when rejection persistence fails — DynamoDB is the gate', async () => {
             const deps = makeDeps();
             (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('DynamoDB timeout'));
             const handler = new BskyOutboundApprovalHandler(deps);
@@ -811,7 +843,9 @@ describe('BskyOutboundApprovalHandler', () => {
             await handler.handleModalSubmit(interaction);
 
             expect(mockLogger.info).not.toHaveBeenCalled();
-            expect(mockLogger.warn).toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to persist Bluesky rejection to DynamoDB — Discord message left active for retry',
+            }));
         });
 
         test('should persist reply with root URI/CID when present', async () => {
@@ -830,24 +864,46 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(recorded.rootCid).toBe(ROOT_CID);
         });
 
-        test('should still update Discord embed when rejection persistence fails', async () => {
+        test('should show error embed with original buttons when DynamoDB persist fails — NOT update to Rejected', async () => {
             const deps = makeDeps();
             (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('DynamoDB timeout'));
             const handler = new BskyOutboundApprovalHandler(deps);
-            const { interaction, editReply } = makeModalInteraction(
-                `bsky-send-reject-reason:${TEST_UUID}`,
-                'Not appropriate',
-                { description: POST_TEXT, fields: makeEmbedFields() }
-            );
+            const originalEmbed = { description: POST_TEXT, fields: makeEmbedFields() };
+            const originalComponents = [{ type: 1, components: [] }];
+            const deferUpdate = mock(async () => ({}));
+            const editReply   = mock(async () => ({}));
+            const interaction = {
+                customId: `bsky-send-reject-reason:${TEST_UUID}`,
+                message:  {
+                    embeds:     [originalEmbed],
+                    components: originalComponents,
+                },
+                fields: {
+                    getTextInputValue: mock((_fieldId: string) => 'Not appropriate'),
+                },
+                deferUpdate,
+                editReply,
+            } as unknown as ModalSubmitInteraction;
 
             await handler.handleModalSubmit(interaction);
 
-            // editReply should still be called despite persistence failure
+            // editReply should be called with the error embed appended + original components preserved
             expect(editReply).toHaveBeenCalledTimes(1);
-            expect(mockLogger.warn).toHaveBeenCalled();
+            const replyArg = (editReply.mock.calls[0] as unknown as [unknown])[0] as {
+                embeds:     unknown[]
+                components: unknown[]
+            };
+            // Should have the original embed(s) + error embed appended
+            expect(replyArg.embeds.length).toBeGreaterThan(0);
+            // Last embed should be the error embed
+            const lastEmbed = replyArg.embeds[replyArg.embeds.length - 1] as { data: { title: string } };
+            expect(lastEmbed?.data?.title).toContain('Rejection failed');
+            // Original buttons should be preserved for retry
+            expect(replyArg.components).toBe(originalComponents);
+            expect(mockLogger.error).toHaveBeenCalled();
         });
 
-        test('should handle missing embed gracefully (no message property)', async () => {
+        test('should show error embed and log error when embed is missing — gate prevents showing Rejected', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);
             // Create modal interaction WITHOUT embed data (message is undefined)
@@ -858,9 +914,84 @@ describe('BskyOutboundApprovalHandler', () => {
 
             await handler.handleModalSubmit(interaction);
 
-            // Should still update Discord embed, just skip persistence
-            expect(editReply).toHaveBeenCalledTimes(1);
+            // Gate: persistence is skipped — no embed to extract data from
             expect(deps.rejectionBackend.recordRejection).not.toHaveBeenCalled();
+            // Should show error embed (NOT "Rejected")
+            expect(editReply).toHaveBeenCalledTimes(1);
+            const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title: string } }[], components: unknown[] };
+            expect(replyArg.embeds).toHaveLength(1);
+            expect(replyArg.embeds[0]?.data?.title).toContain('Rejection failed');
+            // Should NOT show "Rejected"
+            expect(replyArg.embeds[0]?.data?.title).not.toBe('Rejected');
+            // Should log error about missing embed
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Missing embed on Bluesky rejection modal — cannot extract rejection data',
+            }));
+            // Should NOT log info (no successful rejection)
+            expect(mockLogger.info).not.toHaveBeenCalled();
+        });
+
+        test('should log warn and info with discordUpdated:false when editReply fails after successful persist', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const deferUpdate = mock(async () => ({}));
+            const editReply   = mock(async (): Promise<unknown> => {
+                throw new Error('Discord timeout');
+            });
+            const interaction = {
+                customId: `bsky-send-reject-reason:${TEST_UUID}`,
+                message:  {
+                    embeds: [{
+                        description: POST_TEXT,
+                        fields:      makeEmbedFields(),
+                    }],
+                    components: [],
+                },
+                fields: {
+                    getTextInputValue: mock((_fieldId: string) => 'Too aggressive'),
+                },
+                deferUpdate,
+                editReply,
+            } as unknown as ModalSubmitInteraction;
+
+            await handler.handleModalSubmit(interaction);
+
+            // DynamoDB persisted, Discord update failed — warn about Discord failure
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to update Discord embed after Bluesky rejection',
+            }));
+            // Info still logged with discordUpdated: false
+            expect(mockLogger.info).toHaveBeenCalledTimes(1);
+            const infoArg = (mockLogger.info as ReturnType<typeof mock>).mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(infoArg.discordUpdated).toBe(false);
+            expect(infoArg.msg).toBe('Discord admin rejected Bluesky post request');
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        test('should log error twice when both DynamoDB fails and error editReply fails', async () => {
+            const deps = makeDeps();
+            (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('DynamoDB timeout'));
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const deferUpdate = mock(async () => ({}));
+            const editReply   = mock(async (): Promise<unknown> => {
+                throw new Error('Discord also down');
+            });
+            const interaction = {
+                customId: `bsky-send-reject-reason:${TEST_UUID}`,
+                message:  {
+                    embeds:     [{ description: POST_TEXT, fields: makeEmbedFields() }],
+                    components: [],
+                },
+                fields: {
+                    getTextInputValue: mock((_fieldId: string) => 'Not appropriate'),
+                },
+                deferUpdate,
+                editReply,
+            } as unknown as ModalSubmitInteraction;
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(mockLogger.error).toHaveBeenCalledTimes(2);
         });
 
         test('should persist rejection with defaults when embed has no fields', async () => {
@@ -898,6 +1029,32 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(recorded.rootUri).toBeUndefined();
             expect(recorded.rootCid).toBeUndefined();
             expect(recorded.reason).toBe('Bad tone');
+            expect(recorded.uuid).toBe(TEST_UUID);
+        });
+
+        test('should log error and NOT call recordRejection when handleMissingEmbed editReply throws', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const deferUpdate = mock(async () => ({}));
+            const editReply   = mock(async (): Promise<unknown> => {
+                throw new Error('Discord timeout');
+            });
+            const interaction = {
+                customId: `bsky-send-reject-reason:${TEST_UUID}`,
+                message:  undefined,
+                fields:   {
+                    getTextInputValue: mock((_fieldId: string) => 'Not appropriate'),
+                },
+                deferUpdate,
+                editReply,
+            } as unknown as ModalSubmitInteraction;
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deps.rejectionBackend.recordRejection).not.toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to send error editReply for missing embed',
+            }));
         });
     });
 

@@ -3262,6 +3262,7 @@ describe('createContextBuilder loading methods', () => {
             const mockRejectionBackend = {
                 listRejections: mock(async (): Promise<BskyRejectionBackend['listRejections'] extends () => Promise<infer T> ? T : never> => [{
                     type:         'reply' as const,
+                    uuid:         'test-uuid-reply-1',
                     text:         'Great post!',
                     targetHandle: 'someone.bsky.social',
                     parentUri:    'at://parent',
@@ -3342,6 +3343,7 @@ describe('createContextBuilder loading methods', () => {
             const mockRejectionBackend = {
                 listRejections: mock(async () => [{
                     type:             'dm' as const,
+                    uuid:             'test-uuid-dm-1',
                     text:             'Hey there',
                     recipientHandles: ['alice.bsky.social'],
                     convoId:          'convo-123',
@@ -3370,6 +3372,7 @@ describe('createContextBuilder loading methods', () => {
             const mockRejectionBackend = {
                 listRejections: mock(async () => [{
                     type:         'reply' as const,
+                    uuid:         'test-uuid-reply-2',
                     text:         'Great post!',
                     targetHandle: 'someone.bsky.social',
                     parentUri:    'at://parent',

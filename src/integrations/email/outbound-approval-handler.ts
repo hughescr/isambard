@@ -8,6 +8,7 @@ import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
+const AMBER = 0xFF_AA_00;
 
 export interface OutboundApprovalHandlerDeps {
     wildDuckClient: WildDuckClient
@@ -128,7 +129,7 @@ export class OutboundApprovalHandler {
             // Use || so an empty reason field stores 'No reason given' instead of empty string
             const reason = interaction.fields.getTextInputValue('reject-reason') || 'No reason given';
 
-            // Update WildDuck message metadata with rejection info only
+            // Gate: persist rejection to WildDuck — must succeed before updating Discord to "Rejected"
             await this.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, {
                 // Stryker disable next-line StringLiteral: ISO timestamp format is convention
                 rejectedAt: new Date().toISOString(),
@@ -139,19 +140,55 @@ export class OutboundApprovalHandler {
             // Stryker disable next-line StringLiteral: flag name is configuration
             await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
 
+            // Persist succeeded — update Discord to show rejection
             const updatedEmbed = new EmbedBuilder()
                 // Stryker disable next-line StringLiteral: UI label is configuration
                 .setTitle('Rejected')
                 .setDescription(reason)
                 .setColor(RED);
 
-            await interaction.editReply({
-                embeds:     [updatedEmbed],
-                components: [],
-            });
-        } catch (err) {
+            let discordUpdated = false;
+            // Stryker disable BlockStatement: try-catch wraps best-effort Discord UI update
+            try {
+                await interaction.editReply({
+                    embeds:     [updatedEmbed],
+                    components: [],
+                });
+                discordUpdated = true;
+            } catch (editError) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email rejection' });
+            }
+            // Stryker restore BlockStatement
+
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({ err, uid, msg: 'Failed to process reject modal submit' });
+            logger.info({ uid, reason, discordUpdated, msg: 'Discord admin rejected outbound email' });
+        } catch (err) {
+            // WildDuck persist failed — show error embed but keep original buttons for retry
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ err, uid, msg: 'Failed to persist email rejection to WildDuck — Discord message left active for retry' });
+            // Stryker disable BlockStatement: try-catch wraps best-effort error reply to Discord
+            try {
+                const errorEmbed = new EmbedBuilder()
+                    // Stryker disable next-line StringLiteral: UI label is configuration
+                    .setTitle('Rejection failed — please retry')
+                    // Stryker disable next-line StringLiteral: UI message is configuration
+                    .setDescription('Could not save rejection to mail server.')
+                    .setColor(AMBER);
+                const firstEmbed = interaction.message?.embeds[0];
+                await interaction.editReply({
+                    embeds: [
+                        // Stryker disable next-line ArrayDeclaration,ConditionalExpression: preserve first original embed only — caps total at 2 embeds, prevents stacking on repeated failures
+                        ...(firstEmbed ? [EmbedBuilder.from(firstEmbed)] : []),
+                        errorEmbed,
+                    ],
+                    components: interaction.message?.components ?? [],
+                });
+            } catch (replyError) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.error({ err: replyError, uid, msg: 'Failed to send error editReply for email rejection' });
+            }
+            // Stryker restore BlockStatement
         }
         // Stryker restore BlockStatement
     }

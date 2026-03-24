@@ -11,13 +11,14 @@ const REJECTION_SK_PREFIX = 'REJECTION#';
 const MAX_RETRIES = 3;
 const BATCH_SIZE = 25;
 
-function rejectionSK(rejectedAt: string): string {
+function rejectionSK(uuid: string): string {
     // Stryker disable next-line StringLiteral: SK prefix is a configuration constant
-    return `${REJECTION_SK_PREFIX}${rejectedAt}`;
+    return `${REJECTION_SK_PREFIX}${uuid}`;
 }
 
 const BskyRejectedReplySchema = z.object({
     type:         z.literal('reply'),
+    uuid:         z.uuid(),
     text:         z.string(),
     targetHandle: z.string(),
     parentUri:    z.string(),
@@ -30,6 +31,7 @@ const BskyRejectedReplySchema = z.object({
 
 const BskyRejectedDMSchema = z.object({
     type:             z.literal('dm'),
+    uuid:             z.uuid(),
     text:             z.string(),
     recipientHandles: z.array(z.string()),
     convoId:          z.string(),
@@ -56,7 +58,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
         await this.putItem({
             // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK:  REJECTION_PK,
-            SK:  rejectionSK(item.rejectedAt),
+            SK:  rejectionSK(item.uuid),
             ...item,
             // Stryker disable next-line ArithmeticOperator: TTL arithmetic — multiplication order does not affect the result
             TTL: Math.floor(Date.now() / 1000) + (TTL_DAYS * 24 * 60 * 60),
@@ -74,20 +76,22 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
             ExpressionAttributeValues: {
                 ':pk': REJECTION_PK,
             },
-            ScanIndexForward: false,
         });
         // Stryker restore StringLiteral,ObjectLiteral
-        return items.map(item => BskyRejectionItemSchema.parse(item));
+        const parsed = items.map(item => BskyRejectionItemSchema.parse(item));
+        // Sort newest first by rejectedAt timestamp (SK is now UUID, not time-ordered)
+        // Stryker disable next-line StringLiteral,ConditionalExpression: sort comparison is cosmetic ordering only
+        return parsed.toSorted((a, b) => b.rejectedAt.localeCompare(a.rejectedAt));
     }
 
     /**
-     * Delete a rejection by its timestamp.
+     * Delete a rejection by its UUID.
      */
-    async deleteRejection(rejectedAt: string): Promise<void> {
+    async deleteRejection(uuid: string): Promise<void> {
         await this.deleteItem({
             // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK: REJECTION_PK,
-            SK: rejectionSK(rejectedAt),
+            SK: rejectionSK(uuid),
         });
     }
 
@@ -112,7 +116,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
         }
 
         const batches: { PK: string, SK: string }[][] = [];
-        // Stryker disable next-line EqualityOperator: i < vs i <= is equivalent when BATCH_SIZE aligns with array length
+        // Stryker disable next-line EqualityOperator,AssignmentOperator: i < vs i <= equivalent when BATCH_SIZE aligns; i += vs i -= would infinite-loop (timeout, not caught by tests)
         for(let i = 0; i < items.length; i += BATCH_SIZE) {
             batches.push(items.slice(i, i + BATCH_SIZE));
         }
@@ -123,7 +127,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
             let unprocessed = batch;
             let attempt = 0;
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: retry loop boundary — equivalent mutants for loop guard conditions
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: retry loop boundary — equivalent mutants for loop guard conditions; BlockStatement on body would infinite-loop (timeout)
             while(unprocessed.length > 0 && attempt < MAX_RETRIES) {
                 // eslint-disable-next-line no-await-in-loop -- sequential: each attempt depends on prior unprocessed items
                 const result = await this.docClient.send(new BatchWriteCommand({
@@ -148,6 +152,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
                 if(attempt < MAX_RETRIES) {
                     // Stryker disable next-line ArithmeticOperator: Backoff delay — multiplication order does not affect correctness
                     const delay = 100 * attempt;
+                    // Stryker disable next-line BlockStatement: setTimeout callback body — replacing with {} makes the promise never resolve (timeout)
                     // eslint-disable-next-line no-await-in-loop -- sequential: backoff delay between retry attempts
                     await new Promise((resolve) => {
                         setTimeout(resolve, delay);
