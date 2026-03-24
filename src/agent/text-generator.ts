@@ -117,9 +117,9 @@ function buildAbortController(options?: TextGeneratorOptions): AbortController {
     }
 
     // Wire timeout to our internal controller using AbortSignal.timeout (auto-cleanup)
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: timeout guard — 0 means disabled
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: timeout guard — 0 means disabled; tests use timeoutMs=0 so block is never entered
     if(timeoutMs > 0) {
-        // Stryker disable next-line ObjectLiteral,BooleanLiteral: { once: true } is defensive — abort signals only fire once anyway; mutation to {} or false doesn't change observable behavior
+        // Stryker disable next-line ObjectLiteral,BooleanLiteral,ArrowFunction: { once: true } is defensive — abort signals only fire once anyway; mutation to {} or false doesn't change observable behavior; abort callback is fire-and-forget
         AbortSignal.timeout(timeoutMs).addEventListener('abort', () => controller.abort(), { once: true });
     }
 

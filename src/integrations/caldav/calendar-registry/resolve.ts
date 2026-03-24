@@ -7,6 +7,7 @@ import { isCalendarServerId, type CalendarServerEntry } from './types';
  * Returns null if not found, throws AmbiguousCalendarMatchError if multiple match.
  */
 export function resolveServer(servers: CalendarServerEntry[], input: string): CalendarServerEntry | null {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — empty string falls through to matching and returns null anyway (no entity has empty description/label)
     if(!input) {
         return null;
     }
@@ -35,6 +36,7 @@ export function resolveCalendar(
     server: CalendarServerEntry,
     input: string
 ): { calendarPath: string, label: string } | null {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — empty string falls through to matching and returns null anyway (no entity has empty description/label)
     if(!input) {
         return null;
     }
