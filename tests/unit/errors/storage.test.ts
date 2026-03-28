@@ -15,7 +15,10 @@ import {
     TextNotUniqueError,
     InvalidLineNumberError,
     ReconciliationError,
-    ReconciliationThrottledError
+    ReconciliationThrottledError,
+    ContactError,
+    ContactNotFoundError,
+    ContactLastIdentifierError
 } from '@/errors/storage';
 
 describe.concurrent('StorageError', () => {
@@ -381,6 +384,93 @@ describe.concurrent('ReconciliationThrottledError', () => {
     test('should store operation in context', () => {
         const error = new ReconciliationThrottledError('putItem');
         expect(error.context.operation).toBe('putItem');
+    });
+});
+
+describe.concurrent('ContactError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new ContactError('test error');
+        expect(error).toBeInstanceOf(ContactError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name', () => {
+        const error = new ContactError('test error');
+        expect(error.name).toBe('ContactError');
+    });
+
+    test('should have correct message', () => {
+        const error = new ContactError('something went wrong');
+        expect(error.message).toBe('something went wrong');
+    });
+
+    test('should have default code', () => {
+        const error = new ContactError('test');
+        expect(error.code).toBe(ErrorCode.CONTACT_ERROR);
+    });
+});
+
+describe.concurrent('ContactNotFoundError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new ContactNotFoundError('alice-smith');
+        expect(error).toBeInstanceOf(ContactNotFoundError);
+        expect(error).toBeInstanceOf(ContactError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name', () => {
+        const error = new ContactNotFoundError('alice-smith');
+        expect(error.name).toBe('ContactNotFoundError');
+    });
+
+    test('should include personId in message', () => {
+        const error = new ContactNotFoundError('alice-smith');
+        expect(error.message).toContain('alice-smith');
+    });
+
+    test('should store personId in context', () => {
+        const error = new ContactNotFoundError('alice-smith');
+        expect(error.context.personId).toBe('alice-smith');
+    });
+
+    test('should have correct code', () => {
+        const error = new ContactNotFoundError('alice-smith');
+        expect(error.code).toBe(ErrorCode.CONTACT_NOT_FOUND);
+    });
+});
+
+describe.concurrent('ContactLastIdentifierError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new ContactLastIdentifierError('alice-smith');
+        expect(error).toBeInstanceOf(ContactLastIdentifierError);
+        expect(error).toBeInstanceOf(ContactError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name', () => {
+        const error = new ContactLastIdentifierError('alice-smith');
+        expect(error.name).toBe('ContactLastIdentifierError');
+    });
+
+    test('should include personId in message', () => {
+        const error = new ContactLastIdentifierError('alice-smith');
+        expect(error.message).toContain('alice-smith');
+    });
+
+    test('should store personId in context', () => {
+        const error = new ContactLastIdentifierError('alice-smith');
+        expect(error.context.personId).toBe('alice-smith');
+    });
+
+    test('should have correct code', () => {
+        const error = new ContactLastIdentifierError('alice-smith');
+        expect(error.code).toBe(ErrorCode.CONTACT_LAST_IDENTIFIER);
     });
 });
 

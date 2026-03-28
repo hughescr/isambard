@@ -19,7 +19,9 @@ export {
     InvalidPathError,
     TextNotFoundError,
     TextNotUniqueError,
-    InvalidLineNumberError
+    InvalidLineNumberError,
+    ContactNotFoundError,
+    ContactLastIdentifierError
 } from './storage';
 
 export {

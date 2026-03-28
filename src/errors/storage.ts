@@ -199,6 +199,52 @@ export class ReconciliationError extends MemoryToolError {
     }
 }
 
+// ============================================================================
+// Contact Errors
+// ============================================================================
+
+/**
+ * Base error class for all contact-related errors.
+ */
+export class ContactError extends StorageError {
+    constructor(
+        message: string,
+        code: ErrorCode = ErrorCode.CONTACT_ERROR,
+        context?: Record<string, unknown>
+    ) {
+        super(message, code, context);
+        this.name = 'ContactError';
+    }
+}
+
+/**
+ * Error thrown when a contact is not found.
+ */
+export class ContactNotFoundError extends ContactError {
+    declare public readonly context: { personId: string };
+
+    constructor(personId: string) {
+        super(`Contact not found: ${personId}`, ErrorCode.CONTACT_NOT_FOUND, { personId });
+        this.name = 'ContactNotFoundError';
+    }
+}
+
+/**
+ * Error thrown when trying to remove the last identifier from a contact.
+ */
+export class ContactLastIdentifierError extends ContactError {
+    declare public readonly context: { personId: string };
+
+    constructor(personId: string) {
+        super(
+            `Cannot remove last identifier from contact: ${personId}`,
+            ErrorCode.CONTACT_LAST_IDENTIFIER,
+            { personId }
+        );
+        this.name = 'ContactLastIdentifierError';
+    }
+}
+
 /**
  * Error thrown when DynamoDB operations are throttled during reconciliation.
  */

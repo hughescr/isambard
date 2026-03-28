@@ -625,6 +625,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.caldav).toEqual(mockCaldavServer);
         });
+
+        test('should configure contacts MCP server when provided', async () => {
+            const mockContactsServer = { command: 'node', args: ['contacts-server.js'] };
+            const agent = createClaudeAgent({ contactsMcpServer: mockContactsServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.contacts).toEqual(mockContactsServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -852,6 +862,17 @@ describe('createClaudeAgent', () => {
                 'Bash(ls:*)',
                 'mcp__caldav__*',
             ]);
+        });
+
+        test('should include contacts tools when contacts MCP server provided', async () => {
+            const mockContactsServer = { command: 'node', args: ['contacts-server.js'] };
+            const agent = createClaudeAgent({ contactsMcpServer: mockContactsServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            expect(allowedTools).toContain('mcp__contacts__*');
         });
     });
 

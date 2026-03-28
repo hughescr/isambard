@@ -51,6 +51,9 @@ export { createCaldavMCPServer } from './caldav-mcp-server';
 // Wikipedia MCP Server
 export { createWikipediaMCPServer } from './wikipedia-mcp-server';
 
+// Contacts MCP Server
+export { createContactsMCPServer, type ContactChangeRequest } from './contacts-mcp-server';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 

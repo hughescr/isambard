@@ -119,6 +119,7 @@ mock.module('@aws-sdk/lib-dynamodb', () => ({
     UpdateCommand:          class UpdateCommand { constructor(public input: unknown) {} },
     BatchWriteCommand:      class BatchWriteCommand { constructor(public input: unknown) {} },
     ScanCommand:            class ScanCommand { constructor(public input: unknown) {} },
+    TransactWriteCommand:   class TransactWriteCommand { constructor(public input: unknown) {} },
 }));
 
 // Mock Anthropic SDK to avoid import cold-start cost (~5ms)

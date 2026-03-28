@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator  } from '@/agent';
 import type { DynamoDBConfig, ReconciliationConfig } from '@/config';
-import { type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation  } from '@/storage';
+import { type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend  } from '@/storage';
 
 /**
  * Storage layer components
@@ -10,6 +10,7 @@ export interface StorageLayer {
     docClient:                  ReturnType<typeof createDynamoDBClient>['docClient']
     tableName:                  string
     memoryBackend:              MemoryToolBackend
+    contactBackend:             ContactBackend
     taskPersistenceCoordinator: TaskPersistenceCoordinator
     reconciliationScheduler?:   ReconciliationScheduler
 }
@@ -31,6 +32,9 @@ export function createStorageLayer(
 
     // Create memory backend
     const memoryBackend = new MemoryToolBackend(docClient, tableName);
+
+    // Create contact backend
+    const contactBackend = new ContactBackend(docClient, tableName);
 
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
@@ -74,6 +78,7 @@ export function createStorageLayer(
         docClient,
         tableName,
         memoryBackend,
+        contactBackend,
         taskPersistenceCoordinator,
         reconciliationScheduler,
     };

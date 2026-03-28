@@ -15,3 +15,6 @@ export * from './memory-tool';
 
 // DynamoDB Timeout
 export { withDynamoTimeout } from './dynamo-retry';
+
+// Contacts
+export * from './contacts';

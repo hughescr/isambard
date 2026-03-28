@@ -4,12 +4,12 @@ import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
 import { Resource } from 'sst';
-import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills } from '@/agent';
+import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, registerCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, registerContactCommand, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { AllowlistCommandHandler } from '@/integrations/email';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
@@ -177,6 +177,30 @@ export async function createApp(): Promise<App> {
         config.adminDiscordUserId
     );
 
+    // Set up Contacts approval handler (always available — DynamoDB is required)
+    const contactApprovalHandler = new ContactApprovalHandler(storage.contactBackend);
+
+    // Build sendContactApprovalRequest callback — posts approval embed to admin channel
+    // Only wired when email config provides the admin channel ID
+    // Stryker disable BlockStatement: Composition root — optional contact approval callback, not unit-testable
+    const sendContactApprovalRequest = config.email
+        ? async (action: 'create' | 'update', details: ContactChangeRequest): Promise<void> => {
+            const uuid = crypto.randomUUID();
+            contactApprovalHandler.storePendingRequest(uuid, details);
+            const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
+            // Stryker disable BlockStatement,StringLiteral: integration-only callback body
+            const channel = await discordInfra.discordClient.channels.fetch(config.email!.adminDiscordChannelId);
+            // eslint-disable-next-line sonarjs/in-operator-type-error -- channel.send existence check is intentional duck-typing pattern, same as bsky-setup.ts
+            if(channel && 'send' in channel) {
+                await channel.send({ embeds: [embed], components: [actionRow] });
+            } else {
+                throw new Error(`Admin channel ${config.email!.adminDiscordChannelId} is not a sendable text channel`);
+            }
+            // Stryker restore BlockStatement,StringLiteral
+        }
+        : undefined;
+    // Stryker restore BlockStatement
+
     const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend);
     const mcpServers = createMCPServers({
         memoryBackend:             storage.memoryBackend,
@@ -196,6 +220,8 @@ export async function createApp(): Promise<App> {
         bskyRejectionBackend:      bskySetup?.rejectionBackend,
         caldavClient,
         caldavRegistry,
+        contactBackend:            storage.contactBackend,
+        contactApprovalRequest:    sendContactApprovalRequest,
     });
 
     // Load plugins and create agent
@@ -210,6 +236,7 @@ export async function createApp(): Promise<App> {
         bskyMcpServer:              mcpServers.bskyMcpServer,
         caldavMcpServer:            mcpServers.caldavMcpServer,
         wikipediaMcpServer:         mcpServers.wikipediaMcpServer,
+        contactsMcpServer:          mcpServers.contactsMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,
@@ -237,6 +264,9 @@ export async function createApp(): Promise<App> {
         )
         : undefined;
 
+    // Create contacts command handler
+    const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId);
+
     // Create Discord bot
     const bot: DiscordBot = createDiscordBot({
         config:            config.discord,
@@ -255,6 +285,8 @@ export async function createApp(): Promise<App> {
         bskySetup,
         allowlistHandler,
         calendarHandler,
+        contactHandler:    contactCommandHandler,
+        contactApprovalHandler,
     });
 
     let isStopping = false;
@@ -266,6 +298,7 @@ export async function createApp(): Promise<App> {
             logger.info('Starting Isambard application...');
             await bot.start();
             await registerCalendarCommand(config.discord.botToken, config.discord.applicationId);
+            await registerContactCommand(config.discord.botToken, config.discord.applicationId);
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.start();

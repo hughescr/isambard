@@ -7,6 +7,7 @@ import {
 } from './catchup';
 import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
 import { createDiscordClient } from './client';
+import type { ContactCommandHandler, ContactApprovalHandler } from './contact-commands';
 import { createReadyHandler, createErrorHandler } from './handlers';
 import type { InboxManager } from './inbox';
 import { createInteractionHandler } from './interactions';
@@ -153,6 +154,17 @@ export interface DiscordBotOptions {
      * If provided, handles /calendar interactions for CalDAV calendar management.
      */
     calendarHandler?: CalendarCommandHandler
+
+    /**
+     * Optional contact command handler for the /contact slash command.
+     * If provided, handles /contact interactions for contact management.
+     */
+    contactHandler?: ContactCommandHandler
+
+    /**
+     * Optional contact approval handler for Izzy-requested contact changes.
+     */
+    contactApprovalHandler?: ContactApprovalHandler
 }
 
 /**
@@ -221,7 +233,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler, contactHandler, contactApprovalHandler } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -366,6 +378,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await emailSetup.reviewHandler.handleButton(interaction);
                     return;
                 }
+                // Route contact-approve-* and contact-reject-* buttons to contact approval handler
+                if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:'))) {
+                    await contactApprovalHandler.handleButton(interaction);
+                    return;
+                }
                 await interactionHandler.handleButtonInteraction(interaction);
             } else if(interaction.isModalSubmit()) {
                 if(bskySetup && (interaction.customId.startsWith('bsky-send-reject-reason:') || interaction.customId.startsWith('bsky-dm-reject-reason:'))) {
@@ -382,6 +399,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             } else if(interaction.isChatInputCommand() && interaction.commandName === 'calendar') {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
                 await (calendarHandler ? calendarHandler.handle(interaction) : interaction.reply({ content: 'Calendar management is not currently available.', flags: MessageFlags.Ephemeral }));
+            } else if(interaction.isChatInputCommand() && interaction.commandName === 'contact') {
+                // Stryker disable next-line StringLiteral: error message is not behavior-affecting
+                await (contactHandler ? contactHandler.handle(interaction) : interaction.reply({ content: 'Contact management is not currently available.', flags: MessageFlags.Ephemeral }));
             }
         });
 

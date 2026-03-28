@@ -1,11 +1,11 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, type QuestionRegistry  } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, type QuestionRegistry, type ContactChangeRequest } from '@/agent';
 import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { SendRateLimiter } from '@/integrations/email';
-import type { MemoryToolBackend, MemoryPath } from '@/storage';
+import type { MemoryToolBackend, MemoryPath, ContactBackend } from '@/storage';
 
 /**
  * Options for creating MCP servers.
@@ -105,6 +105,16 @@ export interface MCPServersOptions {
      * Optional CalDAV calendar registry backend.
      */
     caldavRegistry?: CalendarRegistryBackend
+
+    /**
+     * Optional contact backend for the contacts MCP server.
+     */
+    contactBackend?: ContactBackend
+
+    /**
+     * Optional callback to send contact change approval requests to admin.
+     */
+    contactApprovalRequest?: (action: 'create' | 'update', details: ContactChangeRequest) => Promise<void>
 }
 
 /**
@@ -140,6 +150,11 @@ export interface MCPServers {
      * Wikipedia MCP server for random article discovery.
      */
     wikipediaMcpServer?: McpServerConfig
+
+    /**
+     * Contacts MCP server for address book management.
+     */
+    contactsMcpServer?: McpServerConfig
 }
 
 /**
@@ -223,6 +238,13 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
 
     const wikipediaMcpServer = createWikipediaMCPServer();
 
+    const contactsMcpServer = options.contactBackend
+        ? createContactsMCPServer({
+            backend:                    options.contactBackend,
+            sendContactApprovalRequest: options.contactApprovalRequest,
+        })
+        : undefined;
+
     return {
         memoryMcpServer,
         discordMcpServer,
@@ -230,5 +252,6 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         bskyMcpServer,
         caldavMcpServer,
         wikipediaMcpServer,
+        contactsMcpServer,
     };
 }

@@ -271,6 +271,7 @@ describe('Bot Lifecycle Integration', () => {
                 bskyMcpServer:              undefined,
                 caldavMcpServer:            expect.any(Object),
                 wikipediaMcpServer:         expect.any(Object),
+                contactsMcpServer:          expect.any(Object),
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
                 mainModel:                  'sonnet',

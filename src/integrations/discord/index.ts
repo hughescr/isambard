@@ -75,3 +75,12 @@ export {
     setupBsky,
     type BskySetupResult
 } from './setup/bsky-setup';
+
+// Contact commands
+export {
+    ContactCommandHandler,
+    ContactApprovalHandler,
+    buildContactApprovalEmbed,
+    registerContactCommand,
+    type ContactApprovalRequest
+} from './contact-commands';

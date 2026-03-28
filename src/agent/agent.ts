@@ -251,6 +251,8 @@ export interface ClaudeAgentOptions {
     caldavMcpServer?:            McpServerConfig
     /** Wikipedia MCP server instance for random article discovery */
     wikipediaMcpServer?:         McpServerConfig
+    /** Contacts MCP server instance for address book access */
+    contactsMcpServer?:          McpServerConfig
     /** Plugins to load (from plugin-loader.ts) */
     plugins?:                    SdkPluginConfig[]
     /** Task persistence coordinator for maintaining tasks across sessions */
@@ -324,8 +326,8 @@ export interface ClaudeAgent {
  * Builds the mcpServers configuration object based on provided servers.
  */
 // eslint-disable-next-line complexity -- mechanical server registration, each branch is trivially independent
-function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
-    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer && !bskyMcpServer && !caldavMcpServer && !wikipediaMcpServer) {
+function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, contactsMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
+    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer && !bskyMcpServer && !caldavMcpServer && !wikipediaMcpServer && !contactsMcpServer) {
         return undefined;
     }
 
@@ -351,13 +353,16 @@ function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: M
     if(wikipediaMcpServer) {
         servers.wikipedia = wikipediaMcpServer;
     }
+    if(contactsMcpServer) {
+        servers.contacts = contactsMcpServer;
+    }
     return servers;
 }
 
 /**
  * Builds the allowedTools list based on which MCP servers are configured.
  */
-function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
+function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, contactsMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): string[] {
     const baseTools = [
         // Memory MCP tools (auto-approved)
         'mcp__memory__*',
@@ -412,6 +417,10 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
 
     if(wikipediaMcpServer) {
         tools.push('mcp__wikipedia__*');
+    }
+
+    if(contactsMcpServer) {
+        tools.push('mcp__contacts__*');
     }
 
     return tools;
@@ -887,6 +896,7 @@ async function processStreamEvents(
  * @param bskyMcpServer Bluesky MCP server configuration
  * @param caldavMcpServer CalDAV MCP server configuration
  * @param wikipediaMcpServer Wikipedia MCP server configuration
+ * @param contactsMcpServer Contacts MCP server configuration
  * @param plugins Plugin configurations
  * @param options Optional batch processing options
  * @returns Query options object for Agent SDK
@@ -901,6 +911,7 @@ function buildQueryOptions(
     bskyMcpServer: McpServerConfig | undefined,
     caldavMcpServer: McpServerConfig | undefined,
     wikipediaMcpServer: McpServerConfig | undefined,
+    contactsMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options?: HandleInputOptions
 ) {
@@ -909,7 +920,7 @@ function buildQueryOptions(
         systemPrompt,
         tools:          EXPLICIT_TOOLS,
         agents:         EXPLICIT_AGENTS,
-        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, options?.specialMode),
+        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, contactsMcpServer, options?.specialMode),
         plugins:        plugins && plugins.length > 0 ? plugins : undefined,
         permissionMode: 'acceptEdits' as const,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
@@ -919,7 +930,7 @@ function buildQueryOptions(
             excludedCommands:         ['git'],
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
-        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, options?.specialMode),
+        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, contactsMcpServer, options?.specialMode),
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Thinking/effort configuration - mutations don't change behavior
         thinking:          { type: 'adaptive' as const },
         effort:            'high' as const,
@@ -1163,6 +1174,7 @@ async function attemptAutoResume(
  * @param bskyMcpServer - Bluesky MCP server configuration
  * @param caldavMcpServer - CalDAV MCP server configuration
  * @param wikipediaMcpServer - Wikipedia MCP server configuration
+ * @param contactsMcpServer - Contacts MCP server configuration
  * @param plugins - Plugin configurations
  * @param options - HandleInput options (including abort controller)
  * @param taskPersistenceCoordinator - Task persistence coordinator if available
@@ -1183,6 +1195,7 @@ async function collectBackgroundTasks(
     bskyMcpServer: McpServerConfig | undefined,
     caldavMcpServer: McpServerConfig | undefined,
     wikipediaMcpServer: McpServerConfig | undefined,
+    contactsMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options: HandleInputOptions | undefined,
     taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
@@ -1198,7 +1211,7 @@ async function collectBackgroundTasks(
     while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, plugins, options);
+        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, contactsMcpServer, plugins, options);
         // eslint-disable-next-line no-await-in-loop -- sequential: each resume attempt depends on prior result
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
@@ -1216,7 +1229,7 @@ async function collectBackgroundTasks(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, contactsMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
     const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
@@ -1274,7 +1287,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, plugins, handleOptions),
+                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, contactsMcpServer, plugins, handleOptions),
                 });
 
                 // 7. Process stream events and track progress
@@ -1286,7 +1299,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, sessionRef.capturedSessionId, wasInterrupted,
-                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, plugins, handleOptions, taskPersistenceCoordinator
+                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, contactsMcpServer, plugins, handleOptions, taskPersistenceCoordinator
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 sessionRef.capturedSessionId = resumeCollected.capturedSessionId;
