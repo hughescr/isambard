@@ -118,6 +118,11 @@ describe.concurrent('ContactKeyGenerator', () => {
             const parsed = ContactKeyGenerator.parseLookupPK(keys.PK);
             expect(parsed).toEqual({ platform: 'email', value: 'alice@example.com' });
         });
+
+        test('throws on invalid platform string', () => {
+            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#invalid#value'))
+                .toThrow();
+        });
     });
 
     describe('parsePersonIdFromLookupSK', () => {

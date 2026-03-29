@@ -1,6 +1,6 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, type QuestionRegistry, type ContactChangeRequest } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
@@ -115,6 +115,11 @@ export interface MCPServersOptions {
      * Optional callback to send contact change approval requests to admin.
      */
     contactApprovalRequest?: (action: 'create' | 'update', details: ContactChangeRequest) => Promise<void>
+
+    /**
+     * Optional PersonHistoryCoordinator for the user context MCP server.
+     */
+    historyCoordinator?: PersonHistoryCoordinator
 }
 
 /**
@@ -155,6 +160,11 @@ export interface MCPServers {
      * Contacts MCP server for address book management.
      */
     contactsMcpServer?: McpServerConfig
+
+    /**
+     * User context MCP server for cross-platform person history.
+     */
+    userContextMcpServer?: McpServerConfig
 }
 
 /**
@@ -245,6 +255,10 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         })
         : undefined;
 
+    const userContextMcpServer = options.historyCoordinator
+        ? createUserContextMCPServer({ coordinator: options.historyCoordinator })
+        : undefined;
+
     return {
         memoryMcpServer,
         discordMcpServer,
@@ -253,5 +267,6 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         caldavMcpServer,
         wikipediaMcpServer,
         contactsMcpServer,
+        userContextMcpServer,
     };
 }

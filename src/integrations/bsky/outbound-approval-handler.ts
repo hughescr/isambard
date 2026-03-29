@@ -1,6 +1,7 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
+import type { ActivityLogger } from '@/agent';
 import type { BskyAllowlist } from '@/integrations/bsky/allowlist';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
@@ -13,6 +14,7 @@ export interface BskyOutboundApprovalHandlerDeps {
     client:           BlueskyClient
     allowlist:        BskyAllowlist
     rejectionBackend: BskyRejectionBackend
+    activityLogger?:  ActivityLogger
 }
 
 /**
@@ -38,11 +40,13 @@ export class BskyOutboundApprovalHandler {
     private readonly client:           BlueskyClient;
     private readonly allowlist:        BskyAllowlist;
     private readonly rejectionBackend: BskyRejectionBackend;
+    private readonly activityLogger?:  ActivityLogger;
 
     constructor(deps: BskyOutboundApprovalHandlerDeps) {
         this.client           = deps.client;
         this.allowlist        = deps.allowlist;
         this.rejectionBackend = deps.rejectionBackend;
+        this.activityLogger   = deps.activityLogger;
     }
 
     private parseRecipientHandles(fields: { name: string, value: string }[]): string[] {
@@ -260,6 +264,10 @@ export class BskyOutboundApprovalHandler {
         // Gate: persist to DynamoDB — must succeed before updating Discord to "Rejected"
         await this.rejectionBackend.recordRejection(rejectionItem);
 
+        // Stryker disable next-line StringLiteral,EqualityOperator,ConditionalExpression: activity log type selection and summary text are informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch(() => undefined);
+
         // Persist succeeded — update Discord to show rejection
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
@@ -336,6 +344,10 @@ export class BskyOutboundApprovalHandler {
 
         await this.client.replyToPost(text, parentUri, parentCid, rootUri, rootCid);
 
+        // Stryker disable next-line StringLiteral: activity log summary text is informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply posted' }).catch(() => undefined);
+
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('Posted \u2713')
@@ -367,6 +379,10 @@ export class BskyOutboundApprovalHandler {
         const rootCid = fields.find(f => f.name === 'Root CID')?.value;
 
         await this.client.replyToPost(text, parentUri, parentCid, rootUri, rootCid);
+
+        // Stryker disable next-line StringLiteral: activity log summary text is informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply posted' }).catch(() => undefined);
 
         // Add handle to allowlist (best-effort)
         let allowlistSuccess = false;
@@ -441,6 +457,10 @@ export class BskyOutboundApprovalHandler {
 
         await this.client.sendDirectMessage(convoId, text);
 
+        // Stryker disable next-line StringLiteral: activity log summary text is informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM sent' }).catch(() => undefined);
+
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
             .setTitle('DM Sent \u2713')
@@ -479,6 +499,10 @@ export class BskyOutboundApprovalHandler {
         }
 
         await this.client.sendDirectMessage(convoId, text);
+
+        // Stryker disable next-line StringLiteral: activity log summary text is informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM sent' }).catch(() => undefined);
 
         // Add all recipient handles to allowlist (best-effort, concurrent)
         const allowlistResults = await Promise.allSettled(

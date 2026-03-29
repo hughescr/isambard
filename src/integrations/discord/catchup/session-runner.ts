@@ -15,6 +15,7 @@ import type { InboxManager } from '../inbox';
 import type { BotStateManager, CatchingUpModeContext, InterruptingMessageDetails } from '../state';
 import type { ChannelId } from '../types';
 import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
+import type { ActivityLogger } from '@/agent';
 import { formatTimeSince } from '@/utils';
 
 /**
@@ -102,6 +103,8 @@ export interface CatchUpSessionRunnerDeps {
     onCatchUpComplete?:     () => void
     /** Optional function to resolve channel ID to channel name */
     resolveChannelName?:    (channelId: ChannelId) => string | undefined
+    /** Optional activity logger for tracking catch-up lifecycle events */
+    activityLogger?:        ActivityLogger
 }
 
 /**
@@ -223,6 +226,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
         // Transition to idle (this also clears viewed channels in the context)
         deps.stateManager.goIdle();
+
+        // Stryker disable next-line StringLiteral: activity log summary text is informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void deps.activityLogger?.log({ type: 'catchup-complete', summary: 'Catch-up completed' }).catch(() => undefined);
 
         // Invoke callback if provided
         deps.onCatchUpComplete?.();
@@ -411,6 +418,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Transition to catching_up mode
             deps.stateManager.startCatchUp(catchUpContext);
 
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void deps.activityLogger?.log({ type: 'catchup-start', summary: 'Catch-up started' }).catch(() => undefined);
+
             // Build catch-up prompt
             const prompt = buildCatchUpPrompt(overview.totalUnread, overview.channels.length);
 
@@ -453,6 +464,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Transition to idle
             deps.stateManager.goIdle();
+
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void deps.activityLogger?.log({ type: 'catchup-suspend', summary: 'Catch-up suspended' }).catch(() => undefined);
 
             // Abort current session
             if(currentAbortController) {

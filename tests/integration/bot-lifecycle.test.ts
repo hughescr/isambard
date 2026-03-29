@@ -272,6 +272,7 @@ describe('Bot Lifecycle Integration', () => {
                 caldavMcpServer:            expect.any(Object),
                 wikipediaMcpServer:         expect.any(Object),
                 contactsMcpServer:          expect.any(Object),
+                userContextMcpServer:       expect.any(Object),
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
                 mainModel:                  'sonnet',

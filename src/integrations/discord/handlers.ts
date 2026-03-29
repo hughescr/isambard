@@ -506,6 +506,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             guildId:     createGuildId(message.guild?.id ?? 'DM'),
             channelId:   createChannelId(message.channel.id),
             userId:      createUserId(message.author.id),
+            username:    message.author.username,
             messageId:   message.id,
             content:     message.cleanContent,
             timestamp:   message.createdAt.toISOString(),

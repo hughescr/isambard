@@ -635,6 +635,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers.contacts).toEqual(mockContactsServer);
         });
+
+        test('should configure user-context MCP server when provided', async () => {
+            const mockUserContextServer = { command: 'node', args: ['user-context-server.js'] };
+            const agent = createClaudeAgent({ userContextMcpServer: mockUserContextServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers['user-context']).toEqual(mockUserContextServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -873,6 +883,17 @@ describe('createClaudeAgent', () => {
             const allowedTools = queryParams.options.allowedTools;
 
             expect(allowedTools).toContain('mcp__contacts__*');
+        });
+
+        test('should include user-context tools when user-context MCP server provided', async () => {
+            const mockUserContextServer = { command: 'node', args: ['user-context-server.js'] };
+            const agent = createClaudeAgent({ userContextMcpServer: mockUserContextServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            expect(allowedTools).toContain('mcp__user-context__*');
         });
     });
 
@@ -1213,6 +1234,48 @@ describe('createClaudeAgent', () => {
             expect(prompt).not.toMatch(/^\[/);
             // Should start with User message directly
             expect(prompt).toMatch(/^User @/);
+        });
+
+        test('should prepend personHistory before message when provided', async () => {
+            const agent = createClaudeAgent({});
+            const historyText = '--- Recent interactions with Alice ---\n[email] [10:00] Hello\n--- End of recent history ---';
+            await agent.handleInput([mockMessageContext], { personHistory: historyText });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should start with personHistory
+            expect(prompt).toMatch(/^--- Recent interactions with Alice ---/);
+            // Should still contain the user message content
+            expect(prompt).toContain('User @111222333');
+            expect(prompt).toContain('Hello Claude!');
+        });
+
+        test('should prepend personHistory before contextNote when both provided', async () => {
+            const agent = createClaudeAgent({});
+            const historyText = '--- Recent interactions with Alice ---\nsome history\n--- End of recent history ---';
+            await agent.handleInput([mockMessageContext], { personHistory: historyText, contextNote: 'Test note' });
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // personHistory comes first, then contextNote, then message
+            const historyIndex = prompt.indexOf('--- Recent interactions with Alice ---');
+            const contextNoteIndex = prompt.indexOf('[Test note]');
+            const messageIndex = prompt.indexOf('User @111222333');
+            expect(historyIndex).toBeLessThan(contextNoteIndex);
+            expect(contextNoteIndex).toBeLessThan(messageIndex);
+        });
+
+        test('should not prepend personHistory when not provided', async () => {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const prompt = querySpy.mock.calls[0][0].prompt as string;
+
+            // Should NOT contain history header
+            expect(prompt).not.toContain('--- Recent interactions');
         });
 
         test('should initialize lastAssistantText as empty string', async () => {

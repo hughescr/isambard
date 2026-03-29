@@ -84,3 +84,6 @@ export {
     registerContactCommand,
     type ContactApprovalRequest
 } from './contact-commands';
+
+// History provider
+export { DiscordHistoryProvider } from './history-provider';

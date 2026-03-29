@@ -11,7 +11,7 @@ export { summarizeEventBatches } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
 export { createDiscordMCPServer, setConversationContext, clearConversationContext } from './discord-mcp-server';
 export { loadPlugins } from './plugin-loader';
-export type { MessageContext, PlatformImage, AgentStreamEvent } from './types';
+export type { MessageContext, PlatformImage, AgentStreamEvent, MCPMessageSearchService, MCPChannelRegistry, MCPDMTracker, MCPChannelInfo, ChannelId } from './types';
 
 export { createTaskDirectoryCopier } from './task-directory-copier';
 export { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './task-persistence-coordinator';
@@ -54,8 +54,18 @@ export { createWikipediaMCPServer } from './wikipedia-mcp-server';
 // Contacts MCP Server
 export { createContactsMCPServer, type ContactChangeRequest } from './contacts-mcp-server';
 
+// User Context MCP Server
+export { createUserContextMCPServer } from './user-context-mcp-server';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 
 // Resume Prompt Builder
 export { type ResumeContext } from './resume-prompt-builder';
+
+// Activity Logger
+export { createActivityLogger, type ActivityLogger, type ActivityLogEntry, type ActivityType } from './activity-logger';
+
+// History Providers
+export type { HistoryEntry, HistoryFetchParams, PlatformHistoryProvider } from './history-providers';
+export { PersonHistoryCoordinator } from './history-providers';

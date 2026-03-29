@@ -13,3 +13,4 @@ export { WildDuckClient } from './wildduck-client';
 export type { WildDuckAttachment, WildDuckAttachmentMeta } from './wildduck-client';
 export * from './send-rate-limiter';
 export * from './outbound-approval-handler';
+export { EmailHistoryProvider } from './history-provider';

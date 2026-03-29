@@ -1,6 +1,7 @@
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
+import type { ActivityLogger } from '@/agent';
 import {
     BskyAllowlist,
     BskyOutboundApprovalHandler,
@@ -23,6 +24,8 @@ export interface BskySetupOptions {
     client:                Client
     /** Discord channel ID for admin approval embeds */
     adminDiscordChannelId: string
+    /** Optional activity logger for recording approval events */
+    activityLogger?:       ActivityLogger
 }
 
 export interface BskySetupResult {
@@ -151,9 +154,10 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     // Create outbound approval handler (handles bsky-send-* and bsky-dm-* button/modal interactions)
     // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({
-        client: bskyClient,
+        client:         bskyClient,
         allowlist,
         rejectionBackend,
+        activityLogger: options.activityLogger,
     });
 
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting

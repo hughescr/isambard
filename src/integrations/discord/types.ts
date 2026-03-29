@@ -27,6 +27,8 @@ export const discordMessageContextSchema = z.object({
     guildId:     guildIdSchema,
     channelId:   channelIdSchema,
     userId:      userIdSchema,
+    /** Discord username (e.g. 'craig') — used for contact lookup and cross-platform history */
+    username:    z.string().optional(),
     messageId:   z.string().min(1),
     content:     z.string(),
     timestamp:   z.iso.datetime(),

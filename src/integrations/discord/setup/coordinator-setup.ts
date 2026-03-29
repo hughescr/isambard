@@ -18,7 +18,7 @@ import { sendResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
 import type { DiscordMessageContext } from '../types';
 import { createPresenceStreamHandler } from './presence-stream-handler';
-import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage  } from '@/agent';
+import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
 
 /**
  * Result of processing Discord message attachments
@@ -130,6 +130,8 @@ export interface SetupCoordinatorParams {
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
+    activityLogger?:          ActivityLogger
+    historyCoordinator?:      PersonHistoryCoordinator
 }
 
 /**
@@ -220,6 +222,30 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                     client:             readyClient,
                     useFallbackOnError: false,
                 });
+
+                // Log the exchange as activity (fire-and-forget with Haiku summary)
+                if(params.activityLogger) {
+                    const userContent  = discordMessage.content;
+                    const botResponse  = result.response;
+                    const actLogger    = params.activityLogger;
+                    void (async () => {
+                        try {
+                            let summary = 'Discord exchange in channel';
+                            const generated = await generateText(
+                                `Summarize this Discord exchange in one sentence (max 30 words):\nUser: ${userContent.slice(0, 500)}\nIzzy: ${botResponse.slice(0, 500)}`
+                            );
+                            if(generated) {
+                                summary = generated;
+                            }
+                            await actLogger.log({
+                                type: 'discord-exchange',
+                                summary,
+                            });
+                        } catch{
+                            // Swallow errors — fire-and-forget
+                        }
+                    })();
+                }
             }
 
             // Update session ID tracker
@@ -352,6 +378,39 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 contextNote = 'Note: This message arrived during catch-up, which has been paused. Respond normally to the user. Catch-up will resume after this conversation.';
             }
 
+            // Auto-inject cross-platform history for the sender
+            const HISTORY_FETCH_TIMEOUT_MS = 5000;
+            let personHistory: string | undefined;
+            if(params.historyCoordinator) {
+                try {
+                    const historyPromise = (async () => {
+                        const senderUsername = contexts[0]?.username;
+                        if(senderUsername) {
+                            const historyResult = await params.historyCoordinator!.getPersonHistory(
+                                senderUsername, { timeWindowMinutes: 120, maxMessagesPerPlatform: 10 }
+                            );
+                            if(historyResult.history) {
+                                return historyResult.history;
+                            }
+                        }
+                        // If no person found or no history, fall back to channel-local history
+                        const channelId = contexts[0]?.channelId;
+                        const messageId = contexts[0]?.messageId;
+                        if(channelId) {
+                            return params.historyCoordinator!.getChannelLocalHistory(channelId, messageId);
+                        }
+                        return undefined;
+                    })();
+
+                    personHistory = await Promise.race([
+                        historyPromise,
+                        new Promise<undefined>((resolve) => { setTimeout(resolve, HISTORY_FETCH_TIMEOUT_MS); }),
+                    ]);
+                } catch (err) {
+                    logger.warn({ err }, 'Failed to fetch person history for context injection');
+                }
+            }
+
             // Call handleInput with presence updates, images, and channel context
             const result = await agent.handleInput(toMessageContexts(modifiedContexts), {
                 sessionId,
@@ -361,6 +420,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 images:        images.length > 0 ? toPlatformImages(images) : undefined,
                 channelList,
                 contextNote,
+                personHistory,
             });
 
             // Complete presence updates after processing

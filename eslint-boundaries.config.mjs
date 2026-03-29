@@ -63,7 +63,7 @@ export const boundariesConfig = {
                 { from: { type: 'storage' }, allow: { to: { type: ['utils', 'errors', 'config'] } } },
                 { from: { type: 'agent' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'email', 'bsky', 'caldav'] } } },
                 { from: { type: 'email' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent'] } } },
-                { from: { type: 'bsky' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
+                { from: { type: 'bsky' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent'] } } },
                 { from: { type: 'caldav' },  allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
                 { from: { type: 'discord' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent', 'email', 'bsky', 'caldav'] } } },
                 { from: { type: 'app' },     allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky', 'caldav'] } } },

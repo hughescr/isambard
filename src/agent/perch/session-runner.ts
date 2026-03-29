@@ -12,6 +12,7 @@
 import type { Logger } from '@hughescr/logger';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import { type PerchSlot, type PerchConfig } from './types';
+import type { ActivityLogger } from '@/agent/activity-logger';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { StreamProgress } from '@/agent/stream-tracker';
 import type { AgentStateManager, InterruptingMessageDetails } from '@/agent/types';
@@ -56,6 +57,8 @@ export interface PerchSessionRunnerDeps {
     runAgentSession: (options: RunAgentSessionOptions) => Promise<AgentSessionResult>
     /** Context builder for perch context (optional for backward compatibility) */
     contextBuilder?: ContextBuilder
+    /** Optional activity logger for tracking perch lifecycle events */
+    activityLogger?: ActivityLogger
 }
 
 /**
@@ -260,6 +263,8 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             if(result.completed) {
                 // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
+                // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+                void deps.activityLogger?.log({ type: 'perch-end', summary: 'Perch session completed' }).catch(() => undefined);
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
@@ -363,6 +368,10 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 msg:             'Starting perch session with timeout',
             });
 
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void deps.activityLogger?.log({ type: 'perch-start', summary: `Perch session started (slot: ${slot})` }).catch(() => undefined);
+
             // Stryker disable BlockStatement: Defensive error handling for context/prompt build failures
             try {
                 // Build perch context (if context builder available)
@@ -427,6 +436,10 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 clearTimeout(sessionTimeout);
                 sessionTimeout = null;
             }
+
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void deps.activityLogger?.log({ type: 'perch-suspend', summary: 'Perch suspended' }).catch(() => undefined);
 
             // Transition to idle BEFORE aborting (so runSessionAndFinalize sees idle mode)
             stateManager.goIdle();
@@ -500,6 +513,10 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 interruptingSummary,
                 newEventsSummary,
             });
+
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void deps.activityLogger?.log({ type: 'perch-resume', summary: 'Perch resumed' }).catch(() => undefined);
 
             // Run session and finalize
             await runSessionAndFinalize({

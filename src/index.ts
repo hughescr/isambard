@@ -4,13 +4,13 @@ import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
 import { Resource } from 'sst';
-import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, type ContactChangeRequest } from '@/agent';
+import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
-import { BlueskyClient } from '@/integrations/bsky';
+import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, registerCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, registerContactCommand, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { AllowlistCommandHandler } from '@/integrations/email';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, registerContactCommand, DiscordHistoryProvider, resolveChannelId, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { AllowlistCommandHandler, EmailHistoryProvider } from '@/integrations/email';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -71,6 +71,9 @@ export async function createApp(): Promise<App> {
         memoryBackend: storage.memoryBackend,
     });
 
+    // Activity logger (always available — uses memoryBackend)
+    const activityLogger = createActivityLogger(storage.memoryBackend);
+
     // Set up email integration if email config is present (conditional — non-fatal)
     // Must happen before contextLayer so the email service can be wired into the perch prompt
     let emailSetup: EmailSetupResult | undefined;
@@ -86,6 +89,7 @@ export async function createApp(): Promise<App> {
                 botToken:           config.discord.botToken,
                 applicationId:      config.discord.applicationId,
                 adminDiscordUserId: config.adminDiscordUserId,
+                activityLogger,
             });
         } catch (err) {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -136,6 +140,7 @@ export async function createApp(): Promise<App> {
                 tableName:             storage.tableName,
                 client:                discordInfra.discordClient,
                 adminDiscordChannelId: config.email.adminDiscordChannelId,
+                activityLogger,
             });
         } catch (err) {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -158,6 +163,44 @@ export async function createApp(): Promise<App> {
         bskyClient = undefined;
     }
     // Stryker restore ConditionalExpression,BooleanLiteral,BlockStatement
+
+    // History providers
+    const historyProviders = [
+        new DiscordHistoryProvider(
+            discordInfra.messageSearchService,
+            {
+                resolveChannelId:   nameOrId => resolveChannelId(nameOrId, discordInfra.channelRegistry),
+                muteChannel:        channelId => discordInfra.channelRegistry.muteChannel(channelId),
+                unmuteChannel:      channelId => discordInfra.channelRegistry.unmuteChannel(channelId),
+                getAllChannels:     () => discordInfra.channelRegistry.getAllChannels(),
+                getUnmutedChannels: () => discordInfra.channelRegistry.getUnmutedChannels(),
+            },
+            // botUserId may be empty if constructed before Discord login; direction defaults to 'mutual' for unknown authors
+            discordInfra.discordClient.user?.id ?? ''
+            // Note: dmTracker is created inside bot.ts at clientReady — not available here.
+            // DM-specific history search will be wired when DMTracker is elevated to composition root.
+        ),
+    ] as PlatformHistoryProvider[];
+
+    // Add email history provider if wildDuckClient available
+    if(emailSetup && config.email) {
+        historyProviders.push(new EmailHistoryProvider(
+            config.email.user,
+            emailSetup.wildDuckClient
+        ));
+    }
+
+    // Add bsky history provider if bskyClient available
+    if(bskyClient) {
+        historyProviders.push(new BskyHistoryProvider(bskyClient));
+    }
+
+    // History coordinator
+    const historyCoordinator = new PersonHistoryCoordinator({
+        contactBackend:       storage.contactBackend,
+        providers:            historyProviders,
+        messageSearchService: discordInfra.messageSearchService,
+    });
 
     // Build email service from emailSetup components (if available)
     const emailService = emailSetup
@@ -222,6 +265,7 @@ export async function createApp(): Promise<App> {
         caldavRegistry,
         contactBackend:            storage.contactBackend,
         contactApprovalRequest:    sendContactApprovalRequest,
+        historyCoordinator,
     });
 
     // Load plugins and create agent
@@ -237,6 +281,7 @@ export async function createApp(): Promise<App> {
         caldavMcpServer:            mcpServers.caldavMcpServer,
         wikipediaMcpServer:         mcpServers.wikipediaMcpServer,
         contactsMcpServer:          mcpServers.contactsMcpServer,
+        userContextMcpServer:       mcpServers.userContextMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,
@@ -287,6 +332,8 @@ export async function createApp(): Promise<App> {
         calendarHandler,
         contactHandler:    contactCommandHandler,
         contactApprovalHandler,
+        activityLogger,
+        historyCoordinator,
     });
 
     let isStopping = false;

@@ -2,7 +2,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes  } from 'discord.js';
-import { createEmailMCPServer } from '@/agent';
+import { createEmailMCPServer, type ActivityLogger } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import {
@@ -38,6 +38,8 @@ export interface EmailSetupOptions {
     applicationId:      string
     /** Admin Discord user ID for authorization checks */
     adminDiscordUserId: string
+    /** Optional activity logger for recording approval events */
+    activityLogger?:    ActivityLogger
 }
 
 export interface EmailSetupResult {
@@ -194,6 +196,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     const outboundApprovalHandler = new OutboundApprovalHandler({
         wildDuckClient,
         allowlist,
+        activityLogger: options.activityLogger,
     });
 
     // Create email MCP server for Claude agent

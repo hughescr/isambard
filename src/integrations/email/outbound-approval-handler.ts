@@ -2,6 +2,7 @@ import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builder
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder  } from 'discord.js';
 import { chain } from 'lodash-es';
+import type { ActivityLogger } from '@/agent';
 import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -11,8 +12,9 @@ const RED   = 0xFF_00_00;
 const AMBER = 0xFF_AA_00;
 
 export interface OutboundApprovalHandlerDeps {
-    wildDuckClient: WildDuckClient
-    allowlist:      EmailAllowlist
+    wildDuckClient:  WildDuckClient
+    allowlist:       EmailAllowlist
+    activityLogger?: ActivityLogger
 }
 
 /**
@@ -34,12 +36,14 @@ export interface OutboundApprovalHandlerDeps {
  * Discord channel-level ACL is the enforcement boundary.
  */
 export class OutboundApprovalHandler {
-    private readonly wildDuckClient: WildDuckClient;
-    private readonly allowlist:      EmailAllowlist;
+    private readonly wildDuckClient:  WildDuckClient;
+    private readonly allowlist:       EmailAllowlist;
+    private readonly activityLogger?: ActivityLogger;
 
     constructor(deps: OutboundApprovalHandlerDeps) {
-        this.wildDuckClient = deps.wildDuckClient;
-        this.allowlist      = deps.allowlist;
+        this.wildDuckClient  = deps.wildDuckClient;
+        this.allowlist       = deps.allowlist;
+        this.activityLogger  = deps.activityLogger;
     }
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -140,6 +144,10 @@ export class OutboundApprovalHandler {
             // Stryker disable next-line StringLiteral: flag name is configuration
             await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
 
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void this.activityLogger?.log({ type: 'email-rejected', summary: 'Email rejected' }).catch(() => undefined);
+
             // Persist succeeded — update Discord to show rejection
             const updatedEmbed = new EmbedBuilder()
                 // Stryker disable next-line StringLiteral: UI label is configuration
@@ -222,6 +230,10 @@ export class OutboundApprovalHandler {
             // is itself the rate control mechanism for non-allowlisted sends.
             await this.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
 
+            // Stryker disable next-line StringLiteral: activity log summary text is informational only
+            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+            void this.activityLogger?.log({ type: 'email-sent', summary: 'Email sent' }).catch(() => undefined);
+
             // Add selected recipients to allowlist (best-effort)
             for(const email of selectedRecipients) {
                 // Stryker disable BlockStatement: try-catch wraps allowlist write - best-effort
@@ -274,6 +286,10 @@ export class OutboundApprovalHandler {
         // Rate limiter is intentionally not incremented here — Craig's manual approval
         // is itself the rate control mechanism for non-allowlisted sends.
         await this.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
+
+        // Stryker disable next-line StringLiteral: activity log summary text is informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: 'email-sent', summary: 'Email sent' }).catch(() => undefined);
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration

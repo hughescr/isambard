@@ -6,7 +6,7 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponseToWellKnownChannel } from '../response-sender';
 import type { BotStateManager } from '../state';
 import { createPresenceStreamHandler } from './presence-stream-handler';
-import { type ClaudeAgent, type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchSessionRunner, createPerchScheduler, createPerchSessionRunner  } from '@/agent';
+import { type ClaudeAgent, type ContextBuilder, type PerchConfig, type PerchScheduler, type PerchSessionRunner, type ActivityLogger, createPerchScheduler, createPerchSessionRunner  } from '@/agent';
 
 /**
  * Parameters for setting up perch scheduler and runner.
@@ -24,6 +24,7 @@ export interface SetupPerchParams {
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
+    activityLogger?:          ActivityLogger
 }
 
 /**
@@ -54,6 +55,7 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
         logger,
         config:          perchConfig,
         contextBuilder,
+        activityLogger:  params.activityLogger,
         runAgentSession: async (runOptions) => {
             // Create abort controller from signal
             const abortController = new AbortController();

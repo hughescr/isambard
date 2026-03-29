@@ -18,7 +18,7 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponseToWellKnownChannel } from '../response-sender';
 import type { BotStateManager } from '../state';
 import { createPresenceStreamHandler } from './presence-stream-handler';
-import { type ClaudeAgent, type PerchConfig  } from '@/agent';
+import { type ClaudeAgent, type PerchConfig, type ActivityLogger  } from '@/agent';
 import { formatTimeSince, getTimeOfDay } from '@/utils';
 
 /**
@@ -79,6 +79,7 @@ export interface SetupCatchUpRunnerParams {
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
+    activityLogger?:          ActivityLogger
 }
 
 /**
@@ -110,6 +111,7 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
         loadInProgressSignal:   memoryBackend.loadInProgressSignal,
         deleteInProgressSignal: memoryBackend.deleteInProgressSignal,
         resolveChannelName:     channelId => inboxManager.getChannelName(channelId),
+        activityLogger:         params.activityLogger,
         runAgentSession:        async (runOptions) => {
             // Create abort controller from signal
             const abortController = new AbortController();

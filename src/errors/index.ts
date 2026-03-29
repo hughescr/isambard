@@ -20,6 +20,7 @@ export {
     TextNotFoundError,
     TextNotUniqueError,
     InvalidLineNumberError,
+    ContactError,
     ContactNotFoundError,
     ContactLastIdentifierError
 } from './storage';

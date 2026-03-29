@@ -1,4 +1,4 @@
-import { createContactId, type ContactId, type PlatformType } from './types';
+import { createContactId, platformTypeSchema, type ContactId, type PlatformType } from './types';
 
 /**
  * DynamoDB key structure for Contact profile items.
@@ -116,7 +116,7 @@ export const ContactKeyGenerator = {
         if(hashIndex === -1) {
             throw new Error(`Invalid lookup PK format: missing platform separator in ${pk}`);
         }
-        const platform = rest.slice(0, hashIndex) as PlatformType;
+        const platform = platformTypeSchema.parse(rest.slice(0, hashIndex));
         const value    = rest.slice(hashIndex + 1);
         return { platform, value };
     },

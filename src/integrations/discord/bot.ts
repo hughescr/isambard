@@ -28,7 +28,7 @@ import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { AllowlistCommandHandler } from '@/integrations/email';
@@ -165,6 +165,16 @@ export interface DiscordBotOptions {
      * Optional contact approval handler for Izzy-requested contact changes.
      */
     contactApprovalHandler?: ContactApprovalHandler
+
+    /**
+     * Optional activity logger for recording lifecycle events (email, bsky, perch, catch-up, Discord exchanges).
+     */
+    activityLogger?: ActivityLogger
+
+    /**
+     * Optional person history coordinator for cross-platform conversation history injection.
+     */
+    historyCoordinator?: PersonHistoryCoordinator
 }
 
 /**
@@ -233,7 +243,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler, contactHandler, contactApprovalHandler } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -459,6 +469,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 onThinkingContentUpdate: setLastThinkingContent,
                 setLastSessionId,
                 addRecentMessage,
+                activityLogger,
             });
         }
 
@@ -477,6 +488,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 onThinkingContentUpdate: setLastThinkingContent,
                 setLastSessionId,
                 addRecentMessage,
+                activityLogger,
             });
             perchSessionRunner = perchSetup.runner;
             perchScheduler = perchSetup.scheduler;
@@ -520,6 +532,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 onThinkingContentUpdate: setLastThinkingContent,
                 setLastSessionId,
                 addRecentMessage,
+                activityLogger,
+                historyCoordinator,
             });
 
             // Register message handler AFTER channel registry is initialized and coordinator is created
