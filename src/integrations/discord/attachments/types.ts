@@ -10,7 +10,9 @@ export {
     type FetchedImage,
     isNativeImageType,
     isConvertibleImageType,
-    isSupportedImageType
+    isSupportedImageType,
+    FailedMediaSchema as FailedAttachmentSchema,
+    type FailedMedia as FailedAttachment
 } from '@/utils';
 
 // Schema for Discord attachment metadata
@@ -32,12 +34,3 @@ export const StoredAttachmentSchema = z.object({
     size:             z.number().int().positive(),
 });
 export type StoredAttachment = z.infer<typeof StoredAttachmentSchema>;
-
-// Schema for failed attachment processing (Discord-specific alias)
-export const FailedAttachmentSchema = z.object({
-    filename:    z.string(),
-    contentType: z.string(),
-    size:        z.number().int().positive(),
-    error:       z.string(),
-});
-export type FailedAttachment = z.infer<typeof FailedAttachmentSchema>;

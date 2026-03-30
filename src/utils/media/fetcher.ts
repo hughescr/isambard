@@ -5,11 +5,10 @@ import {
     type FetchedImage,
     type FailedMedia,
     MAX_IMAGE_SIZE_BYTES,
-    isNativeImageType,
     isSupportedImageType
 } from './types';
 
-const FETCH_TIMEOUT_MS = 30_000;
+export const FETCH_TIMEOUT_MS = 30_000;
 
 export type FetchImageResult = {
     success: true
@@ -77,11 +76,9 @@ export async function fetchImage(
             const result = await convert(initialBuffer, metadata.contentType);
             base64Data = result.buffer.toString('base64');
             mediaType = result.mediaType;
-        } else if(isNativeImageType(metadata.contentType)) {
-            base64Data = initialBuffer.toString('base64');
-            mediaType = metadata.contentType;
         } else {
-            return null;
+            base64Data = initialBuffer.toString('base64');
+            mediaType = metadata.contentType as FetchedImage['mediaType'];
         }
 
         return {

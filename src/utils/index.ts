@@ -49,6 +49,7 @@ export {
     needsConversion,
     convert,
     type ConversionResult,
+    FETCH_TIMEOUT_MS as MediaFetchTimeoutMs,
     fetchImage as fetchMediaImage,
     fetchImages as fetchMediaImages,
     type FetchImageResult as MediaFetchImageResult,

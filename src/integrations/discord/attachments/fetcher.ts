@@ -1,9 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { sanitizeFilename, type MediaFetchImageResult, type MediaFetchImagesResult } from '@/utils';
 import { type AttachmentMetadata, type StoredAttachment } from './types';
-
-const FETCH_TIMEOUT_MS = 30_000;
+import { sanitizeFilename, MediaFetchTimeoutMs, type MediaFetchImageResult, type MediaFetchImagesResult } from '@/utils';
 
 // Re-export generic types under Discord-familiar names for backward compatibility
 export type FetchImageResult = MediaFetchImageResult;
@@ -25,7 +23,7 @@ export async function saveNonImageAttachment(
 
         const response = await fetch(metadata.url, {
 
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            signal: AbortSignal.timeout(MediaFetchTimeoutMs),
         });
 
         if(!response.ok) {

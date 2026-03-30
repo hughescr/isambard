@@ -16,6 +16,7 @@ export {
 export { needsConversion, convert, type ConversionResult } from './converters';
 
 export {
+    FETCH_TIMEOUT_MS,
     fetchImage,
     fetchImages,
     type FetchImageResult,
