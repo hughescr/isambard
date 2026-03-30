@@ -81,9 +81,14 @@ export {
     ContactCommandHandler,
     ContactApprovalHandler,
     buildContactApprovalEmbed,
-    registerContactCommand,
+    buildContactCommand,
     type ContactApprovalRequest
 } from './contact-commands';
+
+// Consolidated slash command registration
+export {
+    registerAllCommands
+} from './register-commands';
 
 // History provider
 export { DiscordHistoryProvider } from './history-provider';

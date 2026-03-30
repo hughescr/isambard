@@ -6,8 +6,6 @@ import {
     ComponentType,
     InteractionContextType,
     MessageFlags,
-    REST,
-    Routes,
     SlashCommandBuilder,
     StringSelectMenuBuilder,
     type ChatInputCommandInteraction
@@ -86,37 +84,6 @@ export function buildCalendarCommand(): SlashCommandBuilder {
                 .addStringOption(opt => opt.setName('calendar_path').setDescription('Calendar name or path').setRequired(true))
             )
         ) as SlashCommandBuilder;
-}
-
-/**
- * Register the /calendar slash command with Discord via REST API.
- * Errors are non-fatal — bot continues without the slash command.
- */
-// Stryker disable BlockStatement: registerCalendarCommand is called from integration-only startup - not unit testable
-export async function registerCalendarCommand(botToken: string, applicationId: string): Promise<void> {
-    // Inner BlockStatement is also covered by the outer disable above
-    try {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: REST version string and config object are not behavior-affecting
-        const rest    = new REST({ version: '10' }).setToken(botToken);
-        const command = buildCalendarCommand();
-        // Stryker disable ObjectLiteral: post body object is configuration
-        await rest.post(
-            Routes.applicationCommands(applicationId),
-            { body: command.toJSON() }
-        );
-        // Stryker restore ObjectLiteral
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({ msg: 'Registered /calendar slash command' });
-    } catch (err) {
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.error({
-            error: err instanceof Error ? err.message : String(err),
-            msg:   'Failed to register /calendar slash command',
-        });
-        // Stryker restore ObjectLiteral,StringLiteral
-        // Continue — command registration failure is non-fatal
-    }
-    // Stryker restore BlockStatement
 }
 
 /**

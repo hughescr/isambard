@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, REST, Routes, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
+import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
 import { z } from 'zod';
 import { ContactNotFoundError } from '@/errors';
 import { contactIdentifierSchema, type Contact, type ContactBackend, type ContactIdentifier, createContactId } from '@/storage';
@@ -264,37 +264,6 @@ export function buildContactCommand(): SlashCommandBuilder {
                 )
         ) as SlashCommandBuilder;
     // Stryker restore all
-}
-
-/**
- * Register the /contact slash command with Discord via REST API.
- * Errors are non-fatal — bot continues without the slash command.
- */
-// Stryker disable BlockStatement: registerContactCommand is called from integration-only startup - not unit testable
-export async function registerContactCommand(botToken: string, applicationId: string): Promise<void> {
-    // Inner BlockStatement is also covered by the outer disable above
-    try {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: REST version string and config object are not behavior-affecting
-        const rest    = new REST({ version: '10' }).setToken(botToken);
-        const command = buildContactCommand();
-        // Stryker disable ObjectLiteral: post body object is configuration
-        await rest.post(
-            Routes.applicationCommands(applicationId),
-            { body: command.toJSON() }
-        );
-        // Stryker restore ObjectLiteral
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({ msg: 'Registered /contact slash command' });
-    } catch (err) {
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.error({
-            error: err instanceof Error ? err.message : String(err),
-            msg:   'Failed to register /contact slash command',
-        });
-        // Stryker restore ObjectLiteral,StringLiteral
-        // Continue — command registration failure is non-fatal
-    }
-    // Stryker restore BlockStatement
 }
 
 /**

@@ -2,15 +2,16 @@ import { readFileSync } from 'node:fs';
 import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
+import type { SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
-import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, registerCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, registerContactCommand, DiscordHistoryProvider, resolveChannelId, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { AllowlistCommandHandler, EmailHistoryProvider } from '@/integrations/email';
+import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, registerAllCommands, DiscordHistoryProvider, resolveChannelId, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { AllowlistCommandHandler, buildAllowlistCommand, EmailHistoryProvider } from '@/integrations/email';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -92,8 +93,6 @@ export async function createApp(): Promise<App> {
                 docClient:          storage.docClient,
                 tableName:          storage.tableName,
                 client:             discordInfra.discordClient,
-                botToken:           config.discord.botToken,
-                applicationId:      config.discord.applicationId,
                 adminDiscordUserId: config.adminDiscordUserId,
                 activityLogger,
             });
@@ -364,6 +363,15 @@ export async function createApp(): Promise<App> {
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');
 
+    // Collect slash command builders for bulk registration at startup
+    // Stryker disable BlockStatement: Composition root — command builder list construction is not unit-testable
+    const commandBuilders: (() => SlashCommandBuilder)[] = [buildCalendarCommand, buildContactCommand];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: optional allowlist command — equivalent mutant for non-allowlist path
+    if(allowlistHandler) {
+        commandBuilders.push(buildAllowlistCommand);
+    }
+    // Stryker restore BlockStatement
+
     let isStopping = false;
 
     return {
@@ -376,16 +384,7 @@ export async function createApp(): Promise<App> {
             await bot.start();
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Discord connected');
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Registering /calendar slash command...');
-            await registerCalendarCommand(config.discord.botToken, config.discord.applicationId);
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Calendar command registered');
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Registering /contact slash command...');
-            await registerContactCommand(config.discord.botToken, config.discord.applicationId);
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Contact command registered');
+            await registerAllCommands(config.discord.botToken, config.discord.applicationId, commandBuilders);
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.start();

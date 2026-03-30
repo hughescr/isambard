@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes  } from 'discord.js';
+import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { createEmailMCPServer, type ActivityLogger } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
@@ -14,7 +14,6 @@ import {
     buildReviewEmbed,
     buildUnsafeAlert,
     buildRestrictedAccessEmbed,
-    buildAllowlistCommand,
     EmailFolder,
     WildDuckClient,
     SendRateLimiter,
@@ -32,10 +31,6 @@ export interface EmailSetupOptions {
     tableName:          string
     /** Discord client instance */
     client:             Client
-    /** Discord bot token for slash command registration */
-    botToken:           string
-    /** Discord application ID for slash command registration */
-    applicationId:      string
     /** Admin Discord user ID for authorization checks */
     adminDiscordUserId: string
     /** Optional activity logger for recording approval events */
@@ -59,7 +54,7 @@ export interface EmailSetupResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Initialize all email integration components and register the /allowlist slash command.
+ * Initialize all email integration components.
  *
  * Creates:
  * - WildDuck client, classifier, allowlist
@@ -67,13 +62,12 @@ export interface EmailSetupResult {
  * - WildDuckListener (NOT started — caller starts it after Discord client ready)
  * - ReviewHandler for button interactions
  * - Email MCP server for Claude agent
- * - Registers the /allowlist slash command with Discord via REST
  *
  * @param options - Email setup options
  * @returns Email components for lifecycle management
  */
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
-    const { emailConfig, docClient, tableName, client, botToken, applicationId, adminDiscordUserId } = options;
+    const { emailConfig, docClient, tableName, client, adminDiscordUserId } = options;
 
     // Create classifier, allowlist
     const classifier = new EmailClassifier();
@@ -222,11 +216,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     });
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration
 
-    // Register /allowlist slash command with Discord
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Registering /allowlist slash command...');
-    await registerAllowlistCommand(botToken, applicationId);
-
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
     logger.info({ msg: 'Email integration initialized' });
 
@@ -270,34 +259,3 @@ async function sendToAdminChannel(
     }
 }
 // Stryker restore all
-
-/**
- * Register the /allowlist slash command with Discord via REST API.
- * Errors are non-fatal — bot continues without the slash command.
- */
-// Stryker disable BlockStatement: registerAllowlistCommand is called from integration-only setupEmail - not unit testable
-async function registerAllowlistCommand(botToken: string, applicationId: string): Promise<void> {
-    // Inner BlockStatement is also covered by the outer disable above
-    try {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: REST version string and config object are not behavior-affecting
-        const rest    = new REST({ version: '10' }).setToken(botToken);
-        const command = buildAllowlistCommand();
-        // Stryker disable ObjectLiteral: post body object is configuration
-        await rest.post(
-            Routes.applicationCommands(applicationId),
-            { body: command.toJSON() }
-        );
-        // Stryker restore ObjectLiteral
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({ msg: 'Registered /allowlist slash command' });
-    } catch (err) {
-        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.error({
-            error: err instanceof Error ? err.message : String(err),
-            msg:   'Failed to register /allowlist slash command',
-        });
-        // Stryker restore ObjectLiteral,StringLiteral
-        // Continue — command registration failure is non-fatal
-    }
-    // Stryker restore BlockStatement
-}

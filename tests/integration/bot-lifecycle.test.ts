@@ -12,12 +12,11 @@ import type { StreamTracker } from '@/agent/stream-tracker';
 import * as configLoader from '@/config/loader';
 import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/config/schemas';
 import { createApp, type App } from '@/index';
-import * as caldavIntegration from '@/integrations/caldav';
 import * as discordBot from '@/integrations/discord/bot';
 import type { DiscordBot } from '@/integrations/discord/bot';
 import * as channelRegistryBackendModule from '@/integrations/discord/channel-registry/backend';
 import * as channelRegistryManagerModule from '@/integrations/discord/channel-registry/manager';
-import * as discordContactCommands from '@/integrations/discord/contact-commands';
+import * as registerCommandsModule from '@/integrations/discord/register-commands';
 import { createGuildId } from '@/integrations/discord/types';
 import * as dynamoClient from '@/storage/client';
 
@@ -107,8 +106,7 @@ describe('Bot Lifecycle Integration', () => {
                 tableName: 'IsambardMemory',
             }),
             // Mock slash command registration (avoids real HTTP requests to Discord API on app.start())
-            spyOn(caldavIntegration, 'registerCalendarCommand').mockResolvedValue(undefined),
-            spyOn(discordContactCommands, 'registerContactCommand').mockResolvedValue(undefined),
+            spyOn(registerCommandsModule, 'registerAllCommands').mockResolvedValue(undefined),
             // @ts-expect-error - Mocking class constructor
             spyOn(channelRegistryBackendModule, 'ChannelRegistryBackend').mockReturnValue(mockChannelRegistryBackend as unknown as InstanceType<typeof channelRegistryBackendModule.ChannelRegistryBackend>),
             // @ts-expect-error - Mocking class constructor
