@@ -113,7 +113,7 @@ function buildVideoEmbedHint(playlists: string[]): string | undefined {
     const label = playlists.length === 1 ? 'This response contains a video embed' : 'This response contains video embeds';
     const lines  = playlists.map(url => `  - ${url}`);
     // Stryker disable next-line StringLiteral: hint message is informational only
-    return `Note: ${label}. Use the processLocalVideoEmbed tool to analyze:\n${lines.join('\n')}`;
+    return `Note: ${label}. Use the processVideoEmbed tool to analyze:\n${lines.join('\n')}`;
 }
 
 export function createBskyMCPServer(options: BskyMCPServerOptions) {

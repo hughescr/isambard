@@ -1907,7 +1907,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.content).toHaveLength(2);
             const hint = textContent(result.content[1]);
-            expect(hint).toContain('processLocalVideoEmbed');
+            expect(hint).toContain('processVideoEmbed');
             expect(hint).toContain('https://video.bsky.app/watch/abc/playlist.m3u8');
         });
 
