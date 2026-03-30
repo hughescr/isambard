@@ -2387,4 +2387,80 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');
         });
     });
+
+    // -------------------------------------------------------------------------
+    // processVideoEmbed tool — path validation
+    // -------------------------------------------------------------------------
+
+    describe('processVideoEmbed tool — path validation', () => {
+        test('should return error when outputDir contains path traversal', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'processVideoEmbed');
+
+            const result = await handler({ url: 'https://example.com/video.m3u8', outputDir: '../../../tmp/evil' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Output directory must be within the working directory');
+        });
+
+        test('should return error when outputDir is an absolute path outside cwd', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'processVideoEmbed');
+
+            const result = await handler({ url: 'https://example.com/video.m3u8', outputDir: '/etc/evil' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Output directory must be within the working directory');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // getVideoFrames tool — path validation and frame count cap
+    // -------------------------------------------------------------------------
+
+    describe('getVideoFrames tool — path validation and frame count cap', () => {
+        test('should return error when videoPath contains path traversal', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getVideoFrames');
+
+            const result = await handler({ videoPath: '../../../etc/passwd', startTime: 0, endTime: 5, count: 3 });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toMatch(/outside the working directory|SECURITY/u);
+        });
+
+        test('should reject frame count exceeding max via Zod schema', () => {
+            const server         = createBskyMCPServer({ client: mockClient });
+            const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getVideoFrames;
+            const countSchema    = registeredTool.inputSchema.shape.count as { safeParse: (v: unknown) => { success: boolean } };
+            const parseResult    = countSchema.safeParse(21);
+
+            expect(parseResult.success).toBe(false);
+        });
+
+        test('should accept frame count at the max', () => {
+            const server         = createBskyMCPServer({ client: mockClient });
+            const registeredTool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.getVideoFrames;
+            const countSchema    = registeredTool.inputSchema.shape.count as { safeParse: (v: unknown) => { success: boolean } };
+            const parseResult    = countSchema.safeParse(20);
+
+            expect(parseResult.success).toBe(true);
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // generateVideoSpectrogram tool — path validation
+    // -------------------------------------------------------------------------
+
+    describe('generateVideoSpectrogram tool — path validation', () => {
+        test('should return error when videoPath contains path traversal', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'generateVideoSpectrogram');
+
+            const result = await handler({ videoPath: '../../../etc/passwd' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toMatch(/outside the working directory|SECURITY/u);
+        });
+    });
 });

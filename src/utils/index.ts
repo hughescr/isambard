@@ -8,6 +8,7 @@ export {
 } from './time';
 
 export {
+    validateFilePath,
     validateFilePaths
 } from './path-validator';
 

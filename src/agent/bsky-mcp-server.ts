@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -5,7 +6,7 @@ import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
 import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend } from '@/integrations/bsky';
 import type { SendRateLimiter } from '@/integrations/email';
-import { processVideo, extractFramesInRange, generateSpectrogram, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
+import { processVideo, extractFramesInRange, generateSpectrogram, createSpawnRunner, createBinarySpawnRunner, validateFilePath } from '@/utils';
 
 /** Shared pagination schema fields for feed tools that support checkpointing. */
 const FEED_PAGINATION_SCHEMA = {
@@ -672,6 +673,11 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 },
                 // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
                 async (args): Promise<CallToolResult> => {
+                    const resolved = path.resolve(process.cwd(), args.outputDir);
+                    const relative = path.relative(process.cwd(), resolved);
+                    if(relative.startsWith('..')) {
+                        return mcpErrorResult('Output directory must be within the working directory');
+                    }
                     try {
                         const result = await processVideo(args.url, args.outputDir, {
                             run:       createSpawnRunner(),
@@ -709,12 +715,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     startTime: z.number().describe('Start time in seconds'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     endTime:   z.number().describe('End time in seconds'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    count:     z.number().int().positive().describe('Number of frames to extract'),
+                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .max(20) is Zod schema configuration
+                    count:     z.number().int().positive().max(20).describe('Number of frames to extract (max 20)'),
                 },
                 // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
                 async (args): Promise<CallToolResult> => {
                     try {
+                        await validateFilePath(args.videoPath);
+                        if(args.endTime <= args.startTime) {
+                            return mcpErrorResult('endTime must be greater than startTime');
+                        }
                         const frames = await extractFramesInRange(
                             args.videoPath,
                             args.startTime,
@@ -753,6 +763,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
                 async (args): Promise<CallToolResult> => {
                     try {
+                        await validateFilePath(args.videoPath);
                         const image = await generateSpectrogram(args.videoPath, createBinarySpawnRunner());
                         return {
                             content: [{
