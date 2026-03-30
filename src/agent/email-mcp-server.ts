@@ -8,7 +8,7 @@ import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { mcpErrorResult, mcpTextResult } from './mcp-helpers';
 import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter, type EmailAllowlist  } from '@/integrations/email';
-import { sanitizeFilename, deduplicateFilename } from '@/utils';
+import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
 /**
  * Format an email address for display to Claude in MCP tool responses.
  * WARNING: NOT RFC 2822 compliant — does NOT quote or escape special characters in names.
@@ -132,6 +132,7 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
  * Returns lines suitable for appending to the email content display.
  */
 // Stryker disable all
+// eslint-disable-next-line sonarjs/cognitive-complexity -- video processing branch adds necessary branching; function handles distinct attachment type paths
 async function saveEmailAttachments(
     wildDuckClient: WildDuckClient,
     mailboxName:    string,
@@ -168,6 +169,23 @@ async function saveEmailAttachments(
                 const data = await wildDuckClient.getAttachment(mailboxName, uid, meta.id);
                 // eslint-disable-next-line no-await-in-loop -- sequential: write depends on prior fetch result
                 await writeFile(filePath, data);
+            }
+            if(meta.contentType.startsWith('video/')) {
+                try {
+                    const videoOutputDir = path.join(attachmentDir, `video-${safeFilename}`);
+                    // eslint-disable-next-line no-await-in-loop -- sequential: video processing per attachment
+                    const videoResult = await processLocalVideo(filePath, videoOutputDir, {
+                        run:       createSpawnRunner(),
+                        binaryRun: createBinarySpawnRunner(),
+                    });
+                    attachmentLines.push(`- Video: ${safeFilename} — ${videoResult.metadataMarkdown}`);
+                    for(const frame of videoResult.frames) {
+                        attachmentLines.push(`- Frame: ${frame.filename}`);
+                    }
+                    continue; // Skip the generic attachment line
+                } catch{
+                    // Fall through to generic attachment line on video processing failure
+                }
             }
             attachmentLines.push(`- attachments/email-${hash}/${safeFilename} (${meta.contentType})`);
         } catch (error) {

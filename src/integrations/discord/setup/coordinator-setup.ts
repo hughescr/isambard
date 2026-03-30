@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import {
@@ -19,6 +20,7 @@ import type { BotStateManager } from '../state';
 import type { DiscordMessageContext } from '../types';
 import { createPresenceStreamHandler } from './presence-stream-handler';
 import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
+import { processVideo } from '@/utils';
 
 /**
  * Result of processing Discord message attachments
@@ -39,7 +41,7 @@ interface ProcessedAttachments {
  * @returns Processed images and content additions for message text
  */
 // Stryker disable all: Integration function with external dependencies - tested via bot integration tests
-// eslint-disable-next-line sonarjs/cognitive-complexity -- attachment pipeline handles image fetching, format conversion, and non-image file saving; each type requires distinct branching
+// eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- attachment pipeline handles image fetching, video processing, format conversion, and non-image file saving; each type requires distinct branching
 async function processAttachments(contexts: DiscordMessageContext[]): Promise<ProcessedAttachments> {
     const allAttachments = contexts.flatMap(ctx => ctx.attachments ?? []);
     let images: FetchedImage[] = [];
@@ -75,8 +77,49 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
             }
         }
 
-        // Save non-image attachments to scratch directory
-        const nonImageAttachments = allAttachments.filter(att => !isSupportedImageType(att.contentType));
+        // Process video attachments
+        const videoAttachments = allAttachments.filter(att => att.contentType.startsWith('video/'));
+        if(videoAttachments.length > 0) {
+            const scratchDir = process.cwd();
+            const messageId = contexts[0]?.messageId ?? 'unknown';
+            const outputDir = path.join(scratchDir, 'attachments', `discord-${messageId}`);
+
+            for(const attachment of videoAttachments) {
+                try {
+                    // eslint-disable-next-line no-await-in-loop -- sequential: video processing per attachment
+                    const result = await processVideo(attachment.url, outputDir);
+                    // Frames are FetchedImage — push directly to images array for multimodal input
+                    images.push(...result.frames);
+                    contentAdditions.push(result.metadataMarkdown);
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                    logger.info({
+                        filename:    attachment.filename,
+                        contentType: attachment.contentType,
+                        frames:      result.frames.length,
+                        msg:         `Processed video attachment: ${attachment.filename}`,
+                    });
+                } catch (error) {
+                    // Graceful fallback: save as regular file
+                    // eslint-disable-next-line no-await-in-loop -- sequential: fallback save after processing failure
+                    const stored = await saveNonImageAttachment(attachment, scratchDir, messageId);
+                    if(stored) {
+                        contentAdditions.push(
+                            `[Video file saved: ${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)})]`
+                        );
+                    }
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+                    logger.warn({
+                        filename:    attachment.filename,
+                        contentType: attachment.contentType,
+                        error:       error instanceof Error ? error.message : String(error),
+                        msg:         `Failed to process video attachment, saved as file: ${attachment.filename}`,
+                    });
+                }
+            }
+        }
+
+        // Save non-image, non-video attachments to scratch directory
+        const nonImageAttachments = allAttachments.filter(att => !isSupportedImageType(att.contentType) && !att.contentType.startsWith('video/'));
         if(nonImageAttachments.length > 0) {
             const scratchDir = process.cwd();
             const messageId = contexts[0]?.messageId ?? 'unknown';

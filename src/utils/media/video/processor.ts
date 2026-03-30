@@ -18,32 +18,26 @@ export interface ProcessVideoOptions {
 }
 
 /**
- * Full video processing pipeline.
+ * Post-download video processing pipeline (steps 3–8).
  *
- * 1. Creates output directory
- * 2. Downloads video (HLS or direct HTTP)
  * 3. Extracts ffprobe metadata
  * 4. Detects scene boundaries (ffmpeg scdet)
  * 5. Extracts 3 frames per scene (begin/mid/end)
  * 6. Gets subtitles (embedded) or transcription (WhisperKit)
  * 7. Builds metadata markdown and writes it to disk
  * 8. Returns VideoProcessingResult
+ *
+ * Use this when the video has already been downloaded to disk.
+ * Use {@link processVideo} when starting from a URL.
  */
-export async function processVideo(
-    url:       string,
+export async function processLocalVideo(
+    videoPath: string,
     outputDir: string,
     options?:  ProcessVideoOptions
 ): Promise<VideoProcessingResult> {
     const run       = options?.run       ?? createSpawnRunner();
     const binaryRun = options?.binaryRun ?? createBinarySpawnRunner();
     const alt       = options?.alt;
-
-    // 1. Create output directory
-    // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir options — recursive:true is required behavior
-    await mkdir(outputDir, { recursive: true });
-
-    // 2. Download video
-    const videoPath = await downloadVideo(url, outputDir, run);
 
     // 3. Extract metadata
     const metadata = await extractMetadata(videoPath, run);
@@ -74,4 +68,29 @@ export async function processVideo(
         metadataMarkdown,
         outputDir,
     };
+}
+
+/**
+ * Full video processing pipeline.
+ *
+ * 1. Creates output directory
+ * 2. Downloads video (HLS or direct HTTP)
+ * 3–8. Delegates to {@link processLocalVideo}
+ */
+export async function processVideo(
+    url:       string,
+    outputDir: string,
+    options?:  ProcessVideoOptions
+): Promise<VideoProcessingResult> {
+    const run = options?.run ?? createSpawnRunner();
+
+    // 1. Create output directory
+    // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir options — recursive:true is required behavior
+    await mkdir(outputDir, { recursive: true });
+
+    // 2. Download video
+    const videoPath = await downloadVideo(url, outputDir, run);
+
+    // 3–8. Process the local file
+    return processLocalVideo(videoPath, outputDir, options);
 }

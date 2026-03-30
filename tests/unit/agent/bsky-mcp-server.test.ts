@@ -1885,6 +1885,96 @@ describe.concurrent('createBskyMCPServer', () => {
             const msg = parsed.messages[0] ?? {};
             expect(msg.embed).toBeUndefined();
         });
+
+        test('should append video embed hint when a message contains a video in nested embeds', async () => {
+            const mockEmbedWithVideo: BskyEmbeddedRecord = {
+                uri:       'at://did:plc:abc123/app.bsky.feed.post/vidpost',
+                cid:       'bafyvid1',
+                author:    { did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' },
+                text:      'Check this video',
+                createdAt: '2025-01-10T08:00:00.000Z',
+                indexedAt: '2025-01-10T08:00:01.000Z',
+                embeds:    [{ type: 'video', video: { cid: 'vidcid', playlist: 'https://video.bsky.app/watch/abc/playlist.m3u8' } }],
+            };
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123', embed: mockEmbedWithVideo })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            expect(result.content).toHaveLength(2);
+            const hint = textContent(result.content[1]);
+            expect(hint).toContain('processVideoEmbed');
+            expect(hint).toContain('https://video.bsky.app/watch/abc/playlist.m3u8');
+        });
+
+        test('should not append video hint when messages have no video embeds', async () => {
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123' })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            expect(result.content).toHaveLength(1);
+        });
+
+        test('should use singular label when exactly one video embed is found', async () => {
+            const mockEmbedWithVideo: BskyEmbeddedRecord = {
+                uri:       'at://did:plc:abc123/app.bsky.feed.post/vidpost',
+                cid:       'bafyvid1',
+                author:    { did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' },
+                text:      'Single video',
+                createdAt: '2025-01-10T08:00:00.000Z',
+                indexedAt: '2025-01-10T08:00:01.000Z',
+                embeds:    [{ type: 'video', video: { cid: 'vidcid', playlist: 'https://video.bsky.app/watch/one/playlist.m3u8' } }],
+            };
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123', embed: mockEmbedWithVideo })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            const hint = textContent(result.content[1]);
+            expect(hint).toContain('contains a video embed');
+            expect(hint).not.toContain('contains video embeds');
+        });
+
+        test('should use plural label when multiple video embeds are found across messages', async () => {
+            const makeVideoEmbed = (playlist: string): BskyEmbeddedRecord => ({
+                uri:       'at://did:plc:abc123/app.bsky.feed.post/vidpost',
+                cid:       'bafyvid',
+                author:    { did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' },
+                text:      'Video message',
+                createdAt: '2025-01-10T08:00:00.000Z',
+                indexedAt: '2025-01-10T08:00:01.000Z',
+                embeds:    [{ type: 'video', video: { cid: 'vidcid', playlist } }],
+            });
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [
+                    mockDirectMessage({ senderDid: 'did:plc:abc123', embed: makeVideoEmbed('https://video.bsky.app/watch/one/playlist.m3u8') }),
+                    mockDirectMessage({ senderDid: 'did:plc:abc123', embed: makeVideoEmbed('https://video.bsky.app/watch/two/playlist.m3u8') }),
+                ],
+                cursor: undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            const hint = textContent(result.content[1]);
+            expect(hint).toContain('contains video embeds');
+            expect(hint).toContain('https://video.bsky.app/watch/one/playlist.m3u8');
+            expect(hint).toContain('https://video.bsky.app/watch/two/playlist.m3u8');
+        });
     });
 
     describe('listConversations tool with embed in lastMessage', () => {

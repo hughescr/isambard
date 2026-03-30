@@ -4,7 +4,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
-import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend } from '@/integrations/bsky';
+import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend, BskyDirectMessage } from '@/integrations/bsky';
 import type { SendRateLimiter } from '@/integrations/email';
 import { processVideo, extractFramesInRange, generateSpectrogram, createSpawnRunner, createBinarySpawnRunner, validateFilePath } from '@/utils';
 
@@ -83,6 +83,35 @@ function transformConversation(convo: BskyConversation): object {
     const lastMessage = { ...msgRest, senderHandle: didToHandle.get(senderDid) ?? senderDid };
 
     return { ...convo, members, lastMessage };
+}
+
+/**
+ * Collect HLS playlist URLs from a DM message's embedded record embeds.
+ */
+function collectVideoPlaylistsFromDM(msg: BskyDirectMessage): string[] {
+    const playlists: string[] = [];
+    for(const nested of msg.embed?.embeds ?? []) {
+        if(nested.type === 'video') {
+            playlists.push(nested.video.playlist);
+        }
+    }
+    return playlists;
+}
+
+/**
+ * Build a video embed hint text block for MCP tool responses.
+ * Returns undefined when no video playlists are found.
+ */
+// eslint-disable-next-line sonarjs/function-return-type -- intentional: undefined signals no hint needed; callers guard on undefined
+function buildVideoEmbedHint(playlists: string[]): string | undefined {
+    if(playlists.length === 0) {
+        return undefined;
+    }
+    // Stryker disable next-line StringLiteral: label text is informational only — tested for presence, not exact wording
+    const label = playlists.length === 1 ? 'This response contains a video embed' : 'This response contains video embeds';
+    const lines  = playlists.map(url => `  - ${url}`);
+    // Stryker disable next-line StringLiteral: hint message is informational only
+    return `Note: ${label}. Use the processVideoEmbed tool to analyze:\n${lines.join('\n')}`;
 }
 
 export function createBskyMCPServer(options: BskyMCPServerOptions) {
@@ -504,7 +533,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             return { ...rest, senderHandle: didToHandle.get(senderDid) ?? senderDid };
                         });
 
-                        return mcpJsonResult({ messages, cursor: result.cursor });
+                        const baseResult = mcpJsonResult({ messages, cursor: result.cursor });
+
+                        // Collect video embed playlists from all messages and append hint
+                        const playlists = result.messages.flatMap(msg => collectVideoPlaylistsFromDM(msg));
+                        const hint      = buildVideoEmbedHint(playlists);
+                        if(hint) {
+                            return { ...baseResult, content: [...baseResult.content, { type: 'text' as const, text: hint }] };
+                        }
+
+                        return baseResult;
                     } catch (error) {
                         return mcpErrorResult(error);
                     }

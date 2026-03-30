@@ -34,5 +34,6 @@ export {
     extractFramesInRange,
     generateSpectrogram,
     processVideo,
+    processLocalVideo,
     type ProcessVideoOptions
 } from './video';

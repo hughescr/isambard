@@ -1,6 +1,6 @@
 import { describe, it, expect, mock, afterEach } from 'bun:test';
 import { rm } from 'node:fs/promises';
-import { processVideo } from '@/utils/media/video/processor';
+import { processVideo, processLocalVideo } from '@/utils/media/video/processor';
 import type { SpawnRunner, BinarySpawnRunner } from '@/utils/media/video/types';
 
 const FAKE_PNG = Buffer.from([0x89, 0x50, 0x4E, 0x47]);
@@ -96,6 +96,58 @@ function makeBinaryRunner(): BinarySpawnRunner {
         exitCode: 0,
     });
 }
+
+describe('processLocalVideo', () => {
+    const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-local-processor-test-${Date.now()}`;
+
+    afterEach(async () => {
+        mock.restore();
+        try {
+            await rm(TEST_DIR, { recursive: true });
+        } catch{
+            // ignore cleanup errors
+        }
+    });
+
+    it('processes a video file that already exists locally (no download step)', async () => {
+        // processLocalVideo takes a file path, not a URL — no fetch should be needed
+        const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
+        const result = await processLocalVideo(`${TEST_DIR}/input/video.mp4`, `${TEST_DIR}/output`, {
+            run,
+            binaryRun: makeBinaryRunner(),
+        });
+
+        expect(result.metadata.videoCodec).toBe('h264');
+        expect(result.metadata.width).toBe(1920);
+        expect(result.frames.length).toBeGreaterThan(0);
+        expect(result.metadataMarkdown).toContain('# Video Metadata');
+        expect(result.outputDir).toBe(`${TEST_DIR}/output`);
+    });
+
+    it('includes alt text in metadata markdown when provided', async () => {
+        const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
+        const result = await processLocalVideo(`${TEST_DIR}/input/video.mp4`, `${TEST_DIR}/output-alt`, {
+            run,
+            binaryRun: makeBinaryRunner(),
+            alt:       'A documentary about ocean life',
+        });
+
+        expect(result.metadataMarkdown).toContain('## Description');
+        expect(result.metadataMarkdown).toContain('A documentary about ocean life');
+    });
+
+    it('extracts subtitles from embedded subtitle tracks', async () => {
+        const run = makeOrchestrationRunner(FFPROBE_WITH_SUBTITLES, WHISPERKIT_OUTPUT);
+        const result = await processLocalVideo(`${TEST_DIR}/input/video.mp4`, `${TEST_DIR}/output-subs`, {
+            run,
+            binaryRun: makeBinaryRunner(),
+        });
+
+        expect(result.subtitles).toBeDefined();
+        expect(result.transcription).toBeUndefined();
+        expect(result.metadataMarkdown).toContain('## Subtitles');
+    });
+});
 
 describe('processVideo', () => {
     const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-processor-test-${Date.now()}`;
