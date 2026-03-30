@@ -1907,7 +1907,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
             expect(result.content).toHaveLength(2);
             const hint = textContent(result.content[1]);
-            expect(hint).toContain('processVideoEmbed');
+            expect(hint).toContain('processLocalVideoEmbed');
             expect(hint).toContain('https://video.bsky.app/watch/abc/playlist.m3u8');
         });
 
@@ -2498,6 +2498,42 @@ describe.concurrent('createBskyMCPServer', () => {
             const handler = getToolHandler(server, 'processVideoEmbed');
 
             const result = await handler({ url: 'https://example.com/video.m3u8', outputDir: '/etc/evil' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Output directory must be within the working directory');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // processLocalVideoEmbed tool — path validation
+    // -------------------------------------------------------------------------
+
+    describe('processLocalVideoEmbed tool — path validation', () => {
+        test('should return error when videoPath contains path traversal', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'processLocalVideoEmbed');
+
+            const result = await handler({ videoPath: '../../../etc/passwd', outputDir: 'output' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toMatch(/outside the working directory|SECURITY/u);
+        });
+
+        test('should return error when outputDir contains path traversal', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'processLocalVideoEmbed');
+
+            const result = await handler({ videoPath: 'video.mp4', outputDir: '../../../tmp/evil' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('Output directory must be within the working directory');
+        });
+
+        test('should return error when outputDir is an absolute path outside cwd', async () => {
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'processLocalVideoEmbed');
+
+            const result = await handler({ videoPath: 'video.mp4', outputDir: '/etc/evil' });
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('Output directory must be within the working directory');
