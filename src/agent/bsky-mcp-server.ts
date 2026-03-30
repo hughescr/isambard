@@ -675,7 +675,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 async (args): Promise<CallToolResult> => {
                     const resolved = path.resolve(process.cwd(), args.outputDir);
                     const relative = path.relative(process.cwd(), resolved);
-                    if(relative.startsWith('..')) {
+                    if(!relative || relative.startsWith('..')) {
                         return mcpErrorResult('Output directory must be within the working directory');
                     }
                     try {
@@ -721,12 +721,12 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
                 async (args): Promise<CallToolResult> => {
                     try {
-                        await validateFilePath(args.videoPath);
+                        const safeVideoPath = await validateFilePath(args.videoPath);
                         if(args.endTime <= args.startTime) {
                             return mcpErrorResult('endTime must be greater than startTime');
                         }
                         const frames = await extractFramesInRange(
-                            args.videoPath,
+                            safeVideoPath,
                             args.startTime,
                             args.endTime,
                             args.count,
@@ -763,8 +763,8 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
                 async (args): Promise<CallToolResult> => {
                     try {
-                        await validateFilePath(args.videoPath);
-                        const image = await generateSpectrogram(args.videoPath, createBinarySpawnRunner());
+                        const safeVideoPath = await validateFilePath(args.videoPath);
+                        const image = await generateSpectrogram(safeVideoPath, createBinarySpawnRunner());
                         return {
                             content: [{
                                 type:     'image' as const,
