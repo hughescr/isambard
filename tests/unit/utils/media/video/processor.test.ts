@@ -1,4 +1,5 @@
-import { describe, it, expect, mock, afterEach } from 'bun:test';
+import { describe, it, expect, mock, spyOn, afterEach } from 'bun:test';
+import * as fsPromises from 'node:fs/promises';
 import { rm } from 'node:fs/promises';
 import { processVideo, processLocalVideo } from '@/utils/media/video/processor';
 import type { SpawnRunner, BinarySpawnRunner } from '@/utils/media/video/types';
@@ -107,6 +108,21 @@ describe('processLocalVideo', () => {
         } catch{
             // ignore cleanup errors
         }
+    });
+
+    it('creates the output directory before processing', async () => {
+        const mkdirSpy = spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
+        // Mock writeFile too so the test doesn't fail on missing dir
+        spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+
+        const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
+        const outputDir = `${TEST_DIR}/mkdir-test-output`;
+        await processLocalVideo(`${TEST_DIR}/input/video.mp4`, outputDir, {
+            run,
+            binaryRun: makeBinaryRunner(),
+        });
+
+        expect(mkdirSpy).toHaveBeenCalledWith(outputDir, { recursive: true });
     });
 
     it('processes a video file that already exists locally (no download step)', async () => {

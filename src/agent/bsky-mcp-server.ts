@@ -86,7 +86,9 @@ function transformConversation(convo: BskyConversation): object {
 }
 
 /**
- * Collect HLS playlist URLs from a DM message's embedded record embeds.
+ * Collects video playlist URLs from a DM's embedded record.
+ * Note: Only covers videos nested in quoted/forwarded posts, not direct video sends.
+ * Direct video embeds in DMs would require extending normalizeMessage to handle non-record embeds.
  */
 function collectVideoPlaylistsFromDM(msg: BskyDirectMessage): string[] {
     const playlists: string[] = [];

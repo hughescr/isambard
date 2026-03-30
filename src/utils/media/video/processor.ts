@@ -39,6 +39,10 @@ export async function processLocalVideo(
     const binaryRun = options?.binaryRun ?? createBinarySpawnRunner();
     const alt       = options?.alt;
 
+    // Ensure output directory exists
+    // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir options — recursive:true is required behavior
+    await mkdir(outputDir, { recursive: true });
+
     // 3. Extract metadata
     const metadata = await extractMetadata(videoPath, run);
 
@@ -73,9 +77,8 @@ export async function processLocalVideo(
 /**
  * Full video processing pipeline.
  *
- * 1. Creates output directory
- * 2. Downloads video (HLS or direct HTTP)
- * 3–8. Delegates to {@link processLocalVideo}
+ * 1. Downloads video (HLS or direct HTTP)
+ * 2–7. Delegates to {@link processLocalVideo} (which creates outputDir and runs steps 3–8)
  */
 export async function processVideo(
     url:       string,
@@ -83,10 +86,6 @@ export async function processVideo(
     options?:  ProcessVideoOptions
 ): Promise<VideoProcessingResult> {
     const run = options?.run ?? createSpawnRunner();
-
-    // 1. Create output directory
-    // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir options — recursive:true is required behavior
-    await mkdir(outputDir, { recursive: true });
 
     // 2. Download video
     const videoPath = await downloadVideo(url, outputDir, run);

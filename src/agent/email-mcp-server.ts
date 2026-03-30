@@ -180,10 +180,11 @@ async function saveEmailAttachments(
                     });
                     attachmentLines.push(`- Video: ${safeFilename} — ${videoResult.metadataMarkdown}`);
                     for(const frame of videoResult.frames) {
-                        attachmentLines.push(`- Frame: ${frame.filename}`);
+                        attachmentLines.push(`  - Frame: ${videoOutputDir}/${frame.filename}`);
                     }
                     continue; // Skip the generic attachment line
-                } catch{
+                } catch (videoError) {
+                    logger.warn({ error: videoError instanceof Error ? videoError.message : String(videoError), filename: safeFilename, msg: 'Video processing failed, using generic attachment reference' });
                     // Fall through to generic attachment line on video processing failure
                 }
             }
