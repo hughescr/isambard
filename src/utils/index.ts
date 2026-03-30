@@ -34,6 +34,19 @@ export {
 } from './retry';
 
 export {
+    processVideo,
+    extractFramesInRange,
+    generateSpectrogram,
+    type VideoProcessingResult,
+    type VideoMetadata,
+    type TranscriptionResult,
+    type SpawnRunner,
+    type BinarySpawnRunner,
+    createSpawnRunner,
+    createBinarySpawnRunner
+} from './media';
+
+export {
     NATIVE_IMAGE_TYPES,
     CONVERTIBLE_IMAGE_TYPES,
     SUPPORTED_IMAGE_TYPES,
