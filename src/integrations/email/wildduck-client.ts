@@ -20,6 +20,9 @@ const SPECIAL_USE_FLAGS: Record<string, string> = {
 };
 // Stryker restore StringLiteral,ObjectLiteral
 
+// Stryker disable next-line ArithmeticOperator: timeout value is configuration
+const REQUEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -882,6 +885,7 @@ export class WildDuckClient {
         const response = await fetch(`${this.options.url}${path}`, {
             ...options,
             headers,
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
 
         if(response.status === 401) {

@@ -90,8 +90,12 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         password:         emailConfig.password,
         maxBodySizeBytes: emailConfig.maxBodySizeBytes,
     });
-    await wildDuckClient.init();
     // Stryker restore ObjectLiteral,StringLiteral
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Starting WildDuck client...');
+    await wildDuckClient.init();
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('WildDuck client initialized');
 
     // Create processor with Discord admin channel callbacks
     // Stryker disable ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral: EmailProcessor config and callbacks are integration wiring - not unit testable
@@ -219,6 +223,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration
 
     // Register /allowlist slash command with Discord
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Registering /allowlist slash command...');
     await registerAllowlistCommand(botToken, applicationId);
 
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting

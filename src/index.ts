@@ -46,7 +46,11 @@ export interface App {
 // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- createApp is a composition root; branching is inherent — wires email, bsky, and all optional integrations
 export async function createApp(): Promise<App> {
     // Clean up stale session files from previous hot reloads
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Cleaning up stale sessions...');
     await cleanupAllStaleSessions();
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Stale sessions cleaned up');
 
     // Load configuration (required)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
@@ -81,6 +85,8 @@ export async function createApp(): Promise<App> {
     if(config.email) {
         // Stryker disable BlockStatement: try-catch wraps email setup - error handling
         try {
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Starting email integration...');
             emailSetup = await setupEmail({
                 emailConfig:        config.email,
                 docClient:          storage.docClient,
@@ -114,7 +120,11 @@ export async function createApp(): Promise<App> {
                 appPassword: config.bsky.appPassword,
                 serviceUrl:  config.bsky.serviceUrl,
             });
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Logging into Bluesky...');
             await bskyClient.login();
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Bluesky login successful');
         } catch (err) {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({
@@ -134,6 +144,8 @@ export async function createApp(): Promise<App> {
     if(bskyClient && config.email) {
         // Stryker disable BlockStatement: try-catch wraps bsky safety rails setup - error handling
         try {
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Setting up Bluesky safety rails...');
             bskySetup = await setupBsky({
                 bskyClient,
                 docClient:             storage.docClient,
@@ -269,8 +281,14 @@ export async function createApp(): Promise<App> {
     });
 
     // Load plugins and create agent
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Loading plugins...');
     // Stryker disable next-line StringLiteral: Filesystem path is configuration
     const plugins = await loadPlugins(path.join(path.resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Plugins loaded');
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Creating Claude agent...');
     const agent = createClaudeAgent({
         contextBuilder:             contextLayer.contextBuilder,
         memoryMcpServer:            mcpServers.memoryMcpServer,
@@ -286,9 +304,15 @@ export async function createApp(): Promise<App> {
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,
     });
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Claude agent created');
 
     // Load identity
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Loading identity context...');
     const identityContext = await loadIdentityContext(config.agent.oauthToken, contextLayer.contextBuilder);
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Identity context loaded');
 
     // Construct allowlist command handler externally (after both email and bsky setups are done)
     // so it can manage both the email and Bluesky allowlists from a single /allowlist command.
@@ -313,6 +337,8 @@ export async function createApp(): Promise<App> {
     const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId);
 
     // Create Discord bot
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Creating Discord bot...');
     const bot: DiscordBot = createDiscordBot({
         config:            config.discord,
         perchConfig:       config.perch,
@@ -335,6 +361,8 @@ export async function createApp(): Promise<App> {
         activityLogger,
         historyCoordinator,
     });
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Discord bot created');
 
     let isStopping = false;
 
@@ -343,9 +371,21 @@ export async function createApp(): Promise<App> {
             isStopping = false;
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Starting Isambard application...');
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Connecting to Discord...');
             await bot.start();
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Discord connected');
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Registering /calendar slash command...');
             await registerCalendarCommand(config.discord.botToken, config.discord.applicationId);
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Calendar command registered');
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Registering /contact slash command...');
             await registerContactCommand(config.discord.botToken, config.discord.applicationId);
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Contact command registered');
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.start();

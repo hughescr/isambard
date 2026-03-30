@@ -72,6 +72,8 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
 
     // Create and load allowlist from DynamoDB into memory cache
     const allowlist = new BskyAllowlist(docClient, tableName);
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Loading Bluesky allowlist...');
     await allowlist.load();
 
     // Create rejection backend for persisting admin-rejected posts/DMs

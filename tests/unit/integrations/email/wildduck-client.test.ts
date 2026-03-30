@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import { WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
 
@@ -98,6 +98,7 @@ function makeErrorResponseWithBody(body: string, status = 400): Response {
 // ---------------------------------------------------------------------------
 describe('WildDuckClient', () => {
     beforeEach(() => {
+        jest.useFakeTimers();
         mockFetch.mockClear();
         mockLogger.warn.mockClear();
         globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -105,6 +106,7 @@ describe('WildDuckClient', () => {
 
     afterEach(() => {
         globalThis.fetch = originalFetch;
+        jest.useRealTimers();
     });
 
     // -----------------------------------------------------------------------
@@ -693,6 +695,22 @@ describe('WildDuckClient', () => {
         mockFetch.mockClear();
         return client;
     }
+
+    // -----------------------------------------------------------------------
+    // makeRequest() — fetch options
+    // -----------------------------------------------------------------------
+    describe('makeRequest() fetch options', () => {
+        test('passes an AbortSignal to fetch for timeout enforcement', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.search({});
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(options.signal).toBeInstanceOf(AbortSignal);
+        });
+    });
 
     // -----------------------------------------------------------------------
     // getUserAddresses()
