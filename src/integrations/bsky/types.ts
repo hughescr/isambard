@@ -1,3 +1,5 @@
+import type { BskyPostEmbed, BskyFacet, BskyEmbeddedRecord } from './embeds';
+
 /**
  * Normalized Bluesky author profile.
  */
@@ -50,6 +52,8 @@ export interface BskyPost {
     indexedAt:   string
     viewer?:     BskyViewerState
     replyRef?:   BskyReplyRef
+    embed?:      BskyPostEmbed
+    facets?:     BskyFacet[]
 }
 
 /**
@@ -94,6 +98,8 @@ export interface BskyDirectMessage {
     text:      string
     senderDid: string
     sentAt:    string
+    embed?:    BskyEmbeddedRecord
+    facets?:   BskyFacet[]
 }
 
 /**

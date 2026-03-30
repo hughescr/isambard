@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
 import type { BskyAllowlist, BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
+import type { BskyEmbeddedRecord } from '../../../src/integrations/bsky/embeds';
 import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integrations/bsky/rejection-backend';
 import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import type { SendRateLimiter } from '../../../src/integrations/email';
@@ -1843,6 +1844,75 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(result.isError).toBeUndefined();
             const parsed = JSON.parse(textContent(result.content[0])) as { messages: unknown[] };
             expect(parsed.messages).toHaveLength(1);
+        });
+
+        test('should pass through embed field when message has a forwarded post', async () => {
+            const mockEmbed: BskyEmbeddedRecord = {
+                uri:       'at://did:plc:abc123/app.bsky.feed.post/forwarded1',
+                cid:       'bafyforwarded1',
+                author:    { did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' },
+                text:      'Original post text',
+                createdAt: '2025-01-10T08:00:00.000Z',
+                indexedAt: '2025-01-10T08:00:01.000Z',
+            };
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123', embed: mockEmbed })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { messages: Record<string, unknown>[] };
+            const msg = parsed.messages[0] ?? {};
+            expect(msg.embed).toBeDefined();
+            expect((msg.embed as BskyEmbeddedRecord).uri).toBe('at://did:plc:abc123/app.bsky.feed.post/forwarded1');
+            expect((msg.embed as BskyEmbeddedRecord).text).toBe('Original post text');
+        });
+
+        test('should not include embed field in response when message has no embed', async () => {
+            (mockClient.getMessages as ReturnType<typeof mock>).mockResolvedValueOnce({
+                messages: [mockDirectMessage({ senderDid: 'did:plc:abc123' })],
+                cursor:   undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'getDirectMessages');
+
+            const result = await handler({ recipients: ['alice.bsky.social'] });
+
+            const parsed = JSON.parse(textContent(result.content[0])) as { messages: Record<string, unknown>[] };
+            const msg = parsed.messages[0] ?? {};
+            expect(msg.embed).toBeUndefined();
+        });
+    });
+
+    describe('listConversations tool with embed in lastMessage', () => {
+        test('should pass through embed field in lastMessage of conversations', async () => {
+            const mockEmbed: BskyEmbeddedRecord = {
+                uri:       'at://did:plc:abc123/app.bsky.feed.post/shared1',
+                cid:       'bafyshared1',
+                author:    { did: 'did:plc:abc123', handle: 'alice.bsky.social', displayName: 'Alice' },
+                text:      'Shared post text',
+                createdAt: '2025-01-14T09:00:00.000Z',
+                indexedAt: '2025-01-14T09:00:01.000Z',
+            };
+            (mockClient.listConversations as ReturnType<typeof mock>).mockResolvedValueOnce({
+                conversations: [mockConversation({
+                    lastMessage: mockDirectMessage({ senderDid: 'did:plc:abc123', embed: mockEmbed }),
+                })],
+                cursor: undefined,
+            });
+            const server  = createBskyMCPServer({ client: mockClient });
+            const handler = getToolHandler(server, 'listConversations');
+
+            const result = await handler({});
+
+            const parsed  = JSON.parse(textContent(result.content[0])) as { conversations: { lastMessage?: Record<string, unknown> }[] };
+            const lastMsg = parsed.conversations[0]?.lastMessage ?? {};
+            expect(lastMsg.embed).toBeDefined();
+            expect((lastMsg.embed as BskyEmbeddedRecord).uri).toBe('at://did:plc:abc123/app.bsky.feed.post/shared1');
+            expect((lastMsg.embed as BskyEmbeddedRecord).text).toBe('Shared post text');
         });
     });
 

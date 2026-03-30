@@ -100,6 +100,40 @@ mock.module('@atproto/api', () => ({
             return record.$type === 'chat.bsky.convo.defs#messageView' || (typeof record.text === 'string' && typeof record.sender === 'object' && record.sender !== null);
         },
     },
+    AppBskyEmbedRecord: {
+        isView: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'app.bsky.embed.record#view' || (typeof record.record === 'object' && record.record !== null);
+        },
+        isViewRecord: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'app.bsky.embed.record#viewRecord' || (typeof record.uri === 'string' && typeof record.cid === 'string' && typeof record.author === 'object' && record.author !== null && typeof record.value === 'object' && record.value !== null);
+        },
+    },
+    AppBskyEmbedImages: {
+        isView: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'app.bsky.embed.images#view';
+        },
+    },
+    AppBskyEmbedVideo: {
+        isView: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'app.bsky.embed.video#view';
+        },
+    },
+    AppBskyEmbedExternal: {
+        isView: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'app.bsky.embed.external#view';
+        },
+    },
+    AppBskyEmbedRecordWithMedia: {
+        isView: (v: unknown) => {
+            const record = v as Record<string, unknown>;
+            return record.$type === 'app.bsky.embed.recordWithMedia#view';
+        },
+    },
 }));
 
 // Import AFTER mocks are registered
@@ -1735,6 +1769,236 @@ describe.concurrent('BlueskyClient', () => {
             }
             expect(thrownError).toBeInstanceOf(BskyAuthError);
         });
+
+        test('normalizes embedded record URI and basic fields when message has a forwarded post', async () => {
+            const MESSAGE_WITH_EMBED = {
+                ...MESSAGE_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:       'app.bsky.embed.record#viewRecord',
+                        uri:         'at://did:plc:author123/app.bsky.feed.post/forwarded1',
+                        cid:         'bafyforwarded1',
+                        author:      CONVO_MEMBER,
+                        value:       { text: 'Original post text', createdAt: '2025-01-10T08:00:00.000Z' },
+                        indexedAt:   '2025-01-10T08:00:01.000Z',
+                        replyCount:  3,
+                        likeCount:   10,
+                        repostCount: 2,
+                    },
+                },
+            };
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_WITH_EMBED] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages).toHaveLength(1);
+            const embed = result.messages[0]?.embed;
+            expect(embed).toBeDefined();
+            expect(embed?.uri).toBe('at://did:plc:author123/app.bsky.feed.post/forwarded1');
+            expect(embed?.cid).toBe('bafyforwarded1');
+            expect(embed?.text).toBe('Original post text');
+            expect(embed?.createdAt).toBe('2025-01-10T08:00:00.000Z');
+            expect(embed?.indexedAt).toBe('2025-01-10T08:00:01.000Z');
+        });
+
+        test('normalizes embedded record counts and author when message has a forwarded post', async () => {
+            const MESSAGE_WITH_EMBED = {
+                ...MESSAGE_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:       'app.bsky.embed.record#viewRecord',
+                        uri:         'at://did:plc:author123/app.bsky.feed.post/forwarded1',
+                        cid:         'bafyforwarded1',
+                        author:      CONVO_MEMBER,
+                        value:       { text: 'Original post text', createdAt: '2025-01-10T08:00:00.000Z' },
+                        indexedAt:   '2025-01-10T08:00:01.000Z',
+                        replyCount:  3,
+                        likeCount:   10,
+                        repostCount: 2,
+                    },
+                },
+            };
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_WITH_EMBED] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            const embed = result.messages[0]?.embed;
+            expect(embed?.replyCount).toBe(3);
+            expect(embed?.likeCount).toBe(10);
+            expect(embed?.repostCount).toBe(2);
+            expect(embed?.author.handle).toBe('alice.bsky.social');
+        });
+
+        test('omits embed when message has no embed field', async () => {
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_VIEW] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.embed).toBeUndefined();
+        });
+
+        test('omits embed when embed record is not a ViewRecord (e.g. ViewNotFound)', async () => {
+            const MESSAGE_WITH_NOT_FOUND_EMBED = {
+                ...MESSAGE_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:    'app.bsky.embed.record#viewNotFound',
+                        uri:      'at://did:plc:author123/app.bsky.feed.post/gone',
+                        notFound: true,
+                    },
+                },
+            };
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_WITH_NOT_FOUND_EMBED] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.embed).toBeUndefined();
+        });
+
+        test('normalizes embedded record in lastMessage of listConversations', async () => {
+            const MESSAGE_WITH_EMBED = {
+                $type:  'chat.bsky.convo.defs#messageView',
+                id:     'msg-embed',
+                rev:    'rev-embed',
+                text:   'Check this out',
+                sender: { did: 'did:plc:member1' },
+                sentAt: '2025-01-15T11:00:00.000Z',
+                embed:  {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:     'app.bsky.embed.record#viewRecord',
+                        uri:       'at://did:plc:author123/app.bsky.feed.post/shared1',
+                        cid:       'bafyshared1',
+                        author:    CONVO_MEMBER,
+                        value:     { text: 'Shared post text', createdAt: '2025-01-14T09:00:00.000Z' },
+                        indexedAt: '2025-01-14T09:00:01.000Z',
+                    },
+                },
+            };
+            mockListConvos.mockResolvedValueOnce({
+                data: { convos: [{ ...CONVO_VIEW, lastMessage: MESSAGE_WITH_EMBED }] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result    = await client.listConversations();
+            const lastEmbed = result.conversations[0]?.lastMessage?.embed;
+            expect(lastEmbed).toBeDefined();
+            expect(lastEmbed?.uri).toBe('at://did:plc:author123/app.bsky.feed.post/shared1');
+            expect(lastEmbed?.text).toBe('Shared post text');
+        });
+
+        test('omits optional count fields from embedded record when absent', async () => {
+            const MESSAGE_WITH_EMBED_NO_COUNTS = {
+                ...MESSAGE_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:     'app.bsky.embed.record#viewRecord',
+                        uri:       'at://did:plc:author123/app.bsky.feed.post/nocounts',
+                        cid:       'bafynocounts',
+                        author:    CONVO_MEMBER,
+                        value:     { text: 'No counts post', createdAt: '2025-01-10T08:00:00.000Z' },
+                        indexedAt: '2025-01-10T08:00:01.000Z',
+                    },
+                },
+            };
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_WITH_EMBED_NO_COUNTS] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            const embed  = result.messages[0]?.embed;
+            expect(embed).toBeDefined();
+            expect(embed?.replyCount).toBeUndefined();
+            expect(embed?.likeCount).toBeUndefined();
+            expect(embed?.repostCount).toBeUndefined();
+        });
+
+        test('falls back to empty string for embedded record text when value.text is not a string', async () => {
+            const MESSAGE_WITH_NON_STRING_VALUE = {
+                ...MESSAGE_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:     'app.bsky.embed.record#viewRecord',
+                        uri:       'at://did:plc:author123/app.bsky.feed.post/notext',
+                        cid:       'bafynotext',
+                        author:    CONVO_MEMBER,
+                        value:     { text: 42, createdAt: '2025-01-10T08:00:00.000Z' },
+                        indexedAt: '2025-01-10T08:00:01.000Z',
+                    },
+                },
+            };
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_WITH_NON_STRING_VALUE] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.embed?.text).toBe('');
+        });
+
+        test('falls back to empty string for embedded record createdAt when value.createdAt is not a string', async () => {
+            const MESSAGE_WITH_NO_CREATED_AT = {
+                ...MESSAGE_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:     'app.bsky.embed.record#viewRecord',
+                        uri:       'at://did:plc:author123/app.bsky.feed.post/nocreatedat',
+                        cid:       'bafynocreatedat',
+                        author:    CONVO_MEMBER,
+                        value:     { text: 'Some text', createdAt: null },
+                        indexedAt: '2025-01-10T08:00:01.000Z',
+                    },
+                },
+            };
+            mockGetMessages.mockResolvedValueOnce({
+                data: { messages: [MESSAGE_WITH_NO_CREATED_AT] },
+            });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.embed?.createdAt).toBe('');
+        });
+
+        test('deduplicates DID lookups across multiple messages in a single getMessages call', async () => {
+            const MENTION_FACET = {
+                index:    { byteStart: 0, byteEnd: 20 },
+                features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:crossmsg123' }],
+            };
+            const MESSAGE_A = {
+                ...MESSAGE_VIEW,
+                id:     'msg-a',
+                facets: [MENTION_FACET],
+            };
+            const MESSAGE_B = {
+                ...MESSAGE_VIEW,
+                id:     'msg-b',
+                facets: [MENTION_FACET],
+            };
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE_A, MESSAGE_B] } });
+            mockGetProfile.mockResolvedValue({ data: { did: 'did:plc:crossmsg123', handle: 'crossmsg.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            // getProfile should only be called once even though both messages mention the same DID
+            expect(mockGetProfile).toHaveBeenCalledTimes(1);
+            expect(result.messages[0]?.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'crossmsg.bsky.social' });
+            expect(result.messages[1]?.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'crossmsg.bsky.social' });
+        });
     });
 
     // -----------------------------------------------------------------------
@@ -1823,6 +2087,574 @@ describe.concurrent('BlueskyClient', () => {
                 thrownError = e;
             }
             expect(thrownError).toBeInstanceOf(BskyAuthError);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Post embed normalization (normalizePostEmbed via getPost / getFeed)
+    // -----------------------------------------------------------------------
+
+    describe('post embed normalization', () => {
+        test('normalizes image embed in a post', async () => {
+            const POST_WITH_IMAGE_EMBED = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.images#view',
+                    images: [
+                        {
+                            thumb:    'https://cdn.bsky.app/thumb.jpg',
+                            fullsize: 'https://cdn.bsky.app/full.jpg',
+                            alt:      'A test image',
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_IMAGE_EMBED] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toEqual({
+                type:   'images',
+                images: [{
+                    thumb:    'https://cdn.bsky.app/thumb.jpg',
+                    fullsize: 'https://cdn.bsky.app/full.jpg',
+                    alt:      'A test image',
+                }],
+            });
+        });
+
+        test('normalizes image embed with aspect ratio', async () => {
+            const POST_WITH_IMAGE_AR = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.images#view',
+                    images: [
+                        {
+                            thumb:       'https://cdn.bsky.app/thumb.jpg',
+                            fullsize:    'https://cdn.bsky.app/full.jpg',
+                            alt:         'Wide image',
+                            aspectRatio: { width: 16, height: 9 },
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_IMAGE_AR] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({
+                type:   'images',
+                images: [{ aspectRatio: { width: 16, height: 9 } }],
+            });
+        });
+
+        test('normalizes video embed in a post', async () => {
+            const POST_WITH_VIDEO_EMBED = {
+                ...POST_VIEW,
+                embed: {
+                    $type:     'app.bsky.embed.video#view',
+                    cid:       'bafyvideo123',
+                    playlist:  'https://video.bsky.app/playlist.m3u8',
+                    thumbnail: 'https://video.bsky.app/thumb.jpg',
+                    alt:       'A test video',
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_VIDEO_EMBED] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toEqual({
+                type:  'video',
+                video: {
+                    cid:       'bafyvideo123',
+                    playlist:  'https://video.bsky.app/playlist.m3u8',
+                    thumbnail: 'https://video.bsky.app/thumb.jpg',
+                    alt:       'A test video',
+                },
+            });
+        });
+
+        test('normalizes video embed without optional fields', async () => {
+            const POST_WITH_MINIMAL_VIDEO = {
+                ...POST_VIEW,
+                embed: {
+                    $type:    'app.bsky.embed.video#view',
+                    cid:      'bafyvideo456',
+                    playlist: 'https://video.bsky.app/playlist2.m3u8',
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_MINIMAL_VIDEO] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({ type: 'video', video: { cid: 'bafyvideo456' } });
+            expect((post.embed as { type: 'video', video: { thumbnail?: string } })?.video.thumbnail).toBeUndefined();
+        });
+
+        test('normalizes video embed with aspect ratio', async () => {
+            const POST_WITH_VIDEO_AR = {
+                ...POST_VIEW,
+                embed: {
+                    $type:       'app.bsky.embed.video#view',
+                    cid:         'bafyvideo789',
+                    playlist:    'https://video.bsky.app/playlist3.m3u8',
+                    aspectRatio: { width: 4, height: 3 },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_VIDEO_AR] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({
+                type:  'video',
+                video: { aspectRatio: { width: 4, height: 3 } },
+            });
+        });
+
+        test('normalizes external link embed in a post', async () => {
+            const POST_WITH_EXTERNAL_EMBED = {
+                ...POST_VIEW,
+                embed: {
+                    $type:    'app.bsky.embed.external#view',
+                    external: {
+                        uri:         'https://example.com/article',
+                        title:       'Example Article',
+                        description: 'An interesting article',
+                        thumb:       'https://example.com/thumb.jpg',
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_EXTERNAL_EMBED] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toEqual({
+                type:     'external',
+                external: {
+                    uri:         'https://example.com/article',
+                    title:       'Example Article',
+                    description: 'An interesting article',
+                    thumbnail:   'https://example.com/thumb.jpg',
+                },
+            });
+        });
+
+        test('normalizes external embed without thumbnail', async () => {
+            const POST_WITH_EXTERNAL_NO_THUMB = {
+                ...POST_VIEW,
+                embed: {
+                    $type:    'app.bsky.embed.external#view',
+                    external: {
+                        uri:         'https://example.com/article2',
+                        title:       'No Thumbnail Article',
+                        description: 'No image here',
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_EXTERNAL_NO_THUMB] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({ type: 'external' });
+            expect((post.embed as { type: 'external', external: { thumbnail?: string } })?.external.thumbnail).toBeUndefined();
+        });
+
+        test('normalizes record embed (quote post)', async () => {
+            const POST_WITH_RECORD_EMBED = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:     'app.bsky.embed.record#viewRecord',
+                        uri:       'at://did:plc:author123/app.bsky.feed.post/quoted1',
+                        cid:       'bafyquoted1',
+                        author:    AUTHOR_BASIC,
+                        value:     { text: 'Quoted post text', createdAt: '2026-03-01T10:00:00.000Z' },
+                        indexedAt: '2026-03-01T10:00:01.000Z',
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_RECORD_EMBED] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({
+                type:   'record',
+                record: {
+                    uri:       'at://did:plc:author123/app.bsky.feed.post/quoted1',
+                    cid:       'bafyquoted1',
+                    text:      'Quoted post text',
+                    createdAt: '2026-03-01T10:00:00.000Z',
+                    indexedAt: '2026-03-01T10:00:01.000Z',
+                    author:    { handle: AUTHOR_BASIC.handle },
+                },
+            });
+        });
+
+        test('normalizes recordWithMedia embed', async () => {
+            const POST_WITH_RECORD_WITH_MEDIA = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.recordWithMedia#view',
+                    record: {
+                        record: {
+                            $type:     'app.bsky.embed.record#viewRecord',
+                            uri:       'at://did:plc:author123/app.bsky.feed.post/quoted2',
+                            cid:       'bafyquoted2',
+                            author:    AUTHOR_BASIC,
+                            value:     { text: 'Post with attached media', createdAt: '2026-03-02T10:00:00.000Z' },
+                            indexedAt: '2026-03-02T10:00:01.000Z',
+                        },
+                    },
+                    media: {
+                        $type:  'app.bsky.embed.images#view',
+                        images: [{
+                            thumb:    'https://cdn.bsky.app/media-thumb.jpg',
+                            fullsize: 'https://cdn.bsky.app/media-full.jpg',
+                            alt:      'Attached image',
+                        }],
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_RECORD_WITH_MEDIA] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({
+                type:   'recordWithMedia',
+                record: { uri: 'at://did:plc:author123/app.bsky.feed.post/quoted2', text: 'Post with attached media' },
+                media:  { type: 'images' },
+            });
+        });
+
+        test('returns undefined embed for recordWithMedia when record is not a ViewRecord', async () => {
+            const POST_WITH_INVALID_RWM = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.recordWithMedia#view',
+                    record: {
+                        record: {
+                            $type:    'app.bsky.embed.record#viewNotFound',
+                            uri:      'at://did:plc:author123/app.bsky.feed.post/gone',
+                            notFound: true,
+                        },
+                    },
+                    media: {
+                        $type:  'app.bsky.embed.images#view',
+                        images: [],
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_INVALID_RWM] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toBeUndefined();
+        });
+
+        test('returns undefined embed for recordWithMedia when media is unrecognized type', async () => {
+            const POST_WITH_UNKNOWN_MEDIA = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.recordWithMedia#view',
+                    record: {
+                        record: {
+                            $type:     'app.bsky.embed.record#viewRecord',
+                            uri:       'at://did:plc:author123/app.bsky.feed.post/quoted3',
+                            cid:       'bafyquoted3',
+                            author:    AUTHOR_BASIC,
+                            value:     { text: 'Post text', createdAt: '2026-03-03T10:00:00.000Z' },
+                            indexedAt: '2026-03-03T10:00:01.000Z',
+                        },
+                    },
+                    media: {
+                        $type: 'app.bsky.embed.unknown#view',
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_UNKNOWN_MEDIA] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toBeUndefined();
+        });
+
+        test('returns undefined embed for unknown embed type', async () => {
+            const POST_WITH_UNKNOWN_EMBED = {
+                ...POST_VIEW,
+                embed: {
+                    $type: 'app.bsky.embed.future#view',
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_UNKNOWN_EMBED] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toBeUndefined();
+        });
+
+        test('returns undefined embed when post has no embed field', async () => {
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_VIEW] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toBeUndefined();
+        });
+
+        test('normalizes nested embeds on a quoted post', async () => {
+            const POST_WITH_NESTED_EMBEDS = {
+                ...POST_VIEW,
+                embed: {
+                    $type:  'app.bsky.embed.record#view',
+                    record: {
+                        $type:     'app.bsky.embed.record#viewRecord',
+                        uri:       'at://did:plc:author123/app.bsky.feed.post/quoted-with-image',
+                        cid:       'bafyquotedimg1',
+                        author:    AUTHOR_BASIC,
+                        value:     { text: 'Post with an image', createdAt: '2026-03-04T10:00:00.000Z' },
+                        indexedAt: '2026-03-04T10:00:01.000Z',
+                        embeds:    [
+                            {
+                                $type:  'app.bsky.embed.images#view',
+                                images: [{
+                                    thumb:    'https://cdn.bsky.app/nested-thumb.jpg',
+                                    fullsize: 'https://cdn.bsky.app/nested-full.jpg',
+                                    alt:      'Nested image',
+                                }],
+                            },
+                        ],
+                    },
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_NESTED_EMBEDS] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.embed).toMatchObject({ type: 'record' });
+            const recordEmbed = post.embed as { type: 'record', record: { embeds?: { type: string }[] } };
+            expect(recordEmbed?.record.embeds).toHaveLength(1);
+            expect(recordEmbed?.record.embeds?.[0]).toMatchObject({ type: 'images' });
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Facet normalization (normalizeFacets via getPost / getMessages)
+    // -----------------------------------------------------------------------
+
+    describe('facet normalization', () => {
+        test('normalizes mention facet with DID resolved to handle', async () => {
+            const POST_WITH_MENTION = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 6, byteEnd: 28 },
+                            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:mentioned123' }],
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_MENTION] } });
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:mentioned123', handle: 'mentioned.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.facets).toHaveLength(1);
+            expect(post.facets?.[0]).toEqual({
+                index:    { byteStart: 6, byteEnd: 28 },
+                features: [{ type: 'mention', handle: 'mentioned.bsky.social' }],
+            });
+        });
+
+        test('falls back to DID if getProfile throws during mention resolution', async () => {
+            const POST_WITH_MENTION = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 0, byteEnd: 20 },
+                            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:unknown999' }],
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_MENTION] } });
+            mockGetProfile.mockRejectedValueOnce(new Error('Profile not found'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'did:plc:unknown999' });
+        });
+
+        test('deduplicates DID lookups within a single post (caching)', async () => {
+            const POST_WITH_DUPLICATE_MENTIONS = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 0, byteEnd: 20 },
+                            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:cached123' }],
+                        },
+                        {
+                            index:    { byteStart: 30, byteEnd: 50 },
+                            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:cached123' }],
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_DUPLICATE_MENTIONS] } });
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:cached123', handle: 'cached.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            // getProfile should only be called once even with two facets for the same DID
+            expect(mockGetProfile).toHaveBeenCalledTimes(1);
+            expect(post.facets).toHaveLength(2);
+            expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'cached.bsky.social' });
+            expect(post.facets?.[1]?.features?.[0]).toEqual({ type: 'mention', handle: 'cached.bsky.social' });
+        });
+
+        test('deduplicates DID lookups across multiple posts in a single getFeed call', async () => {
+            const MENTION_FACET = {
+                index:    { byteStart: 0, byteEnd: 20 },
+                features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:crosspost123' }],
+            };
+            const POST_A = {
+                ...POST_VIEW,
+                uri:    'at://did:plc:author123/app.bsky.feed.post/post-a',
+                cid:    'bafypost-a',
+                record: { ...POST_RECORD, facets: [MENTION_FACET] },
+            };
+            const POST_B = {
+                ...POST_VIEW,
+                uri:    'at://did:plc:author123/app.bsky.feed.post/post-b',
+                cid:    'bafypost-b',
+                record: { ...POST_RECORD, facets: [MENTION_FACET] },
+            };
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [{ post: POST_A }, { post: POST_B }], cursor: undefined } });
+            mockGetProfile.mockResolvedValue({ data: { did: 'did:plc:crosspost123', handle: 'crosspost.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            // getProfile should only be called once even though both posts mention the same DID
+            expect(mockGetProfile).toHaveBeenCalledTimes(1);
+            expect(result.items[0]?.post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'crosspost.bsky.social' });
+            expect(result.items[1]?.post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'crosspost.bsky.social' });
+        });
+
+        test('normalizes link facet', async () => {
+            const POST_WITH_LINK = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 10, byteEnd: 32 },
+                            features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.com/article' }],
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_LINK] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.facets?.[0]).toEqual({
+                index:    { byteStart: 10, byteEnd: 32 },
+                features: [{ type: 'link', uri: 'https://example.com/article' }],
+            });
+        });
+
+        test('normalizes tag facet', async () => {
+            const POST_WITH_TAG = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 20, byteEnd: 35 },
+                            features: [{ $type: 'app.bsky.richtext.facet#tag', tag: 'typescript' }],
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_TAG] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.facets?.[0]).toEqual({
+                index:    { byteStart: 20, byteEnd: 35 },
+                features: [{ type: 'tag', tag: 'typescript' }],
+            });
+        });
+
+        test('skips unknown feature types', async () => {
+            const POST_WITH_UNKNOWN_FACET = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 0, byteEnd: 10 },
+                            features: [{ $type: 'app.bsky.richtext.facet#future', data: 'something' }],
+                        },
+                    ],
+                },
+            };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_UNKNOWN_FACET] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            // Facet with all-unknown features should be omitted
+            expect(post.facets).toBeUndefined();
+        });
+
+        test('returns undefined facets when post has no facets', async () => {
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_VIEW] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            expect(post.facets).toBeUndefined();
+        });
+
+        test('omits facets when record.facets is empty array', async () => {
+            const postView = { ...POST_VIEW, record: { ...POST_RECORD, facets: [] } };
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [postView] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getPost(POST_VIEW.uri);
+            expect(result.facets).toBeUndefined();
+        });
+
+        test('normalizes facets in a DM message', async () => {
+            const MESSAGE_WITH_FACETS = {
+                ...MESSAGE_VIEW,
+                facets: [
+                    {
+                        index:    { byteStart: 0, byteEnd: 22 },
+                        features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.com' }],
+                    },
+                ],
+            };
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE_WITH_FACETS] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.facets).toHaveLength(1);
+            expect(result.messages[0]?.facets?.[0]).toEqual({
+                index:    { byteStart: 0, byteEnd: 22 },
+                features: [{ type: 'link', uri: 'https://example.com' }],
+            });
+        });
+
+        test('returns undefined facets when DM has no facets', async () => {
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE_VIEW] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.facets).toBeUndefined();
+        });
+
+        test('normalizes mention facet in a DM message', async () => {
+            const MESSAGE_WITH_MENTION_FACET = {
+                ...MESSAGE_VIEW,
+                facets: [
+                    {
+                        index:    { byteStart: 5, byteEnd: 28 },
+                        features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:dm-mentioned' }],
+                    },
+                ],
+            };
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE_WITH_MENTION_FACET] } });
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:dm-mentioned', handle: 'dm-mentioned.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-001');
+            expect(result.messages[0]?.facets?.[0]?.features?.[0]).toEqual({
+                type:   'mention',
+                handle: 'dm-mentioned.bsky.social',
+            });
         });
     });
 });

@@ -1,5 +1,6 @@
-import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost, ChatBskyConvoDefs, type ChatBskyActorDefs } from '@atproto/api';
+import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost, AppBskyEmbedRecord, AppBskyEmbedImages, AppBskyEmbedVideo, AppBskyEmbedExternal, AppBskyEmbedRecordWithMedia, type AppBskyRichtextFacet, ChatBskyConvoDefs, type ChatBskyActorDefs } from '@atproto/api';
 import { logger } from '@hughescr/logger';
+import { type BskyEmbeddedRecord, type BskyPostEmbed, type BskyFacet, type BskyFacetFeature } from '@/integrations/bsky/embeds';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
 import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
 
@@ -110,10 +111,11 @@ export class BlueskyClient {
         cursor?:   string
     ): Promise<{ items: BskyFeedItem[], cursor?: string }> {
         try {
+            const didCache = this.createDIDCache();
             if(feedName === undefined || feedName === 'following') {
                 const response = await this.agent.getTimeline({ limit, cursor });
                 return {
-                    items:  response.data.feed.map(item => this.normalizeFeedItem(item)),
+                    items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
                     cursor: response.data.cursor,
                 };
             }
@@ -129,7 +131,7 @@ export class BlueskyClient {
 
             const response = await this.agent.app.bsky.feed.getFeed({ feed: feedUri, limit, cursor });
             return {
-                items:  response.data.feed.map(item => this.normalizeFeedItem(item)),
+                items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
                 cursor: response.data.cursor,
             };
         } catch (err: unknown) {
@@ -147,9 +149,10 @@ export class BlueskyClient {
         cursor?: string
     ): Promise<{ items: BskyFeedItem[], cursor?: string }> {
         try {
+            const didCache = this.createDIDCache();
             const response = await this.agent.getAuthorFeed({ actor, limit, cursor });
             return {
-                items:  response.data.feed.map(item => this.normalizeFeedItem(item)),
+                items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
                 cursor: response.data.cursor,
             };
         } catch (err: unknown) {
@@ -169,7 +172,7 @@ export class BlueskyClient {
                 // Stryker disable next-line StringLiteral: error message is informational only
                 throw new BskyError('Post not found', undefined, { uri });
             }
-            return this.normalizePost(posts[0]);
+            return await this.normalizePost(posts[0]);
         } catch (err: unknown) {
             if(err instanceof BskyError) {
                 throw err;
@@ -235,9 +238,10 @@ export class BlueskyClient {
         cursor?: string
     ): Promise<{ posts: BskyPost[], cursor?: string }> {
         try {
+            const didCache = this.createDIDCache();
             const response = await this.agent.app.bsky.feed.searchPosts({ q: query, limit, cursor });
             return {
-                posts:  response.data.posts.map(post => this.normalizePost(post)),
+                posts:  await Promise.all(response.data.posts.map(post => this.normalizePost(post, didCache))),
                 cursor: response.data.cursor,
             };
         } catch (err: unknown) {
@@ -410,9 +414,10 @@ export class BlueskyClient {
         status?:    string
     ): Promise<{ conversations: BskyConversation[], cursor?: string }> {
         try {
+            const didCache = this.createDIDCache();
             const response = await this.requireChatAgent().chat.bsky.convo.listConvos({ limit, cursor, readState, status });
             return {
-                conversations: response.data.convos.map(convo => this.normalizeConversation(convo)),
+                conversations: await Promise.all(response.data.convos.map(convo => this.normalizeConversation(convo, didCache))),
                 cursor:        response.data.cursor,
             };
         } catch (err: unknown) {
@@ -430,7 +435,7 @@ export class BlueskyClient {
     async getConversationForMembers(memberDids: string[]): Promise<BskyConversation> {
         try {
             const response = await this.requireChatAgent().chat.bsky.convo.getConvoForMembers({ members: memberDids });
-            return this.normalizeConversation(response.data.convo);
+            return await this.normalizeConversation(response.data.convo);
         } catch (err: unknown) {
             if(err instanceof BskyError) {
                 throw err;
@@ -449,11 +454,14 @@ export class BlueskyClient {
         cursor?: string
     ): Promise<{ messages: BskyDirectMessage[], cursor?: string }> {
         try {
+            const didCache = this.createDIDCache();
             const response = await this.requireChatAgent().chat.bsky.convo.getMessages({ convoId, limit, cursor });
             return {
-                messages: response.data.messages
-                    .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
-                    .map(msg => this.normalizeMessage(msg as ChatBskyConvoDefs.MessageView)),
+                messages: await Promise.all(
+                    response.data.messages
+                        .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
+                        .map(msg => this.normalizeMessage(msg as ChatBskyConvoDefs.MessageView, didCache))
+                ),
                 cursor: response.data.cursor,
             };
         } catch (err: unknown) {
@@ -476,7 +484,7 @@ export class BlueskyClient {
                 convoId,
                 message: { text: rt.text, facets: rt.facets },
             });
-            return this.normalizeMessage(response.data);
+            return await this.normalizeMessage(response.data);
         } catch (err: unknown) {
             if(err instanceof BskyError) {
                 throw err;
@@ -535,8 +543,11 @@ export class BlueskyClient {
         };
     }
 
-    private normalizePost(post: AppBskyFeedDefs.PostView): BskyPost {
+    private async normalizePost(post: AppBskyFeedDefs.PostView, didCache?: Map<string, Promise<string>>): Promise<BskyPost> {
         const record = post.record as AppBskyFeedPost.Record;
+        const normalizedEmbed = this.normalizePostEmbed(post.embed);
+        const cache = didCache ?? this.createDIDCache();
+        const normalizedFacets = record.facets ? await this.normalizeFacets(record.facets, cache) : undefined;
         return {
             uri:         post.uri,
             cid:         post.cid,
@@ -551,6 +562,10 @@ export class BlueskyClient {
             ...(post.viewer ? { viewer: this.normalizeViewer(post.viewer) } : {}),
             // Stryker disable next-line ConditionalExpression: ternary guards optional replyRef — truthy/falsy tests both branches
             ...(record.reply ? { replyRef: { root: { uri: record.reply.root.uri, cid: record.reply.root.cid }, parent: { uri: record.reply.parent.uri, cid: record.reply.parent.cid } } } : {}),
+            // Stryker disable next-line ConditionalExpression: ternary guards optional embed normalization
+            ...(normalizedEmbed ? { embed: normalizedEmbed } : {}),
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: ternary guards optional facets — empty array means all features were unknown types
+            ...(normalizedFacets && normalizedFacets.length > 0 ? { facets: normalizedFacets } : {}),
         };
     }
 
@@ -570,9 +585,9 @@ export class BlueskyClient {
         };
     }
 
-    private normalizeFeedItem(item: AppBskyFeedDefs.FeedViewPost): BskyFeedItem {
+    private async normalizeFeedItem(item: AppBskyFeedDefs.FeedViewPost, didCache?: Map<string, Promise<string>>): Promise<BskyFeedItem> {
         const result: BskyFeedItem = {
-            post: this.normalizePost(item.post),
+            post: await this.normalizePost(item.post, didCache),
         };
 
         if(item.reply !== undefined) {
@@ -581,8 +596,8 @@ export class BlueskyClient {
 
             if(this.isPostView(parent) && this.isPostView(root)) {
                 result.reply = {
-                    parent: this.normalizePost(parent),
-                    root:   this.normalizePost(root),
+                    parent: await this.normalizePost(parent, didCache),
+                    root:   await this.normalizePost(root, didCache),
                 };
             }
         }
@@ -627,17 +642,214 @@ export class BlueskyClient {
         };
     }
 
-    private normalizeMessage(msg: ChatBskyConvoDefs.MessageView): BskyDirectMessage {
+    private normalizeEmbeddedRecord(viewRecord: AppBskyEmbedRecord.ViewRecord): BskyEmbeddedRecord {
+        const value  = viewRecord.value as { text?: unknown, createdAt?: unknown };
+        const embeds = viewRecord.embeds
+            ?.map(e => this.normalizePostEmbed(e))
+            .filter((e): e is BskyPostEmbed => e !== undefined);
+        return {
+            uri:       viewRecord.uri,
+            cid:       viewRecord.cid,
+            author:    this.normalizeAuthor(viewRecord.author),
+            text:      typeof value.text === 'string' ? value.text : '',
+            createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
+            indexedAt: viewRecord.indexedAt,
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
+            ...(viewRecord.replyCount === undefined ? {} : { replyCount: viewRecord.replyCount }),
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
+            ...(viewRecord.likeCount === undefined ? {} : { likeCount: viewRecord.likeCount }),
+            // Stryker disable next-line ObjectLiteral,EqualityOperator,ConditionalExpression: undefined check for optional numeric field — zero is a valid count
+            ...(viewRecord.repostCount === undefined ? {} : { repostCount: viewRecord.repostCount }),
+            // Stryker disable next-line ConditionalExpression: ternary guards optional nested embeds array
+            ...(embeds && embeds.length > 0 ? { embeds } : {}),
+        };
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- conditional spread in map callback produces structurally equivalent shapes
+    private normalizeImageEmbed(view: AppBskyEmbedImages.View): BskyPostEmbed {
+        return {
+            type:   'images',
+            images: view.images.map(img => ({
+                thumb:    img.thumb,
+                fullsize: img.fullsize,
+                alt:      img.alt,
+                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+                ...(img.aspectRatio ? { aspectRatio: { width: img.aspectRatio.width, height: img.aspectRatio.height } } : {}),
+            })),
+        };
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- conditional spreads produce structurally equivalent shapes
+    private normalizeVideoEmbed(view: AppBskyEmbedVideo.View): BskyPostEmbed {
+        return {
+            type:  'video',
+            video: {
+                cid:      view.cid,
+                playlist: view.playlist,
+                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+                ...(view.thumbnail ? { thumbnail: view.thumbnail } : {}),
+                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+                ...(view.alt ? { alt: view.alt } : {}),
+                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+                ...(view.aspectRatio ? { aspectRatio: { width: view.aspectRatio.width, height: view.aspectRatio.height } } : {}),
+            },
+        };
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- conditional spread produces structurally equivalent shapes
+    private normalizeExternalEmbed(view: AppBskyEmbedExternal.View): BskyPostEmbed {
+        return {
+            type:     'external',
+            external: {
+                uri:         view.external.uri,
+                title:       view.external.title,
+                description: view.external.description,
+                // Stryker disable next-line ObjectLiteral: empty spread branch — falsy path produces no properties
+                ...(view.external.thumb ? { thumbnail: view.external.thumb } : {}),
+            },
+        };
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- early return undefined when record/media normalization fails
+    private normalizeRecordWithMediaEmbed(view: AppBskyEmbedRecordWithMedia.View): BskyPostEmbed | undefined {
+        // Stryker disable next-line ConditionalExpression: type guard on embedded record — must check ViewRecord to safely cast
+        if(!AppBskyEmbedRecord.isViewRecord(view.record.record)) {
+            return undefined;
+        }
+        const normalizedRecord = this.normalizeEmbeddedRecord(view.record.record);
+        const normalizedMedia  = this.normalizePostEmbed(view.media);
+        // Stryker disable next-line ConditionalExpression: guard ensures media was successfully normalized
+        if(!normalizedMedia) {
+            return undefined;
+        }
+        return { type: 'recordWithMedia', record: normalizedRecord, media: normalizedMedia };
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- returns undefined for null/unrecognized embed types
+    private normalizePostEmbed(embed: unknown): BskyPostEmbed | undefined {
+        if(embed === undefined || embed === null) {
+            return undefined;
+        }
+        const e = embed as Record<string, unknown>;
+        // Stryker disable BlockStatement,ConditionalExpression: AT Protocol type guard chain — each isView() check is a distinct type discriminant; order matters for correctness
+        if(AppBskyEmbedImages.isView(e)) {
+            return this.normalizeImageEmbed(e as unknown as AppBskyEmbedImages.View);
+        }
+        if(AppBskyEmbedVideo.isView(e)) {
+            return this.normalizeVideoEmbed(e as unknown as AppBskyEmbedVideo.View);
+        }
+        if(AppBskyEmbedExternal.isView(e)) {
+            return this.normalizeExternalEmbed(e as unknown as AppBskyEmbedExternal.View);
+        }
+        if(AppBskyEmbedRecordWithMedia.isView(e)) {
+            return this.normalizeRecordWithMediaEmbed(e as unknown as AppBskyEmbedRecordWithMedia.View);
+        }
+        if(AppBskyEmbedRecord.isView(e) && AppBskyEmbedRecord.isViewRecord(e.record)) {
+            return { type: 'record', record: this.normalizeEmbeddedRecord(e.record as unknown as AppBskyEmbedRecord.ViewRecord) };
+        }
+        // Stryker restore BlockStatement,ConditionalExpression
+        return undefined;
+    }
+
+    private createDIDCache(): Map<string, Promise<string>> {
+        return new Map<string, Promise<string>>();
+    }
+
+    private resolveMentionDid(did: string, didCache: Map<string, Promise<string>>): Promise<string> {
+        const cached = didCache.get(did);
+        if(cached) {
+            return cached;
+        }
+        // The promise is stored in the cache before it resolves, so concurrent calls for the
+        // same DID share a single in-flight request.  The .catch ensures the promise never
+        // rejects (failed lookups fall back to the raw DID), which means the cached promise is
+        // safe to reuse even when the profile lookup fails — no thundering-herd retry.
+        const promise = this.agent.getProfile({ actor: did })
+            .then(r => r.data.handle)
+            .catch((error: unknown) => {
+                // Intentionally swallow — profile lookup failure falls back to DID as handle
+                // Stryker disable next-line StringLiteral: error message is informational only
+                logger.debug({ error }, 'Failed to resolve mention DID to handle, using DID as fallback');
+                return did;
+            });
+        didCache.set(did, promise);
+        return promise;
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- returns undefined for unknown feature types (future-proof)
+    private buildFacetFeature(f: Record<string, unknown>, didHandleMap: Map<string, string>): BskyFacetFeature | undefined {
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
+        if(f.$type === 'app.bsky.richtext.facet#mention' && typeof f.did === 'string') {
+            // Stryker disable next-line StringLiteral: default fallback — DID used as handle when not in resolution map
+            return { type: 'mention', handle: didHandleMap.get(f.did) ?? f.did };
+        }
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
+        if(f.$type === 'app.bsky.richtext.facet#link' && typeof f.uri === 'string') {
+            return { type: 'link', uri: f.uri };
+        }
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
+        if(f.$type === 'app.bsky.richtext.facet#tag' && typeof f.tag === 'string') {
+            return { type: 'tag', tag: f.tag };
+        }
+        return undefined;
+    }
+
+    private async normalizeFacets(facets: AppBskyRichtextFacet.Main[], didCache: Map<string, Promise<string>>): Promise<BskyFacet[]> {
+        // Collect unique mention DIDs across all facets
+        const mentionDids = new Set<string>();
+        for(const facet of facets) {
+            for(const feature of facet.features) {
+                const f = feature as Record<string, unknown>;
+                // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
+                if(f.$type === 'app.bsky.richtext.facet#mention' && typeof f.did === 'string') {
+                    mentionDids.add(f.did);
+                }
+            }
+        }
+
+        // Resolve all unique DIDs through cache (deduplicates across posts in same request)
+        const didEntries = await Promise.all(
+            [...mentionDids].map(async did => [did, await this.resolveMentionDid(did, didCache)] as const)
+        );
+        const didHandleMap = new Map(didEntries);
+
+        // Build normalized facets
+        const result: BskyFacet[] = [];
+        for(const facet of facets) {
+            const features = facet.features
+                .map(feature => this.buildFacetFeature(feature as Record<string, unknown>, didHandleMap))
+                .filter((f): f is BskyFacetFeature => f !== undefined);
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — only push facets with known features
+            if(features.length > 0) {
+                result.push({ index: { byteStart: facet.index.byteStart, byteEnd: facet.index.byteEnd }, features });
+            }
+        }
+
+        return result;
+    }
+
+    private async normalizeMessage(msg: ChatBskyConvoDefs.MessageView, didCache?: Map<string, Promise<string>>): Promise<BskyDirectMessage> {
+        const embed        = msg.embed;
+        // Stryker disable next-line ConditionalExpression: ternary guards optional embed normalization
+        const normalizedEmbed = (embed && AppBskyEmbedRecord.isView(embed) && AppBskyEmbedRecord.isViewRecord(embed.record))
+            ? this.normalizeEmbeddedRecord(embed.record)
+            : undefined;
+        const cache = didCache ?? this.createDIDCache();
+        const normalizedFacets = msg.facets ? await this.normalizeFacets(msg.facets, cache) : undefined;
         return {
             id:        msg.id,
             rev:       msg.rev,
             text:      msg.text,
             senderDid: msg.sender.did,
             sentAt:    msg.sentAt,
+            // Stryker disable next-line ConditionalExpression: ternary guards optional embed normalization
+            ...(normalizedEmbed ? { embed: normalizedEmbed } : {}),
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: ternary guards optional facets — empty array means all features were unknown types
+            ...(normalizedFacets && normalizedFacets.length > 0 ? { facets: normalizedFacets } : {}),
         };
     }
 
-    private normalizeConversation(convo: ChatBskyConvoDefs.ConvoView): BskyConversation {
+    private async normalizeConversation(convo: ChatBskyConvoDefs.ConvoView, didCache?: Map<string, Promise<string>>): Promise<BskyConversation> {
         return {
             id:          convo.id,
             rev:         convo.rev,
@@ -649,7 +861,7 @@ export class BlueskyClient {
             // Only normalize lastMessage if it's a MessageView (not DeletedMessageView)
             // Stryker disable next-line ConditionalExpression: ternary guards optional lastMessage normalization
             ...(convo.lastMessage && ChatBskyConvoDefs.isMessageView(convo.lastMessage)
-                ? { lastMessage: this.normalizeMessage(convo.lastMessage) }
+                ? { lastMessage: await this.normalizeMessage(convo.lastMessage, didCache) }
                 : {}),
         };
     }
