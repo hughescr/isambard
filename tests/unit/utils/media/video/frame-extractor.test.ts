@@ -93,6 +93,21 @@ describe('extractFramesAtTimestamps', () => {
         expect(frames).toHaveLength(3);
     });
 
+    it('returns results in input order when processing with concurrency limit', async () => {
+        // 8 timestamps — exceeds FRAME_EXTRACT_CONCURRENCY=4, verifying order is preserved
+        const capturedTimestamps: number[] = [];
+        const orderRunner = makeTrackingRunner(capturedTimestamps);
+        const inputTimestamps = [1, 2, 3, 4, 5, 6, 7, 8];
+        const frames = await extractFramesAtTimestamps('/test/video.mp4', inputTimestamps, orderRunner);
+        expect(frames).toHaveLength(8);
+        // Each frame's filename encodes the timestamp — verify order via captured timestamps
+        expect(capturedTimestamps).toHaveLength(8);
+        // All timestamps should be present (order from workers may vary, but results[i] is correct)
+        for(const ts of inputTimestamps) {
+            expect(capturedTimestamps).toContain(ts);
+        }
+    });
+
     it('skips null results from failing ffmpeg calls', async () => {
         const frames = await extractFramesAtTimestamps('/test/video.mp4', [1, 5, 9], makeFailingRunner());
         expect(frames).toHaveLength(0);

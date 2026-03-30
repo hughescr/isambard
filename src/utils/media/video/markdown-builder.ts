@@ -114,10 +114,16 @@ function buildTranscriptionLines(transcription: TranscriptionResult): string[] {
 export function buildMetadataMarkdown(
     metadata:       VideoMetadata,
     subtitles?:     string,
-    transcription?: TranscriptionResult
+    transcription?: TranscriptionResult,
+    alt?:           string
 ): string {
     // Stryker disable next-line StringLiteral: top-level heading is structural
     const lines: string[] = ['# Video Metadata', '', ...buildTechnicalLines(metadata)];
+
+    if(alt !== undefined) {
+        // Stryker disable next-line StringLiteral,ArrayDeclaration: description section heading and separator are structural
+        lines.push('', '## Description', '', alt);
+    }
 
     if(subtitles !== undefined) {
         // Stryker disable next-line ArrayDeclaration,StringLiteral,MethodExpression: section heading strings and .trim() are structural

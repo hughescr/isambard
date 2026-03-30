@@ -14,6 +14,7 @@ const METADATA_FILENAME = 'video-metadata.md';
 export interface ProcessVideoOptions {
     run?:       SpawnRunner
     binaryRun?: BinarySpawnRunner
+    alt?:       string
 }
 
 /**
@@ -35,6 +36,7 @@ export async function processVideo(
 ): Promise<VideoProcessingResult> {
     const run       = options?.run       ?? createSpawnRunner();
     const binaryRun = options?.binaryRun ?? createBinarySpawnRunner();
+    const alt       = options?.alt;
 
     // 1. Create output directory
     // Stryker disable next-line ObjectLiteral,BooleanLiteral: mkdir options — recursive:true is required behavior
@@ -56,7 +58,7 @@ export async function processVideo(
     const { subtitles, transcription } = await getSubtitlesOrTranscription(videoPath, metadata, outputDir, run);
 
     // 7. Build metadata markdown
-    const metadataMarkdown = buildMetadataMarkdown(metadata, subtitles, transcription);
+    const metadataMarkdown = buildMetadataMarkdown(metadata, subtitles, transcription, alt);
 
     // 8. Write markdown to disk
     // Stryker disable next-line StringLiteral: encoding option is configuration

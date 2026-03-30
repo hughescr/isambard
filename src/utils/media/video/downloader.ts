@@ -1,4 +1,3 @@
-import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { SpawnRunner } from './types';
 
@@ -51,8 +50,8 @@ export async function downloadVideo(
         throw new Error(`HTTP download failed: ${response.status} ${response.statusText}`);
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await writeFile(outputPath, buffer);
+    // Stream response body directly to disk without buffering in memory
+    await Bun.write(outputPath, response);
 
     return outputPath;
 }

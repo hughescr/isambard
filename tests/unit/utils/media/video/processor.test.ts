@@ -48,9 +48,9 @@ const FFPROBE_WITH_SUBTITLES = JSON.stringify({
 });
 
 const SCDET_STDERR = `
-[scdet @ 0x7f] lavfi.sdet.score=45.0 lavfi.sdet.time=5.000
-[scdet @ 0x7f] lavfi.sdet.score=50.0 lavfi.sdet.time=12.000
-[scdet @ 0x7f] lavfi.sdet.score=38.0 lavfi.sdet.time=17.000
+[scdet @ 0x7f] lavfi.scd.score=45.0 lavfi.scd.time=5.000
+[scdet @ 0x7f] lavfi.scd.score=50.0 lavfi.scd.time=12.000
+[scdet @ 0x7f] lavfi.scd.score=38.0 lavfi.scd.time=17.000
 `;
 
 const WHISPERKIT_OUTPUT = '[00:00:01.000 --> 00:00:03.000]  SPEAKER_00: Hello world\n';
@@ -124,6 +124,20 @@ describe('processVideo', () => {
         expect(result.frames.length).toBeGreaterThan(0);
         expect(result.metadataMarkdown).toContain('# Video Metadata');
         expect(result.outputDir).toBe(`${TEST_DIR}/test1`);
+    });
+
+    it('includes alt text in metadata markdown when provided', async () => {
+        globalThis.fetch = mock(async (): Promise<Response> => new Response(Buffer.from('fake video'), { status: 200 })) as unknown as typeof fetch;
+
+        const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
+        const result = await processVideo('https://example.com/video.mp4', `${TEST_DIR}/test-alt`, {
+            run,
+            binaryRun: makeBinaryRunner(),
+            alt:       'A beautiful sunset timelapse',
+        });
+
+        expect(result.metadataMarkdown).toContain('## Description');
+        expect(result.metadataMarkdown).toContain('A beautiful sunset timelapse');
     });
 
     it('uses HLS download for .m3u8 URLs', async () => {

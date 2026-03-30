@@ -89,7 +89,6 @@ export async function transcribeWithWhisperKit(
         '--diarization',
         '--report',
         '--report-path', outputDir,
-        '--word-timestamps',
     ]);
     // Stryker restore StringLiteral,ArrayDeclaration
 

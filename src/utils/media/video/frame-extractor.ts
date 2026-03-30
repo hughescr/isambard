@@ -1,6 +1,32 @@
 import type { FetchedImage } from '../types';
 import type { SceneInfo, BinarySpawnRunner } from './types';
 
+// Stryker disable next-line ArithmeticOperator: concurrency limit is configuration
+const FRAME_EXTRACT_CONCURRENCY = 4;
+
+/** Run fn over items with at most concurrency items in flight at once. */
+async function mapWithConcurrency<T, R>(
+    items:       T[],
+    concurrency: number,
+    fn:          (item: T) => Promise<R>
+): Promise<R[]> {
+    // Stryker disable next-line ArrayDeclaration: Array.from structural initialization — equivalent mutations break results shape
+    const results: R[] = Array.from({ length: items.length });
+    let index = 0;
+    // Stryker disable BlockStatement: worker body is tested via results array — Stryker cannot isolate the loop internals
+    async function worker(): Promise<void> {
+        while(index < items.length) {
+            const i = index++;
+            // eslint-disable-next-line no-await-in-loop -- sequential within each worker is intentional
+            results[i] = await fn(items[i]);
+        }
+    }
+    // Stryker restore BlockStatement
+    // Stryker disable next-line ArrayDeclaration,MethodExpression: Array.from structural initialization — Math.min/max produce same results (both yield all items), min just avoids excess workers
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+    return results;
+}
+
 /** Extract a single frame at a given timestamp as a FetchedImage, or null on failure. */
 async function extractFrameAt(
     videoPath: string,
@@ -65,8 +91,10 @@ export async function extractFramesAtTimestamps(
     timestamps: number[],
     run:        BinarySpawnRunner
 ): Promise<FetchedImage[]> {
-    const results = await Promise.all(
-        timestamps.map(ts => extractFrameAt(videoPath, ts, run))
+    const results = await mapWithConcurrency(
+        timestamps,
+        FRAME_EXTRACT_CONCURRENCY,
+        ts => extractFrameAt(videoPath, ts, run)
     );
 
     const frames: FetchedImage[] = [];

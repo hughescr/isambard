@@ -10,9 +10,9 @@ const FALLBACK_SCENE_COUNT = 4;
 /** Parse scdet filter output to extract scene change timestamps. */
 function parseScdetTimestamps(stderr: string): number[] {
     const timestamps: number[] = [];
-    // scdet outputs lines like: [scdet @ 0x...] lavfi.sdet.time=12.345
+    // scdet outputs lines like: [scdet @ 0x...] lavfi.scd.time=12.345
     // Stryker disable next-line Regex: regex mutations produce structurally equivalent or invalid patterns
-    const lineRe = /lavfi\.sdet\.time=(\d+(?:\.\d+)?)/g;
+    const lineRe = /lavfi\.scd\.time=(\d+(?:\.\d+)?)/g;
     // Stryker disable BlockStatement: loop body executes when regex matches; empty-string test covers loop exit
     let match    = lineRe.exec(stderr);
     while(match !== null) {
@@ -73,8 +73,14 @@ export async function detectScenes(
     // Stryker restore StringLiteral
 
     // ffmpeg writes filter output to stderr regardless of exit code
-    // Non-zero exit on null mux is normal
+    // Non-zero exit on null mux is normal; warn only when exit is non-zero AND no scdet output
     const changeTimestamps = parseScdetTimestamps(result.stderr);
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: defensive check — both branches produce same fallback result for genuine failures
+    if(result.exitCode !== 0 && changeTimestamps.length === 0) {
+        // Could be a real failure (not just the null mux exit) — fall through to fallback below
+        // eslint-disable-next-line no-console -- intentional diagnostic warning for ffmpeg failures
+        console.warn(`[scene-detector] ffmpeg exited with code ${result.exitCode} and produced no scdet output`);
+    }
 
     const scenes = buildScenes(changeTimestamps, duration);
 

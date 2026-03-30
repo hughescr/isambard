@@ -676,6 +676,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         const result = await processVideo(args.url, args.outputDir, {
                             run:       createSpawnRunner(),
                             binaryRun: createBinarySpawnRunner(),
+                            alt:       args.alt,
                         });
                         return {
                             content: [
@@ -721,6 +722,9 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                             args.count,
                             createBinarySpawnRunner()
                         );
+                        if(frames.length === 0) {
+                            return mcpErrorResult('No frames could be extracted in the specified range');
+                        }
                         return {
                             content: frames.map(f => ({
                                 type:     'image' as const,

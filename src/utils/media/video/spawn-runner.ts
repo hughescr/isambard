@@ -3,17 +3,34 @@ import type { SpawnResult, SpawnRunner, BinarySpawnResult, BinarySpawnRunner } f
 // Stryker disable next-line ArithmeticOperator: default timeout is configuration
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+/** Subset of Bun subprocess with piped stdout/stderr streams. */
+interface PipedProc {
+    stdout: ReadableStream<Uint8Array>
+    stderr: ReadableStream<Uint8Array>
+    exited: Promise<number>
+    kill(): void
+}
+
 // Stryker disable all: real subprocess I/O — not unit-testable without integration test harness
 async function runTextProcess(
     cmd:     string[],
     options?: { timeout?: number, cwd?: string }
 ): Promise<SpawnResult> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
-    const proc    = Bun.spawn(cmd, {
-        stdout: 'pipe',
-        stderr: 'pipe',
-        cwd:    options?.cwd,
-    });
+    let proc: PipedProc;
+    try {
+        proc = Bun.spawn(cmd, {
+            stdout: 'pipe',
+            stderr: 'pipe',
+            cwd:    options?.cwd,
+        }) as unknown as PipedProc;
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if(msg.includes('ENOENT') || msg.includes('not found')) {
+            return { stdout: '', stderr: `Command not found: ${cmd[0] ?? ''}`, exitCode: 127 };
+        }
+        throw err;
+    }
 
     const timer = setTimeout(() => proc.kill(), timeout);
 
@@ -39,10 +56,19 @@ async function runBinaryProcess(
     options?: { timeout?: number }
 ): Promise<BinarySpawnResult> {
     const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
-    const proc    = Bun.spawn(cmd, {
-        stdout: 'pipe',
-        stderr: 'pipe',
-    });
+    let proc: PipedProc;
+    try {
+        proc = Bun.spawn(cmd, {
+            stdout: 'pipe',
+            stderr: 'pipe',
+        }) as unknown as PipedProc;
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if(msg.includes('ENOENT') || msg.includes('not found')) {
+            return { stdout: Buffer.alloc(0), stderr: `Command not found: ${cmd[0] ?? ''}`, exitCode: 127 };
+        }
+        throw err;
+    }
 
     const timer = setTimeout(() => proc.kill(), timeout);
 

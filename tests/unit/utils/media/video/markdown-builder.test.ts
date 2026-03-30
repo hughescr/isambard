@@ -96,6 +96,17 @@ describe('buildMetadataMarkdown', () => {
         expect(md).toContain('[02:10] No speaker label here');
     });
 
+    it('includes description section when alt text is provided', () => {
+        const md = buildMetadataMarkdown(MINIMAL_METADATA, undefined, undefined, 'A video showing a sunset over the ocean');
+        expect(md).toContain('## Description');
+        expect(md).toContain('A video showing a sunset over the ocean');
+    });
+
+    it('omits description section when alt is not provided', () => {
+        const md = buildMetadataMarkdown(MINIMAL_METADATA);
+        expect(md).not.toContain('## Description');
+    });
+
     it('shows full text for transcription with no segments', () => {
         const emptyTranscription: TranscriptionResult = {
             segments: [],

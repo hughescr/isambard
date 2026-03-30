@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, spyOn } from 'bun:test';
 import { detectScenes } from '@/utils/media/video/scene-detector';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
@@ -13,9 +13,9 @@ function makeRunner(stderr: string, exitCode = 0): SpawnRunner {
 // Simulated scdet stderr output lines
 const MULTI_SCENE_STDERR = `
 frame=  100 fps= 25 q=-0.0 ...
-[scdet @ 0x7f] lavfi.sdet.score=42.10 lavfi.sdet.time=4.000
-[scdet @ 0x7f] lavfi.sdet.score=55.30 lavfi.sdet.time=8.500
-[scdet @ 0x7f] lavfi.sdet.score=60.00 lavfi.sdet.time=14.200
+[scdet @ 0x7f] lavfi.scd.score=42.10 lavfi.scd.time=4.000
+[scdet @ 0x7f] lavfi.scd.score=55.30 lavfi.scd.time=8.500
+[scdet @ 0x7f] lavfi.scd.score=60.00 lavfi.scd.time=14.200
 `;
 
 const NO_SCENE_STDERR = `
@@ -23,7 +23,7 @@ frame=  50 fps= 25 q=-0.0 ...
 `;
 
 const SINGLE_SCENE_STDERR = `
-[scdet @ 0x7f] lavfi.sdet.score=38.00 lavfi.sdet.time=5.000
+[scdet @ 0x7f] lavfi.scd.score=38.00 lavfi.scd.time=5.000
 `;
 
 describe('detectScenes', () => {
@@ -68,11 +68,19 @@ describe('detectScenes', () => {
         expect(scenes).toHaveLength(4);
     });
 
+    it('logs a warning and falls back when ffmpeg exits non-zero with no scdet output', async () => {
+        const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+        const scenes = await detectScenes('/test/video.mp4', 40, makeRunner('', 1));
+        expect(scenes).toHaveLength(4);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ffmpeg exited with code 1'));
+        warnSpy.mockRestore();
+    });
+
     it('parses integer timestamps without decimal point', async () => {
         // Tests that the regex optional decimal (?:\.\d+)? works for integers too
         const integerTimeSderr = `
-[scdet @ 0x7f] lavfi.sdet.score=42.10 lavfi.sdet.time=4
-[scdet @ 0x7f] lavfi.sdet.score=55.30 lavfi.sdet.time=12
+[scdet @ 0x7f] lavfi.scd.score=42.10 lavfi.scd.time=4
+[scdet @ 0x7f] lavfi.scd.score=55.30 lavfi.scd.time=12
 `;
         const scenes = await detectScenes('/test/video.mp4', 20, makeRunner(integerTimeSderr));
         expect(scenes).toHaveLength(3);
