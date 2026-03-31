@@ -58,10 +58,20 @@ export class ChannelRegistryManager {
             this.backend.getChannelsByGuild(dmGuildId),
         ]);
 
-        for(const record of [...guildRecords, ...dmRecords]) {
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+        logger.info({ guildChannels: guildRecords.length, dmChannels: dmRecords.length, msg: 'Warming channel cache...' });
+
+        const allRecords = [...guildRecords, ...dmRecords];
+        for(let i = 0; i < allRecords.length; i++) {
+            const record = allRecords[i];
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+            logger.debug({ index: i + 1, total: allRecords.length, channelId: record.channelId, msg: 'Warming channel...' });
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
             await this.fetchAndCacheChannel(record);
         }
+
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+        logger.info({ channelCount: allRecords.length, msg: 'Channel cache warmed' });
 
         this.cacheWarmed = true;
     }
