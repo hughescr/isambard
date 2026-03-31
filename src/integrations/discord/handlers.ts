@@ -489,9 +489,7 @@ async function handlePendingQuestion(
             await message.reply({
                 content: "I'm not sure if this message is for me. If you'd like my help, please @mention me!",
             });
-        },
-        // Stryker disable next-line StringLiteral: Operation name for logging only
-        'replyToUnrelatedMessage'
+        }
     );
     return true; // Early return - don't continue processing
 }

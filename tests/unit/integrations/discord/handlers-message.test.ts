@@ -37,7 +37,6 @@ describe('Discord Event Handlers', () => {
         mockWithDiscordRetry.mockReset();
         mockWithDiscordRetry.mockImplementation(async <T>(
             operation: () => Promise<T>,
-            _operationName: string,
             _options?: unknown
         ): Promise<T> => {
             // By default, just execute the operation once without any retry logic
@@ -865,7 +864,6 @@ describe('Discord Event Handlers', () => {
                 // Configure withDiscordRetry mock to actually retry on transient errors (but without delays)
                 mockWithDiscordRetry.mockImplementation(async <T>(
                     operation: () => Promise<T>,
-                    _operationName: string,
                     _options?: unknown
                 ): Promise<T> => {
                     try {

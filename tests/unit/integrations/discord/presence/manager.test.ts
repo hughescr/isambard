@@ -286,13 +286,12 @@ describe('PresenceManager', () => {
             // Restore original retry implementation but inject instant sleep for fast test execution
             mockWithDiscordRetry.mockImplementation(async <T>(
                 operation: () => Promise<T>,
-                _operationName: string,
                 _options?: unknown
             ): Promise<T> => {
                 // Call real implementation but inject instant sleep
 
                 const options = _options as Record<string, unknown> & { deps?: Record<string, unknown> };
-                return originalWithDiscordRetry(operation, _operationName, {
+                return originalWithDiscordRetry(operation, {
                     ...options,
                     deps: {
                         ...options?.deps,

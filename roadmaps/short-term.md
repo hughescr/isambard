@@ -14,6 +14,11 @@
 - ✅ Config via SST secrets (`BskyHandle`, `BskyAppPassword`)
 - ✅ 100% mutation score
 
+## Completed: Calendar Access (Read-Only)
+- ✅ Read-only event queries via `tsdav` (CalDAV)
+- ✅ MCP tools: `getCalendarEvents`, `getUpcomingEvents`, `listUserCalendars`
+- ✅ Calendar context injected into user message prefix and perch context via `context-builder.ts`
+
 ## Current Focus: RSS Feed Aggregation
 
 ### RSS Feed Reader
@@ -29,13 +34,6 @@
 ## Tech Debt: TypeScript Strictness
 
 - Enable `noUncheckedIndexedAccess` in `tsconfig.json` to get compile-time safety for array/object index access. Will require fixing all sites where TypeScript infers `T | undefined` for array element access.
-
-## Next: Calendar Access (Read-Only)
-
-### CalDAV Connection
-- Read-only event queries via `tsdav`
-- MCP tools: `getUpcomingEvents`, `checkAvailability`
-- Integration with session gap tracking for time-aware context
 
 ## Upcoming: Person-Based Allowlists
 

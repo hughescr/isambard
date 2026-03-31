@@ -81,6 +81,22 @@ describe('classifyDiscordError', () => {
         expect(result.message).toBe('Unknown error');
     });
 
+    test('classifies AbortError as transient', () => {
+        const error = new Error('The operation was aborted');
+        error.name = 'AbortError';
+
+        const result = classifyDiscordError(error);
+
+        expect(result.category).toBe('transient');
+        expect(result.message).toBe('The operation was aborted');
+    });
+
+    test('classifies non-Error object with AbortError name as permanent', () => {
+        const error = { name: 'AbortError', message: 'not a real Error' };
+        const result = classifyDiscordError(error);
+        expect(result.category).toBe('permanent');
+    });
+
     // Stryker disable next-line ConditionalExpression, BlockStatement: Testing error without code property
     test('classifies error without code property as permanent', () => {
         const error = { message: 'Some error without code' };
@@ -97,7 +113,7 @@ describe('withDiscordRetry', () => {
     test('succeeds on first attempt without retry', async () => {
         const operation = mock().mockResolvedValue('success');
 
-        const result = await withDiscordRetry(operation, 'test-operation');
+        const result = await withDiscordRetry(operation);
 
         expect(result).toBe('success');
         expect(operation).toHaveBeenCalledTimes(1);
@@ -118,7 +134,7 @@ describe('withDiscordRetry', () => {
             debug: mock(),
         };
 
-        const result = await withDiscordRetry(operation, 'test-operation', {
+        const result = await withDiscordRetry(operation, {
             deps: { sleep: mockSleep, logger: mockLogger } as Partial<RetryDeps>,
         });
 
@@ -143,7 +159,7 @@ describe('withDiscordRetry', () => {
         };
 
         expect(
-            withDiscordRetry(operation, 'test-operation', {
+            withDiscordRetry(operation, {
                 deps: { logger: mockLogger } as Partial<RetryDeps>,
             })
         ).rejects.toThrow(RateLimitError);
@@ -171,7 +187,7 @@ describe('withDiscordRetry', () => {
         };
 
         expect(
-            withDiscordRetry(operation, 'test-operation', {
+            withDiscordRetry(operation, {
                 policy: { maxAttempts: 3 },
                 deps:   { sleep: mockSleep, logger: mockLogger } as Partial<RetryDeps>,
             })
@@ -201,7 +217,7 @@ describe('withDiscordRetry', () => {
         };
 
         expect(
-            withDiscordRetry(operation, 'test-operation', {
+            withDiscordRetry(operation, {
                 policy: {
                     maxAttempts: 5,
                     baseDelayMs: 2000,
@@ -224,7 +240,7 @@ describe('withDiscordRetry', () => {
         };
 
         expect(
-            withDiscordRetry(operation, 'test-operation', {
+            withDiscordRetry(operation, {
                 deps: { logger: mockLogger } as Partial<RetryDeps>,
             })
         ).rejects.toThrow('Invalid channel ID');

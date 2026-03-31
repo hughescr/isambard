@@ -218,6 +218,8 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
 
     (async () => {
         try {
+            logger.info({ msg: 'Starting inbox initialization...' });
+
             // Start unified state manager
             botStateManager.start();
 
@@ -225,13 +227,7 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
             inboxManager.setBotUserId(readyClient.user!.id);
 
             // Load unread messages (automatically initializes checkpoints for monitored channels)
-            const count = await inboxManager.loadUnread();
-            if(count > 0) {
-                logger.info({
-                    unreadCount: count,
-                    msg:         `Inbox loaded with ${count} unread messages`,
-                });
-            }
+            await inboxManager.loadUnread();
 
             // NOW check if catch-up should start (after inbox is loaded)
             // Skip if perch test mode triggerOnStartup is enabled (perch handles everything)

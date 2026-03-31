@@ -209,7 +209,7 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
             buildQuestionButtons: config => buildQuestionButtons(config),
         },
         retryHelper: {
-            withRetry: (fn, operationName) => withDiscordRetry(fn, operationName),
+            withRetry: fn => withDiscordRetry(fn),
         },
         timezone: options.timezone,
     });

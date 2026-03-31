@@ -2,7 +2,8 @@
  * Discord Retry Logic
  *
  * Provides retry logic specifically for Discord operations.
- * Only retries transient network errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED).
+ * Retries transient errors: network errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED)
+ * and request timeouts (AbortError from Discord.js REST).
  * Does NOT retry rate limit errors (429) - Discord.js handles those internally.
  *
  * Key design principles:
@@ -20,6 +21,7 @@ export interface DiscordRetryOptions {
 /**
  * Classify Discord errors for retry logic.
  *
+ * - AbortError -> transient (Discord.js REST timeout after exhausting internal retries)
  * - Network errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED) -> transient (retry)
  * - Rate limit errors (RateLimitError) -> permanent (Discord.js handles internally)
  * - All other errors -> permanent (don't retry)
@@ -35,6 +37,14 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
         message = error.message;
     } else if(typeof error === 'string' && error) {
         message = error;
+    }
+
+    // Check for AbortError (transient - request timed out after Discord.js exhausted internal retries)
+    if(error instanceof Error && error.name === 'AbortError') {
+        return {
+            category: 'transient',
+            message,
+        };
     }
 
     // Check for network errors (transient)
@@ -67,7 +77,6 @@ const discordErrorClassifier: ErrorClassifier = classifyDiscordError;
  * Only retries transient network errors. Rate limit errors and other errors are not retried.
  *
  * @param operation The async operation to retry
- * @param operationName Name for logging purposes
  * @param options Retry configuration (policy, deps)
  * @returns The result of the operation
  * @throws The error if all retries are exhausted or a permanent error occurs
@@ -76,14 +85,12 @@ const discordErrorClassifier: ErrorClassifier = classifyDiscordError;
  * ```typescript
  * const message = await withDiscordRetry(
  *   () => channel.send('Hello'),
- *   'send-message',
  *   { policy: { maxAttempts: 5 } }
  * );
  * ```
  */
 export async function withDiscordRetry<T>(
     operation: () => Promise<T>,
-    operationName: string,
     options: DiscordRetryOptions = {}
 ): Promise<T> {
     const { policy = {}, deps = {} } = options;

@@ -1416,6 +1416,44 @@ describe('CalendarCommandHandler - /calendar shared remove-server', () => {
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove shared server');
     });
+
+    test('replies ambiguity error when shared server description matches multiple entries', async () => {
+        const ambigRecord = {
+            userId:    'SHARED',
+            createdAt: '',
+            updatedAt: '',
+            servers:   [
+                {
+                    serverId:    TEST_SERVER_UUID,
+                    description: 'Holidays',
+                    serverUrl:   'https://caldav.example.com',
+                    username:    'admin1',
+                    password:    'pass1',
+                    calendars:   [{ calendarPath: '/shared/holidays-1', label: 'Holidays 1' }],
+                },
+                {
+                    // Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
+                    serverId:    '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`,
+                    description: 'Holidays',
+                    serverUrl:   'https://caldav.example.com',
+                    username:    'admin2',
+                    password:    'pass2',
+                    calendars:   [{ calendarPath: '/shared/holidays-2', label: 'Holidays 2' }],
+                },
+            ],
+        };
+        mockRegistry.getSharedRecord.mockResolvedValue(ambigRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-server', {
+            server_id: 'holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedServer).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Multiple servers match');
+        expect(replyArg.content).toContain('holidays');
+    });
 });
 
 // ─── Unknown subcommands ──────────────────────────────────────────────────────
@@ -1598,5 +1636,58 @@ describe('CalendarCommandHandler - /calendar shared remove-calendar', () => {
 
         const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
         expect(replyArg.content).toContain('Failed to remove shared calendar');
+    });
+
+    test('replies "not found" when shared server does not match in remove-calendar', async () => {
+        mockRegistry.getSharedRecord.mockResolvedValue(sharedServerRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
+            server_id:     'nonexistent-server',
+            calendar_path: '/shared/holidays',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('not found');
+    });
+
+    test('replies ambiguity error when shared server description matches multiple entries in remove-calendar', async () => {
+        const ambigRecord = {
+            userId:    'SHARED',
+            createdAt: '',
+            updatedAt: '',
+            servers:   [
+                {
+                    serverId:    TEST_SERVER_UUID,
+                    description: 'Holidays',
+                    serverUrl:   'https://caldav.example.com',
+                    username:    'admin1',
+                    password:    'pass1',
+                    calendars:   [{ calendarPath: '/shared/holidays-1', label: 'Holidays 1' }],
+                },
+                {
+                    // Stryker disable next-line StringLiteral: Test UUID is a test configuration constant
+                    serverId:    '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`,
+                    description: 'Holidays',
+                    serverUrl:   'https://caldav.example.com',
+                    username:    'admin2',
+                    password:    'pass2',
+                    calendars:   [{ calendarPath: '/shared/holidays-2', label: 'Holidays 2' }],
+                },
+            ],
+        };
+        mockRegistry.getSharedRecord.mockResolvedValue(ambigRecord);
+
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'shared', 'remove-calendar', {
+            server_id:     'holidays',
+            calendar_path: '/shared/holidays-1',
+        });
+        await handler.handle(asChatInput);
+
+        expect(mockRegistry.removeSharedCalendar).not.toHaveBeenCalled();
+        const replyArg = editReply.mock.calls[0]?.[0] as { content?: string };
+        expect(replyArg.content).toContain('Multiple servers match');
+        expect(replyArg.content).toContain('holidays');
     });
 });

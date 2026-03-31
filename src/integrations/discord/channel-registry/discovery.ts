@@ -1,3 +1,4 @@
+import { logger } from '@hughescr/logger';
 import type { Client, Guild, GuildChannel } from 'discord.js';
 import { createChannelId, createGuildId } from '../types';
 import type { ChannelRegistryManager } from './manager';
@@ -27,6 +28,12 @@ export async function discoverAllChannels(
         updated:    0,
         errors:     [],
     };
+
+    const guildCount = client.guilds.cache.size;
+    const startMs = Date.now();
+
+    // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+    logger.info({ guildCount, msg: 'Discovering channels across guilds...' });
 
     // Create promises for discovering channels in each guild (parallel execution)
     const guildPromises = [...client.guilds.cache.entries()].map(async ([guildId, guild]) => {
@@ -66,6 +73,9 @@ export async function discoverAllChannels(
             }
         }
     }
+
+    // Stryker disable next-line ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
+    logger.info({ discovered: result.discovered, updated: result.updated, elapsedMs: Date.now() - startMs, msg: 'Channel discovery complete' });
 
     return result;
 }

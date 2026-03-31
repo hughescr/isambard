@@ -194,9 +194,26 @@ export class InboxManager {
 
         // Get unmuted channels from registry instead of static list
         const channels = await this.channelRegistry.getUnmutedChannels();
+        const startMs = Date.now();
 
-        for(const channel of channels) {
+        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+        logger.info({
+            channelCount: channels.length,
+            msg:          'Loading unread messages...',
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+
+        for(const [index, channel] of channels.entries()) {
             const channelId = channel.channelId;
+
+            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+            logger.debug({
+                index:       index + 1,
+                total:       channels.length,
+                channelName: channel.channelName,
+                msg:         'Loading channel...',
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
             // Stryker disable BlockStatement: Error handling logs failure but continues processing other channels
             try {
                 // Initialize checkpoint if it doesn't exist (creates new checkpoint with lastSeenAt = now)
@@ -295,18 +312,19 @@ export class InboxManager {
             // Stryker restore BlockStatement
         }
 
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+        // Stryker disable ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
         logger.info({
             successCount,
             failCount,
-            msg: 'Loaded unread messages summary',
+            elapsedMs: Date.now() - startMs,
+            msg:       'Loaded unread messages summary',
         });
         logger.info({
             totalLoaded,
             channelCount: this.unreadMessages.size,
             msg:          `Inbox loaded: ${totalLoaded} unread messages across ${this.unreadMessages.size} channels`,
         });
-        // Stryker restore ObjectLiteral,StringLiteral
+        // Stryker restore ObjectLiteral,StringLiteral,ArithmeticOperator
 
         return totalLoaded;
     }

@@ -76,9 +76,7 @@ async function fetchAndValidateChannel(
     retryHelper: MCPRetryHelper
 ): Promise<{ channel: TextChannel } | { error: CallToolResult }> {
     const channel = await retryHelper.withRetry(
-        () => client.channels.fetch(channelId),
-        // Stryker disable next-line StringLiteral: Operation name for logging
-        'fetchChannel'
+        () => client.channels.fetch(channelId)
     );
 
     if(!channel) {
@@ -124,21 +122,15 @@ async function sendMessage(
 
     if(replyToMessageId) {
         const originalMessage = await retryHelper.withRetry(
-            () => channel.messages.fetch(replyToMessageId),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'fetchMessage'
+            () => channel.messages.fetch(replyToMessageId)
         );
         return retryHelper.withRetry(
-            () => originalMessage.reply(messageOptions),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'replyToMessage'
+            () => originalMessage.reply(messageOptions)
         );
     }
 
     return retryHelper.withRetry(
-        () => channel.send(messageOptions),
-        // Stryker disable next-line StringLiteral: Operation name for logging
-        'sendMessage'
+        () => channel.send(messageOptions)
     );
 }
 
@@ -161,9 +153,7 @@ async function createThreadIfRequested(
     // Stryker disable next-line ConditionalExpression,LogicalOperator: All conditions required for thread capability check
     if('threads' in channel && channel.isTextBased() && !channel.isThread() && !channel.isDMBased()) {
         const thread = await retryHelper.withRetry(
-            () => sentMessage.startThread({ name: threadName }),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'startThread'
+            () => sentMessage.startThread({ name: threadName })
         );
         return thread.id;
     }
@@ -202,9 +192,7 @@ async function normalizeChannelId(
     channel:             TextChannel
 } | { error: CallToolResult }> {
     const fetchedChannel = await retryHelper.withRetry(
-        () => client.channels.fetch(channelId),
-        // Stryker disable next-line StringLiteral: Operation name for logging
-        'fetchChannel'
+        () => client.channels.fetch(channelId)
     );
 
     if(!fetchedChannel) {
@@ -228,9 +216,7 @@ async function normalizeChannelId(
 
     const channel = fetchedChannel.isThread()
         ? await retryHelper.withRetry(
-            () => client.channels.fetch(normalizedChannelId),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'fetchParentChannel'
+            () => client.channels.fetch(normalizedChannelId)
         )
         : fetchedChannel;
 
@@ -289,9 +275,7 @@ async function prepareQuestionChannel(
             () => channel.threads.create({
                 // Stryker disable next-line LogicalOperator,StringLiteral: Fallback chain for thread name with default
                 name: threadName ?? 'Q&A'
-            }),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'createThread'
+            })
         );
         return {
             targetChannel: thread as unknown as TextChannel,
@@ -809,9 +793,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         // 6. Send question
                         const sentMessage = await retryHelper.withRetry(
-                            () => targetChannel.send(messageOptions),
-                            // Stryker disable next-line StringLiteral: Operation name for logging
-                            'sendQuestion'
+                            () => targetChannel.send(messageOptions)
                         );
 
                         // Stryker disable ObjectLiteral,StringLiteral,LogicalOperator: Logger info object - content not behavior-affecting
@@ -877,9 +859,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         // Fetch the message
                         const message = await retryHelper.withRetry(
-                            () => channelResult.channel.messages.fetch(args.messageId),
-                            // Stryker disable next-line StringLiteral: Operation name for logging
-                            'fetchMessage'
+                            () => channelResult.channel.messages.fetch(args.messageId)
                         );
 
                         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Discord.js types fetch() as non-nullable but runtime may return falsy
@@ -903,9 +883,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             try {
                                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
                                 await retryHelper.withRetry(
-                                    () => message.react(emoji),
-                                    // Stryker disable next-line StringLiteral: Operation name for logging
-                                    'addReaction'
+                                    () => message.react(emoji)
                                 );
                                 addedEmojis.push(emoji);
                             } catch (error) {

@@ -560,7 +560,7 @@ describe('InboxManager', () => {
             // Verify the summary log message contains correct counts
             // Look for the log call with successCount and failCount
             const infoCalls = (mockLogger.info as ReturnType<typeof mock>).mock.calls as unknown[][];
-            const summaryLogCall = infoCalls.find((call: unknown[]) => typeof call[0] === 'object' && call[0] !== null && 'successCount' in call[0] && 'failCount' in call[0]);
+            const summaryLogCall = infoCalls.find((call: unknown[]) => typeof call[0] === 'object' && call[0] !== null && 'successCount' in (call[0] as Record<string, unknown>) && 'failCount' in (call[0] as Record<string, unknown>));
 
             expect(summaryLogCall).toBeDefined();
             const summaryArg = summaryLogCall![0] as Record<string, unknown>;
@@ -730,6 +730,130 @@ describe('InboxManager', () => {
 
             // All messages kept when no botUserId is set
             expect(total).toBe(2);
+        });
+
+        test('should log starting message with channel count', async () => {
+            const channel1Id = createChannelId('111111111');
+            const channel2Id = createChannelId('222222222');
+            const channel3Id = createChannelId('333333333');
+
+            const mockRegistryWithChannels = {
+                getUnmutedChannels: mock(async () => [
+                    { channelId: channel1Id, channelName: '#channel-1', guildId, isMuted: false },
+                    { channelId: channel2Id, channelName: '#channel-2', guildId, isMuted: false },
+                    { channelId: channel3Id, channelName: '#channel-3', guildId, isMuted: false },
+                ]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannels = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannels,
+            });
+
+            await managerWithChannels.loadUnread();
+
+            const infoCalls = (mockLogger.info as ReturnType<typeof mock>).mock.calls as unknown[][];
+            const startLogCall = infoCalls.find((call: unknown[]) => {
+                const arg = call[0];
+                if(typeof arg !== 'object' || arg === null) {
+                    return false;
+                }
+                const rec = arg as Record<string, unknown>;
+                return 'channelCount' in rec && rec.msg === 'Loading unread messages...';
+            });
+
+            expect(startLogCall).toBeDefined();
+            const startArg = startLogCall![0] as Record<string, unknown>;
+            expect(startArg.channelCount).toBe(3);
+        });
+
+        test('should log per-channel debug progress', async () => {
+            const channel1Id = createChannelId('111111111');
+            const channel2Id = createChannelId('222222222');
+
+            const mockRegistryWithChannels = {
+                getUnmutedChannels: mock(async () => [
+                    { channelId: channel1Id, channelName: '#channel-1', guildId, isMuted: false },
+                    { channelId: channel2Id, channelName: '#channel-2', guildId, isMuted: false },
+                ]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannels = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannels,
+            });
+
+            const checkpoint: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId:  channel1Id,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 5000).toISOString(), // gap too small — skipped
+                updatedAt:  nowIso,
+            };
+            mockCheckpointManager.load = mock(async () => checkpoint);
+
+            await managerWithChannels.loadUnread();
+
+            const debugCalls = (mockLogger.debug as ReturnType<typeof mock>).mock.calls as unknown[][];
+            const perChannelCalls = debugCalls.filter((call: unknown[]) => {
+                const arg = call[0];
+                if(typeof arg !== 'object' || arg === null) {
+                    return false;
+                }
+                const rec = arg as Record<string, unknown>;
+                return 'index' in rec && 'total' in rec && rec.msg === 'Loading channel...';
+            });
+
+            expect(perChannelCalls).toHaveLength(2);
+            const first = perChannelCalls[0][0] as Record<string, unknown>;
+            expect(first.index).toBe(1);
+            expect(first.total).toBe(2);
+            expect(first.channelName).toBe('#channel-1');
+        });
+
+        test('should log completion summary with elapsed time', async () => {
+            const channel1Id = createChannelId('111111111');
+
+            const mockRegistryWithChannel = {
+                getUnmutedChannels: mock(async () => [
+                    { channelId: channel1Id, channelName: '#channel-1', guildId, isMuted: false },
+                ]),
+            } as unknown as ChannelRegistryManager;
+
+            const managerWithChannel = new InboxManager({
+                checkpointManager:    mockCheckpointManager,
+                messageSearchService: mockMessageSearchService,
+                channelRegistry:      mockRegistryWithChannel,
+            });
+
+            // Give it a checkpoint with a sufficient gap so the channel fully processes (hits successCount++)
+            mockCheckpointManager.load = mock(async () => ({
+                service:    'discord' as const,
+                channelId:  channel1Id,
+                guildId,
+                lastSeenAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(), // 10 minutes ago
+                updatedAt:  nowIso,
+            }));
+
+            await managerWithChannel.loadUnread();
+
+            const infoCalls = (mockLogger.info as ReturnType<typeof mock>).mock.calls as unknown[][];
+            const summaryCall = infoCalls.find((call: unknown[]) => {
+                const arg = call[0];
+                if(typeof arg !== 'object' || arg === null) {
+                    return false;
+                }
+                const rec = arg as Record<string, unknown>;
+                return 'elapsedMs' in rec && 'successCount' in rec && 'failCount' in rec;
+            });
+
+            expect(summaryCall).toBeDefined();
+            const summaryArg = summaryCall![0] as Record<string, unknown>;
+            expect(typeof summaryArg.elapsedMs).toBe('number');
+            expect(summaryArg.successCount).toBe(1);
+            expect(summaryArg.failCount).toBe(0);
         });
 
         test('should handle empty message results', async () => {

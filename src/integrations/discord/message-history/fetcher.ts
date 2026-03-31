@@ -234,9 +234,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
                 // eslint-disable-next-line no-await-in-loop -- sequential: pagination depends on prior response cursor
                 const batch = await withDiscordRetry(
-                    () => channel.messages.fetch(fetchOptions),
-                    // Stryker disable next-line StringLiteral: Operation name for retry logging
-                    'fetchMessages'
+                    () => channel.messages.fetch(fetchOptions)
                 ) as Map<string, Message>;
 
                 if(batch.size === 0) {
@@ -288,9 +286,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
         try {
             const message = await withDiscordRetry(
-                () => channel.messages.fetch(messageId),
-                // Stryker disable next-line StringLiteral: Operation name for retry logging
-                'fetchMessageById'
+                () => channel.messages.fetch(messageId)
             );
             return transformMessage(message);
         } catch{
@@ -317,9 +313,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
             try {
                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per message
                 const message = await withDiscordRetry(
-                    () => channel.messages.fetch(messageId),
-                    // Stryker disable next-line StringLiteral: Operation name for retry logging
-                    'fetchMessageById'
+                    () => channel.messages.fetch(messageId)
                 );
                 results.push(transformMessage(message));
             } catch{

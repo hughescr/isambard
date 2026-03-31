@@ -329,7 +329,7 @@ export interface MCPQuestionButtonBuilder {
  */
 export interface MCPRetryHelper {
     /** Execute a function with retry on transient failures */
-    withRetry<T>(fn: () => Promise<T>, operationName: string): Promise<T>
+    withRetry<T>(fn: () => Promise<T>): Promise<T>
 }
 
 /**

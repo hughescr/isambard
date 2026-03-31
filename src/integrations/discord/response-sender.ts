@@ -109,9 +109,7 @@ async function sendChunksByReply(
 ): Promise<void> {
     // First chunk uses reply() to thread the response (with retry and rate limiting)
     const firstReply = await withDiscordRetry(
-        () => rateLimiter.replyToMessage(message, chunks[0]),
-        // Stryker disable next-line StringLiteral: Operation name for logging only
-        'replyToMessage'
+        () => rateLimiter.replyToMessage(message, chunks[0])
     );
     // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
     logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
@@ -121,9 +119,7 @@ async function sendChunksByReply(
     for(let i = 1; i < chunks.length; i++) {
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
         await withDiscordRetry(
-            () => rateLimiter.replyToMessage(firstReply, chunks[i]),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'replyToMessage'
+            () => rateLimiter.replyToMessage(firstReply, chunks[i])
         );
         // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
@@ -148,9 +144,7 @@ async function sendChunksToChannel(
     for(let i = 0; i < chunks.length; i++) {
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
         await withDiscordRetry(
-            () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i]),
-            // Stryker disable next-line StringLiteral: Operation name for logging
-            'sendToChannel'
+            () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i])
         );
         // Stryker disable all: Logging for observability
         logger.info({
@@ -378,9 +372,7 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
         for(let i = 0; i < chunks.length; i++) {
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
             await withDiscordRetry(
-                () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i]),
-                // Stryker disable next-line StringLiteral: Operation name for logging only
-                'sendToChannel'
+                () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i])
             );
             // Stryker disable ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator: Logging for observability
             logger.info({
