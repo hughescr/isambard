@@ -10,7 +10,7 @@ import {
     type PersonHistoryOptions,
     type PlatformHistoryProvider
 } from './types';
-import type { Contact, ContactBackend } from '@/storage';
+import type { Contact, ContactBackend, PlatformType } from '@/storage';
 
 /**
  * Options for constructing a PersonHistoryCoordinator.
@@ -70,6 +70,21 @@ export class PersonHistoryCoordinator {
     constructor(private readonly options: PersonHistoryCoordinatorOptions) {}
 
     /**
+     * Resolve a contact by identifier, using direct platform lookup when a hint is available.
+     * Falls back to fuzzy lookup if platform lookup returns nothing or no hint is provided.
+     */
+    private async resolveContact(identifier: string, platformHint: PlatformType | undefined): Promise<Contact[]> {
+        if(platformHint) {
+            const direct = await this.options.contactBackend.resolveIdentifier(platformHint, identifier);
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: optimization guard — empty direct produces same fallback result
+            if(direct.length > 0) {
+                return direct;
+            }
+        }
+        return this.options.contactBackend.fuzzyLookup(identifier);
+    }
+
+    /**
      * Fetch cross-platform history for a person identified by a fuzzy query.
      *
      * @param identifier - Name, email, handle, or any fuzzy-matchable identifier.
@@ -85,9 +100,10 @@ export class PersonHistoryCoordinator {
         const maxTotal      = options?.maxTotalEntries        ?? DEFAULT_MAX_TOTAL_ENTRIES;
         const windowMinutes = options?.timeWindowMinutes      ?? DEFAULT_TIME_WINDOW_MINUTES;
         const maxChars      = options?.maxCharacters          ?? DEFAULT_MAX_CHARACTERS;
+        const platformHint  = options?.platformHint;
 
-        // Step 1: resolve the person via fuzzy lookup
-        const contacts = await this.options.contactBackend.fuzzyLookup(identifier);
+        // Step 1: resolve the person — use direct platform lookup when hint is available (avoids full-contact scan)
+        const contacts = await this.resolveContact(identifier, platformHint);
         if(contacts.length === 0) {
             return { history: undefined, person: undefined };
         }

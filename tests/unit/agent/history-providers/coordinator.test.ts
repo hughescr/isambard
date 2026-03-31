@@ -37,8 +37,9 @@ function todayUtc(hour: number, minute: number): string {
 // ── Mock types ─────────────────────────────────────────────────────────────────
 
 interface MockContactBackend {
-    fuzzyLookup: ReturnType<typeof mock>
-    getContact:  ReturnType<typeof mock>
+    fuzzyLookup:       ReturnType<typeof mock>
+    resolveIdentifier: ReturnType<typeof mock>
+    getContact:        ReturnType<typeof mock>
 }
 
 interface MockSearchService {
@@ -64,8 +65,9 @@ function makeOptions(
 
 function makeMockBackend(): MockContactBackend {
     return {
-        fuzzyLookup: mock(async (): Promise<Contact[]> => [makeContact()]),
-        getContact:  mock(async (): Promise<Contact | undefined> => makeContact()),
+        fuzzyLookup:       mock(async (): Promise<Contact[]> => [makeContact()]),
+        resolveIdentifier: mock(async (): Promise<Contact[]> => [makeContact()]),
+        getContact:        mock(async (): Promise<Contact | undefined> => makeContact()),
     };
 }
 
@@ -524,6 +526,43 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             await coord.getPersonHistory('craig');
 
             expect(fetchHistory).not.toHaveBeenCalled();
+        });
+
+        test('uses resolveIdentifier when platformHint is provided', async () => {
+            const backend = makeMockBackend();
+            const coord   = new PersonHistoryCoordinator(makeOptions({ backend }));
+            await coord.getPersonHistory('craig', { platformHint: 'discord' });
+
+            expect(backend.resolveIdentifier).toHaveBeenCalledTimes(1);
+            expect(backend.fuzzyLookup).not.toHaveBeenCalled();
+        });
+
+        test('passes platform and identifier to resolveIdentifier', async () => {
+            const backend = makeMockBackend();
+            const coord   = new PersonHistoryCoordinator(makeOptions({ backend }));
+            await coord.getPersonHistory('craig', { platformHint: 'discord' });
+
+            expect(backend.resolveIdentifier).toHaveBeenCalledWith('discord', 'craig');
+        });
+
+        test('falls back to fuzzyLookup when resolveIdentifier returns empty with platformHint', async () => {
+            const backend = makeMockBackend();
+            backend.resolveIdentifier.mockImplementation(async (): Promise<Contact[]> => []);
+            const coord = new PersonHistoryCoordinator(makeOptions({ backend }));
+            await coord.getPersonHistory('craig', { platformHint: 'discord' });
+
+            expect(backend.resolveIdentifier).toHaveBeenCalledTimes(1);
+            expect(backend.fuzzyLookup).toHaveBeenCalledTimes(1);
+            expect(backend.fuzzyLookup).toHaveBeenCalledWith('craig');
+        });
+
+        test('uses fuzzyLookup when no platformHint is provided', async () => {
+            const backend = makeMockBackend();
+            const coord   = new PersonHistoryCoordinator(makeOptions({ backend }));
+            await coord.getPersonHistory('craig');
+
+            expect(backend.fuzzyLookup).toHaveBeenCalledTimes(1);
+            expect(backend.resolveIdentifier).not.toHaveBeenCalled();
         });
     });
 

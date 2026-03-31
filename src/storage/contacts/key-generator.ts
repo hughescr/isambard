@@ -72,6 +72,28 @@ export const ContactKeyGenerator = {
     },
 
     /**
+     * Creates GSI2 keys for a contact profile item, enabling efficient listing
+     * of all contacts without a full table scan.
+     *
+     * @param personId - The contact's personId (kebab-case)
+     * @returns GSI2 keys for the contact profile item
+     *
+     * @example
+     * ```ts
+     * ContactKeyGenerator.createCollectionKeys('craig-hughes')
+     * // { GSI2PK: 'CONTACTS', GSI2SK: 'CONTACT#craig-hughes' }
+     * ```
+     */
+    createCollectionKeys(personId: ContactId): { GSI2PK: string, GSI2SK: string } {
+        return {
+            // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
+            GSI2PK: 'CONTACTS',
+            // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
+            GSI2SK: `CONTACT#${personId}`,
+        };
+    },
+
+    /**
      * Parses a personId from a profile item PK.
      *
      * @param pk - Primary Key (CONTACT#{personId})

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PlatformType } from '@/storage';
 
 /**
  * Direction of a history interaction.
@@ -69,6 +70,8 @@ export interface PersonHistoryOptions {
     startTime?:              Date
     /** Absolute end of the time window. Defaults to now when not provided. */
     endTime?:                Date
+    /** Optional platform hint for direct identifier resolution (avoids fuzzy scan). */
+    platformHint?:           PlatformType
 }
 
 // Default values for PersonHistoryOptions

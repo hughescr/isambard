@@ -5,7 +5,8 @@ export {
     createContactId,
     type ContactIdentifier,
     type ContactId,
-    type Contact
+    type Contact,
+    type PlatformType
 } from './types';
 
 // Backend

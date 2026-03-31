@@ -82,9 +82,11 @@ export const contactSchema = z.object({
 export type Contact = z.infer<typeof contactSchema>;
 
 /**
- * DynamoDB item structure with PK/SK keys.
+ * DynamoDB item structure with PK/SK keys and GSI2 keys for collection listing.
  */
 export interface ContactProfileItem extends Contact {
-    PK: string  // CONTACT#{personId}
-    SK: string  // PROFILE
+    PK: string      // CONTACT#{personId}
+    SK: string      // PROFILE
+    GSI2PK: string  // CONTACTS
+    GSI2SK: string  // CONTACT#{personId}
 }

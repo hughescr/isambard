@@ -125,6 +125,35 @@ describe.concurrent('ContactKeyGenerator', () => {
         });
     });
 
+    describe('createCollectionKeys', () => {
+        test('creates correct GSI2PK and GSI2SK', () => {
+            const keys = ContactKeyGenerator.createCollectionKeys(PERSON_ID);
+            expect(keys).toEqual({
+                GSI2PK: 'CONTACTS',
+                GSI2SK: 'CONTACT#craig-hughes',
+            });
+        });
+
+        test('always has GSI2PK = CONTACTS', () => {
+            const id = 'alice-wonderland' as ContactId;
+            const keys = ContactKeyGenerator.createCollectionKeys(id);
+            expect(keys.GSI2PK).toBe('CONTACTS');
+        });
+
+        test('uses personId in GSI2SK', () => {
+            const id = 'bob-smith' as ContactId;
+            const keys = ContactKeyGenerator.createCollectionKeys(id);
+            expect(keys.GSI2SK).toBe('CONTACT#bob-smith');
+        });
+
+        test('round-trips: personId can be parsed from GSI2SK via parsePersonIdFromPK', () => {
+            const keys = ContactKeyGenerator.createCollectionKeys(PERSON_ID);
+            // GSI2SK has same CONTACT# prefix as PK, so parsePersonIdFromPK can parse it
+            const parsed = ContactKeyGenerator.parsePersonIdFromPK(keys.GSI2SK);
+            expect(parsed).toBe(PERSON_ID);
+        });
+    });
+
     describe('parsePersonIdFromLookupSK', () => {
         test('parses personId from lookup SK', () => {
             const personId = ContactKeyGenerator.parsePersonIdFromLookupSK('CONTACT#craig-hughes');

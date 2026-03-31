@@ -1,4 +1,4 @@
-import { ScanCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { ContactKeyGenerator } from './key-generator';
 import {
     contactSchema,
@@ -83,9 +83,11 @@ export class ContactBackend extends BaseRepository<Contact> {
         }
 
         // Write the profile item
+        const collectionKeys = ContactKeyGenerator.createCollectionKeys(contact.personId);
         const profileItem: ContactProfileItem = {
             ...contact,
             ...profileKeys,
+            ...collectionKeys,
         };
         // Stryker disable next-line ObjectLiteral: DynamoDB TransactWrite put request structure
         transactItems.push({ Put: { TableName: this.tableName, Item: profileItem } });
@@ -216,8 +218,8 @@ export class ContactBackend extends BaseRepository<Contact> {
     }
 
     /**
-     * List all contacts.
-     * Since contact count is small (< 100), a full scan is acceptable.
+     * List all contacts using a GSI2 query instead of a full table scan.
+     * GSI2PK='CONTACTS' covers all contact profile items efficiently.
      * Paginates through all DynamoDB pages to avoid silently dropping contacts
      * if the result set exceeds 1 MB.
      */
@@ -227,22 +229,19 @@ export class ContactBackend extends BaseRepository<Contact> {
         do {
             // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
             // eslint-disable-next-line no-await-in-loop -- sequential pagination: each page depends on LastEvaluatedKey from the prior page
-            const result = await this.docClient.send(new ScanCommand({
+            const result = await this.docClient.send(new QueryCommand({
                 TableName:                 this.tableName,
-                FilterExpression:          'begins_with(#pk, :pkPrefix) AND #sk = :sk',
-                ExpressionAttributeNames:  { '#pk': 'PK', '#sk': 'SK' },
-                ExpressionAttributeValues: {
-                    ':pkPrefix': 'CONTACT#',
-                    ':sk':       'PROFILE',
-                },
-                ExclusiveStartKey: lastKey,
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :pk',
+                ExpressionAttributeValues: { ':pk': 'CONTACTS' },
+                ExclusiveStartKey:         lastKey,
             }));
             // Stryker restore StringLiteral,ObjectLiteral
             allItems.push(...(result.Items ?? []) as Record<string, unknown>[]);
             lastKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
         } while(lastKey);
         return allItems.map((item) => {
-            const { PK: _pk, SK: _sk, ...rest } = item;
+            const { PK: _pk, SK: _sk, GSI2PK: _gsi2pk, GSI2SK: _gsi2sk, ...rest } = item;
             return contactSchema.parse(rest);
         });
     }

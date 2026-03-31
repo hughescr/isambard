@@ -393,7 +393,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                         const senderUsername = contexts[0]?.username;
                         if(senderUsername) {
                             const historyResult = await params.historyCoordinator!.getPersonHistory(
-                                senderUsername, { timeWindowMinutes: 120, maxMessagesPerPlatform: 10 }
+                                senderUsername, { timeWindowMinutes: 120, maxMessagesPerPlatform: 10, platformHint: 'discord' }
                             );
                             if(historyResult.history) {
                                 return historyResult.history;

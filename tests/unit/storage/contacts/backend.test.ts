@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
-    ScanCommand,
+    QueryCommand,
     TransactWriteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -41,10 +41,23 @@ const BOB: Contact = {
 function contactGetResponse(contact: Contact): { Item: Record<string, unknown> } {
     return {
         Item: {
-            PK: `CONTACT#${contact.personId}`,
-            SK: 'PROFILE',
+            PK:     `CONTACT#${contact.personId}`,
+            SK:     'PROFILE',
+            GSI2PK: 'CONTACTS',
+            GSI2SK: `CONTACT#${contact.personId}`,
             ...contact,
         },
+    };
+}
+
+/** Helper: build a query result item for listContacts (includes GSI2 keys) */
+function contactQueryItem(contact: Contact): Record<string, unknown> {
+    return {
+        PK:     `CONTACT#${contact.personId}`,
+        SK:     'PROFILE',
+        GSI2PK: 'CONTACTS',
+        GSI2SK: `CONTACT#${contact.personId}`,
+        ...contact,
     };
 }
 
@@ -138,7 +151,7 @@ describe('ContactBackend', () => {
             expect(items).toHaveLength(3);
         });
 
-        test('writes profile item with correct PK/SK', async () => {
+        test('writes profile item with correct PK/SK and GSI2 keys', async () => {
             ddbMock.on(GetCommand).resolves(notFound());
             ddbMock.on(TransactWriteCommand).resolves({});
 
@@ -150,6 +163,8 @@ describe('ContactBackend', () => {
             expect(profilePut?.Put?.Item).toMatchObject({
                 PK:          'CONTACT#alice-smith',
                 SK:          'PROFILE',
+                GSI2PK:      'CONTACTS',
+                GSI2SK:      'CONTACT#alice-smith',
                 personId:    'alice-smith',
                 displayName: 'Alice Smith',
             });
@@ -432,8 +447,6 @@ describe('ContactBackend', () => {
     // ======================================================================
     describe('resolveIdentifier', () => {
         test('returns contacts matching the identifier', async () => {
-            // Query returns a lookup item — import QueryCommand dynamically (already mocked in setup)
-            const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
             ddbMock.on(QueryCommand).resolves({
                 Items: [{ PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' }],
             });
@@ -446,7 +459,6 @@ describe('ContactBackend', () => {
         });
 
         test('normalizes value to lowercase for lookup', async () => {
-            const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.resolveIdentifier('email', 'ALICE@EXAMPLE.COM');
@@ -457,7 +469,6 @@ describe('ContactBackend', () => {
         });
 
         test('trims whitespace from value for lookup', async () => {
-            const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.resolveIdentifier('email', '  alice@example.com  ');
@@ -468,7 +479,6 @@ describe('ContactBackend', () => {
         });
 
         test('returns empty array when no matches', async () => {
-            const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.resolveIdentifier('email', 'nobody@example.com');
@@ -477,7 +487,6 @@ describe('ContactBackend', () => {
         });
 
         test('returns multiple contacts when multiple lookups match', async () => {
-            const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
             ddbMock.on(QueryCommand).resolves({
                 Items: [
                     { PK: 'CONTACT_LOOKUP#name#alice', SK: 'CONTACT#alice-smith' },
@@ -496,7 +505,6 @@ describe('ContactBackend', () => {
         });
 
         test('skips missing contacts gracefully', async () => {
-            const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
             ddbMock.on(QueryCommand).resolves({
                 Items: [{ PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' }],
             });
@@ -703,11 +711,11 @@ describe('ContactBackend', () => {
     // listContacts
     // ======================================================================
     describe('listContacts', () => {
-        test('returns all contacts from scan', async () => {
-            ddbMock.on(ScanCommand).resolves({
+        test('returns all contacts from GSI2 query', async () => {
+            ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'CONTACT#alice-smith', SK: 'PROFILE', ...ALICE },
-                    { PK: 'CONTACT#bob-jones',   SK: 'PROFILE', ...BOB },
+                    contactQueryItem(ALICE),
+                    contactQueryItem(BOB),
                 ],
             });
 
@@ -716,49 +724,52 @@ describe('ContactBackend', () => {
             expect(result).toHaveLength(2);
             expect(result[0]).toEqual(ALICE);
             expect(result[1]).toEqual(BOB);
-            // PK/SK must not be present
+            // PK/SK/GSI2 keys must not be present on the returned Contact objects
             expect(result[0]).not.toHaveProperty('PK');
             expect(result[0]).not.toHaveProperty('SK');
+            expect(result[0]).not.toHaveProperty('GSI2PK');
+            expect(result[0]).not.toHaveProperty('GSI2SK');
         });
 
         test('returns empty array when no contacts exist', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.listContacts();
 
             expect(result).toEqual([]);
         });
 
-        test('uses correct scan filter', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+        test('uses GSI2 query with correct index and key condition', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listContacts();
 
-            const calls = ddbMock.commandCalls(ScanCommand);
+            const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(1);
             expect(calls[0].args[0].input.TableName).toBe('TestTable');
+            expect(calls[0].args[0].input.IndexName).toBe('GSI2');
+            expect(calls[0].args[0].input.KeyConditionExpression).toBe('GSI2PK = :pk');
             expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-                ':pkPrefix': 'CONTACT#',
-                ':sk':       'PROFILE',
+                ':pk': 'CONTACTS',
             });
         });
 
         test('handles undefined Items gracefully', async () => {
-            ddbMock.on(ScanCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({});
 
             const result = await backend.listContacts();
 
             expect(result).toEqual([]);
         });
 
-        test('handles paginated scan results', async () => {
-            ddbMock.on(ScanCommand)
+        test('handles paginated query results', async () => {
+            ddbMock.on(QueryCommand)
                 .resolvesOnce({
-                    Items:            [{ PK: 'CONTACT#alice-smith', SK: 'PROFILE', ...ALICE }],
-                    LastEvaluatedKey: { PK: 'CONTACT#alice-smith', SK: 'PROFILE' },
+                    Items:            [contactQueryItem(ALICE)],
+                    LastEvaluatedKey: { PK: 'CONTACT#alice-smith', SK: 'PROFILE', GSI2PK: 'CONTACTS', GSI2SK: 'CONTACT#alice-smith' },
                 })
                 .resolvesOnce({
-                    Items: [{ PK: 'CONTACT#bob-jones', SK: 'PROFILE', ...BOB }],
+                    Items: [contactQueryItem(BOB)],
                 });
 
             const contacts = await backend.listContacts();
@@ -766,20 +777,19 @@ describe('ContactBackend', () => {
             expect(contacts).toHaveLength(2);
             expect(contacts[0]).toEqual(ALICE);
             expect(contacts[1]).toEqual(BOB);
-            // Verify ScanCommand was called twice
-            expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(2);
+            // Verify QueryCommand was called twice
+            expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(2);
             // Verify ExclusiveStartKey was passed on second call
-            expect(ddbMock.commandCalls(ScanCommand)[1]?.args[0].input.ExclusiveStartKey).toEqual({
-                PK: 'CONTACT#alice-smith',
-                SK: 'PROFILE',
+            expect(ddbMock.commandCalls(QueryCommand)[1]?.args[0].input.ExclusiveStartKey).toEqual({
+                PK: 'CONTACT#alice-smith', SK: 'PROFILE', GSI2PK: 'CONTACTS', GSI2SK: 'CONTACT#alice-smith',
             });
         });
 
-        test('single-page scan with no LastEvaluatedKey calls ScanCommand once', async () => {
-            ddbMock.on(ScanCommand).resolves({
+        test('single-page query with no LastEvaluatedKey calls QueryCommand once', async () => {
+            ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'CONTACT#alice-smith', SK: 'PROFILE', ...ALICE },
-                    { PK: 'CONTACT#bob-jones',   SK: 'PROFILE', ...BOB },
+                    contactQueryItem(ALICE),
+                    contactQueryItem(BOB),
                 ],
                 // No LastEvaluatedKey — single page
             });
@@ -787,15 +797,15 @@ describe('ContactBackend', () => {
             const contacts = await backend.listContacts();
 
             expect(contacts).toHaveLength(2);
-            expect(ddbMock.commandCalls(ScanCommand)).toHaveLength(1);
+            expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
         });
 
         test('first call passes no ExclusiveStartKey', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listContacts();
 
-            const calls = ddbMock.commandCalls(ScanCommand);
+            const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls[0]?.args[0].input.ExclusiveStartKey).toBeUndefined();
         });
     });
@@ -805,10 +815,10 @@ describe('ContactBackend', () => {
     // ======================================================================
     describe('fuzzyLookup', () => {
         beforeEach(() => {
-            ddbMock.on(ScanCommand).resolves({
+            ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    { PK: 'CONTACT#alice-smith', SK: 'PROFILE', ...ALICE },
-                    { PK: 'CONTACT#bob-jones',   SK: 'PROFILE', ...BOB },
+                    contactQueryItem(ALICE),
+                    contactQueryItem(BOB),
                 ],
             });
         });
@@ -863,7 +873,7 @@ describe('ContactBackend', () => {
         });
 
         test('returns empty array when no contacts exist', async () => {
-            ddbMock.on(ScanCommand).resolves({ Items: [] });
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             const result = await backend.fuzzyLookup('alice');
 
@@ -871,20 +881,10 @@ describe('ContactBackend', () => {
         });
 
         test('ranks exact matches above prefix matches', async () => {
-            ddbMock.on(ScanCommand).resolves({
+            ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    {
-                        PK:          'CONTACT#alice-smith',
-                        SK:          'PROFILE',
-                        ...ALICE,
-                        identifiers: [{ platform: 'name', value: 'alice' }],
-                    },
-                    {
-                        PK:          'CONTACT#bob-jones',
-                        SK:          'PROFILE',
-                        ...BOB,
-                        identifiers: [{ platform: 'email', value: 'alice@example.com' }],
-                    },
+                    contactQueryItem({ ...ALICE, identifiers: [{ platform: 'name', value: 'alice' }] }),
+                    contactQueryItem({ ...BOB,   identifiers: [{ platform: 'email', value: 'alice@example.com' }] }),
                 ],
             });
 
@@ -897,22 +897,10 @@ describe('ContactBackend', () => {
         });
 
         test('ranks prefix matches above substring matches', async () => {
-            ddbMock.on(ScanCommand).resolves({
+            ddbMock.on(QueryCommand).resolves({
                 Items: [
-                    {
-                        PK:          'CONTACT#alice-smith',
-                        SK:          'PROFILE',
-                        ...ALICE,
-                        displayName: 'the-alice-prefix',  // substring 'alice'
-                        identifiers: [{ platform: 'email', value: 'notmatching@example.com' }],
-                    },
-                    {
-                        PK:          'CONTACT#bob-jones',
-                        SK:          'PROFILE',
-                        ...BOB,
-                        displayName: 'Alice Starts Here',  // prefix 'alice'
-                        identifiers: [{ platform: 'email', value: 'bob@example.com' }],
-                    },
+                    contactQueryItem({ ...ALICE, displayName: 'the-alice-prefix',  identifiers: [{ platform: 'email', value: 'notmatching@example.com' }] }),
+                    contactQueryItem({ ...BOB,   displayName: 'Alice Starts Here', identifiers: [{ platform: 'email', value: 'bob@example.com' }] }),
                 ],
             });
 
