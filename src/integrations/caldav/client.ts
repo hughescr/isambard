@@ -5,6 +5,9 @@ import { createDAVClient, type DAVCalendar, type DAVCalendarObject } from 'tsdav
 import type { CalendarServerEntry } from './calendar-registry/types';
 import { CaldavAuthError, CaldavTimeoutError } from './errors';
 import type { CalendarInfo, CalendarEvent } from './types';
+import type { ServiceHealthRegistry } from '@/services';
+
+const CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
 interface CachedEvents {
     events:    CalendarEvent[]
@@ -13,17 +16,32 @@ interface CachedEvents {
 
 type AttendeeItem = ical.Attendee;
 
+export interface CalDAVClientOptions {
+    cacheTtlMs?:     number
+    timeoutMs?:      number
+    healthRegistry?: ServiceHealthRegistry
+}
+
 /**
  * CalDAV client wrapping tsdav and node-ical for calendar event fetching.
  */
 export class CalDAVClient {
-    readonly #cacheTtlMs: number;
-    readonly #timeoutMs:  number;
-    readonly #cache = new Map<string, CachedEvents>();
+    readonly #cacheTtlMs:      number;
+    readonly #timeoutMs:       number;
+    readonly #cache =          new Map<string, CachedEvents>();
+    readonly #healthRegistry?: ServiceHealthRegistry;
+    #consecutiveFailures =     0;
 
-    constructor(cacheTtlMs = 300_000, timeoutMs = 15_000) {
-        this.#cacheTtlMs = cacheTtlMs;
-        this.#timeoutMs = timeoutMs;
+    constructor(optionsOrCacheTtlMs: CalDAVClientOptions | number = {}, timeoutMs = 15_000) {
+        if(typeof optionsOrCacheTtlMs === 'number') {
+            this.#cacheTtlMs     = optionsOrCacheTtlMs;
+            this.#timeoutMs      = timeoutMs;
+            this.#healthRegistry = undefined;
+        } else {
+            this.#cacheTtlMs     = optionsOrCacheTtlMs.cacheTtlMs ?? 300_000;
+            this.#timeoutMs      = optionsOrCacheTtlMs.timeoutMs ?? 15_000;
+            this.#healthRegistry = optionsOrCacheTtlMs.healthRegistry;
+        }
     }
 
     /**
@@ -70,9 +88,11 @@ export class CalDAVClient {
                     expiresAt: Date.now() + this.#cacheTtlMs,
                 });
                 allEvents.push(...serverEvents);
+                this.#recordSuccess();
             } catch (error) {
                 // Log and continue — partial results are better than total failure
                 logger.warn({ error, serverUrl: server.serverUrl }, 'Failed to fetch events from CalDAV server, continuing with partial results');
+                this.#recordFailure(error);
             }
         }
 
@@ -96,6 +116,29 @@ export class CalDAVClient {
     }
 
     // --- Private helpers ---
+
+    #recordSuccess(): void {
+        if(this.#healthRegistry === undefined) {
+            return;
+        }
+        const wasOffline = this.#consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD;
+        this.#consecutiveFailures = 0;
+        if(wasOffline) {
+            this.#healthRegistry.sendEvent('caldav', 'CONNECT_SUCCESS');
+        }
+    }
+
+    #recordFailure(error: unknown): void {
+        if(this.#healthRegistry === undefined) {
+            return;
+        }
+        this.#consecutiveFailures++;
+        if(this.#consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
+            this.#healthRegistry.sendEvent('caldav', 'CONNECTION_LOST', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
 
     async #fetchServerEvents(server: CalendarServerEntry, start: Date, end: Date): Promise<CalendarEvent[]> {
         const client = await this.#createClient(server.serverUrl, server.username, server.password);

@@ -92,3 +92,7 @@ export {
 
 // History provider
 export { DiscordHistoryProvider } from './history-provider';
+
+// Discord capability facade
+export type { DiscordCapability, SendResult, SendOptions, ChannelContent, DiscordCapabilityDeps, DiscordCapabilityLogger } from './capability';
+export { DiscordCapabilityImpl } from './capability';

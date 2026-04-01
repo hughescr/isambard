@@ -4,6 +4,7 @@ import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInterac
 import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
 import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
+import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
 import { mockLogger } from '../../../setup';
 
 const ADMIN_USER_ID = '222222222222222222';
@@ -88,9 +89,14 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
         isAllowed: mock(() => false),
     } as unknown as EmailAllowlist;
 
+    const mockSagaBackend: ApprovalSagaBackend = {
+        create: mock(async () => { /* intentionally empty */ }),
+    } as unknown as ApprovalSagaBackend;
+
     return {
         wildDuckClient: mockWildDuck,
         allowlist:      mockAllowlist,
+        sagaBackend:    mockSagaBackend,
         ...overrides,
     };
 }
@@ -141,7 +147,7 @@ describe('OutboundApprovalHandler', () => {
         });
 
         describe('approve (email-send-approve)', () => {
-            test('should deferUpdate, call submitMessage, show success embed', async () => {
+            test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, deferUpdate, editReply } = makeButtonInteraction('email-send-approve:42');
@@ -149,18 +155,26 @@ describe('OutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(deferUpdate).toHaveBeenCalledTimes(1);
-                expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledWith('Drafts', 42);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
-            test('should call submitMessage with correct folder and UID', async () => {
+            test('should create saga with correct type and uid param', async () => {
                 const deps    = makeDeps();
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approve:99');
 
                 await handler.handleButton(interaction);
 
-                expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledWith('Drafts', 99);
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    type:   string
+                    state:  string
+                    params: Record<string, unknown>
+                };
+                expect(createArg.type).toBe('email_send');
+                expect(createArg.state).toBe('approved');
+                expect(createArg.params.uid).toBe(99);
             });
 
             test('should NOT add recipient to allowlist on plain approve', async () => {
@@ -173,7 +187,7 @@ describe('OutboundApprovalHandler', () => {
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
             });
 
-            test('should show "Sent ✓" embed in green after successful approve', async () => {
+            test('should show "Approved ✓" embed in green after successful approve', async () => {
                 const deps    = makeDeps();
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
@@ -227,8 +241,8 @@ describe('OutboundApprovalHandler', () => {
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 expect(handler.handleButton(interaction)).resolves.toBeUndefined();
-                // Falls back to simple approve — submit is called
-                expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
+                // Falls back to simple approve — saga is created
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
@@ -239,8 +253,8 @@ describe('OutboundApprovalHandler', () => {
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 expect(handler.handleButton(interaction)).resolves.toBeUndefined();
-                // Falls back to simple approve
-                expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
+                // Falls back to simple approve — saga is created
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(mockLogger.warn).toHaveBeenCalled();
             });
 
@@ -255,8 +269,8 @@ describe('OutboundApprovalHandler', () => {
                 const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 expect(handler.handleButton(interaction)).resolves.toBeUndefined();
-                // Falls back to simple approve
-                expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
+                // Falls back to simple approve — saga is created
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
             });
 
             test('should deduplicate recipients when to appears in cc — only one Select Menu option created', async () => {
@@ -337,9 +351,9 @@ describe('OutboundApprovalHandler', () => {
         });
 
         describe('error handling', () => {
-            test('should call editReply with error message when submitMessage fails', async () => {
+            test('should call editReply with error message when sagaBackend.create fails', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.submitMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck submit failed'));
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB write failed'));
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
@@ -351,7 +365,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should call editReply with embeds and components cleared on error', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.submitMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck failed'));
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
@@ -365,7 +379,7 @@ describe('OutboundApprovalHandler', () => {
 
             test('should log error if editReply fails after error', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.submitMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck failed'));
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
                 editReply.mockRejectedValue(new Error('Discord error'));
                 const handler = new OutboundApprovalHandler(deps);
@@ -597,7 +611,7 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleSelectMenu(interaction);
 
             expect(deferUpdate).not.toHaveBeenCalled();
-            expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
+            expect(deps.sagaBackend.create).not.toHaveBeenCalled();
         });
 
         test('should return early for malformed customId with no colon', async () => {
@@ -608,7 +622,7 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleSelectMenu(interaction);
 
             expect(deferUpdate).not.toHaveBeenCalled();
-            expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
+            expect(deps.sagaBackend.create).not.toHaveBeenCalled();
         });
 
         test('should return early for invalid UID', async () => {
@@ -621,7 +635,7 @@ describe('OutboundApprovalHandler', () => {
             expect(deferUpdate).not.toHaveBeenCalled();
         });
 
-        test('should deferUpdate, submit draft, update embed to Sent when recipients selected', async () => {
+        test('should deferUpdate, create saga, update embed to Approved when recipients selected', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, deferUpdate, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
@@ -629,8 +643,26 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleSelectMenu(interaction);
 
             expect(deferUpdate).toHaveBeenCalledTimes(1);
-            expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledWith('Drafts', 42);
+            expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+            expect(deps.wildDuckClient.submitMessage).not.toHaveBeenCalled();
             expect(editReply).toHaveBeenCalledTimes(1);
+        });
+
+        test('should create saga with correct type and uid param', async () => {
+            const deps    = makeDeps();
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:99', ['a@example.com']);
+
+            await handler.handleSelectMenu(interaction);
+
+            const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                type:   string
+                state:  string
+                params: Record<string, unknown>
+            };
+            expect(createArg.type).toBe('email_send');
+            expect(createArg.state).toBe('approved');
+            expect(createArg.params.uid).toBe(99);
         });
 
         test('should add each selected recipient to allowlist', async () => {
@@ -647,14 +679,14 @@ describe('OutboundApprovalHandler', () => {
             expect(secondArg.email).toBe('b@example.com');
         });
 
-        test('should submit draft without adding to allowlist when no recipients selected', async () => {
+        test('should create saga without adding to allowlist when no recipients selected', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
             await handler.handleSelectMenu(interaction);
 
-            expect(deps.wildDuckClient.submitMessage).toHaveBeenCalledTimes(1);
+            expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
             expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
         });
 
@@ -670,9 +702,9 @@ describe('OutboundApprovalHandler', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
         });
 
-        test('should show error editReply when submitMessage throws', async () => {
+        test('should show error editReply when sagaBackend.create throws', async () => {
             const deps = makeDeps();
-            (deps.wildDuckClient.submitMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('submit failed'));
+            (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
@@ -683,9 +715,9 @@ describe('OutboundApprovalHandler', () => {
             expect(replyArg.content).toContain('error occurred');
         });
 
-        test('should log error when editReply fails after submitMessage error', async () => {
+        test('should log error when editReply fails after sagaBackend.create error', async () => {
             const deps = makeDeps();
-            (deps.wildDuckClient.submitMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('submit failed'));
+            (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
             const handler = new OutboundApprovalHandler(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockRejectedValue(new Error('Discord error'));

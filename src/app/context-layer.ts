@@ -1,5 +1,6 @@
 import { createContextBuilder, EventDeltaTracker, summarizeEventBatches, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from '@/agent';
 import type { BskyRejectionBackend } from '@/integrations/bsky';
+import type { ServiceHealthRegistry } from '@/services';
 import type { MemoryToolBackend } from '@/storage';
 
 /**
@@ -13,15 +14,16 @@ export interface ContextLayer {
 /**
  * Creates the context layer with context builder and event delta tracker.
  *
- * @param memoryBackend       - Memory tool backend for context loading
- * @param emailService        - Optional email service for perch inbox section
- * @param bskyDMService       - Optional Bluesky DM service for perch DM section
- * @param calendarService     - Optional calendar service for perch calendar section
+ * @param memoryBackend        - Memory tool backend for context loading
+ * @param emailService         - Optional email service for perch inbox section
+ * @param bskyDMService        - Optional Bluesky DM service for perch DM section
+ * @param calendarService      - Optional calendar service for perch calendar section
  * @param bskyRejectionBackend - Optional Bluesky rejection backend for rejected post tracking
+ * @param healthRegistry       - Optional service health registry for status section
  * @returns Context layer components
  */
-export function createContextLayer(memoryBackend: MemoryToolBackend, emailService?: EmailService, bskyDMService?: BskyDMService, calendarService?: CalendarService, bskyRejectionBackend?: BskyRejectionBackend): ContextLayer {
-    const contextBuilder = createContextBuilder({ backend: memoryBackend, summarizeEventBatches, emailService, bskyDMService, calendarService, bskyRejectionBackend });
+export function createContextLayer(memoryBackend: MemoryToolBackend, emailService?: EmailService, bskyDMService?: BskyDMService, calendarService?: CalendarService, bskyRejectionBackend?: BskyRejectionBackend, healthRegistry?: ServiceHealthRegistry): ContextLayer {
+    const contextBuilder = createContextBuilder({ backend: memoryBackend, summarizeEventBatches, emailService, bskyDMService, calendarService, bskyRejectionBackend, healthRegistry });
     const eventDeltaTracker = new EventDeltaTracker(contextBuilder);
 
     return { contextBuilder, eventDeltaTracker };

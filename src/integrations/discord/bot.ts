@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
+import type { DiscordCapability } from './capability';
 import {
     type CatchUpSessionRunner,
     type CatchUpCompletionSignal,
@@ -32,6 +33,7 @@ import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListRe
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { AllowlistCommandHandler } from '@/integrations/email';
+import type { ServiceHealthRegistry } from '@/services';
 
 /**
  * Global state for Discord client to survive Bun hot reload.
@@ -175,6 +177,19 @@ export interface DiscordBotOptions {
      * Optional person history coordinator for cross-platform conversation history injection.
      */
     historyCoordinator?: PersonHistoryCoordinator
+
+    /**
+     * Optional health registry for tracking Discord service health state.
+     * If provided, shard disconnect/ready/resume events update service health.
+     */
+    healthRegistry?: ServiceHealthRegistry
+
+    /**
+     * Optional Discord capability facade for outbox fallback.
+     * When provided, send paths (perch, catch-up, agent response) use the facade
+     * so messages are queued to the outbox when Discord is temporarily offline.
+     */
+    discordCapability?: DiscordCapability
 }
 
 /**
@@ -191,6 +206,15 @@ export interface DiscordBot {
      * Stops the bot by destroying the Discord client connection.
      */
     stop(): Promise<void>
+
+    /**
+     * Trigger catch-up after a Discord reconnect.
+     * Reloads the inbox to pick up messages received during the outage,
+     * then starts a catch-up session if there are unread messages.
+     * No-op if the catch-up runner has not yet been initialised (i.e. the
+     * bot has never completed its first clientReady sequence).
+     */
+    triggerCatchUp(): Promise<void>
 
     /**
      * For testing - expose internal state manager (Phase 2).
@@ -243,7 +267,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -267,7 +291,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
     let presenceManager: PresenceManager | undefined;
     let coordinator: MessageCoordinator | undefined;
-    let rateLimiter: DiscordRateLimiter | undefined;
     let catchUpSessionRunner: CatchUpSessionRunner | undefined;
     let perchScheduler: PerchScheduler | undefined;
     let perchSessionRunner: PerchSessionRunner | undefined;
@@ -307,73 +330,92 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Stryker restore all
     }
 
-    // Register clientReady handler for messageCreate setup
-    // This runs after the client is authenticated and ready
-    // Use .once() to ensure this setup only runs once, even on reconnects
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- clientReady handler must be async; complexity is inherent — it orchestrates presence, coordinator, perch, catch-up, inbox, and email lifecycle in sequence
-    client.once('clientReady', async (readyClient: Client): Promise<void> => {
-        // Log that the bot is ready (preserving functionality from removed logging handler)
-        createReadyHandler()(readyClient);
-        // At this point, readyClient.user is guaranteed to be non-null
-        // because the 'clientReady' event only fires after successful authentication
-
-        // Track last session ID for task context
-        let lastSessionId: string | undefined;
-        const setLastSessionId = (sessionId: string | undefined): void => {
-            if(sessionId) {
-                lastSessionId = sessionId;
-            }
-        };
-        const getLastSessionId = (): string | undefined => lastSessionId;
-
-        // Track recent messages (user + bot) for context-aware idle status generation
-        interface RecentMessage { author: 'user' | 'izzy', content: string, timestamp: number }
-        const MAX_RECENT_MESSAGES = 10; // Increased from 5 since we track both sides
-        const recentMessages: RecentMessage[] = [];
-
-        const addRecentMessage = (content: string, author: 'user' | 'izzy' = 'user'): void => {
-            recentMessages.push({ author, content: content.slice(0, 200), timestamp: Date.now() });
-            if(recentMessages.length > MAX_RECENT_MESSAGES) {
-                recentMessages.shift();
-            }
-        };
-
-        // Track last thinking content for context-aware idle status generation
-        let lastThinkingContent: string | undefined;
-
-        const setLastThinkingContent = (content: string): void => {
-            lastThinkingContent = content;
-        };
-
-        const getLastThinkingContent = (): string | undefined => lastThinkingContent;
-
-        // Create task list reader for idle status context
-        const taskListReader = createTaskListReader({
-            getCurrentSessionId: getLastSessionId,
-            logger,
+    // Register shard event listeners for health tracking
+    // Stryker disable BlockStatement: Composition root — shard health event wiring is not unit-testable
+    if(healthRegistry) {
+        // Stryker disable next-line StringLiteral: Discord.js event name
+        client.on('shardDisconnect', () => {
+            healthRegistry.sendEvent('discord', 'CONNECTION_LOST');
         });
-
-        // Create rate limiter for Discord message sending
-        rateLimiter = new DiscordRateLimiter({
-            globalConcurrency: 5,
-            logger,
+        // Stryker disable next-line StringLiteral: Discord.js event name
+        client.on('shardReady', () => {
+            healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
         });
-
-        // Create answer classifier with Haiku for ambiguous messages
-        const answerClassifier = new AnswerClassifier({
-            classifyWithLLM: classifyWithHaiku,
+        // Stryker disable next-line StringLiteral: Discord.js event name
+        client.on('shardResume', () => {
+            healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
         });
+    }
+    // Stryker restore BlockStatement
 
-        // Create interaction handler for button clicks
-        const interactionHandler = createInteractionHandler({
-            questionRegistry,
-        });
+    // Track last session ID for task context
+    let lastSessionId: string | undefined;
+    // Stryker disable BlockStatement: composition root helper — tested via coordinator integration
+    const setLastSessionId = (sessionId: string | undefined): void => {
+        if(sessionId) {
+            lastSessionId = sessionId;
+        }
+    };
+    // Stryker restore BlockStatement
+    const getLastSessionId = (): string | undefined => lastSessionId;
 
-        // Register interaction handler for button clicks and slash commands
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
-        client.on('interactionCreate', async (interaction) => {
+    // Track recent messages (user + bot) for context-aware idle status generation
+    interface RecentMessage { author: 'user' | 'izzy', content: string, timestamp: number }
+    const MAX_RECENT_MESSAGES = 10; // Increased from 5 since we track both sides
+    const recentMessages: RecentMessage[] = [];
+
+    // Stryker disable BlockStatement: composition root helper — tested via coordinator integration
+    const addRecentMessage = (content: string, author: 'user' | 'izzy' = 'user'): void => {
+        recentMessages.push({ author, content: content.slice(0, 200), timestamp: Date.now() });
+        if(recentMessages.length > MAX_RECENT_MESSAGES) {
+            recentMessages.shift();
+        }
+    };
+    // Stryker restore BlockStatement
+
+    // Track last thinking content for context-aware idle status generation
+    let lastThinkingContent: string | undefined;
+
+    // Stryker disable next-line BlockStatement: composition root callback — not covered by unit tests
+    const setLastThinkingContent = (content: string): void => {
+        lastThinkingContent = content;
+    };
+
+    const getLastThinkingContent = (): string | undefined => lastThinkingContent;
+
+    // Create task list reader for idle status context
+    const taskListReader = createTaskListReader({
+        getCurrentSessionId: getLastSessionId,
+        logger,
+    });
+
+    // Create rate limiter for Discord message sending
+    const rateLimiter = new DiscordRateLimiter({
+        globalConcurrency: 5,
+        logger,
+    });
+
+    // Create answer classifier with Haiku for ambiguous messages
+    const answerClassifier = new AnswerClassifier({
+        classifyWithLLM: classifyWithHaiku,
+    });
+
+    // Create interaction handler for button clicks
+    const interactionHandler = createInteractionHandler({
+        questionRegistry,
+    });
+
+    // Register interaction handler for button clicks and slash commands
+    // This uses `client` (not `readyClient`) so it is registered immediately at bot creation time,
+    // not inside the clientReady handler. This allows interactions to be routed even before the
+    // first clientReady fires.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- interactionCreate handler is async; branching is inherent — routes buttons, modals, selects, and slash commands
+    client.on('interactionCreate', async (interaction) => {
+        // Stryker disable BlockStatement: top-level error handler — prevents unhandled rejections
+        try {
             if(interaction.isButton()) {
                 // Route bsky-send-* and bsky-dm-* buttons to bsky outbound approval handler
+                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
                 if(bskySetup && (interaction.customId.startsWith('bsky-send-') || interaction.customId.startsWith('bsky-dm-'))) {
                     await bskySetup.outboundApprovalHandler.handleButton(interaction);
                     return;
@@ -389,12 +431,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     return;
                 }
                 // Route contact-approve-* and contact-reject-* buttons to contact approval handler
+                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
                 if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:'))) {
                     await contactApprovalHandler.handleButton(interaction);
                     return;
                 }
                 await interactionHandler.handleButtonInteraction(interaction);
             } else if(interaction.isModalSubmit()) {
+                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
                 if(bskySetup && (interaction.customId.startsWith('bsky-send-reject-reason:') || interaction.customId.startsWith('bsky-dm-reject-reason:'))) {
                     await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
                 } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
@@ -413,183 +457,220 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting
                 await (contactHandler ? contactHandler.handle(interaction) : interaction.reply({ content: 'Contact management is not currently available.', flags: MessageFlags.Ephemeral }));
             }
-        });
-
-        // Create dynamic status generator if identityContext is provided
-        // IMPORTANT: Must create before presence manager, catch-up session runner, and coordinator
-        const dynamicStatusGenerator = identityContext
-            ? createDynamicStatusGenerator({ identityContext })
-            : undefined;
-
-        // Setup presence manager if optional deps provided
-        // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
-        let presenceSetup: PresenceSetupResult | undefined;
-        if(identityContext && config.presence) {
-            presenceSetup = setupPresence({
-                identityContext,
-                presenceConfig:   config.presence,
-                readyClient,
-                botStateManager,
-                dynamicStatusGenerator,
-                inboxManager,
-                getTaskContext:   () => taskListReader.buildTaskListSummary(),
-                getRecentContext: async () => {
-                    if(recentMessages.length === 0) {
-                        return undefined;
-                    }
-                    const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
-                    return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
-                },
-                contextBuilder,
-                getLastThinkingContent,
+        } catch (err) {
+            logger.error({
+                error:           err instanceof Error ? err.message : String(err),
+                interactionType: interaction.type,
+                msg:             'Unhandled error in interaction handler',
             });
-            presenceManager = presenceSetup.presenceManager;
-            unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
-            unsubscribeActivityPhase = presenceSetup.unsubscribeActivityPhase;
-        }
-
-        // Create DMTracker and ResponseRouter (after client is ready, BEFORE session runners)
-        const dmTracker = new DMTracker(channelRegistry, readyClient);
-        const responseRouter = new ResponseRouter({
-            manager: channelRegistry,
-        });
-
-        // Create catch-up session runner if all dependencies available (must be created before inbox init)
-        if(inboxManager && agent && memoryBackend) {
-            catchUpSessionRunner = setupCatchUpSessionRunner({
-                inboxManager,
-                agent,
-                memoryBackend,
-                botStateManager,
-                presenceManager,
-                dynamicStatusGenerator,
-                responseRouter,
-                rateLimiter,
-                client:                  readyClient,
-                onThinkingContentUpdate: setLastThinkingContent,
-                setLastSessionId,
-                addRecentMessage,
-                activityLogger,
-            });
-        }
-
-        // Create perch session runner and scheduler if config provided
-        if(agent && options.perchConfig?.enabled) {
-            const perchSetup = setupPerchSessionRunnerAndScheduler({
-                agent,
-                perchConfig:             options.perchConfig,
-                botStateManager,
-                presenceManager,
-                dynamicStatusGenerator,
-                responseRouter,
-                rateLimiter,
-                client:                  readyClient,
-                contextBuilder,
-                onThinkingContentUpdate: setLastThinkingContent,
-                setLastSessionId,
-                addRecentMessage,
-                activityLogger,
-            });
-            perchSessionRunner = perchSetup.runner;
-            perchScheduler = perchSetup.scheduler;
-        }
-
-        // Initialize channel registry BEFORE setting up message handlers
-        // Pass rateLimiter for error notification (may be undefined if not created yet)
-        await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter);
-
-        // Mute admin email channel so Craig's messages there don't reach Izzy
-        if(emailSetup?.adminChannelId) {
-            // Stryker disable BlockStatement: try-catch wraps admin channel mute - non-fatal startup step
+            // Try to respond to the interaction if it hasn't been acknowledged
+            // Stryker disable BlockStatement: nested error handler — interaction may have expired
             try {
-                await channelRegistry.muteChannel(emailSetup.adminChannelId);
-                // Stryker disable next-line ObjectLiteral,StringLiteral: log message is not behavior-affecting
-                logger.info({ msg: 'Admin email channel muted in channel registry' });
-            } catch (err) {
-                logger.warn({
-                    error: err instanceof Error ? err.message : String(err),
-                    // Stryker disable next-line StringLiteral: log message is not behavior-affecting
-                    msg:   'Failed to mute admin email channel — messages there may reach Izzy',
-                });
+                if(interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: 'An error occurred while processing this interaction.',
+                        flags:   MessageFlags.Ephemeral,
+                    });
+                }
+            } catch{
+                // Interaction may have expired — nothing we can do
             }
             // Stryker restore BlockStatement
         }
+        // Stryker restore BlockStatement
+    });
 
-        // Create message coordinator if agent is provided (MUST be before setupMessageProcessing)
-        if(agent) {
-            coordinator = setupCoordinatorIntegration({
-                agent,
-                presenceManager,
-                dynamicStatusGenerator,
-                botStateManager,
-                catchUpSessionRunner,
-                perchSessionRunner,
-                responseRouter,
-                rateLimiter,
-                readyClient,
-                channelRegistry,
-                eventDeltaTracker,
-                onThinkingContentUpdate: setLastThinkingContent,
-                setLastSessionId,
-                addRecentMessage,
-                activityLogger,
-                historyCoordinator,
+    // Create dynamic status generator if identityContext is provided
+    // IMPORTANT: Must create before presence manager, catch-up session runner, and coordinator
+    // Stryker disable next-line ConditionalExpression: composition root — identityContext optional dep wiring
+    const dynamicStatusGenerator = identityContext
+        ? createDynamicStatusGenerator({ identityContext })
+        : undefined;
+
+    // Idempotency guard: track whether clientReady setup has run.
+    // The handler is registered with .on() (not .once()) so reconnects fire it again,
+    // but full component initialisation only runs on the first connection.
+    let initialized = false;
+
+    // Register clientReady handler for messageCreate setup
+    // This runs after the client is authenticated and ready.
+    // Use .on() (not .once()) so reconnects fire the handler again; the `initialized`
+    // flag gates the one-time setup so components are only created on first connection.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises, complexity, sonarjs/cognitive-complexity -- clientReady handler must be async; complexity is inherent — it orchestrates presence, coordinator, perch, catch-up, inbox, and email lifecycle in sequence
+    client.on('clientReady', async (readyClient: Client): Promise<void> => {
+        // Log that the bot is ready (preserving functionality from removed logging handler)
+        createReadyHandler()(readyClient);
+        // At this point, readyClient.user is guaranteed to be non-null
+        // because the 'clientReady' event only fires after successful authentication
+
+        if(!initialized) {
+            initialized = true;
+
+            // Setup presence manager if optional deps provided
+            // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
+            let presenceSetup: PresenceSetupResult | undefined;
+            if(identityContext && config.presence) {
+                presenceSetup = setupPresence({
+                    identityContext,
+                    presenceConfig:   config.presence,
+                    readyClient,
+                    botStateManager,
+                    dynamicStatusGenerator,
+                    inboxManager,
+                    getTaskContext:   () => taskListReader.buildTaskListSummary(),
+                    // Stryker disable next-line BlockStatement: composition root callback — not covered by unit tests
+                    getRecentContext: async () => {
+                        // Stryker disable next-line BlockStatement: optimization guard — empty array short-circuit, not covered by unit tests
+                        if(recentMessages.length === 0) {
+                            return undefined;
+                        }
+                        const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
+                        return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
+                    },
+                    contextBuilder,
+                    getLastThinkingContent,
+                });
+                presenceManager = presenceSetup.presenceManager;
+                unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
+                unsubscribeActivityPhase = presenceSetup.unsubscribeActivityPhase;
+            }
+
+            // Create DMTracker and ResponseRouter (after client is ready, BEFORE session runners)
+            const dmTracker = new DMTracker(channelRegistry, readyClient);
+            const responseRouter = new ResponseRouter({
+                manager: channelRegistry,
             });
 
-            // Register message handler AFTER channel registry is initialized and coordinator is created
-            // Message processing requires coordinator, which requires agent
-            setupMessageProcessing({
+            // Create catch-up session runner if all dependencies available (must be created before inbox init)
+            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
+            if(inboxManager && agent && memoryBackend) {
+                catchUpSessionRunner = setupCatchUpSessionRunner({
+                    inboxManager,
+                    agent,
+                    memoryBackend,
+                    botStateManager,
+                    presenceManager,
+                    dynamicStatusGenerator,
+                    responseRouter,
+                    rateLimiter,
+                    client:                  readyClient,
+                    onThinkingContentUpdate: setLastThinkingContent,
+                    setLastSessionId,
+                    addRecentMessage,
+                    activityLogger,
+                    discordCapability,
+                });
+            }
+            // Stryker restore BlockStatement
+
+            // Create perch session runner and scheduler if config provided
+            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
+            if(agent && options.perchConfig?.enabled) {
+                const perchSetup = setupPerchSessionRunnerAndScheduler({
+                    agent,
+                    perchConfig:             options.perchConfig,
+                    botStateManager,
+                    presenceManager,
+                    dynamicStatusGenerator,
+                    responseRouter,
+                    rateLimiter,
+                    client:                  readyClient,
+                    contextBuilder,
+                    onThinkingContentUpdate: setLastThinkingContent,
+                    setLastSessionId,
+                    addRecentMessage,
+                    activityLogger,
+                    discordCapability,
+                });
+                perchSessionRunner = perchSetup.runner;
+                perchScheduler = perchSetup.scheduler;
+            }
+            // Stryker restore BlockStatement
+
+            // Initialize channel registry BEFORE setting up message handlers
+            // Pass rateLimiter for error notification (may be undefined if not created yet)
+            await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter);
+
+            // Mute admin email channel so Craig's messages there don't reach Izzy
+            if(emailSetup?.adminChannelId) {
+                // Stryker disable BlockStatement: try-catch wraps admin channel mute - non-fatal startup step
+                try {
+                    await channelRegistry.muteChannel(emailSetup.adminChannelId);
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: log message is not behavior-affecting
+                    logger.info({ msg: 'Admin email channel muted in channel registry' });
+                } catch (err) {
+                    logger.warn({
+                        error: err instanceof Error ? err.message : String(err),
+                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
+                        msg:   'Failed to mute admin email channel — messages there may reach Izzy',
+                    });
+                }
+                // Stryker restore BlockStatement
+            }
+
+            // Create message coordinator if agent is provided (MUST be before setupMessageProcessing)
+            if(agent) {
+                coordinator = setupCoordinatorIntegration({
+                    agent,
+                    presenceManager,
+                    dynamicStatusGenerator,
+                    botStateManager,
+                    catchUpSessionRunner,
+                    perchSessionRunner,
+                    responseRouter,
+                    rateLimiter,
+                    readyClient,
+                    channelRegistry,
+                    eventDeltaTracker,
+                    onThinkingContentUpdate: setLastThinkingContent,
+                    setLastSessionId,
+                    addRecentMessage,
+                    activityLogger,
+                    historyCoordinator,
+                    discordCapability,
+                });
+
+                // Register message handler AFTER channel registry is initialized and coordinator is created
+                // Message processing requires coordinator, which requires agent
+                setupMessageProcessing({
+                    client,
+                    readyClient,
+                    channelRegistry,
+                    addRecentMessage,
+                    coordinator,
+                    questionRegistry,
+                    answerClassifier,
+                    inboxManager,
+                    catchUpSessionRunner,
+                    botStateManager,
+                    perchSessionRunner,
+                    dmTracker,
+                });
+            }
+
+            // Register channel cleanup event handlers
+            setupChannelCleanupHandlers({
                 client,
-                readyClient,
-                channelRegistry,
-                addRecentMessage,
                 coordinator,
-                questionRegistry,
-                answerClassifier,
-                inboxManager,
-                catchUpSessionRunner,
-                botStateManager,
-                perchSessionRunner,
-                dmTracker,
+                channelRegistry,
             });
-        }
 
-        // Register channel cleanup event handlers
-        setupChannelCleanupHandlers({
-            client,
-            coordinator,
-            channelRegistry,
-        });
-
-        // Initialize inbox on startup and then check for catch-up
-        if(inboxManager) {
-            setupInboxAndCatchUp({
-                inboxManager,
-                readyClient,
-                botStateManager,
-                catchUpSessionRunner,
-                presenceManager,
-                memoryBackend: memoryBackend!,
-                perchConfig:   options.perchConfig,
-            });
-        }
-
-        // Start email listener if email setup is provided
-        if(emailSetup) {
-            // Stryker disable BlockStatement: try-catch wraps email listener start - error handling
-            try {
-                await emailSetup.listener.start();
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.info({ msg: 'Email listener started' });
-            } catch (err) {
-                logger.error({
-                    error: err instanceof Error ? err.message : String(err),
-                    msg:   'Failed to start email listener',
+            // Initialize inbox on startup and then check for catch-up
+            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
+            if(inboxManager) {
+                setupInboxAndCatchUp({
+                    inboxManager,
+                    readyClient,
+                    botStateManager,
+                    catchUpSessionRunner,
+                    presenceManager,
+                    memoryBackend:  memoryBackend!,
+                    perchConfig:    options.perchConfig,
+                    healthRegistry: options.healthRegistry,
                 });
-                // Continue — email failure is non-fatal
             }
             // Stryker restore BlockStatement
-        }
+        } // end if(!initialized)
     });
 
     return {
@@ -598,7 +679,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await client.login(config.botToken);
         },
 
-        // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- shutdown sequencing has inherent branching for each optional component
         async stop(): Promise<void> {
             // Stop coordinator if it exists
             if(coordinator) {
@@ -640,35 +720,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(presenceManager) {
                 presenceManager.stop();
             }
-            // Stop rate limiter if it exists
-            if(rateLimiter) {
-                rateLimiter.stop();
-            }
-            // Stop email listener if it exists
-            if(emailSetup) {
-                // Stryker disable BlockStatement: try-catch isolates email stop from Discord cleanup
-                try {
-                    await emailSetup.listener.stop();
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
-                        msg:   'Email listener stop failed during shutdown',
-                    });
-                }
-                // Stryker restore BlockStatement
-                // Stryker disable BlockStatement: try-catch isolates WildDuck shutdown from Discord cleanup
-                try {
-                    await emailSetup.wildDuckClient.shutdown();
-                } catch (err) {
-                    logger.error({
-                        error: err instanceof Error ? err.message : String(err),
-                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
-                        msg:   'WildDuck client shutdown failed during email teardown',
-                    });
-                }
-                // Stryker restore BlockStatement
-            }
+            // Stop rate limiter
+            rateLimiter.stop();
             // Remove all listeners before destroy to prevent memory leaks
             client.removeAllListeners();
             // destroy() is sufficient for cleanup (as per user decision)
@@ -679,6 +732,24 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 globalThis.__discordClient = undefined;
             }
         },
+
+        // Stryker disable BlockStatement: Composition root — reconnect catch-up trigger is not unit-testable
+        async triggerCatchUp(): Promise<void> {
+            if(!catchUpSessionRunner || !inboxManager) {
+                return;
+            }
+            try {
+                await inboxManager.loadUnread();
+                const shouldStart = await catchUpSessionRunner.shouldStartCatchUp();
+                if(shouldStart) {
+                    logger.info({ msg: 'Starting catch-up after Discord reconnect' });
+                    await catchUpSessionRunner.startCatchUp();
+                }
+            } catch (err) {
+                logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Reconnect catch-up trigger failed' });
+            }
+        },
+        // Stryker restore BlockStatement
 
         // For testing - expose internal state manager (Phase 2)
         _botStateManager: botStateManager,

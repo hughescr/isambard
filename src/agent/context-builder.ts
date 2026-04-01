@@ -9,6 +9,7 @@ import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
+import type { ServiceHealthRegistry } from '@/services';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
 
@@ -56,6 +57,7 @@ export interface ContextBuilderOptions {
     bskyDMService?:         BskyDMService          // Optional Bluesky DM service for perch DM section
     bskyRejectionBackend?:  BskyRejectionBackend   // Optional Bluesky rejection backend for perch rejection section
     calendarService?:       CalendarService        // Optional calendar service for context injection
+    healthRegistry?:        ServiceHealthRegistry  // Optional service health registry for status section
 }
 
 export interface ContextBuilder {
@@ -283,6 +285,7 @@ class ContextBuilderImpl implements ContextBuilder {
     readonly #bskyDMService:           BskyDMService | undefined;
     readonly #bskyRejectionBackend:    BskyRejectionBackend | undefined;
     readonly #calendarService:         CalendarService | undefined;
+    readonly #healthRegistry:          ServiceHealthRegistry | undefined;
 
     constructor(options: ContextBuilderOptions) {
         this.#backend = options.backend;
@@ -298,6 +301,7 @@ class ContextBuilderImpl implements ContextBuilder {
         this.#bskyDMService = options.bskyDMService;
         this.#bskyRejectionBackend = options.bskyRejectionBackend;
         this.#calendarService = options.calendarService;
+        this.#healthRegistry = options.healthRegistry;
 
         this.#maxIdentityChars = maxIdentityTokens * CHARS_PER_TOKEN;
         this.#maxUserChars = (options.maxUserTokens ?? DEFAULT_MAX_USER_TOKENS) * CHARS_PER_TOKEN;
@@ -449,6 +453,27 @@ class ContextBuilderImpl implements ContextBuilder {
             return `[Calendar unavailable: ${classifyCalendarError(error)}]`;
         }
         // Stryker restore BlockStatement
+    }
+
+    /**
+     * Build the service health section showing any degraded or offline services.
+     * Returns formatted section string, or undefined if all services are online or no registry is configured.
+     */
+    // eslint-disable-next-line sonarjs/function-return-type -- intentional: undefined signals all services online; callers treat undefined as "no section to show"
+    #buildServiceHealthSection(): string | undefined {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: optional dependency guard — healthRegistry is always provided in tested paths
+        if(!this.#healthRegistry) {
+            return undefined;
+        }
+
+        const summary = this.#healthRegistry.buildStatusSummary();
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: undefined summary means all services online — no section needed
+        if(summary === undefined) {
+            return undefined;
+        }
+
+        // Stryker disable next-line StringLiteral: Section header and status text are cosmetic UI text
+        return `## Service Status\n⚠️ Some services are currently unavailable:\n${summary}\nAll other services are operating normally.`;
     }
 
     /**
@@ -819,25 +844,32 @@ class ContextBuilderImpl implements ContextBuilder {
         // 1. Time header (always first, refreshed per-message)
         sections.push(formatTimeHeader(userTimezone));
 
-        // 2. User-specific memories (path-based)
+        // 2. Service health status (shown early so Izzy knows which services are available)
+        const healthSection = this.#buildServiceHealthSection();
+        // Stryker disable next-line BlockStatement: composition root — healthSection conditional tested at the #buildServiceHealthSection level
+        if(healthSection) {
+            sections.push(healthSection);
+        }
+
+        // 3. User-specific memories (path-based)
         const userMemories = await this.loadUserMemories(userId, now);
         if(userMemories) {
             sections.push(`[About this user]\n${userMemories}`);
         }
 
-        // 3. Calendar context (optional — skip if no calendar service configured)
+        // 4. Calendar context (optional — skip if no calendar service configured)
         const calendarSection = await this.#buildCalendarSection(userId, userTimezone, now);
         if(calendarSection) {
             sections.push(calendarSection);
         }
 
-        // 4. Hot state (sigmoid-scored, tiered)
+        // 5. Hot state (sigmoid-scored, tiered)
         const hotState = await this.loadHotState(now);
         if(hotState) {
             sections.push(`[Current state]\n${hotState}`);
         }
 
-        // 5. Recent events (tiered display)
+        // 6. Recent events (tiered display)
         // Stryker disable ArithmeticOperator: Config constant calculation for event loading limit
         const eventsResult = await this.loadRecentEvents(
             this.#maxEventFullItems + this.#maxEventBatchSize * 4,
@@ -853,13 +885,20 @@ class ContextBuilderImpl implements ContextBuilder {
         return `${sections.join('\n\n')}\n\n`;
     }
 
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- perch context aggregates 8 optional sections (time, state, events, calendar, inbox, rejected drafts, bsky DMs, bsky rejections); each section adds one branch
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- perch context aggregates 9 optional sections (time, health, state, events, calendar, inbox, rejected drafts, bsky DMs, bsky rejections); each section adds one branch
     async buildPerchContext(now: Date = new Date()): Promise<string> {
         // 1. Time header (no user timezone for perch)
         // Stryker disable next-line ArrayDeclaration: Equivalent - time header is always first element
         const sections: string[] = [formatTimeHeader()];
 
-        // 2. Top state memories (full content, truncated per-item)
+        // 2. Service health status (shown early so Izzy knows which services are available)
+        const healthSection = this.#buildServiceHealthSection();
+        // Stryker disable next-line BlockStatement: composition root — healthSection conditional tested at the #buildServiceHealthSection level
+        if(healthSection) {
+            sections.push(healthSection);
+        }
+
+        // 3. Top state memories (full content, truncated per-item)
         // Stryker disable next-line ObjectLiteral: Config parameter for getStateItemsScored
         const scoredItems = await this.#backend.getStateItemsScored({ now });
         if(scoredItems.length > 0) {
@@ -880,7 +919,7 @@ class ContextBuilderImpl implements ContextBuilder {
             sections.push(`## Recent Focus\n${stateSections.join('\n\n')}`);
         }
 
-        // 3. Recent events (all shown in full, no summarization)
+        // 4. Recent events (all shown in full, no summarization)
         // Stryker disable next-line ArithmeticOperator: Config constant for perch event count
         const perchEventCount = 5;
         const eventsResult = await this.loadRecentEvents(perchEventCount, now);
@@ -901,31 +940,31 @@ class ContextBuilderImpl implements ContextBuilder {
             sections.push(`## Recent Events\n${eventSections.join('\n\n')}`);
         }
 
-        // 4. Calendar context (optional — skip if no calendar service configured)
+        // 5. Calendar context (optional — skip if no calendar service configured)
         const perchCalendarSection = await this.#buildPerchCalendarSection(now);
         if(perchCalendarSection) {
             sections.push(perchCalendarSection);
         }
 
-        // 5. Email inbox summary (optional — skip if no email service configured)
+        // 6. Email inbox summary (optional — skip if no email service configured)
         const inboxSection = await this.#buildEmailInboxSection(now);
         if(inboxSection) {
             sections.push(inboxSection);
         }
 
-        // 6. Rejected drafts context (outbound emails rejected by admin)
+        // 7. Rejected drafts context (outbound emails rejected by admin)
         const rejectedDraftsSection = await this.#buildRejectedDraftSection();
         if(rejectedDraftsSection) {
             sections.push(rejectedDraftsSection);
         }
 
-        // 7. Bluesky DM summary (optional — skip if no bsky service configured)
+        // 8. Bluesky DM summary (optional — skip if no bsky service configured)
         const bskyDMSection = await this.#buildBskyDMSection();
         if(bskyDMSection) {
             sections.push(bskyDMSection);
         }
 
-        // 8. Rejected Bluesky posts/DMs (admin rejections awaiting agent review)
+        // 9. Rejected Bluesky posts/DMs (admin rejections awaiting agent review)
         // Stryker disable next-line ConditionalExpression,BlockStatement: optional section guard
         const bskyRejectedSection = await this.#buildBskyRejectedPostsSection();
         if(bskyRejectedSection) {

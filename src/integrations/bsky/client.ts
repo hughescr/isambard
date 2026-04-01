@@ -3,6 +3,7 @@ import { logger } from '@hughescr/logger';
 import { type BskyEmbeddedRecord, type BskyPostEmbed, type BskyFacet, type BskyFacetFeature } from '@/integrations/bsky/embeds';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
 import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
+import type { ServiceHealthRegistry } from '@/services';
 
 // HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
 // Stryker disable ObjectLiteral,StringLiteral: HTTP status code constants are configuration
@@ -43,25 +44,28 @@ const BSKY_MAX_GRAPHEME_LENGTH = 300;
 const BSKY_DM_MAX_GRAPHEME_LENGTH = 1000;
 
 interface BlueskyClientOptions {
-    handle:      string
-    appPassword: string
-    serviceUrl?: string
+    handle:          string
+    appPassword:     string
+    serviceUrl?:     string
+    healthRegistry?: ServiceHealthRegistry
 }
 
 /**
  * Bluesky AT Protocol client wrapping AtpAgent with normalized domain types.
  */
 export class BlueskyClient {
-    private readonly agent:       AtpAgent;
-    private          chatAgent:   AtpAgent | undefined;
-    private readonly handle:      string;
-    private readonly appPassword: string;
+    private readonly agent:          AtpAgent;
+    private          chatAgent:      AtpAgent | undefined;
+    private readonly handle:         string;
+    private readonly appPassword:    string;
+    private readonly healthRegistry: ServiceHealthRegistry | undefined;
 
     constructor(options: BlueskyClientOptions) {
         // Stryker disable next-line StringLiteral: default service URL is configuration
-        this.agent       = new AtpAgent({ service: options.serviceUrl ?? 'https://bsky.social' });
-        this.handle      = options.handle;
-        this.appPassword = options.appPassword;
+        this.agent          = new AtpAgent({ service: options.serviceUrl ?? 'https://bsky.social' });
+        this.handle         = options.handle;
+        this.appPassword    = options.appPassword;
+        this.healthRegistry = options.healthRegistry;
     }
 
     /**
@@ -81,7 +85,7 @@ export class BlueskyClient {
             this.chatAgent = this.agent.withProxy('bsky_chat', 'did:web:api.bsky.chat');
         } catch (err: unknown) {
             // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Login failed');
+            throw this.mapError(err, 'Login failed', false);
         }
     }
 
@@ -870,9 +874,13 @@ export class BlueskyClient {
     // Error mapping
     // ---------------------------------------------------------------------------
 
-    private mapError(err: unknown, message: string): BskyError {
+    private mapError(err: unknown, message: string, notifyHealthRegistry = true): BskyError {
         if(isXRPCError(err)) {
             if(err.status === HTTP_STATUS.AUTH_REQUIRED) {
+                // Stryker disable next-line ConditionalExpression: health registry notification guard — only notify for runtime auth failures, not login
+                if(notifyHealthRegistry) {
+                    this.healthRegistry?.sendEvent('bluesky', 'CONNECTION_LOST', { error: err.message });
+                }
                 return new BskyAuthError(message, { originalMessage: err.message, error: err.error });
             }
             if(err.status === HTTP_STATUS.RATE_LIMITED) {

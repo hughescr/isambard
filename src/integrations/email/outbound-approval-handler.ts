@@ -11,9 +11,31 @@ const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 const AMBER = 0xFF_AA_00;
 
+/**
+ * Minimal interface for creating approval sagas.
+ * Satisfies ApprovalSagaBackend without crossing the services boundary.
+ */
+export interface SagaWriter {
+    create(saga: {
+        id:                 string
+        state:              string
+        type:               string
+        params:             Record<string, unknown>
+        approvalChannelId?: string
+        approvalMessageId?: string
+        adminUserId?:       string
+        rejectionReason?:   string
+        lastError?:         string
+        createdAt:          string
+        updatedAt:          string
+        ttl?:               number
+    }): Promise<void>
+}
+
 export interface OutboundApprovalHandlerDeps {
     wildDuckClient:  WildDuckClient
     allowlist:       EmailAllowlist
+    sagaBackend:     SagaWriter
     activityLogger?: ActivityLogger
 }
 
@@ -38,11 +60,13 @@ export interface OutboundApprovalHandlerDeps {
 export class OutboundApprovalHandler {
     private readonly wildDuckClient:  WildDuckClient;
     private readonly allowlist:       EmailAllowlist;
+    private readonly sagaBackend:     SagaWriter;
     private readonly activityLogger?: ActivityLogger;
 
     constructor(deps: OutboundApprovalHandlerDeps) {
         this.wildDuckClient  = deps.wildDuckClient;
         this.allowlist       = deps.allowlist;
+        this.sagaBackend     = deps.sagaBackend;
         this.activityLogger  = deps.activityLogger;
     }
 
@@ -228,11 +252,21 @@ export class OutboundApprovalHandler {
 
             // Rate limiter is intentionally not incremented here — Craig's manual approval
             // is itself the rate control mechanism for non-allowlisted sends.
-            await this.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
+
+            // Stryker disable next-line StringLiteral: ISO timestamp format is convention
+            const now = new Date().toISOString();
+            await this.sagaBackend.create({
+                id:        crypto.randomUUID(),
+                state:     'approved',
+                type:      'email_send',
+                params:    { uid },
+                createdAt: now,
+                updatedAt: now,
+            });
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
             // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
-            void this.activityLogger?.log({ type: 'email-sent', summary: 'Email sent' }).catch(() => undefined);
+            void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch(() => undefined);
 
             // Add selected recipients to allowlist (best-effort)
             for(const email of selectedRecipients) {
@@ -254,7 +288,7 @@ export class OutboundApprovalHandler {
 
             const updatedEmbed = new EmbedBuilder()
                 // Stryker disable next-line StringLiteral: UI label is configuration
-                .setTitle('Sent \u2713')
+                .setTitle('Approved \u2713 \u2014 sending shortly')
                 .setColor(GREEN);
 
             await interaction.editReply({
@@ -285,15 +319,25 @@ export class OutboundApprovalHandler {
     private async handleApprove(interaction: ButtonInteraction, uid: number): Promise<void> {
         // Rate limiter is intentionally not incremented here — Craig's manual approval
         // is itself the rate control mechanism for non-allowlisted sends.
-        await this.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
+
+        // Stryker disable next-line StringLiteral: ISO timestamp format is convention
+        const now = new Date().toISOString();
+        await this.sagaBackend.create({
+            id:        crypto.randomUUID(),
+            state:     'approved',
+            type:      'email_send',
+            params:    { uid },
+            createdAt: now,
+            updatedAt: now,
+        });
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
         // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
-        void this.activityLogger?.log({ type: 'email-sent', summary: 'Email sent' }).catch(() => undefined);
+        void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch(() => undefined);
 
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
-            .setTitle('Sent \u2713')
+            .setTitle('Approved \u2713 \u2014 sending shortly')
             .setColor(GREEN);
 
         await interaction.editReply({

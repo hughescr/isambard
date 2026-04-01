@@ -8,6 +8,7 @@ import {
     addAttachmentInfoToContexts
 } from '../attachments';
 import type { FetchedImage } from '../attachments/types';
+import type { DiscordCapability } from '../capability';
 import type { CatchUpSessionRunner } from '../catchup';
 import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
 import type { ChannelMetadata } from '../channel-registry/types';
@@ -138,6 +139,7 @@ export interface SetupCoordinatorParams {
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
     activityLogger?:          ActivityLogger
     historyCoordinator?:      PersonHistoryCoordinator
+    discordCapability?:       DiscordCapability
 }
 
 /**
@@ -219,7 +221,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 // Capture rate limiter reference for safe closure access
                 const limiter = rateLimiter;
 
-                await sendResponse({
+                const sendResult = await sendResponse({
                     responseRouter,
                     botStateManager,
                     response:           result.response,
@@ -227,7 +229,17 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                     rateLimiter:        limiter,
                     client:             readyClient,
                     useFallbackOnError: false,
+                    discordCapability:  params.discordCapability,
                 });
+
+                // If response was queued to outbox (Discord offline), ensure bot returns to idle
+                // so perch/catch-up aren't blocked waiting for a send that already completed
+                if(!sendResult.sent) {
+                    const modeAfterSend = botStateManager.getMode();
+                    if(modeAfterSend === 'processing_message') {
+                        botStateManager.goIdle();
+                    }
+                }
 
                 // Log the exchange as activity (fire-and-forget with Haiku summary)
                 if(params.activityLogger) {

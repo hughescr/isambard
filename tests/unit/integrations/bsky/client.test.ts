@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
+import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
 // Mock return types (loose enough for test data flexibility)
@@ -2655,6 +2656,59 @@ describe.concurrent('BlueskyClient', () => {
                 type:   'mention',
                 handle: 'dm-mentioned.bsky.social',
             });
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Health registry integration
+    // -----------------------------------------------------------------------
+
+    describe('health registry', () => {
+        test('sends CONNECTION_LOST to health registry on runtime 401 error', async () => {
+            const mockSendEvent    = mock(() => undefined);
+            const healthRegistry   = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
+            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Token expired'));
+            const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
+            expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
+            await Promise.resolve();
+            expect(mockSendEvent).toHaveBeenCalledWith('bluesky', 'CONNECTION_LOST', expect.objectContaining({ error: expect.any(String) }));
+        });
+
+        test('does not send CONNECTION_LOST on rate limit error (429)', async () => {
+            const mockSendEvent  = mock(() => undefined);
+            const healthRegistry = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
+            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded', 'Too many requests'));
+            const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
+            expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
+            await Promise.resolve();
+            expect(mockSendEvent).not.toHaveBeenCalled();
+        });
+
+        test('does not send CONNECTION_LOST on generic XRPC error', async () => {
+            const mockSendEvent  = mock(() => undefined);
+            const healthRegistry = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
+            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(500, 'InternalError', 'Server error'));
+            const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
+            expect(client.getFeed()).rejects.toBeInstanceOf(BskyError);
+            await Promise.resolve();
+            expect(mockSendEvent).not.toHaveBeenCalled();
+        });
+
+        test('does not send CONNECTION_LOST when no health registry provided', async () => {
+            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Token expired'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            // Should not throw from missing registry
+            expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
+        });
+
+        test('does not send CONNECTION_LOST on login 401 (handled by reconnection loop)', async () => {
+            const mockSendEvent  = mock(() => undefined);
+            const healthRegistry = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
+            mockLogin.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Invalid credentials'));
+            const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
+            expect(client.login()).rejects.toBeInstanceOf(BskyAuthError);
+            await Promise.resolve();
+            expect(mockSendEvent).not.toHaveBeenCalled();
         });
     });
 });

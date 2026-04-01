@@ -187,7 +187,9 @@ describe('createMCPServers', () => {
                 getAllChannels:     expect.any(Function),
                 getUnmutedChannels: expect.any(Function),
             }),
-            mockOptions.botStateManager
+            mockOptions.botStateManager,
+            mockOptions.healthRegistry,
+            mockOptions.discordReconnectionLoop
         );
     });
 

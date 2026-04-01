@@ -3,6 +3,7 @@ import { mockLogger } from '../../../setup';
 import type { CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
 import { CaldavAuthError, CaldavTimeoutError } from '@/integrations/caldav/errors';
 import type { CalendarEvent } from '@/integrations/caldav/types';
+import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
 // Mock tsdav
@@ -103,6 +104,17 @@ function makeVEvent(overrides: Record<string, unknown> = {}): Record<string, unk
         datetype: 'date-time',
         dtstamp:  new Date('2025-06-15T12:00:00.000Z'),
         ...overrides,
+    };
+}
+
+function makeHealthRegistry(): {
+    registry:  ServiceHealthRegistry
+    sendEvent: ReturnType<typeof mock>
+} {
+    const sendEvent = mock(() => undefined);
+    return {
+        registry: { sendEvent } as unknown as ServiceHealthRegistry,
+        sendEvent,
     };
 }
 
@@ -425,6 +437,104 @@ describe('CalDAVClient.getEvents', () => {
 
         expect(result).toHaveLength(2);
         expect(mockCreateDAVClient).toHaveBeenCalledTimes(2);
+    });
+
+    // -----------------------------------------------------------------------
+    // Health registry events
+    // -----------------------------------------------------------------------
+
+    test('no health events emitted when registry not configured', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<never> => {
+            throw new Error('Network error');
+        });
+
+        // Should not crash when no health registry
+        const client = new CalDAVClient();
+        await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        // No assertion — just verifying no exception from missing registry
+    });
+
+    test('no CONNECTION_LOST until 3 consecutive server failures', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<never> => {
+            throw new Error('Network error');
+        });
+
+        const { registry, sendEvent } = makeHealthRegistry();
+        const client = new CalDAVClient({ healthRegistry: registry });
+        const server = makeServer();
+        const end    = new Date('2025-06-18T12:00:00.000Z');
+
+        // Two failures — below threshold
+        await client.getEvents([server], BASE_DATE, end);
+        await client.getEvents([server], BASE_DATE, end);
+
+        expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+    });
+
+    test('emits CONNECTION_LOST after 3 consecutive server failures', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<never> => {
+            throw new Error('Network error');
+        });
+
+        const { registry, sendEvent } = makeHealthRegistry();
+        // Use 0ms TTL so each call re-fetches (no cache hits that bypass failure tracking)
+        const client = new CalDAVClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const server = makeServer();
+        const end    = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([server], BASE_DATE, end); // failure 1
+        await client.getEvents([server], BASE_DATE, end); // failure 2
+        await client.getEvents([server], BASE_DATE, end); // failure 3 — threshold
+
+        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.objectContaining({
+            error: 'Network error',
+        }));
+    });
+
+    test('emits CONNECT_SUCCESS after recovery from 3+ failures', async () => {
+        let fetchCalendarsCallCount = 0;
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => {
+            fetchCalendarsCallCount++;
+            if(fetchCalendarsCallCount <= 3) {
+                throw new Error('Network error');
+            }
+            return [makeDAVCalendar()];
+        });
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const { registry, sendEvent } = makeHealthRegistry();
+        const client = new CalDAVClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const server = makeServer();
+        const end    = new Date('2025-06-18T12:00:00.000Z');
+
+        await client.getEvents([server], BASE_DATE, end); // failure 1
+        await client.getEvents([server], BASE_DATE, end); // failure 2
+        await client.getEvents([server], BASE_DATE, end); // failure 3 — CONNECTION_LOST emitted
+        await client.getEvents([server], BASE_DATE, end); // success — CONNECT_SUCCESS emitted
+
+        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECTION_LOST', expect.anything());
+        expect(sendEvent).toHaveBeenCalledWith('caldav', 'CONNECT_SUCCESS');
+    });
+
+    test('no CONNECT_SUCCESS on success when no prior failures', async () => {
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
+            makeDAVCalendar(),
+        ]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
+
+        const { registry, sendEvent } = makeHealthRegistry();
+        const client = new CalDAVClient({ healthRegistry: registry, cacheTtlMs: 0 });
+        const server = makeServer();
+
+        await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        // No CONNECT_SUCCESS when already online (no failures tracked)
+        expect(sendEvent).not.toHaveBeenCalledWith('caldav', 'CONNECT_SUCCESS');
     });
 });
 

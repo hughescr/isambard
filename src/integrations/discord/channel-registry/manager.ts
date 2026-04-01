@@ -64,7 +64,7 @@ export class ChannelRegistryManager {
         const allRecords = [...guildRecords, ...dmRecords];
         for(let i = 0; i < allRecords.length; i++) {
             const record = allRecords[i];
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
+            // Stryker disable next-line ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
             logger.debug({ index: i + 1, total: allRecords.length, channelId: record.channelId, msg: 'Warming channel...' });
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel
             await this.fetchAndCacheChannel(record);

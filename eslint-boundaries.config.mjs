@@ -14,6 +14,7 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  * 2. errors     - Error types, minimal dependencies
  * 3. config     - Configuration loading, minimal dependencies
  * 4. storage    - Data layer, independent of application/agent
+ * 4b. services  - Service health, lifecycle, outbox infrastructure
  * 5. agent      - Platform-agnostic AI agent logic
  * 6. discord    - Discord integration, depends on agent
  *    email      - Email integration, depends on agent
@@ -26,8 +27,9 @@ export const boundaryElements = [
     { type: 'utils',   pattern: 'src/utils/**' },
     { type: 'errors',  pattern: 'src/errors/**' },
     { type: 'config',  pattern: 'src/config/**' },
-    { type: 'storage', pattern: 'src/storage/**' },
-    { type: 'agent',   pattern: 'src/agent/**' },
+    { type: 'storage',   pattern: 'src/storage/**' },
+    { type: 'services', pattern: 'src/services/**' },
+    { type: 'agent',    pattern: 'src/agent/**' },
     { type: 'discord', pattern: 'src/integrations/discord/**' },
     { type: 'email',   pattern: 'src/integrations/email/**' },
     { type: 'bsky',    pattern: 'src/integrations/bsky/**' },
@@ -60,18 +62,19 @@ export const boundariesConfig = {
                 { from: { type: 'utils', internalPath: 'path-validator.ts' }, allow: { to: { type: ['errors'] } } },
                 { from: { type: 'errors' },  allow: { to: { type: ['utils'] } } },
                 { from: { type: 'config' },  allow: { to: { type: ['utils'] } } },
-                { from: { type: 'storage' }, allow: { to: { type: ['utils', 'errors', 'config'] } } },
-                { from: { type: 'agent' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'email', 'bsky', 'caldav'] } } },
-                { from: { type: 'email' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent'] } } },
-                { from: { type: 'bsky' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent'] } } },
-                { from: { type: 'caldav' },  allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
-                { from: { type: 'discord' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent', 'email', 'bsky', 'caldav'] } } },
-                { from: { type: 'app' },     allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky', 'caldav'] } } },
+                { from: { type: 'storage' },  allow: { to: { type: ['utils', 'errors', 'config'] } } },
+                { from: { type: 'services' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
+                { from: { type: 'agent' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'email', 'bsky', 'caldav'] } } },
+                { from: { type: 'email' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } },
+                { from: { type: 'bsky' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } },
+                { from: { type: 'caldav' },  allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services'] } } },
+                { from: { type: 'discord' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'email', 'bsky', 'caldav'] } } },
+                { from: { type: 'app' },     allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav'] } } },
                 // Entry-point enforcement (merged from boundaries/entry-point)
                 {
                     disallow: {
                         to: {
-                            type:         ['utils', 'errors', 'config', 'storage', 'agent', 'discord', 'email', 'bsky', 'caldav', 'app'],
+                            type:         ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'app'],
                             internalPath: '!index.ts'
                         }
                     }

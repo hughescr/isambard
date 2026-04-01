@@ -53,6 +53,7 @@
     "semver": "^7.7.4",
     "sst": "^4.5.11",
     "tsdav": "^2.1.8",
+    "xstate": "^5.30.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

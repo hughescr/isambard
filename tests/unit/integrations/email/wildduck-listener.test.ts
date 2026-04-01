@@ -3,7 +3,8 @@ import { mockLogger } from '../../../setup';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { WildDuckClient, WildDuckMessageSummary } from '@/integrations/email/wildduck-client';
-import { type WildDuckListenerConfig, WildDuckListener, MAX_NOTIFY_ATTEMPTS  } from '@/integrations/email/wildduck-listener';
+import { type WildDuckListenerConfig, WildDuckListener } from '@/integrations/email/wildduck-listener';
+import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -41,42 +42,26 @@ function makeSummary(uid: number): WildDuckMessageSummary {
 // ---------------------------------------------------------------------------
 
 function makeWildDuckClient(overrides: Partial<{
-    listMessages:          ReturnType<typeof mock>
-    getFullMessage:        ReturnType<typeof mock>
-    getMessage:            ReturnType<typeof mock>
-    search:                ReturnType<typeof mock>
-    updateMessageMetadata: ReturnType<typeof mock>
-    updateMessageFlags:    ReturnType<typeof mock>
-    getAuthToken:          ReturnType<typeof mock>
-    getApiUrl:             ReturnType<typeof mock>
+    listMessages:   ReturnType<typeof mock>
+    getFullMessage: ReturnType<typeof mock>
+    getAuthToken:   ReturnType<typeof mock>
+    getApiUrl:      ReturnType<typeof mock>
 }> = {}): {
-    client:                WildDuckClient
-    listMessages:          ReturnType<typeof mock>
-    getFullMessage:        ReturnType<typeof mock>
-    getMessage:            ReturnType<typeof mock>
-    search:                ReturnType<typeof mock>
-    updateMessageMetadata: ReturnType<typeof mock>
-    updateMessageFlags:    ReturnType<typeof mock>
-    getAuthToken:          ReturnType<typeof mock>
-    getApiUrl:             ReturnType<typeof mock>
+    client:         WildDuckClient
+    listMessages:   ReturnType<typeof mock>
+    getFullMessage: ReturnType<typeof mock>
+    getAuthToken:   ReturnType<typeof mock>
+    getApiUrl:      ReturnType<typeof mock>
 } {
-    const listMessages          = overrides.listMessages          ?? mock(() => Promise.resolve([]));
-    const getFullMessage        = overrides.getFullMessage        ?? mock(() => Promise.resolve(null));
-    const getMessage            = overrides.getMessage            ?? mock(() => Promise.resolve(null));
-    const search                = overrides.search                ?? mock(() => Promise.resolve([]));
-    const updateMessageMetadata = overrides.updateMessageMetadata ?? mock(() => Promise.resolve(undefined));
-    const updateMessageFlags    = overrides.updateMessageFlags    ?? mock(() => Promise.resolve(undefined));
-    const getAuthToken          = overrides.getAuthToken          ?? mock(() => 'test-token');
-    const getApiUrl             = overrides.getApiUrl             ?? mock(() => 'https://wildduck.example.com');
+    const listMessages   = overrides.listMessages   ?? mock(() => Promise.resolve([]));
+    const getFullMessage = overrides.getFullMessage ?? mock(() => Promise.resolve(null));
+    const getAuthToken   = overrides.getAuthToken   ?? mock(() => 'test-token');
+    const getApiUrl      = overrides.getApiUrl      ?? mock(() => 'https://wildduck.example.com');
 
     return {
-        client: { listMessages, getFullMessage, getMessage, search, updateMessageMetadata, updateMessageFlags, getAuthToken, getApiUrl } as unknown as WildDuckClient,
+        client: { listMessages, getFullMessage, getAuthToken, getApiUrl } as unknown as WildDuckClient,
         listMessages,
         getFullMessage,
-        getMessage,
-        search,
-        updateMessageMetadata,
-        updateMessageFlags,
         getAuthToken,
         getApiUrl,
     };
@@ -93,6 +78,23 @@ function makeProcessor(result?: Error): {
     return {
         processor: { processEmail } as unknown as EmailProcessor,
         processEmail,
+    };
+}
+
+function makeHealthRegistry(): {
+    registry:    ServiceHealthRegistry
+    sendEvent:   ReturnType<typeof mock>
+    isAvailable: ReturnType<typeof mock>
+    getState:    ReturnType<typeof mock>
+} {
+    const sendEvent   = mock(() => undefined);
+    const isAvailable = mock(() => true);
+    const getState    = mock(() => 'online' as const);
+    return {
+        registry: { sendEvent, isAvailable, getState } as unknown as ServiceHealthRegistry,
+        sendEvent,
+        isAvailable,
+        getState,
     };
 }
 
@@ -197,22 +199,6 @@ describe('WildDuckListener', () => {
 
             expect(listMessages).toHaveBeenCalledWith('INBOX', { unseen: true, limit: 21 });
             expect(processEmail).toHaveBeenCalledTimes(2);
-
-            await listener.stop();
-        });
-
-        test('calls checkPendingNotifications after backlog drain', async () => {
-            const onSendApprovalRequest = mock(async () => undefined);
-            const { client, search }    = makeWildDuckClient({
-                search: mock(async () => []),
-            });
-            const { processor } = makeProcessor();
-            const config        = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(search).toHaveBeenCalledTimes(1);
 
             await listener.stop();
         });
@@ -685,358 +671,198 @@ describe('WildDuckListener', () => {
     });
 
     // -----------------------------------------------------------------------
-    // checkPendingNotifications
+    // Health registry events
     // -----------------------------------------------------------------------
 
-    describe('checkPendingNotifications', () => {
-        function makeSearchResult(uid: number, folder = 'Drafts'): { message: string, from: string, to: string[], subject: string, date: string } {
-            return {
-                message: `${folder}:${uid}`,
-                from:    'sender@example.com',
-                to:      ['recv@example.com'],
-                subject: 'Test',
-                date:    '2024-01-15T10:00:00Z',
-            };
-        }
+    describe('health registry events', () => {
+        test('no health events when registry not configured', async () => {
+            let listCount = 0;
+            const listMessages = mock(async () => {
+                listCount++;
+                if(listCount <= 1) {
+                    return [];
+                }
+                throw new Error('Network error');
+            });
+            const { client } = makeWildDuckClient({ listMessages });
+            const { processor } = makeProcessor();
 
-        test('does not call search when onSendApprovalRequest is not configured', async () => {
-            const { client, search } = makeWildDuckClient();
-            const { processor }      = makeProcessor();
-
-            // No onSendApprovalRequest in config
+            // No health registry in config
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start();
 
-            expect(search).not.toHaveBeenCalled();
-
-            await listener.stop();
-        });
-
-        test('no further calls when search returns empty array', async () => {
-            const { client, search, getMessage } = makeWildDuckClient({
-                search: mock(async () => []),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(search).toHaveBeenCalledWith({ query: { keyword: 'DiscordNotifyFailed' }, mailboxes: ['Drafts'] });
-            expect(getMessage).not.toHaveBeenCalled();
-
-            await listener.stop();
-        });
-
-        test('on successful retry: calls onSendApprovalRequest, clears flag, resets notifyAttempts', async () => {
-            const uid = 42;
-            const { client, getMessage, updateMessageMetadata, updateMessageFlags } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:      uid,
-                    subject: 'Test subject',
-                    to:      [{ address: 'alice@example.com' }],
-                    cc:      [],
-                })),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
-            expect(onSendApprovalRequest).toHaveBeenCalledWith('alice@example.com', 'Test subject', uid, undefined);
-            expect(updateMessageFlags).toHaveBeenCalledWith('Drafts', uid, { removeFlags: ['DiscordNotifyFailed'] });
-            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 0 });
-
-            await listener.stop();
-        });
-
-        test('on successful retry with CC: passes cc array to onSendApprovalRequest', async () => {
-            const uid = 77;
-            const { client, getMessage } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:      uid,
-                    subject: 'CC test',
-                    to:      [{ address: 'alice@example.com' }],
-                    cc:      [{ address: 'bob@example.com' }, { address: 'carol@example.com' }],
-                })),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
-            expect(onSendApprovalRequest).toHaveBeenCalledWith('alice@example.com', 'CC test', uid, ['bob@example.com', 'carol@example.com']);
-
-            await listener.stop();
-        });
-
-        test('on successful retry with undefined to field: passes empty string', async () => {
-            const uid = 88;
-            const { client, updateMessageFlags, updateMessageMetadata } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:      uid,
-                    subject: 'No-to test',
-                    // `to` field deliberately absent
-                })),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(onSendApprovalRequest).toHaveBeenCalledWith('', 'No-to test', uid, undefined);
-            expect(updateMessageFlags).toHaveBeenCalledWith('Drafts', uid, { removeFlags: ['DiscordNotifyFailed'] });
-            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 0 });
-
-            await listener.stop();
-        });
-
-        test('skips message when getMessage returns null', async () => {
-            const uid = 55;
-            const { client, getMessage, updateMessageMetadata } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(() => Promise.resolve(null)),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(getMessage).toHaveBeenCalledWith('Drafts', uid);
-            expect(onSendApprovalRequest).not.toHaveBeenCalled();
-            expect(updateMessageMetadata).not.toHaveBeenCalled();
-
-            await listener.stop();
-        });
-
-        test('when onSendApprovalRequest throws, DiscordNotifyFailed flag is retained', async () => {
-            const uid = 99;
-            const { client, updateMessageFlags } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:       uid,
-                    subject:  'Pending approval',
-                    to:       [{ address: 'target@example.com' }],
-                    metaData: { notifyAttempts: 1 },
-                })),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => {
-                throw new Error('Admin channel not sendable');
-            });
-            const config = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            // Flag not cleared (notification still pending); no give-up since attempts < MAX
-            expect(updateMessageFlags).not.toHaveBeenCalledWith('Drafts', uid, expect.objectContaining({ removeFlags: ['DiscordNotifyFailed'] }));
-            expect(updateMessageFlags).not.toHaveBeenCalledWith('Drafts', uid, expect.objectContaining({ addFlags: ['DiscordNotifyGaveUp'] }));
-        });
-
-        test('on failed retry below MAX_NOTIFY_ATTEMPTS: increments notifyAttempts, keeps flag', async () => {
-            const uid = 33;
-            const { client, updateMessageMetadata, updateMessageFlags } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:       uid,
-                    subject:  'Retry test',
-                    to:       [{ address: 'bob@example.com' }],
-                    metaData: { notifyAttempts: 2 },
-                })),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => {
-                throw new Error('Discord offline');
-            });
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            // Did NOT transition flags (below MAX_NOTIFY_ATTEMPTS)
-            expect(updateMessageFlags).not.toHaveBeenCalled();
-            // Incremented attempts from 2 → 3
-            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 3 });
-
-            await listener.stop();
-        });
-
-        test('on failed retry at MAX_NOTIFY_ATTEMPTS: transitions to DiscordNotifyGaveUp', async () => {
-            const uid = 44;
-            const { client, updateMessageMetadata, updateMessageFlags } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:       uid,
-                    subject:  'Give up test',
-                    to:       [{ address: 'carol@example.com' }],
-                    metaData: { notifyAttempts: MAX_NOTIFY_ATTEMPTS - 1 },
-                })),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => {
-                throw new Error('Discord offline');
-            });
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(updateMessageFlags).toHaveBeenCalledWith('Drafts', uid, {
-                addFlags:    ['DiscordNotifyGaveUp'],
-                removeFlags: ['DiscordNotifyFailed'],
-            });
-            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: MAX_NOTIFY_ATTEMPTS });
-
-            await listener.stop();
-        });
-
-        test('on failed retry with no metadata: defaults to 2, below MAX', async () => {
-            const uid = 66;
-            let getMessageCallCount = 0;
-            const { client, updateMessageMetadata, updateMessageFlags } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => {
-                    getMessageCallCount++;
-                    if(getMessageCallCount === 1) {
-                        return { id: uid, subject: 'Test', to: [{ address: 'dave@example.com' }] };
-                    }
-                    return null;
-                }),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => {
-                throw new Error('Discord offline');
-            });
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            expect(updateMessageFlags).not.toHaveBeenCalled();
-            expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', uid, { notifyAttempts: 2 });
-
-            await listener.stop();
-        });
-
-        test('error in search is caught and logged, does not throw', async () => {
-            const { client }    = makeWildDuckClient({
-                search: mock(async () => { throw new Error('Search failed'); }),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            // Should not throw
-            await listener.start();
-
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                msg: expect.stringContaining('pending notification'),
-            }));
-
-            await listener.stop();
-        });
-
-        test('error during escalation metadata update is logged, does not throw', async () => {
-            const uid = 88;
-            const { client } = makeWildDuckClient({
-                search:     mock(async () => [makeSearchResult(uid)]),
-                getMessage: mock(async () => ({
-                    id:       uid,
-                    subject:  'Meta error test',
-                    to:       [{ address: 'eve@example.com' }],
-                    metaData: { notifyAttempts: 1 },
-                })),
-                updateMessageMetadata: mock(async () => {
-                    throw new Error('WildDuck offline');
-                }),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => {
-                throw new Error('Discord offline');
-            });
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            // Should not throw
-            await listener.start();
-
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                msg: expect.stringContaining('notification attempt metadata'),
-            }));
-
-            await listener.stop();
-        });
-
-        test('checkPendingNotifications called after each scheduled poll cycle', async () => {
-            const { client, search } = makeWildDuckClient({
-                search: mock(async () => []),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
-
-            const listener = new WildDuckListener(client, processor, config);
-            await listener.start();
-
-            const callsAfterStart = search.mock.calls.length;
-            expect(callsAfterStart).toBeGreaterThanOrEqual(1);
-
-            // Trigger one poll cycle
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await flushAsync();
 
-            const callsAfterPoll = search.mock.calls.length;
-            expect(callsAfterPoll).toBeGreaterThan(callsAfterStart);
+            // No crash — just no events recorded anywhere
 
             await listener.stop();
         });
 
-        test('search result with invalid format is skipped gracefully', async () => {
-            // A search result with no colon (malformed) should be skipped
-            const { client, getMessage } = makeWildDuckClient({
-                search: mock(async () => [{ message: 'NoColonHere', from: '', to: [], subject: '', date: '' }]),
-            });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
+        test('no CONNECT_SUCCESS event on first successful poll (not recovering)', async () => {
+            const { client } = makeWildDuckClient();
+            const { processor } = makeProcessor();
+            const { registry, sendEvent } = makeHealthRegistry();
+            const config = { ...DEFAULT_CONFIG, healthRegistry: registry };
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start();
 
-            // getMessage should not be called for malformed results
-            expect(getMessage).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync();
+
+            // Should NOT emit CONNECT_SUCCESS when already online (no consecutive failures)
+            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
 
             await listener.stop();
         });
 
-        test('search result with non-numeric UID is skipped gracefully', async () => {
-            const { client, getMessage } = makeWildDuckClient({
-                search: mock(async () => [{ message: 'Drafts:notanumber', from: '', to: [], subject: '', date: '' }]),
+        test('no CONNECTION_LOST event until 3 consecutive poll failures', async () => {
+            let listCount = 0;
+            const listMessages = mock(async () => {
+                listCount++;
+                if(listCount === 1) {
+                    return []; // startup succeeds
+                }
+                throw new Error('Network error');
             });
-            const { processor }         = makeProcessor();
-            const onSendApprovalRequest = mock(async () => undefined);
-            const config                = { ...DEFAULT_CONFIG, onSendApprovalRequest };
+            const { client } = makeWildDuckClient({ listMessages });
+            const { processor } = makeProcessor();
+            const { registry, sendEvent } = makeHealthRegistry();
+            const config = { ...DEFAULT_CONFIG, healthRegistry: registry };
+
+            const listener = new WildDuckListener(client, processor, config);
+            await listener.start(); // listCount=1
+
+            // Trigger 2 failing polls — not yet at threshold
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // listCount=2 (fails)
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // listCount=3 (fails)
+
+            expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+
+            await listener.stop();
+        });
+
+        test('emits CONNECTION_LOST after 3 consecutive poll failures', async () => {
+            let listCount = 0;
+            const listMessages = mock(async () => {
+                listCount++;
+                if(listCount === 1) {
+                    return []; // startup succeeds
+                }
+                throw new Error('Network error');
+            });
+            const { client } = makeWildDuckClient({ listMessages });
+            const { processor } = makeProcessor();
+            const { registry, sendEvent } = makeHealthRegistry();
+            const config = { ...DEFAULT_CONFIG, healthRegistry: registry };
+
+            const listener = new WildDuckListener(client, processor, config);
+            await listener.start(); // listCount=1
+
+            // Trigger 3 failing polls to hit threshold
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // failure 1
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // failure 2
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // failure 3 — threshold hit
+
+            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.objectContaining({
+                error: 'Network error',
+            }));
+
+            await listener.stop();
+        });
+
+        test('emits CONNECT_SUCCESS after recovery from 3+ failures', async () => {
+            let listCount = 0;
+            const listMessages = mock(async () => {
+                listCount++;
+                if(listCount === 1) {
+                    return []; // startup succeeds
+                }
+                if(listCount <= 4) {
+                    throw new Error('Network error'); // 3 failures to reach threshold
+                }
+                return []; // recovery
+            });
+            const { client } = makeWildDuckClient({ listMessages });
+            const { processor } = makeProcessor();
+            const { registry, sendEvent } = makeHealthRegistry();
+            const config = { ...DEFAULT_CONFIG, healthRegistry: registry };
+
+            const listener = new WildDuckListener(client, processor, config);
+            await listener.start(); // listCount=1
+
+            // 3 failing polls
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // failure 1
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // failure 2
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // failure 3 — threshold hit, CONNECTION_LOST emitted
+
+            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
+            const connectLostCallCount = (sendEvent.mock.calls as unknown[][]).filter(
+                c => c[1] === 'CONNECTION_LOST'
+            ).length;
+            expect(connectLostCallCount).toBe(1);
+
+            // Successful poll — recovery
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync();
+
+            expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
+
+            await listener.stop();
+        });
+
+        test('does not emit CONNECT_SUCCESS again on second consecutive successful poll', async () => {
+            let listCount = 0;
+            const listMessages = mock(async () => {
+                listCount++;
+                if(listCount === 1) {
+                    return []; // startup
+                }
+                if(listCount <= 4) {
+                    throw new Error('Network error'); // 3 failures
+                }
+                return []; // all subsequent succeed
+            });
+            const { client } = makeWildDuckClient({ listMessages });
+            const { processor } = makeProcessor();
+            const { registry, sendEvent } = makeHealthRegistry();
+            const config = { ...DEFAULT_CONFIG, healthRegistry: registry };
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start();
 
-            expect(getMessage).not.toHaveBeenCalled();
+            // 3 failing polls
+            for(let i = 0; i < 3; i++) {
+                jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+                // eslint-disable-next-line no-await-in-loop -- sequential: must flush microtasks one tick at a time
+                await flushAsync();
+            }
+
+            // Two successful polls
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // first success — CONNECT_SUCCESS
+
+            jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
+            await flushAsync(); // second success — no extra CONNECT_SUCCESS
+
+            const connectSuccessCalls = (sendEvent.mock.calls as unknown[][]).filter(
+                c => c[1] === 'CONNECT_SUCCESS'
+            ).length;
+            expect(connectSuccessCalls).toBe(1);
 
             await listener.stop();
         });

@@ -257,7 +257,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -365,7 +365,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -434,7 +434,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -559,7 +559,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -665,7 +665,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to set up subscriptions
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -704,7 +704,7 @@ describe('createDiscordBot', () => {
     });
 
     describe('Reconnection Handler Safety', () => {
-        test('should use client.once() for clientReady to prevent duplicate handler registration on reconnects', () => {
+        test('should use client.on() for clientReady so reconnects re-fire the handler', () => {
             const mockClient = {
                 on:                 mock(() => mockClient),
                 once:               mock(() => mockClient),
@@ -723,16 +723,23 @@ describe('createDiscordBot', () => {
                 channelRegistry: mockChannelRegistry,
             });
 
-            // Verify client.once() was called with 'clientReady' (not client.on())
+            // Verify client.on() was called with 'clientReady' (not client.once())
+            // Using on() allows the handler to re-fire on reconnects; idempotency is
+            // enforced by the `initialized` flag inside the handler.
 
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
-            const clientReadyCalls = onceCalls.filter(([event]) => event === 'clientReady');
+            const onCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
+            const clientReadyCalls = onCalls.filter(([event]) => event === 'clientReady');
 
-            // Should have at least one clientReady handler registered with once()
+            // Should have at least one clientReady handler registered with on()
             expect(clientReadyCalls.length).toBeGreaterThan(0);
+
+            // Verify it was NOT registered with once()
+            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
+            const clientReadyOnceCalls = onceCalls.filter(([event]) => event === 'clientReady');
+            expect(clientReadyOnceCalls.length).toBe(0);
         });
 
-        test('should verify clientReady handler uses once() to prevent re-registration on reconnect', async () => {
+        test('should verify clientReady handler uses initialized flag to prevent duplicate setup on reconnect', async () => {
             let messageCreateHandlerCount = 0;
             let interactionCreateHandlerCount = 0;
             let clientReadyHandlerCallCount = 0;
@@ -752,23 +759,16 @@ describe('createDiscordBot', () => {
                         messageCreateHandlerCount++;
                     }
                     if(event === 'interactionCreate') {
+                        // interactionCreate is now registered at bot creation, not inside clientReady
                         interactionCreateHandlerCount++;
                     }
-                    return mockClient;
-                }),
-                once: mock((event: string, handler: (...args: unknown[]) => void | Promise<void>) => {
-                    // once() should only fire the handler once
-
-                    const wrappedHandler = async (...args: unknown[]) => {
+                    if(event === 'clientReady') {
+                        // Track how many times the handler is *registered* (should be once per bot creation)
                         clientReadyHandlerCallCount++;
-                        await Promise.resolve(handler(...args));
-                    };
-                    if(!registeredHandlers.has(event)) {
-                        registeredHandlers.set(event, []);
                     }
-                    registeredHandlers.get(event)!.push(wrappedHandler);
                     return mockClient;
                 }),
+                once:               mock(() => mockClient),
                 login:              mock(async () => 'mock-token'),
                 destroy:            mock(async () => undefined),
                 removeAllListeners: mock(() => undefined),
@@ -799,11 +799,14 @@ describe('createDiscordBot', () => {
                 agent:           mockAgent,
             });
 
-            // Verify that clientReady was registered with once()
+            // interactionCreate is registered at bot creation time (before clientReady fires)
+            expect(interactionCreateHandlerCount).toBe(1);
 
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
-            const clientReadyOnceCalls = onceCalls.filter(([event]) => event === 'clientReady');
-            expect(clientReadyOnceCalls.length).toBeGreaterThan(0);
+            // Verify that clientReady was registered with on()
+            const onCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
+            const clientReadyOnCalls = onCalls.filter(([event]) => event === 'clientReady');
+            expect(clientReadyOnCalls.length).toBeGreaterThan(0);
+            expect(clientReadyHandlerCallCount).toBe(1); // registered once
 
             // Simulate the first clientReady event
             const clientReadyHandlers = registeredHandlers.get('clientReady') ?? [];
@@ -815,18 +818,20 @@ describe('createDiscordBot', () => {
                 await Promise.resolve(handler(mockClient));
             }
 
-            // After first clientReady, should have handlers registered
+            // After first clientReady, messageCreate handler should be registered
             expect(messageCreateHandlerCount).toBe(1);
-            expect(interactionCreateHandlerCount).toBe(1);
-            expect(clientReadyHandlerCallCount).toBe(1);
 
-            // Verify that the fix prevents duplicate registrations
-            // With once(), the handler shouldn't be called again on reconnect
-            // But even if Discord.js allowed it, we verify the pattern is correct
-            // The key protection is using once() instead of on()
+            // Fire clientReady again (simulating reconnect)
+            for(const handler of clientReadyHandlers) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: each handler must complete before next
+                await Promise.resolve(handler(mockClient));
+            }
+
+            // messageCreate should still be 1 — the initialized flag prevents duplicate registration
+            expect(messageCreateHandlerCount).toBe(1);
         });
 
-        test('should verify messageCreate and interactionCreate handlers are registered inside clientReady', async () => {
+        test('should verify interactionCreate is registered immediately and messageCreate inside clientReady', async () => {
             let messageCreateRegistered = false;
             let interactionCreateRegistered = false;
 
@@ -871,14 +876,16 @@ describe('createDiscordBot', () => {
                 agent:           mockAgent,
             });
 
-            // Before clientReady fires, handlers should NOT be registered
+            // interactionCreate is registered at bot creation time (before clientReady fires)
+            expect(interactionCreateRegistered).toBe(true);
+
+            // messageCreate is still registered inside clientReady (requires readyClient)
             expect(messageCreateRegistered).toBe(false);
-            expect(interactionCreateRegistered).toBe(false);
 
             // Get and fire the clientReady handler
 
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const clientReadyHandler_ = onceCalls.find(([event]) => event === 'clientReady');
+            const onCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const clientReadyHandler_ = onCalls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandler_?.[1];
 
             expect(clientReadyHandler).toBeDefined();
@@ -887,9 +894,8 @@ describe('createDiscordBot', () => {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
 
-            // After clientReady fires, handlers SHOULD be registered
+            // After clientReady fires, messageCreate SHOULD be registered
             expect(messageCreateRegistered).toBe(true);
-            expect(interactionCreateRegistered).toBe(true);
         });
     });
 
@@ -944,7 +950,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -991,7 +997,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event - call ALL handlers to avoid order dependency
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandlers = calls.filter(([event]) => event === 'clientReady');
             for(const [, handler] of readyHandlers) {
                 handler(mockClient);
@@ -1049,7 +1055,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event to create presenceManager
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -1119,7 +1125,7 @@ describe('createDiscordBot', () => {
 
             // Simulate clientReady event to create presenceManager
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
             if(messageSetupHandler) {
@@ -1380,7 +1386,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandler?.[1];
             if(clientReadyHandler) {
@@ -1446,7 +1452,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandler?.[1];
             if(clientReadyHandler) {
@@ -1511,7 +1517,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandler?.[1];
             if(clientReadyHandler) {
@@ -1569,7 +1575,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandler?.[1];
             if(clientReadyHandler) {
@@ -1636,7 +1642,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady event
 
-            const calls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const readyHandler = calls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = readyHandler?.[1];
             if(clientReadyHandler) {
@@ -1806,7 +1812,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler_ = onceCalls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandler_?.[1];
             if(clientReadyHandler) {
@@ -1863,7 +1869,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to register event handlers
 
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler_ = onceCalls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandler_?.[1];
             if(clientReadyHandler) {
@@ -1949,7 +1955,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler_ = onceCalls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandler_?.[1];
             if(clientReadyHandler) {
@@ -2034,7 +2040,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler_ = onceCalls.find(([event]) => event === 'clientReady');
             const clientReadyHandler = clientReadyHandler_?.[1];
             if(clientReadyHandler) {
@@ -2095,7 +2101,7 @@ describe('createDiscordBot', () => {
 
             // Trigger clientReady to complete setup
 
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2177,7 +2183,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2281,7 +2287,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2379,7 +2385,7 @@ describe('createDiscordBot', () => {
             });
 
             // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2407,7 +2413,7 @@ describe('createDiscordBot', () => {
     });
 
     describe('Email integration lifecycle', () => {
-        test('when listener.stop() throws, client.destroy() is still called', async () => {
+        test('bot.stop() calls client.destroy() when emailSetup is present', async () => {
             const mockClient = {
                 on:                 mock(() => mockClient),
                 once:               mock(() => mockClient),
@@ -2421,9 +2427,7 @@ describe('createDiscordBot', () => {
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
             const mockEmailSetup = {
-                listener: { start: mock(async () => undefined), stop:  mock(async () => {
-                    throw new Error('IMAP disconnect failed');
-                }) },
+                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
                 reviewHandler:    { handleButton: mock(async () => undefined) },
                 allowlistHandler: { handle: mock(async () => undefined) },
                 emailMcpServer:   {},
@@ -2438,11 +2442,12 @@ describe('createDiscordBot', () => {
                 emailSetup:      mockEmailSetup,
             });
 
-            // stop() should not throw even though listener.stop() throws
             await bot.stop();
 
-            // client.destroy() must still have been called
+            // client.destroy() must have been called (email lifecycle is managed by app.stop(), not bot.stop())
             expect(mockClient.destroy).toHaveBeenCalledTimes(1);
+            // listener.stop() is NOT called by bot.stop() — it is now managed by app.stop()
+            expect(mockEmailSetup.listener.stop).not.toHaveBeenCalled();
         });
 
         test('/allowlist command replies with unavailable message when emailSetup is absent', async () => {
@@ -2485,7 +2490,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2512,10 +2517,20 @@ describe('createDiscordBot', () => {
             }));
         });
 
-        test('listener.start() is called on clientReady when emailSetup is present', async () => {
+        test('/calendar command replies with unavailable message when calendarHandler is absent', async () => {
+            // Capture the interactionCreate handler
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
             const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once: mock((_event: string, _handler: (...args: unknown[]) => void) => {
+                    return mockClient;
+                }),
                 login:              mock(async () => 'mock-token'),
                 destroy:            mock(async () => undefined),
                 removeAllListeners: mock(() => undefined),
@@ -2523,42 +2538,64 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
-            const mockEmailSetup = {
-                listener:         { start: mock(async () => undefined), stop: mock(async () => undefined) },
-                reviewHandler:    { handleButton: mock(async () => undefined) },
-                allowlistHandler: { handle: mock(async () => undefined) },
-                emailMcpServer:   {},
-                imap:             {},
-                counters:         {},
-            } as unknown as EmailSetupResult;
-
+            // Create bot WITHOUT calendarHandler
             createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistry,
-                emailSetup:      mockEmailSetup,
             });
 
-            // listener.start() should NOT be called before clientReady fires
-            expect(mockEmailSetup.listener.start).not.toHaveBeenCalled();
-
-            // Fire clientReady handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            // Fire clientReady
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
 
-            // listener.start() must be called once clientReady fires
-            expect(mockEmailSetup.listener.start).toHaveBeenCalledTimes(1);
+            expect(interactionCreateHandler).toBeDefined();
+
+            const replyMock = mock(async (_opts: unknown) => undefined);
+            const mockInteraction = {
+                isButton:           mock(() => false),
+                isModalSubmit:      mock(() => false),
+                isStringSelectMenu: mock(() => false),
+                isChatInputCommand: mock(() => true),
+                commandName:        'calendar',
+                reply:              replyMock,
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            expect(replyMock).toHaveBeenCalledTimes(1);
+            expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
+                flags: MessageFlags.Ephemeral,
+            }));
         });
 
-        test('listener.start() failure is non-fatal: clientReady completes and bot is stoppable', async () => {
+        test('/contact command replies with unavailable message when contactHandler is absent', async () => {
+            // Capture the interactionCreate handler
+            let interactionCreateHandler: ((interaction: unknown) => Promise<void>) | undefined;
+
             const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
+                on: mock((event: string, handler: (...args: unknown[]) => void) => {
+                    if(event === 'interactionCreate') {
+                        interactionCreateHandler = handler as (interaction: unknown) => Promise<void>;
+                    }
+                    return mockClient;
+                }),
+                once: mock((_event: string, _handler: (...args: unknown[]) => void) => {
+                    return mockClient;
+                }),
                 login:              mock(async () => 'mock-token'),
                 destroy:            mock(async () => undefined),
                 removeAllListeners: mock(() => undefined),
@@ -2566,37 +2603,48 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                    discovered: 0,
+                    updated:    0,
+                    errors:     [],
+                }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
-            const mockEmailSetup = {
-                listener: { start: mock(async () => {
-                    throw new Error('IMAP connect failed');
-                }), stop: mock(async () => undefined) },
-                reviewHandler:    { handleButton: mock(async () => undefined) },
-                allowlistHandler: { handle: mock(async () => undefined) },
-                emailMcpServer:   {},
-                imap:             {},
-                counters:         {},
-            } as unknown as EmailSetupResult;
-
-            const bot = createDiscordBot({
+            // Create bot WITHOUT contactHandler
+            createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistry,
-                emailSetup:      mockEmailSetup,
             });
 
-            // Fire clientReady — listener.start() will throw, but clientReady must not throw
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            // Fire clientReady
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
-                // Must not throw even though listener.start() throws
                 await Promise.resolve(clientReadyHandler(mockClient));
             }
 
-            // Bot must still be stoppable
-            await bot.stop();
-            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
+            expect(interactionCreateHandler).toBeDefined();
+
+            const replyMock = mock(async (_opts: unknown) => undefined);
+            const mockInteraction = {
+                isButton:           mock(() => false),
+                isModalSubmit:      mock(() => false),
+                isStringSelectMenu: mock(() => false),
+                isChatInputCommand: mock(() => true),
+                commandName:        'contact',
+                reply:              replyMock,
+            };
+
+            await interactionCreateHandler!(mockInteraction);
+
+            expect(replyMock).toHaveBeenCalledTimes(1);
+            expect(replyMock).toHaveBeenCalledWith(expect.objectContaining({
+                flags: MessageFlags.Ephemeral,
+            }));
         });
 
         test('email-* button interactions are routed to reviewHandler.handleButton()', async () => {
@@ -2637,7 +2685,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2700,7 +2748,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2761,7 +2809,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2822,7 +2870,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2887,7 +2935,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -2949,7 +2997,7 @@ describe('createDiscordBot', () => {
                 emailSetup:      mockEmailSetup,
             });
 
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -3010,7 +3058,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady to register interactionCreate handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -3079,7 +3127,7 @@ describe('createDiscordBot', () => {
             expect(muteChannelMock).not.toHaveBeenCalled();
 
             // Fire clientReady handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));
@@ -3129,7 +3177,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady — muteChannel will throw, but clientReady must not throw
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 // Must not throw even though muteChannel throws
@@ -3177,7 +3225,7 @@ describe('createDiscordBot', () => {
             });
 
             // Fire clientReady handler
-            const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
             const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
             if(clientReadyHandler) {
                 await Promise.resolve(clientReadyHandler(mockClient));

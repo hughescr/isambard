@@ -9,7 +9,9 @@ import {
     buildBskyApprovalEmbed,
     type BlueskyClient
 } from '@/integrations/bsky';
+import type { DiscordCapability } from '@/integrations/discord/capability';
 import { SendRateLimiter } from '@/integrations/email';
+import type { ApprovalSagaBackend } from '@/services';
 import { retryAsync } from '@/utils';
 
 // ---------------------------------------------------------------------------
@@ -24,8 +26,16 @@ export interface BskySetupOptions {
     client:                Client
     /** Discord channel ID for admin approval embeds */
     adminDiscordChannelId: string
+    /** Approval saga backend for durable approval workflows */
+    approvalSagaBackend:   ApprovalSagaBackend
     /** Optional activity logger for recording approval events */
     activityLogger?:       ActivityLogger
+    /**
+     * Optional Discord capability facade.
+     * When provided, approval embeds are sent via the facade (with outbox fallback
+     * when Discord is offline) instead of calling channel.send() directly.
+     */
+    discordCapability?:    DiscordCapability
 }
 
 export interface BskySetupResult {
@@ -114,15 +124,21 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             parentText,
         });
 
-        // Retry channel.send() up to 3 times; errors propagate to caller after exhaustion
-        await retryAsync(async () => {
-            const channel = await client.channels.fetch(adminDiscordChannelId);
-            if(channel && 'send' in channel) {
-                await channel.send({ embeds: [embed], components: [actionRow] });
-            } else {
-                throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
-            }
-        }, { policy: { maxAttempts: 3 } });
+        // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times
+        await (options.discordCapability
+            ? options.discordCapability.sendToChannel(
+                adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                { priority: 'high', type: 'bsky_approval' }
+            )
+            : retryAsync(async () => {
+                const channel = await client.channels.fetch(adminDiscordChannelId);
+                if(channel && 'send' in channel) {
+                    await channel.send({ embeds: [embed], components: [actionRow] });
+                } else {
+                    throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
+                }
+            }, { policy: { maxAttempts: 3 } }));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
@@ -142,14 +158,21 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             convoId,
         });
 
-        await retryAsync(async () => {
-            const channel = await client.channels.fetch(adminDiscordChannelId);
-            if(channel && 'send' in channel) {
-                await channel.send({ embeds: [embed], components: [actionRow] });
-            } else {
-                throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
-            }
-        }, { policy: { maxAttempts: 3 } });
+        // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times
+        await (options.discordCapability
+            ? options.discordCapability.sendToChannel(
+                adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                { priority: 'high', type: 'bsky_approval' }
+            )
+            : retryAsync(async () => {
+                const channel = await client.channels.fetch(adminDiscordChannelId);
+                if(channel && 'send' in channel) {
+                    await channel.send({ embeds: [embed], components: [actionRow] });
+                } else {
+                    throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
+                }
+            }, { policy: { maxAttempts: 3 } }));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator
 
@@ -159,6 +182,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         client:         bskyClient,
         allowlist,
         rejectionBackend,
+        sagaBackend:    options.approvalSagaBackend,
         activityLogger: options.activityLogger,
     });
 

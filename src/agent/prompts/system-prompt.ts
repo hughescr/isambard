@@ -268,7 +268,17 @@ Example: "I discovered I enjoy collaborative debugging"
 ❌ **Obvious context**: "User is talking to me" - implicit
 ❌ **Duplicate information**: Facts already in other memories
 ❌ **Speculative futures**: "User might want X" - store when confirmed
-❌ **Verbose transcripts**: Full message text - summarize instead`;
+❌ **Verbose transcripts**: Full message text - summarize instead
+
+## Service Availability
+
+Some external services (Discord, email, Bluesky, calendar) may be temporarily unavailable. When this happens:
+- A "Service Status" section will appear in your context showing which services are offline
+- Tool calls to offline services will return a structured error explaining the situation
+- Read operations may work in degraded mode; write operations requiring admin approval need both the target service AND Discord to be online
+- Memory operations (view, store, search) always work — they use DynamoDB which is always available
+- If you need a service that's offline, you can retry the tool call — this triggers an immediate reconnection attempt
+- Continue your work with available services rather than waiting for offline ones to return`;
 
 /**
  * Discord Channel Context template with placeholder for channel list.

@@ -5,6 +5,7 @@ import type { BskyAllowlist } from '../../../../src/integrations/bsky/allowlist'
 import type { BlueskyClient } from '../../../../src/integrations/bsky/client';
 import { BskyOutboundApprovalHandler, type BskyOutboundApprovalHandlerDeps } from '../../../../src/integrations/bsky/outbound-approval-handler';
 import { type BskyRejectionBackend } from '../../../../src/integrations/bsky/rejection-backend';
+import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
 import { mockLogger } from '../../../setup';
 
 // ---------------------------------------------------------------------------
@@ -165,10 +166,15 @@ function makeDeps(overrides: Partial<BskyOutboundApprovalHandlerDeps> = {}): Bsk
         clearAll:        mock(async () => { /* intentionally empty */ }),
     } as unknown as BskyRejectionBackend;
 
+    const mockSagaBackend: ApprovalSagaBackend = {
+        create: mock(async () => { /* intentionally empty */ }),
+    } as unknown as ApprovalSagaBackend;
+
     return {
         client:           mockClient,
         allowlist:        mockAllowlist,
         rejectionBackend: mockRejectionBackend,
+        sagaBackend:      mockSagaBackend,
         ...overrides,
     };
 }
@@ -220,7 +226,7 @@ describe('BskyOutboundApprovalHandler', () => {
         });
 
         describe('approve (bsky-send-approve)', () => {
-            test('should deferUpdate, call replyToPost, show success embed', async () => {
+            test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction, deferUpdate, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
@@ -228,11 +234,12 @@ describe('BskyOutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(deferUpdate).toHaveBeenCalledTimes(1);
-                expect(deps.client.replyToPost).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.replyToPost).not.toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
-            test('should call replyToPost with text and parent URI/CID from embed', async () => {
+            test('should create saga with text and parent URI/CID from embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`, {
@@ -243,16 +250,19 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledWith(
-                    POST_TEXT,
-                    PARENT_URI,
-                    PARENT_CID,
-                    undefined,
-                    undefined
-                );
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    type:   string
+                    state:  string
+                    params: Record<string, unknown>
+                };
+                expect(createArg.type).toBe('bsky_reply');
+                expect(createArg.state).toBe('approved');
+                expect(createArg.params.text).toBe(POST_TEXT);
+                expect(createArg.params.parentUri).toBe(PARENT_URI);
+                expect(createArg.params.parentCid).toBe(PARENT_CID);
             });
 
-            test('should pass rootUri/rootCid to replyToPost when present in embed', async () => {
+            test('should include rootUri/rootCid in saga params when present in embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`, {
@@ -262,13 +272,11 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledWith(
-                    POST_TEXT,
-                    PARENT_URI,
-                    PARENT_CID,
-                    ROOT_URI,
-                    ROOT_CID
-                );
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    params: Record<string, unknown>
+                };
+                expect(createArg.params.rootUri).toBe(ROOT_URI);
+                expect(createArg.params.rootCid).toBe(ROOT_CID);
             });
 
             test('should NOT add to allowlist on plain approve', async () => {
@@ -316,10 +324,36 @@ describe('BskyOutboundApprovalHandler', () => {
                 // Error was caught and editReply called with error message
                 expect(mockLogger.error).toHaveBeenCalled();
             });
+
+            test('should throw if parentCid is missing but parentUri is present', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                // Only parentUri present — parentCid missing
+                const interaction = {
+                    customId: `bsky-send-approve:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: POST_TEXT,
+                            fields:      [
+                                { name: 'Parent URI', value: PARENT_URI, inline: true },
+                                // Parent CID intentionally omitted
+                            ],
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalled();
+            });
         });
 
         describe('approve+allowlist (bsky-send-approveallowlist)', () => {
-            test('should deferUpdate, call replyToPost, add to allowlist, show success embed', async () => {
+            test('should deferUpdate, create saga, add to allowlist, show success embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction, deferUpdate, editReply } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
@@ -327,7 +361,8 @@ describe('BskyOutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(deferUpdate).toHaveBeenCalledTimes(1);
-                expect(deps.client.replyToPost).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.replyToPost).not.toHaveBeenCalled();
                 expect(deps.client.getProfile).toHaveBeenCalledWith(TEST_HANDLE);
                 expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(1);
                 expect(editReply).toHaveBeenCalledTimes(1);
@@ -359,7 +394,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(replyArg.embeds[0]?.data?.title).toContain('allowlisted');
             });
 
-            test('should still complete post when allowlist addEntry fails, shows "allowlist failed" in embed title', async () => {
+            test('should still create saga when allowlist addEntry fails, shows "allowlist failed" in embed title', async () => {
                 const deps = makeDeps();
                 (deps.allowlist.addEntry as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
                 const handler = new BskyOutboundApprovalHandler(deps);
@@ -367,14 +402,15 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.replyToPost).not.toHaveBeenCalled();
                 expect(mockLogger.warn).toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
                 expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
             });
 
-            test('should still complete post when getProfile fails', async () => {
+            test('should still create saga when getProfile fails', async () => {
                 const deps = makeDeps();
                 (deps.client.getProfile as ReturnType<typeof mock>).mockRejectedValue(new Error('profile fetch failed'));
                 const handler = new BskyOutboundApprovalHandler(deps);
@@ -382,13 +418,14 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.replyToPost).not.toHaveBeenCalled();
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
                 expect(mockLogger.warn).toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
-            test('should call replyToPost with text and parent URI/CID from embed', async () => {
+            test('should create saga with text and parent URI/CID from embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`, {
@@ -399,16 +436,19 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledWith(
-                    POST_TEXT,
-                    PARENT_URI,
-                    PARENT_CID,
-                    undefined,
-                    undefined
-                );
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    type:   string
+                    state:  string
+                    params: Record<string, unknown>
+                };
+                expect(createArg.type).toBe('bsky_reply');
+                expect(createArg.state).toBe('approved');
+                expect(createArg.params.text).toBe(POST_TEXT);
+                expect(createArg.params.parentUri).toBe(PARENT_URI);
+                expect(createArg.params.parentCid).toBe(PARENT_CID);
             });
 
-            test('should pass rootUri/rootCid to replyToPost when present in embed', async () => {
+            test('should include rootUri/rootCid in saga params when present in embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`, {
@@ -418,13 +458,60 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledWith(
-                    POST_TEXT,
-                    PARENT_URI,
-                    PARENT_CID,
-                    ROOT_URI,
-                    ROOT_CID
-                );
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    params: Record<string, unknown>
+                };
+                expect(createArg.params.rootUri).toBe(ROOT_URI);
+                expect(createArg.params.rootCid).toBe(ROOT_CID);
+            });
+
+            test('should throw if parentCid is missing but parentUri is present (approveallowlist path)', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                // Only parentUri present — parentCid missing
+                const interaction = {
+                    customId: `bsky-send-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: POST_TEXT,
+                            fields:      [
+                                { name: 'Replying to', value: TEST_HANDLE, inline: true },
+                                { name: 'Parent URI',  value: PARENT_URI,  inline: true },
+                                // Parent CID intentionally omitted
+                            ],
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalled();
+            });
+
+            test('should throw if parentUri is missing from embed (approveallowlist path)', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const interaction = {
+                    customId: `bsky-send-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: POST_TEXT,
+                            fields:      [],
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(mockLogger.error).toHaveBeenCalled();
             });
 
             test('should NOT call getProfile when targetHandle is missing from embed', async () => {
@@ -449,7 +536,8 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.replyToPost).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.replyToPost).not.toHaveBeenCalled();
                 expect(deps.client.getProfile).not.toHaveBeenCalled();
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
             });
@@ -478,6 +566,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deferUpdate).not.toHaveBeenCalled();
                 expect(showModal).toHaveBeenCalledTimes(1);
                 expect(deps.client.replyToPost).not.toHaveBeenCalled();
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
             });
 
             test('should show modal with customId containing original uuid', async () => {
@@ -525,9 +614,9 @@ describe('BskyOutboundApprovalHandler', () => {
         });
 
         describe('error handling', () => {
-            test('should call editReply with error message when replyToPost fails', async () => {
+            test('should call editReply with error message when sagaBackend.create fails', async () => {
                 const deps = makeDeps();
-                (deps.client.replyToPost as ReturnType<typeof mock>).mockRejectedValue(new Error('Bluesky API error'));
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
@@ -539,7 +628,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should call editReply with embeds and components cleared on error', async () => {
                 const deps = makeDeps();
-                (deps.client.replyToPost as ReturnType<typeof mock>).mockRejectedValue(new Error('API failed'));
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
@@ -553,7 +642,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should log error if editReply fails after error', async () => {
                 const deps = makeDeps();
-                (deps.client.replyToPost as ReturnType<typeof mock>).mockRejectedValue(new Error('API failed'));
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
                 editReply.mockRejectedValue(new Error('Discord error'));
                 const handler = new BskyOutboundApprovalHandler(deps);
@@ -1074,7 +1163,7 @@ describe('BskyOutboundApprovalHandler', () => {
         });
 
         describe('bsky-dm-approve', () => {
-            test('should deferUpdate, call sendDirectMessage, show success embed', async () => {
+            test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction, deferUpdate, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
@@ -1082,11 +1171,12 @@ describe('BskyOutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(deferUpdate).toHaveBeenCalledTimes(1);
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
-            test('should call sendDirectMessage with convoId from embed and DM text', async () => {
+            test('should create saga with convoId and DM text from embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`, {
@@ -1096,10 +1186,18 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledWith(DM_CONVO_ID, DM_TEXT);
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    type:   string
+                    state:  string
+                    params: Record<string, unknown>
+                };
+                expect(createArg.type).toBe('bsky_dm');
+                expect(createArg.state).toBe('approved');
+                expect(createArg.params.convoId).toBe(DM_CONVO_ID);
+                expect(createArg.params.text).toBe(DM_TEXT);
             });
 
-            test('should show "DM Sent ✓" in embed title', async () => {
+            test('should show "DM Approved ✓" in embed title', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
@@ -1107,7 +1205,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(replyArg.embeds[0]?.data?.title).toContain('DM Sent');
+                expect(replyArg.embeds[0]?.data?.title).toContain('DM Approved');
             });
 
             test('should clear buttons in success editReply', async () => {
@@ -1155,7 +1253,7 @@ describe('BskyOutboundApprovalHandler', () => {
         });
 
         describe('bsky-dm-approveallowlist', () => {
-            test('should deferUpdate, call sendDirectMessage, add recipients to allowlist, show success embed', async () => {
+            test('should deferUpdate, create saga, add recipients to allowlist, show success embed', async () => {
                 const deps    = makeDeps();
                 // Override getProfile to return the correct handle for each call
                 (deps.client.getProfile as ReturnType<typeof mock>)
@@ -1169,7 +1267,8 @@ describe('BskyOutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(deferUpdate).toHaveBeenCalledTimes(1);
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(deps.client.getProfile).toHaveBeenCalledWith(DM_HANDLE_ALICE);
                 expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(1);
                 expect(editReply).toHaveBeenCalledTimes(1);
@@ -1207,7 +1306,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(replyArg.embeds[0]?.data?.title).toContain('allowlisted');
             });
 
-            test('should still complete DM when allowlist addEntry fails, shows "allowlist failed"', async () => {
+            test('should still create saga when allowlist addEntry fails, shows "allowlist failed"', async () => {
                 const deps = makeDeps();
                 (deps.client.getProfile as ReturnType<typeof mock>)
                     .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
@@ -1220,13 +1319,14 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(mockLogger.warn).toHaveBeenCalled();
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
                 expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
             });
 
-            test('should still complete DM when getProfile fails for a recipient', async () => {
+            test('should still create saga when getProfile fails for a recipient', async () => {
                 const deps = makeDeps();
                 (deps.client.getProfile as ReturnType<typeof mock>)
                     .mockRejectedValue(new Error('profile fetch failed'));
@@ -1238,13 +1338,14 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
                 expect(mockLogger.warn).toHaveBeenCalled();
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
-            test('should call sendDirectMessage with exact convoId from embed field', async () => {
+            test('should create saga with exact convoId from embed field', async () => {
                 // Mutants 15/16: ConditionalExpression/EqualityOperator on convoId field lookup
                 const deps = makeDeps();
                 (deps.client.getProfile as ReturnType<typeof mock>)
@@ -1258,7 +1359,61 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledWith(customConvoId, DM_TEXT);
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    params: Record<string, unknown>
+                };
+                expect(createArg.params.convoId).toBe(customConvoId);
+            });
+
+            test('should create saga with type bsky_dm and state approved', async () => {
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(
+                    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    { recipientHandles: [DM_HANDLE_ALICE] }
+                );
+
+                await handler.handleButton(interaction);
+
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    type:   string
+                    state:  string
+                    params: Record<string, unknown>
+                };
+                expect(createArg.type).toBe('bsky_dm');
+                expect(createArg.state).toBe('approved');
+                expect(createArg.params.text).toBe(DM_TEXT);
+            });
+
+            test('should use empty string for text when embed description is null', async () => {
+                const deps = makeDeps();
+                (deps.client.getProfile as ReturnType<typeof mock>)
+                    .mockResolvedValueOnce({ did: DM_DID_ALICE, handle: DM_HANDLE_ALICE });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const interaction = {
+                    customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    message:  {
+                        embeds: [{
+                            description: null,
+                            fields:      [
+                                { name: 'Recipients',      value: JSON.stringify([DM_HANDLE_ALICE]), inline: false },
+                                { name: 'Conversation ID', value: DM_CONVO_ID,                       inline: true },
+                            ],
+                        }],
+                    },
+                    deferUpdate: mock(async () => ({})),
+                    editReply:   mock(async () => ({})),
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+                    params: Record<string, unknown>
+                };
+                expect(createArg.params.text).toBe('');
             });
 
             test('should parse recipient handles from Recipients embed field and add each to allowlist', async () => {
@@ -1298,13 +1453,14 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(mockLogger.warn).toHaveBeenCalled();
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
                 expect(replyArg.embeds[0]?.data?.title).toContain('allowlist failed');
             });
 
-            test('should send DM and not call addEntry when Recipients field is absent from embed', async () => {
+            test('should create saga and not call addEntry when Recipients field is absent from embed', async () => {
                 // Covers the [] fallback in recipientHandles when recipientsValue is undefined
                 // Mutant: [] → ["Stryker was here"] would cause addEntry to be called with a spurious handle
                 const deps = makeDeps();
@@ -1328,7 +1484,8 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
             });
 
@@ -1369,6 +1526,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deferUpdate).not.toHaveBeenCalled();
                 expect(showModal).toHaveBeenCalledTimes(1);
                 expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
             });
 
             test('should show modal with customId containing bsky-dm-reject-reason prefix and original uuid', async () => {
@@ -1410,7 +1568,7 @@ describe('BskyOutboundApprovalHandler', () => {
         });
 
         describe('bsky-dm-approveallowlist — malformed JSON and empty recipients', () => {
-            test('should still send DM and show "allowlist failed" when Recipients field is malformed JSON', async () => {
+            test('should still create saga and show "allowlist failed" when Recipients field is malformed JSON', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 const fields: { name: string, value: string, inline: boolean }[] = [
@@ -1432,7 +1590,8 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledWith(DM_CONVO_ID, DM_TEXT);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
                 expect(mockLogger.warn).toHaveBeenCalled();
                 const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
@@ -1463,7 +1622,8 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.client.sendDirectMessage).toHaveBeenCalledTimes(1);
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
                 const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };

@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import { chain } from 'lodash-es';
+import type { DiscordCapability } from '../capability';
 import {
     createCatchUpSessionRunner,
     type CatchUpSessionRunner,
@@ -19,6 +20,7 @@ import { sendResponseToWellKnownChannel } from '../response-sender';
 import type { BotStateManager } from '../state';
 import { createPresenceStreamHandler } from './presence-stream-handler';
 import { type ClaudeAgent, type PerchConfig, type ActivityLogger  } from '@/agent';
+import type { ServiceHealthRegistry } from '@/services';
 import { formatTimeSince, getTimeOfDay } from '@/utils';
 
 /**
@@ -80,6 +82,8 @@ export interface SetupCatchUpRunnerParams {
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
     activityLogger?:          ActivityLogger
+    /** Optional capability facade for outbox fallback when Discord is offline. */
+    discordCapability?:       DiscordCapability
 }
 
 /**
@@ -163,11 +167,12 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
             if(result.response && !result.wasInterrupted) {
                 params.addRecentMessage?.(result.response, 'izzy');
                 await sendResponseToWellKnownChannel({
-                    response:    result.response,
-                    sessionType: 'catching_up',
+                    response:          result.response,
+                    sessionType:       'catching_up',
                     responseRouter,
                     rateLimiter,
                     client,
+                    discordCapability: params.discordCapability,
                 });
             }
 
@@ -192,7 +197,9 @@ export interface SetupInboxParams {
     memoryBackend:        {
         loadCompletionSignal: () => Promise<CatchUpCompletionSignal | null>
     }
-    perchConfig: PerchConfig | undefined
+    perchConfig:     PerchConfig | undefined
+    /** Optional health registry — when provided, catch-up defers until Discord is online. */
+    healthRegistry?: ServiceHealthRegistry
 }
 
 /**
@@ -211,12 +218,13 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
         presenceManager,
         memoryBackend,
         perchConfig,
+        healthRegistry,
     } = params;
 
     // Capture runner reference for closure safety
     const runner = catchUpSessionRunner;
 
-    (async () => {
+    async function runInboxInit(): Promise<void> {
         try {
             logger.info({ msg: 'Starting inbox initialization...' });
 
@@ -258,7 +266,27 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
                 msg:   'Failed to load inbox on startup',
             });
         }
-    })().catch((error) => {
+    }
+
+    // If Discord is not yet available, defer inbox init until it comes online (one-shot subscriber)
+    if(healthRegistry && !healthRegistry.isAvailable('discord')) {
+        logger.info({ msg: 'Discord not yet available — deferring inbox initialization until Discord is online' });
+        const unsubscribe = healthRegistry.subscribe((change) => {
+            if(change.service === 'discord' && change.newState === 'online') {
+                unsubscribe();
+                runInboxInit().catch((error) => {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    logger.error({
+                        error: errorMsg,
+                        msg:   'Unhandled error in deferred inbox initialization',
+                    });
+                });
+            }
+        });
+        return;
+    }
+
+    runInboxInit().catch((error) => {
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error({
             error: errorMsg,

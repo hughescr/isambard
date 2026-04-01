@@ -1897,7 +1897,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('WildDuck upload failed');
         });
 
-        test('should return failure message and set DiscordNotifyFailed flag via wildDuckClient when sendApprovalRequest fails', async () => {
+        test('should return failure message when sendApprovalRequest fails', async () => {
             mockAllowlist.isAllowed = mock(() => false);
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
@@ -1914,33 +1914,10 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('failed to notify admin');
-            expect(getText(result)).toContain('retry automatically');
+            expect(getText(result)).toContain('check pending drafts manually');
             expect(mockLogger.warn).toHaveBeenCalled();
-            // Flag should be set on the draft via wildDuckClient (not IMAP)
-            expect(mockSendWildDuck.updateMessageFlags).toHaveBeenCalledWith('Drafts', 99, { addFlags: ['DiscordNotifyFailed'] });
-            // Attempt count stored in metadata
-            expect(mockSendWildDuck.updateMessageMetadata).toHaveBeenCalledWith('Drafts', 99, { notifyAttempts: 1 });
-        });
-
-        test('should inform Izzy of notification failure even when flag setting also fails', async () => {
-            mockAllowlist.isAllowed = mock(() => false);
-            mockSendApprovalRequest = mock(async () => {
-                throw new Error('Discord unavailable');
-            });
-            (mockSendWildDuck.updateMessageFlags as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck flag failed'));
-
-            const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
-            });
-            const handler = getToolHandler(server, 'sendEmail');
-
-            const result: CallToolResult = await handler({ to: 'new@example.com', subject: 'Hi', body: 'Body', identity: 'formal' });
-
-            // Should still inform Izzy even if flag setting failed
-            expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('failed to notify admin');
+            // No flag setting — outbox handles retry now
+            expect(mockSendWildDuck.updateMessageFlags).not.toHaveBeenCalledWith('Drafts', 99, { addFlags: ['DiscordNotifyFailed'] });
         });
 
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
@@ -2858,7 +2835,7 @@ describe('createEmailMCPServer', () => {
             expect(mockLogger.warn).toHaveBeenCalled();
         });
 
-        test('should return failure message and set DiscordNotifyFailed flag via wildDuckClient when sendApprovalRequest fails', async () => {
+        test('should return failure message when sendApprovalRequest fails', async () => {
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
@@ -2873,31 +2850,10 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('failed to notify admin');
-            expect(getText(result)).toContain('retry automatically');
+            expect(getText(result)).toContain('check pending drafts manually');
             expect(mockLogger.warn).toHaveBeenCalled();
-            // Flag should be set on the draft via wildDuckClient (not IMAP)
-            expect(mockWildDuckAmend.updateMessageFlags).toHaveBeenCalledWith('Drafts', 55, { addFlags: ['DiscordNotifyFailed'] });
-            // Attempt count stored in metadata
-            expect(mockWildDuckAmend.updateMessageMetadata).toHaveBeenCalledWith('Drafts', 55, { notifyAttempts: 1 });
-        });
-
-        test('should inform Izzy of notification failure even when flag setting also fails', async () => {
-            mockSendApprovalRequest = mock(async () => {
-                throw new Error('Discord unavailable');
-            });
-            (mockWildDuckAmend.updateMessageFlags as ReturnType<typeof mock>).mockRejectedValue(new Error('WildDuck flag failed'));
-
-            const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
-            });
-            const handler = getToolHandler(server, 'amendAndResubmitDraft');
-
-            const result: CallToolResult = await handler({ message: 'Drafts:42' });
-
-            // Should still inform Izzy even if flag setting failed
-            expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('failed to notify admin');
+            // No flag setting — outbox handles retry now
+            expect(mockWildDuckAmend.updateMessageFlags).not.toHaveBeenCalledWith('Drafts', 55, { addFlags: ['DiscordNotifyFailed'] });
         });
 
         test('should use formal from address when identity is formal', async () => {

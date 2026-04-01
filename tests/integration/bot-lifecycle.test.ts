@@ -64,8 +64,9 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock Discord Bot
         mockDiscordBot = {
-            start: mock(async () => undefined),
-            stop:  mock(async () => undefined),
+            start:          mock(async () => undefined),
+            stop:           mock(async () => undefined),
+            triggerCatchUp: mock(async () => undefined),
         } as DiscordBot;
 
         // Mock Claude Agent
@@ -80,7 +81,11 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock DynamoDB client creation
         const mockClient = {} as DynamoDBClient;
-        const mockDocClient = {} as DynamoDBDocumentClient;
+        // mockDocClient.send must return empty Items so outbox drain (triggered on Discord CONNECT_SUCCESS)
+        // does not throw when the health subscription fires during app.start()
+        const mockDocClient = {
+            send: mock(async () => ({ Items: [], Count: 0 })),
+        } as unknown as DynamoDBDocumentClient;
 
         // Mock ChannelRegistryBackend and ChannelRegistryManager
         const mockChannelRegistryBackend = {
@@ -322,12 +327,13 @@ describe('Bot Lifecycle Integration', () => {
             expect(mockDiscordBot.start).toHaveBeenCalledTimes(1);
         });
 
-        it('should propagate errors from bot.start', async () => {
+        it('should start reconnection loop instead of throwing when bot.start fails', async () => {
             const mockErrorBot: DiscordBot = {
                 start: mock(async () => {
                     throw new Error('Login failed');
                 }),
-                stop: mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             };
 
             spies.push(
@@ -342,7 +348,13 @@ describe('Bot Lifecycle Integration', () => {
 
             const app = await createApp();
 
-            expect(app.start()).rejects.toThrow('Login failed');
+            // Discord startup failure is now non-fatal: app.start() resolves and starts
+            // a reconnection loop in the background instead of throwing.
+            // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- awaiting .resolves assertion is intentional; ensures the promise is settled before proceeding
+            await expect(app.start()).resolves.toBeUndefined();
+
+            // Clean up
+            await app.stop();
         });
     });
 

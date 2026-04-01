@@ -4,10 +4,11 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
-import { mcpErrorResult } from './mcp-helpers';
+import { mcpErrorResult, checkServiceHealth } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
 import { createChannelId, createUserId, type UserId, type ChannelId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
 import { PathSecurityError } from '@/errors';
+import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import { validateFilePaths, formatLocalDateTime } from '@/utils';
 
 /**
@@ -408,27 +409,31 @@ function formatQuestionResult(
  */
 export interface DiscordMCPServerOptions {
     /** Message search service for querying message history */
-    searchService:    MCPMessageSearchService
+    searchService:     MCPMessageSearchService
     /** Discord.js client for sending messages and fetching channel data */
-    client:           Client
+    client:            Client
     /** Registry for tracking pending questions awaiting user responses */
-    questionRegistry: QuestionRegistry
+    questionRegistry:  QuestionRegistry
     /** Channel registry for name resolution and mute management */
-    channelRegistry:  MCPChannelRegistry
+    channelRegistry:   MCPChannelRegistry
     /** DM tracker for username-to-channel resolution */
-    dmTracker:        MCPDMTracker
+    dmTracker:         MCPDMTracker
     /** Message splitter for chunking long messages */
-    messageSplitter:  MCPMessageSplitter
+    messageSplitter:   MCPMessageSplitter
     /** Button builder for interactive question options */
-    buttonBuilder:    MCPQuestionButtonBuilder
+    buttonBuilder:     MCPQuestionButtonBuilder
     /** Retry helper for Discord API calls */
-    retryHelper:      MCPRetryHelper
+    retryHelper:       MCPRetryHelper
     /** Server timezone for localTimestamp enrichment. The MCP server is a
      *  shared, session-level resource created at startup. Per-user timezone
      *  would require threading user context into each tool call. The agent's
      *  prompts and message formatting use per-user timezone where available.
      */
-    timezone?:        string
+    timezone?:         string
+    /** Optional service health registry for fast-fail guards */
+    healthRegistry?:   ServiceHealthRegistry
+    /** Optional reconnection loop to trigger on health check failure */
+    reconnectionLoop?: ReconnectionLoop
 }
 
 /**
@@ -468,6 +473,14 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                     limit:     z.number().int().positive().max(100).optional().describe('Maximum messages to return (default 10, max 100)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         const result = await searchService.searchMessages({
@@ -511,6 +524,14 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                     limit:     z.number().int().positive().max(100).optional().describe('Number of messages to return (default 10, max 100)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         const result = await searchService.getRecentMessages(
@@ -551,6 +572,14 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                     messageId: z.union([z.string(), z.array(z.string())]).describe('Discord message ID or array of message IDs'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         // Handle array input
@@ -630,6 +659,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                 },
                 // eslint-disable-next-line sonarjs/cognitive-complexity -- MCP tool handler validates inputs, resolves channels, sends chunks, and creates threads; branching is inherent to the multi-step protocol
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         // Validate inputs
                         const threadError = validateThreadCreation(args.createThread, args.threadName);
@@ -753,6 +790,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     targetUserId:   z.string().optional().describe('Optional user ID to @mention in the question. Advisory only - anyone can answer.'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         // 1. Validate options count
                         const optionsError = validateQuestionOptions(args.options);
@@ -846,7 +891,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     emoji:     z.union([z.string(), z.array(z.string())]).describe('Emoji or array of emojis to react with (e.g., "👍" or ["👍", "❤️"])'),
                 },
+                // eslint-disable-next-line sonarjs/cognitive-complexity -- health check guard adds 1 to a function already at the limit; net complexity is unchanged
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         // Resolve channel name to ID if needed
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
@@ -932,6 +986,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         await channelRegistry.muteChannel(channelId);
@@ -960,6 +1022,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
                         await channelRegistry.unmuteChannel(channelId);
@@ -988,6 +1058,14 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     includesMuted: z.boolean().optional().describe('Include muted channels in the list (default: false)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     try {
                         // Get channels based on includesMuted parameter (default false)
                         const includesMuted = args.includesMuted === true;

@@ -6,8 +6,9 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
-import { mcpErrorResult, mcpTextResult } from './mcp-helpers';
+import { mcpErrorResult, mcpTextResult, checkServiceHealth, checkWriteServiceHealth } from './mcp-helpers';
 import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter, type EmailAllowlist  } from '@/integrations/email';
+import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
 /**
  * Format an email address for display to Claude in MCP tool responses.
@@ -69,6 +70,10 @@ export interface EmailMCPServerOptions {
     allowlist?:             EmailAllowlist
     /** Optional callback to send outbound approval request to admin */
     sendApprovalRequest?:   (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    /** Optional service health registry for fast-fail guards */
+    healthRegistry?:        ServiceHealthRegistry
+    /** Optional reconnection loop to trigger on health check failure */
+    reconnectionLoop?:      ReconnectionLoop
 }
 
 // Stryker disable ObjectLiteral,StringLiteral: MIME type map is a configuration constant
@@ -360,26 +365,19 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         }
 
         // Not on allowlist (or replyAll) — request admin approval
+        // sendApprovalRequest uses the Discord outbox for fallback when Discord is offline,
+        // so failures here are exceptional (e.g. outbox backend unavailable).
         if(sendApprovalRequest) {
+            // Stryker disable BlockStatement: try-catch wraps approval request — error handling for exceptional outbox failures
             try {
                 await sendApprovalRequest(toAddress, subject, draftUid, cc);
             } catch (error) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send outbound approval request' });
-                // Best-effort: flag the draft so periodic recheck can retry notification
-                // Stryker disable BlockStatement: catch block logs best-effort warning — logger.warn call on flagErr not verified by approval tests
-                try {
-                    // Stryker disable next-line StringLiteral: flag name is configuration
-                    await wildDuckClient.updateMessageFlags(EmailFolder.Drafts, draftUid, { addFlags: ['DiscordNotifyFailed'] });
-                    await wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, draftUid, { notifyAttempts: 1 });
-                } catch (flagError) {
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.warn({ error: flagError instanceof Error ? flagError.message : String(flagError), msg: 'Failed to set DiscordNotifyFailed flag on draft' });
-                }
-                // Stryker restore BlockStatement
                 // Stryker disable next-line StringLiteral: Result message is configuration
-                return `Draft saved as ${EmailFolder.Drafts}:${draftUid} but failed to notify admin. Please ask Craig to check pending drafts, or I will retry automatically.${rateLimitWarning}`;
+                return `Draft saved as ${EmailFolder.Drafts}:${draftUid} but failed to notify admin. Please check pending drafts manually.${rateLimitWarning}`;
             }
+            // Stryker restore BlockStatement
         }
 
         // Stryker disable next-line StringLiteral: Result message is configuration
@@ -398,6 +396,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 // Stryker disable next-line StringLiteral: Zod schema description is MCP parameter documentation
                 { showSeen: z.boolean().describe('When true, include read messages alongside unread. Defaults to false (unread only).').optional() },
                 async ({ showSeen }): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'email', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const [countsData, messages] = await Promise.all([
@@ -442,6 +448,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 },
                 // eslint-disable-next-line sonarjs/cognitive-complexity -- MCP tool handler validates access, fetches email, saves attachments, and formats output; branching is inherent to the multi-step protocol
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'email', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const { mailboxName, uid } = parseMailboxUid(args.message);
@@ -521,6 +535,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'email', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
                     try {
                         const { mailboxName, uid } = parseMailboxUid(args.message);
@@ -581,6 +603,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     // Stryker restore StringLiteral,ArrayDeclaration
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'email', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps WildDuck API operations - error handling
                     try {
                         // Determine which mailboxes to search
@@ -655,6 +685,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     attachments: z.array(z.string()).optional().describe('File paths to attach'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkWriteServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkWriteServiceHealth(options.healthRegistry, 'email', 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps send operations - error handling
                     try {
                         // Resolve from address based on identity (loads addresses lazily)
@@ -726,6 +764,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 },
                 // eslint-disable-next-line complexity -- replyToEmail handler has inherent branching for access control, rate limiting, and replyAll logic
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkWriteServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkWriteServiceHealth(options.healthRegistry, 'email', 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps reply operations - error handling
                     try {
                         // Resolve from address based on identity (loads addresses lazily)
@@ -824,6 +870,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message: z.string().regex(DRAFTS_UID_REGEX, 'Must be in Drafts:UID format (e.g., Drafts:42)').describe('The draft to delete, in Drafts:UID format'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkServiceHealth(options.healthRegistry, 'email', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps delete operations - error handling
                     try {
                         const { uid } = parseMailboxUid(args.message);
@@ -860,6 +914,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     identity: z.enum(['formal', 'informal']).optional().describe('Email identity to use (leave blank to keep original)'),
                 },
                 async (args): Promise<CallToolResult> => {
+                    // Stryker disable BlockStatement: health guard delegates to tested checkWriteServiceHealth
+                    if(options.healthRegistry) {
+                        const healthCheck = checkWriteServiceHealth(options.healthRegistry, 'email', 'discord', options.reconnectionLoop);
+                        if(healthCheck) {
+                            return healthCheck;
+                        }
+                    }
+                    // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps amend operations - error handling
                     try {
                         // Resolve from address based on identity (loads addresses lazily)

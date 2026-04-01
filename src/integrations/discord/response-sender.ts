@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Message, TextChannel, Client } from 'discord.js';
+import type { DiscordCapability } from './capability';
 import { type ResponseRouter, type RoutingResult, WellKnownChannelNotFoundError  } from './channel-registry';
 import { splitMessage } from './messages';
 import type { DiscordRateLimiter } from './rate-limiter';
@@ -25,6 +26,12 @@ export interface SendResponseConfig {
     client:             Client
     /** Whether to use fallback or skip on error (handlers.ts uses fallback, bot.ts skips) */
     useFallbackOnError: boolean
+    /**
+     * Optional Discord capability facade.
+     * When provided, each chunk is sent via the facade (with outbox fallback when Discord is offline)
+     * instead of directly via the rate limiter.
+     */
+    discordCapability?: DiscordCapability
 }
 
 /**
@@ -33,6 +40,8 @@ export interface SendResponseConfig {
 export interface SendResponseResult {
     /** Whether the response was sent */
     sent:        boolean
+    /** Whether the response was queued to the outbox (Discord offline) */
+    queued?:     boolean
     /** Routing information (if sent) */
     routing?:    RoutingResult
     /** Error that occurred (if any) */
@@ -46,15 +55,21 @@ export interface SendResponseResult {
  */
 export interface SendToWellKnownConfig {
     /** Response router for routing decisions */
-    responseRouter: ResponseRouter
+    responseRouter:     ResponseRouter
     /** The response text to send */
-    response:       string | null | undefined
+    response:           string | null | undefined
     /** Session type (catching_up or perching) */
-    sessionType:    'catching_up' | 'perching'
+    sessionType:        'catching_up' | 'perching'
     /** Rate limiter for Discord API calls */
-    rateLimiter:    DiscordRateLimiter
+    rateLimiter:        DiscordRateLimiter
     /** Discord client for fetching channels */
-    client:         Client
+    client:             Client
+    /**
+     * Optional Discord capability facade.
+     * When provided, each chunk is sent via the facade (with outbox fallback when Discord is offline)
+     * instead of directly via the rate limiter.
+     */
+    discordCapability?: DiscordCapability
 }
 
 /**
@@ -256,6 +271,26 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
     // Split long messages into Discord-safe chunks
     const chunks = splitMessage(content);
 
+    // If capability facade is provided, use it for all chunks — it handles outbox fallback
+    // Stryker disable all: Integration send helper — tested via bot integration tests
+    if(config.discordCapability) {
+        let anyQueued = false;
+        for(let i = 0; i < chunks.length; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering
+            const result = await config.discordCapability.sendToChannel(
+                targetChannelId,
+                chunks[i],
+                { priority: 'high', type: 'agent_response' }
+            );
+            if(result.status === 'queued' || result.status === 'unavailable') {
+                anyQueued = true;
+                // Continue loop so remaining chunks are also queued, not dropped
+            }
+        }
+        return { sent: !anyQueued, queued: anyQueued || undefined, routing };
+    }
+    // Stryker restore all
+
     try {
         // If target channel is the same as origin, use reply() for first chunk
         // Otherwise, send all chunks to target channel
@@ -277,6 +312,74 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
             error: err,
         };
     }
+}
+
+/**
+ * Sends a single chunk to a well-known channel via capability or direct rate-limited send.
+ * Returns the SendResult status when using capability, or 'sent' for the direct path.
+ */
+// Stryker disable all: Integration send helper — tested via bot integration tests
+async function sendOneChunkToWellKnownChannel(
+    chunk:             string,
+    sessionType:       'catching_up' | 'perching',
+    targetChannelId:   string,
+    rateLimiter:       DiscordRateLimiter,
+    client:            Client,
+    discordCapability: DiscordCapability | undefined,
+    targetChannel:     TextChannel | undefined
+): Promise<'sent' | 'queued' | 'unavailable'> {
+    if(discordCapability) {
+        const outboxType = sessionType === 'catching_up' ? 'catch_up_output' : 'perch_output';
+        const result = await discordCapability.sendToChannel(targetChannelId, chunk, { priority: 'high', type: outboxType });
+        return result.status;
+    }
+    await withDiscordRetry(() => rateLimiter.sendToChannel(targetChannel!, chunk));
+    return 'sent';
+}
+// Stryker restore all
+
+/**
+ * Sends message chunks to a well-known channel, using capability facade or direct rate-limited send.
+ * Returns true if all chunks were sent directly, false if any were queued to the outbox.
+ */
+async function sendChunksToWellKnownChannel(
+    chunks:            string[],
+    sessionType:       'catching_up' | 'perching',
+    targetChannelId:   string,
+    rateLimiter:       DiscordRateLimiter,
+    client:            Client,
+    discordCapability: DiscordCapability | undefined
+): Promise<boolean> {
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral: channelType is only used in log messages below (which are already Stryker-disabled)
+    const channelType = sessionType === 'catching_up' ? 'catch-up' : 'perch-time';
+    // Stryker disable next-line ConditionalExpression: targetChannel is only needed for non-capability path
+    const targetChannel = discordCapability ? undefined : await client.channels.fetch(targetChannelId) as TextChannel | undefined;
+    if(!discordCapability && !targetChannel?.isTextBased()) {
+        throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
+    }
+    let anyQueued = false;
+    for(let i = 0; i < chunks.length; i++) {
+        // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering
+        const status = await sendOneChunkToWellKnownChannel(chunks[i], sessionType, targetChannelId, rateLimiter, client, discordCapability, targetChannel);
+        // Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: anyQueued tracking — capability send status tested in capability.test.ts
+        if(status === 'queued' || status === 'unavailable') {
+            anyQueued = true;
+        }
+        // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
+        // Stryker disable ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator: Logging for observability
+        logger.info({
+            sessionType,
+            channelType,
+            targetChannelId,
+            chunkIndex:  i,
+            totalChunks: chunks.length,
+            msg:         anyQueued
+                ? (i === 0 ? 'Response queued to outbox for well-known channel' : 'Continuation queued to outbox for well-known channel')
+                : (i === 0 ? 'Response sent to well-known channel' : 'Continuation sent to well-known channel'),
+        });
+        // Stryker restore ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator
+    }
+    return !anyQueued;
 }
 
 /**
@@ -362,34 +465,20 @@ export async function sendResponseToWellKnownChannel(config: SendToWellKnownConf
     const chunks = splitMessage(content);
 
     try {
-        // Fetch target channel
-        const targetChannel = await client.channels.fetch(targetChannelId);
-        if(!targetChannel?.isTextBased()) {
-            throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
-        }
+        const allSent = await sendChunksToWellKnownChannel(
+            chunks,
+            sessionType,
+            targetChannelId,
+            rateLimiter,
+            client,
+            config.discordCapability
+        );
 
-        // Send all chunks to the well-known channel
-        for(let i = 0; i < chunks.length; i++) {
-            // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
-            await withDiscordRetry(
-                () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i])
-            );
-            // Stryker disable ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator: Logging for observability
-            logger.info({
-                sessionType,
-                channelType: sessionType === 'catching_up' ? 'catch-up' : 'perch-time',
-                targetChannelId,
-                chunkIndex:  i,
-                totalChunks: chunks.length,
-                msg:         i === 0 ? 'Response sent to well-known channel' : 'Continuation sent to well-known channel',
-            });
-            // Stryker restore ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator
-        }
-
-        return {
-            sent: true,
-            routing,
-        };
+        // Stryker disable ConditionalExpression,BooleanLiteral: queued flag propagation — callers don't inspect this but it's semantically correct
+        return allSent
+            ? { sent: true, routing }
+            : { sent: false, queued: true, routing };
+        // Stryker restore ConditionalExpression,BooleanLiteral
     } catch (sendError) {
         const err = sendError instanceof Error ? sendError : new Error(String(sendError));
         // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability

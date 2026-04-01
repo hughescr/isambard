@@ -5,6 +5,7 @@ import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient, type Bsk
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { SendRateLimiter } from '@/integrations/email';
+import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import type { MemoryToolBackend, MemoryPath, ContactBackend } from '@/storage';
 
 /**
@@ -120,6 +121,32 @@ export interface MCPServersOptions {
      * Optional PersonHistoryCoordinator for the user context MCP server.
      */
     historyCoordinator?: PersonHistoryCoordinator
+
+    /**
+     * Optional service health registry for fast-fail guards in MCP tool handlers.
+     * When provided, MCP servers can check service availability before attempting
+     * operations that would otherwise time out when a service is offline.
+     */
+    healthRegistry?: ServiceHealthRegistry
+
+    /**
+     * Optional reconnection loop for Discord. When provided, MCP tool health
+     * checks can trigger an immediate reconnection attempt on failure.
+     */
+    discordReconnectionLoop?: ReconnectionLoop
+
+    /**
+     * Optional reconnection loop for Bluesky. When provided, MCP tool health
+     * checks can trigger an immediate reconnection attempt on failure.
+     */
+    bskyReconnectionLoop?: ReconnectionLoop
+
+    /**
+     * Optional reconnection loop for Email. When provided, MCP tool health
+     * checks can trigger an immediate reconnection attempt on failure.
+     */
+    emailReconnectionLoop?: ReconnectionLoop
+
 }
 
 /**
@@ -211,7 +238,9 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         retryHelper: {
             withRetry: fn => withDiscordRetry(fn),
         },
-        timezone: options.timezone,
+        timezone:         options.timezone,
+        healthRegistry:   options.healthRegistry,
+        reconnectionLoop: options.discordReconnectionLoop,
     });
 
     const inboxMcpServer = createInboxMCPServer(
@@ -223,7 +252,9 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
             getAllChannels:     () => options.channelRegistry.getAllChannels(),
             getUnmutedChannels: () => options.channelRegistry.getUnmutedChannels(),
         },
-        options.botStateManager
+        options.botStateManager,
+        options.healthRegistry,
+        options.discordReconnectionLoop
     );
 
     const bskyMcpServer = options.bskyClient
@@ -235,14 +266,17 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
             sendApprovalRequest:   options.bskySendApprovalRequest,
             sendDMApprovalRequest: options.bskySendDMApprovalRequest,
             rejectionBackend:      options.bskyRejectionBackend,
+            healthRegistry:        options.healthRegistry,
+            reconnectionLoop:      options.bskyReconnectionLoop,
         })
         : undefined;
 
     const caldavMcpServer = options.caldavClient && options.caldavRegistry
         ? createCaldavMCPServer({
-            client:      options.caldavClient,
-            registry:    options.caldavRegistry,
-            resolveUser: name => dmTracker.resolveUserByName(name),
+            client:         options.caldavClient,
+            registry:       options.caldavRegistry,
+            resolveUser:    name => dmTracker.resolveUserByName(name),
+            healthRegistry: options.healthRegistry,
         })
         : undefined;
 

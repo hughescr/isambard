@@ -4,6 +4,7 @@ import { logger } from '@hughescr/logger';
 import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { createEmailMCPServer, type ActivityLogger } from '@/agent';
 import type { EmailConfig } from '@/config';
+import type { DiscordCapability } from '@/integrations/discord/capability';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import {
     EmailClassifier,
@@ -19,6 +20,7 @@ import {
     SendRateLimiter,
     OutboundApprovalHandler
 } from '@/integrations/email';
+import type { ApprovalSagaBackend, ReconnectionLoop, ServiceHealthRegistry } from '@/services';
 import { retryAsync } from '@/utils';
 
 // ---------------------------------------------------------------------------
@@ -26,15 +28,38 @@ import { retryAsync } from '@/utils';
 // ---------------------------------------------------------------------------
 
 export interface EmailSetupOptions {
-    emailConfig:        EmailConfig
-    docClient:          DynamoDBDocumentClient
-    tableName:          string
+    emailConfig:         EmailConfig
+    docClient:           DynamoDBDocumentClient
+    tableName:           string
     /** Discord client instance */
-    client:             Client
+    client:              Client
     /** Admin Discord user ID for authorization checks */
-    adminDiscordUserId: string
+    adminDiscordUserId:  string
     /** Optional activity logger for recording approval events */
-    activityLogger?:    ActivityLogger
+    activityLogger?:     ActivityLogger
+    /**
+     * Pre-created WildDuckClient to reuse.
+     * When provided, client creation and init() are skipped — the caller is
+     * responsible for calling init() separately (e.g. as part of a reconnection loop).
+     */
+    wildDuckClient?:     WildDuckClient
+    /**
+     * Optional service health registry for fast-fail guards in MCP tool handlers.
+     */
+    healthRegistry?:     ServiceHealthRegistry
+    /**
+     * Optional reconnection loop for email. When provided, the email MCP server can
+     * trigger an immediate reconnection attempt on health-guard failures.
+     */
+    reconnectionLoop?:   ReconnectionLoop
+    /**
+     * Optional Discord capability facade.
+     * When provided, admin channel notifications use the facade (with outbox fallback
+     * when Discord is offline) instead of calling channel.send() directly.
+     */
+    discordCapability?:  DiscordCapability
+    /** Approval saga backend for durable approval workflows */
+    approvalSagaBackend: ApprovalSagaBackend
 }
 
 export interface EmailSetupResult {
@@ -76,20 +101,30 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Load allowlist from DynamoDB into memory cache
     await allowlist.load();
 
-    // Create WildDuck client (required — wildDuckApiUrl is required in the config schema)
-    // Stryker disable ObjectLiteral,StringLiteral: WildDuck client wiring is integration-only
-    const wildDuckClient = new WildDuckClient({
-        url:              emailConfig.wildDuckApiUrl,
-        user:             emailConfig.user,
-        password:         emailConfig.password,
-        maxBodySizeBytes: emailConfig.maxBodySizeBytes,
-    });
-    // Stryker restore ObjectLiteral,StringLiteral
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Starting WildDuck client...');
-    await wildDuckClient.init();
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('WildDuck client initialized');
+    // Use pre-created client if provided; otherwise create and init a new one.
+    // When a pre-created client is passed in, the caller is responsible for having
+    // already called (or will call) init() on it — this avoids recreating downstream
+    // objects on reconnection and keeps all consumer references stable.
+    // Stryker disable BlockStatement: WildDuck client creation and init are integration-only
+    let wildDuckClient: WildDuckClient;
+    if(options.wildDuckClient) {
+        wildDuckClient = options.wildDuckClient;
+    } else {
+        // Stryker disable ObjectLiteral,StringLiteral: WildDuck client wiring is integration-only
+        wildDuckClient = new WildDuckClient({
+            url:              emailConfig.wildDuckApiUrl,
+            user:             emailConfig.user,
+            password:         emailConfig.password,
+            maxBodySizeBytes: emailConfig.maxBodySizeBytes,
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('Starting WildDuck client...');
+        await wildDuckClient.init();
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('WildDuck client initialized');
+    }
+    // Stryker restore BlockStatement
 
     // Create processor with Discord admin channel callbacks
     // Stryker disable ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral: EmailProcessor config and callbacks are integration wiring - not unit testable
@@ -101,7 +136,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     client,
                     emailConfig.adminDiscordChannelId,
                     { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nUse \`/allowlist add ${email.from.address}\` to add to allowlist.` },
-                    'Failed to send safe-but-not-allowlisted notification to admin channel'
+                    'Failed to send safe-but-not-allowlisted notification to admin channel',
+                    options.discordCapability
                 );
             },
             onReview: async (email, _verdict) => {
@@ -110,7 +146,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     client,
                     emailConfig.adminDiscordChannelId,
                     { embeds: [embed], components: [actionRow] },
-                    'Failed to send email review embed to admin channel'
+                    'Failed to send email review embed to admin channel',
+                    options.discordCapability
                 );
             },
             onUnsafe: async (email, verdict) => {
@@ -119,7 +156,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     client,
                     emailConfig.adminDiscordChannelId,
                     { embeds: [embed], components: [actionRow] },
-                    'Failed to send unsafe alert to admin channel'
+                    'Failed to send unsafe alert to admin channel',
+                    options.discordCapability
                 );
             },
         }
@@ -168,15 +206,21 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 .setStyle(ButtonStyle.Danger)
         );
 
-        // Retry channel.send() up to 3 times; errors propagate to caller after exhaustion
-        await retryAsync(async () => {
-            const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
-            if(channel && 'send' in channel) {
-                await channel.send({ embeds: [embed], components: [actionRow] });
-            } else {
-                throw new Error(`Admin channel ${emailConfig.adminDiscordChannelId} is not a sendable text channel`);
-            }
-        }, { policy: { maxAttempts: 3 } });
+        // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times
+        await (options.discordCapability
+            ? options.discordCapability.sendToChannel(
+                emailConfig.adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                { priority: 'high', type: 'email_approval' }
+            )
+            : retryAsync(async () => {
+                const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
+                if(channel && 'send' in channel) {
+                    await channel.send({ embeds: [embed], components: [actionRow] });
+                } else {
+                    throw new Error(`Admin channel ${emailConfig.adminDiscordChannelId} is not a sendable text channel`);
+                }
+            }, { policy: { maxAttempts: 3 } }));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
@@ -184,9 +228,9 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Must be created after sendApprovalRequest and wildDuckClient are defined.
     // Stryker disable next-line ObjectLiteral: WildDuckListener config object is integration wiring
     const listener = new WildDuckListener(wildDuckClient, processor, {
-        pollFallbackMs:        emailConfig.pollFallbackMs,
-        sseReconnectDelayMs:   emailConfig.sseReconnectDelayMs,
-        onSendApprovalRequest: sendApprovalRequest,
+        pollFallbackMs:      emailConfig.pollFallbackMs,
+        sseReconnectDelayMs: emailConfig.sseReconnectDelayMs,
+        healthRegistry:      options.healthRegistry,
     });
 
     // Create outbound approval handler (handles email-send-* button/modal interactions)
@@ -194,6 +238,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     const outboundApprovalHandler = new OutboundApprovalHandler({
         wildDuckClient,
         allowlist,
+        sagaBackend:    options.approvalSagaBackend,
         activityLogger: options.activityLogger,
     });
 
@@ -206,13 +251,16 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 client,
                 emailConfig.adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
-                'Failed to send restricted mailbox notification to admin channel'
+                'Failed to send restricted mailbox notification to admin channel',
+                options.discordCapability
             );
         },
         wildDuckClient,
         rateLimiter,
         allowlist,
         sendApprovalRequest,
+        healthRegistry:   options.healthRegistry,
+        reconnectionLoop: options.reconnectionLoop,
     });
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration
 
@@ -237,19 +285,29 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
 /**
  * Fetch the admin Discord channel and send a message payload to it.
+ * When a capability facade is provided, uses it for outbox fallback support.
  * Errors are non-fatal — logs the provided error message and returns.
  */
 // Stryker disable all: sendToAdminChannel is integration-only wiring — not unit testable
 async function sendToAdminChannel(
-    client:    Client,
-    channelId: string,
-    payload:   MessageCreateOptions,
-    errorMsg:  string
+    client:             Client,
+    channelId:          string,
+    payload:            MessageCreateOptions,
+    errorMsg:           string,
+    discordCapability?: DiscordCapability
 ): Promise<void> {
     try {
-        const channel = await client.channels.fetch(channelId);
-        if(channel && 'send' in channel) {
-            await channel.send(payload);
+        if(discordCapability) {
+            await discordCapability.sendToChannel(channelId, {
+                content:    payload.content,
+                embeds:     payload.embeds as EmbedBuilder[] | undefined,
+                components: payload.components as ActionRowBuilder[] | undefined,
+            }, { priority: 'high', type: 'email_notification' });
+        } else {
+            const channel = await client.channels.fetch(channelId);
+            if(channel && 'send' in channel) {
+                await channel.send(payload);
+            }
         }
     } catch (err) {
         logger.error({

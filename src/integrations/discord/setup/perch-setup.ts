@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
+import type { DiscordCapability } from '../capability';
 import type { ResponseRouter } from '../channel-registry';
 import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
@@ -25,6 +26,8 @@ export interface SetupPerchParams {
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
     activityLogger?:          ActivityLogger
+    /** Optional capability facade for outbox fallback when Discord is offline. */
+    discordCapability?:       DiscordCapability
 }
 
 /**
@@ -100,11 +103,12 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             if(result.response && !result.wasInterrupted) {
                 params.addRecentMessage?.(result.response, 'izzy');
                 await sendResponseToWellKnownChannel({
-                    response:    result.response,
-                    sessionType: 'perching',
+                    response:          result.response,
+                    sessionType:       'perching',
                     responseRouter,
                     rateLimiter,
                     client,
+                    discordCapability: params.discordCapability,
                 });
             }
 

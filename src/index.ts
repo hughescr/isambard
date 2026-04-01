@@ -5,13 +5,15 @@ import { logger, setTimezone } from '@hughescr/logger';
 import type { SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
+import { z } from 'zod';
 import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, registerAllCommands, DiscordHistoryProvider, resolveChannelId, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { AllowlistCommandHandler, buildAllowlistCommand, EmailHistoryProvider } from '@/integrations/email';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { AllowlistCommandHandler, buildAllowlistCommand, EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
+import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -60,6 +62,9 @@ export async function createApp(): Promise<App> {
     // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
 
+    // Create health registry for service lifecycle tracking
+    const healthRegistry = new ServiceHealthRegistryImpl({ logger });
+
     // Create question registry for interactive questions (shared between MCP and bot)
     const questionRegistry = new QuestionRegistry();
 
@@ -76,18 +81,67 @@ export async function createApp(): Promise<App> {
         memoryBackend: storage.memoryBackend,
     });
 
+    // Outbox and approval saga backends (always available — DynamoDB is required)
+    const outboxBackend      = new OutboxBackend(storage.docClient, storage.tableName);
+    const approvalSagaBackend = new ApprovalSagaBackend(storage.docClient, storage.tableName);
+
+    // Discord capability facade (wraps Discord sends with outbox fallback)
+    const discordCapability = new DiscordCapabilityImpl({
+        registry: healthRegistry,
+        outboxBackend,
+        logger,
+    });
+
     // Activity logger (always available — uses memoryBackend)
     const activityLogger = createActivityLogger(storage.memoryBackend);
 
     // Set up email integration if email config is present (conditional — non-fatal)
     // Must happen before contextLayer so the email service can be wired into the perch prompt
+    //
+    // Design: create WildDuckClient eagerly and wire all downstream objects immediately so
+    // that consumer references (historyProviders, emailService, emailMcpServer, etc.) are
+    // stable.  Only init() (authenticate + load mailboxes) is retried on failure — the client
+    // object itself never changes, so no stale-reference problem exists after reconnection.
     let emailSetup: EmailSetupResult | undefined;
+    let emailReconnectionLoop: ReconnectionLoop | undefined;
+    let unsubscribeEmailReconnect: (() => void) | undefined;
     // Stryker disable BlockStatement: outer if-block body — composition root, not unit-testable
     if(config.email) {
+        healthRegistry.sendEvent('email', 'CONFIGURE');
         // Stryker disable BlockStatement: try-catch wraps email setup - error handling
+
+        // Create client eagerly so all downstream objects can capture a stable reference.
+        // Stryker disable ObjectLiteral,StringLiteral: WildDuck client creation is integration-only
+        const eagerWildDuckClient = new WildDuckClient({
+            url:              config.email.wildDuckApiUrl,
+            user:             config.email.user,
+            password:         config.email.password,
+            maxBodySizeBytes: config.email.maxBodySizeBytes,
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+
+        // Create reconnection loop eagerly so post-connect drops are also handled.
+        emailReconnectionLoop = createReconnectionLoop({
+            service:   'email',
+            registry:  healthRegistry,
+            connectFn: async () => {
+                await eagerWildDuckClient.init();
+            },
+        });
+
+        // Subscribe to health changes: auto-start reconnection loop when email goes offline
+        unsubscribeEmailReconnect = healthRegistry.subscribe((change) => {
+            if(change.service === 'email' && change.newState === 'offline' && emailReconnectionLoop && !emailReconnectionLoop.isRunning()) {
+                emailReconnectionLoop.start();
+            }
+        });
+
+        // Wire all downstream objects now (before init succeeds).
+        // Health guards on MCP tools prevent usage until init() succeeds.
+        // setupEmail with a pre-created wildDuckClient skips client creation and init().
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('Setting up email integration...');
         try {
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Starting email integration...');
             emailSetup = await setupEmail({
                 emailConfig:        config.email,
                 docClient:          storage.docClient,
@@ -95,14 +149,41 @@ export async function createApp(): Promise<App> {
                 client:             discordInfra.discordClient,
                 adminDiscordUserId: config.adminDiscordUserId,
                 activityLogger,
+                wildDuckClient:     eagerWildDuckClient,
+                healthRegistry,
+                reconnectionLoop:   emailReconnectionLoop,
+                discordCapability,
+                approvalSagaBackend,
             });
         } catch (err) {
+            // Non-WildDuck setup failure (e.g. allowlist DynamoDB load) — log and skip email.
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({
                 error: err instanceof Error ? err.message : String(err),
-                msg:   'Email integration setup failed, continuing without email',
+                msg:   'Email integration setup failed (non-WildDuck), email unavailable for this session',
             });
             // Stryker restore ObjectLiteral,StringLiteral
+        }
+
+        // Attempt to authenticate the WildDuck client (init = authenticate + load mailboxes).
+        // Even if emailSetup failed above, we try init so health state is correct.
+        try {
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('Starting WildDuck client...');
+            await eagerWildDuckClient.init();
+            healthRegistry.sendEvent('email', 'CONNECT_SUCCESS');
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info('WildDuck client initialized');
+        } catch (err) {
+            healthRegistry.sendEvent('email', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({
+                error: err instanceof Error ? err.message : String(err),
+                msg:   'WildDuck init failed, starting reconnection loop',
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
+            // Retry only init() — downstream objects already hold stable refs to the same client.
+            emailReconnectionLoop.start();
         }
         // Stryker restore BlockStatement
     }
@@ -110,28 +191,57 @@ export async function createApp(): Promise<App> {
 
     // Set up Bluesky integration if bsky config is present (conditional — non-fatal)
     let bskyClient: BlueskyClient | undefined;
+    let bskyReconnectionLoop: ReconnectionLoop | undefined;
+    let unsubscribeBskyReconnect: (() => void) | undefined;
     // Stryker disable BlockStatement: Composition root — optional bsky integration guard not unit-testable
     if(config.bsky) {
-        // Stryker disable BlockStatement: try-catch wraps bsky setup - error handling
+        healthRegistry.sendEvent('bluesky', 'CONFIGURE');
+
+        // Create client eagerly so reconnection loop can capture a stable reference.
+        // Stryker disable ObjectLiteral,StringLiteral: BlueskyClient creation is integration-only
+        bskyClient = new BlueskyClient({
+            handle:      config.bsky.handle,
+            appPassword: config.bsky.appPassword,
+            serviceUrl:  config.bsky.serviceUrl,
+            healthRegistry,
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+
+        // Create reconnection loop eagerly so post-connect drops are also handled.
+        bskyReconnectionLoop = createReconnectionLoop({
+            service:   'bluesky',
+            registry:  healthRegistry,
+            connectFn: async () => {
+                await bskyClient!.login();
+            },
+        });
+
+        // Subscribe to health changes: auto-start reconnection loop when bluesky goes offline
+        unsubscribeBskyReconnect = healthRegistry.subscribe((change) => {
+            if(change.service === 'bluesky' && change.newState === 'offline' && bskyReconnectionLoop && !bskyReconnectionLoop.isRunning()) {
+                bskyReconnectionLoop.start();
+            }
+        });
+
+        // Stryker disable BlockStatement: try-catch wraps bsky login - error handling
         try {
-            bskyClient = new BlueskyClient({
-                handle:      config.bsky.handle,
-                appPassword: config.bsky.appPassword,
-                serviceUrl:  config.bsky.serviceUrl,
-            });
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Logging into Bluesky...');
             await bskyClient.login();
+            healthRegistry.sendEvent('bluesky', 'CONNECT_SUCCESS');
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Bluesky login successful');
         } catch (err) {
+            healthRegistry.sendEvent('bluesky', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({
                 error: err instanceof Error ? err.message : String(err),
-                msg:   'Bluesky integration setup failed, continuing without Bluesky',
+                msg:   'Bluesky login failed, starting reconnection loop',
             });
             // Stryker restore ObjectLiteral,StringLiteral
-            bskyClient = undefined;
+            // Keep bskyClient alive so reconnection can retry login on the same client.
+            // Health guards on MCP tools will prevent usage until login succeeds.
+            bskyReconnectionLoop.start();
         }
         // Stryker restore BlockStatement
     }
@@ -152,6 +262,8 @@ export async function createApp(): Promise<App> {
                 client:                discordInfra.discordClient,
                 adminDiscordChannelId: config.email.adminDiscordChannelId,
                 activityLogger,
+                discordCapability,
+                approvalSagaBackend,
             });
         } catch (err) {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -165,17 +277,120 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore BlockStatement
 
-    // If bsky client exists but safety rails were not set up (no email config or setup failed),
-    // disable Bluesky entirely to prevent unguarded posting
+    // If bsky client exists and login succeeded (health=online) but safety rails were not set up,
+    // disable Bluesky for the current session to prevent unguarded posting.
+    // If login failed (health!=online), bskyClient is kept alive for reconnection; safety rails
+    // will remain unavailable until a restart, so write tools stay disabled via approval-flow checks.
     // Stryker disable ConditionalExpression,BooleanLiteral,BlockStatement: Composition root safety guard — not unit-testable
-    if(bskyClient && !bskySetup) {
+    if(bskyClient && !bskySetup && healthRegistry.isAvailable('bluesky')) {
         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky integration' });
+        logger.warn({ msg: 'Bluesky client available but safety rails not configured — disabling Bluesky writes for this session' });
         bskyClient = undefined;
     }
     // Stryker restore ConditionalExpression,BooleanLiteral,BlockStatement
 
+    // Create Discord reconnection loop eagerly — must be created before createMCPServers() so it
+    // can be threaded into Discord MCP health guards.  The connectFn is deferred through a
+    // mutable reference so the loop can be created before `bot` is constructed.
+    // Stryker disable BlockStatement: Composition root — reconnection loop wiring is not unit-testable
+    // eslint-disable-next-line prefer-const -- assigned below after bot is constructed; `let` is required for the deferred-wiring pattern
+    let discordReconnectFn: (() => Promise<void>) | undefined;
+    const discordReconnectionLoop = createReconnectionLoop({
+        service:   'discord',
+        registry:  healthRegistry,
+        connectFn: async () => {
+            await discordReconnectFn!();
+        },
+    });
+
+    // Subscribe to health changes: auto-start reconnection loop when Discord goes offline
+    const unsubscribeDiscordReconnect = healthRegistry.subscribe((change) => {
+        if(change.service === 'discord' && change.newState === 'offline' && !discordReconnectionLoop.isRunning()) {
+            discordReconnectionLoop.start();
+        }
+    });
+    // Stryker restore BlockStatement
+
+    // Outbox drainer — delivers queued Discord messages when Discord comes back online
+    // Stryker disable BlockStatement: Composition root — deliverFn wiring is not unit-testable
+    const outboxDrainer: OutboxDrainer = createOutboxDrainer({
+        outboxBackend,
+        registry:  healthRegistry,
+        deliverFn: async (item) => {
+            const channel = await discordCapability.fetchChannel(item.destination);
+            if(channel === null) {
+                throw new Error(`Channel ${item.destination} unavailable`);
+            }
+            if(item.payload.text) {
+                const chunks = splitMessage(item.payload.text);
+                for(const chunk of chunks) {
+                    // eslint-disable-next-line no-await-in-loop -- chunks must be sent sequentially to preserve message order
+                    await withDiscordRetry(() => channel.send(chunk));
+                }
+            }
+            if(item.payload.embeds && item.payload.embeds.length > 0) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- embed type varies by integration
+                await withDiscordRetry(() => channel.send({ embeds: item.payload.embeds as any[] }));
+            }
+        },
+        logger,
+    });
+    // Stryker restore BlockStatement
+
+    // Zod schemas for saga executor param validation
+    // Stryker disable ObjectLiteral,StringLiteral: Composition root — schema definitions are configuration constants
+    const bskyReplyParamsSchema = z.object({
+        text:      z.string(),
+        parentUri: z.string(),
+        parentCid: z.string(),
+        rootUri:   z.string().optional(),
+        rootCid:   z.string().optional(),
+    });
+
+    const bskyDMParamsSchema = z.object({ text: z.string(), convoId: z.string() });
+    // Stryker restore ObjectLiteral,StringLiteral
+
+    // Saga executor — re-executes approved bsky/email actions after service recovery
+    // Stryker disable BlockStatement: Composition root — executor closures capture optional clients — not unit-testable
+    const sagaExecutor: SagaExecutor = createSagaExecutor({
+        backend:   approvalSagaBackend,
+        registry:  healthRegistry,
+        executors: {
+            bsky_reply: async (params) => {
+                if(!bskyClient) {
+                    throw new Error('Bluesky client not available');
+                }
+                const parsed = bskyReplyParamsSchema.parse(params);
+                await bskyClient.replyToPost(parsed.text, parsed.parentUri, parsed.parentCid, parsed.rootUri, parsed.rootCid);
+            },
+            bsky_dm: async (params) => {
+                if(!bskyClient) {
+                    throw new Error('Bluesky client not available');
+                }
+                const parsed = bskyDMParamsSchema.parse(params);
+                await bskyClient.sendDirectMessage(parsed.convoId, parsed.text);
+            },
+            email_send: async (params) => {
+                if(!emailSetup) {
+                    throw new Error('Email not available');
+                }
+                const uid = z.object({ uid: z.number().int() }).parse(params).uid;
+                await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
+            },
+            email_reply: async (params) => {
+                if(!emailSetup) {
+                    throw new Error('Email not available');
+                }
+                const uid = z.object({ uid: z.number().int() }).parse(params).uid;
+                await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
+            },
+        },
+        logger,
+    });
+    // Stryker restore BlockStatement
+
     // History providers
+    // Stryker disable ObjectLiteral,ConditionalExpression,StringLiteral,BlockStatement,ArrayDeclaration: Composition root — history provider wiring is not unit-testable
     const historyProviders = [
         new DiscordHistoryProvider(
             discordInfra.messageSearchService,
@@ -212,18 +427,27 @@ export async function createApp(): Promise<App> {
         providers:            historyProviders,
         messageSearchService: discordInfra.messageSearchService,
     });
+    // Stryker restore ObjectLiteral,ConditionalExpression,StringLiteral,BlockStatement
 
     // Build email service from emailSetup components (if available)
+    // Stryker disable next-line ConditionalExpression,ObjectLiteral: Composition root — optional service wiring
     const emailService = emailSetup
         ? { wildDuckClient: emailSetup.wildDuckClient }
         : undefined;
 
     // Build bsky DM service from bskyClient (if available and safety rails active)
+    // Stryker disable next-line ConditionalExpression,ObjectLiteral: Composition root — optional service wiring
     const bskyDMService = bskyClient ? { client: bskyClient } : undefined;
 
     // Create CalDAV components (always available — DynamoDB is required)
-    const caldavClient = new CalDAVClient();
+    // Stryker disable next-line ObjectLiteral: Composition root — CalDAV client options object is wiring
+    const caldavClient = new CalDAVClient({ healthRegistry });
+    // Stryker disable next-line StringLiteral,ObjectLiteral: Composition root — CalDAV has no auth step, always available
+    healthRegistry.sendEvent('caldav', 'CONFIGURE');
+    // Stryker disable next-line StringLiteral,ObjectLiteral: Composition root — CalDAV has no auth step, always available
+    healthRegistry.sendEvent('caldav', 'CONNECT_SUCCESS');
     const caldavRegistry = new CalendarRegistryBackend(storage.docClient, storage.tableName);
+    // Stryker disable next-line ObjectLiteral: Composition root — CalDAV service wiring object is configuration
     const calendarService = { client: caldavClient, registry: caldavRegistry };
     const calendarHandler = new CalendarCommandHandler(
         caldavClient,
@@ -243,19 +467,18 @@ export async function createApp(): Promise<App> {
             contactApprovalHandler.storePendingRequest(uuid, details);
             const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
             // Stryker disable BlockStatement,StringLiteral: integration-only callback body
-            const channel = await discordInfra.discordClient.channels.fetch(config.email!.adminDiscordChannelId);
-            // eslint-disable-next-line sonarjs/in-operator-type-error -- channel.send existence check is intentional duck-typing pattern, same as bsky-setup.ts
-            if(channel && 'send' in channel) {
-                await channel.send({ embeds: [embed], components: [actionRow] });
-            } else {
-                throw new Error(`Admin channel ${config.email!.adminDiscordChannelId} is not a sendable text channel`);
-            }
+            await discordCapability.sendToChannel(
+                config.email!.adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                { priority: 'high', type: 'contact_approval' }
+            );
             // Stryker restore BlockStatement,StringLiteral
         }
         : undefined;
     // Stryker restore BlockStatement
 
-    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend);
+    // Stryker disable ObjectLiteral,OptionalChaining: Composition root — service wiring objects and optional deps are not unit-testable
+    const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend, healthRegistry);
     const mcpServers = createMCPServers({
         memoryBackend:             storage.memoryBackend,
         messageSearchService:      discordInfra.messageSearchService,
@@ -277,7 +500,12 @@ export async function createApp(): Promise<App> {
         contactBackend:            storage.contactBackend,
         contactApprovalRequest:    sendContactApprovalRequest,
         historyCoordinator,
+        healthRegistry,
+        discordReconnectionLoop,
+        bskyReconnectionLoop,
+        emailReconnectionLoop,
     });
+    // Stryker restore ObjectLiteral,OptionalChaining
 
     // Load plugins and create agent
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -316,12 +544,15 @@ export async function createApp(): Promise<App> {
     // Construct allowlist command handler externally (after both email and bsky setups are done)
     // so it can manage both the email and Bluesky allowlists from a single /allowlist command.
     const activeBskyClient = bskyClient; // capture for closure — TypeScript narrowing
+    // Stryker disable BlockStatement,ConditionalExpression: Composition root — optional handle resolver closure not unit-testable
     const resolveHandleToDid = activeBskyClient
         ? async (handle: string): Promise<string | undefined> => {
             const profile = await activeBskyClient.getProfile(handle);
             return profile.did;
         }
         : undefined;
+    // Stryker restore BlockStatement,ConditionalExpression
+    // Stryker disable next-line ConditionalExpression: Composition root — optional allowlist handler wiring
     const allowlistHandler = emailSetup
         ? new AllowlistCommandHandler(
             emailSetup.allowlist,
@@ -359,12 +590,14 @@ export async function createApp(): Promise<App> {
         contactApprovalHandler,
         activityLogger,
         historyCoordinator,
+        healthRegistry,
+        discordCapability,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');
 
     // Collect slash command builders for bulk registration at startup
-    // Stryker disable BlockStatement: Composition root — command builder list construction is not unit-testable
+    // Stryker disable BlockStatement,ArrayDeclaration: Composition root — command builder list construction is not unit-testable
     const commandBuilders: (() => SlashCommandBuilder)[] = [buildCalendarCommand, buildContactCommand];
     // Stryker disable next-line ConditionalExpression,BlockStatement: optional allowlist command — equivalent mutant for non-allowlist path
     if(allowlistHandler) {
@@ -372,29 +605,163 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore BlockStatement
 
+    // Wire Discord client into the capability facade now (client may not be logged in yet,
+    // but the facade checks isReady() before sending, so this is safe to set eagerly).
+    discordCapability.setClient(discordInfra.discordClient);
+
+    // Subscribe to health changes: drain outbox when any service comes online
+    // Registered once at createApp() time so it survives across start()/stop() cycles
+    // Stryker disable BlockStatement: Composition root — health subscription callback is not unit-testable
+    const unsubscribeOutboxDrain = healthRegistry.subscribe((change) => {
+        if(change.newState === 'online') {
+            void outboxDrainer.drain(change.service);
+        }
+    });
+    // Stryker restore BlockStatement
+
+    // Subscribe to health changes: reset failed sagas when a service comes back online
+    // Stryker disable BlockStatement: Composition root — health subscription callback is not unit-testable
+    const unsubscribeSagaRetry = healthRegistry.subscribe((change) => {
+        if(change.newState !== 'online') {
+            return;
+        }
+
+        const sagaTypes: ApprovalSagaType[] = [];
+        if(change.service === 'bluesky') {
+            sagaTypes.push('bsky_reply', 'bsky_dm');
+        }
+        if(change.service === 'email') {
+            sagaTypes.push('email_send', 'email_reply');
+        }
+        if(sagaTypes.length === 0) {
+            return;
+        }
+
+        void (async () => {
+            try {
+                const failed = await approvalSagaBackend.listByState('failed');
+                for(const saga of failed) {
+                    // eslint-disable-next-line sonarjs/argument-type -- saga.type and sagaTypes are both ApprovalSagaType; sonarjs infers string incorrectly
+                    if(sagaTypes.includes(saga.type)) {
+                        // eslint-disable-next-line no-await-in-loop -- sequential: saga state updates must be ordered
+                        await approvalSagaBackend.updateState(saga.id, 'approved');
+                    }
+                }
+            } catch (err) {
+                logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Failed to reset sagas on reconnect' });
+            }
+        })();
+    });
+    // Stryker restore BlockStatement
+
+    // Subscribe to health changes: run recovery phase when Discord reconnects.
+    // Registered inside app.start() AFTER bot.start() so it only fires on reconnects.
+    // Catch-up on first connection is handled by setupInboxAndCatchUp in bot.ts clientReady.
+    let unsubscribeDiscordRecovery: (() => void) | undefined;
+
+    // Wire discordReconnectFn now that bot is available.
+    discordReconnectFn = async () => {
+        await bot.start();
+    };
+
     let isStopping = false;
 
     return {
+        // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
         start: async () => {
             isStopping = false;
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Starting Isambard application...');
+
+            // Mark Discord as starting
+            healthRegistry.sendEvent('discord', 'CONFIGURE');
+
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Connecting to Discord...');
-            await bot.start();
-            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-            logger.info('Discord connected');
-            await registerAllCommands(config.discord.botToken, config.discord.applicationId, commandBuilders);
+            // Stryker disable BlockStatement: try-catch wraps Discord startup — error handling
+            try {
+                await bot.start();
+                healthRegistry.sendEvent('discord', 'CONNECT_SUCCESS');
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Discord connected');
+            } catch (err) {
+                healthRegistry.sendEvent('discord', 'CONNECT_FAIL', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+                logger.warn({
+                    error: err instanceof Error ? err.message : String(err),
+                    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                    msg:   'Discord unavailable at startup, starting reconnection loop',
+                });
+                discordReconnectionLoop.start();
+            }
+            // Stryker restore BlockStatement
+
+            // Register recovery subscriber now — after initial bot.start() — so it only fires on reconnects.
+            // Catch-up on first connection is handled by setupInboxAndCatchUp inside bot.ts clientReady.
+            unsubscribeDiscordRecovery = healthRegistry.subscribe((change) => {
+                if(change.service === 'discord' && change.newState === 'online') {
+                    void (async () => {
+                        try {
+                            await discordInfra.channelRegistry.warmCache();
+                            const currentMode = discordInfra.botStateManager.getMode();
+                            if(currentMode === 'processing_message') {
+                                discordInfra.botStateManager.goIdle();
+                            }
+                            await bot.triggerCatchUp();
+                        } catch (err) {
+                            logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Discord recovery phase failed' });
+                        }
+                    })();
+                }
+            });
+
+            // Start email listener (independent of Discord — email works even if Discord is offline)
+            // Stryker disable BlockStatement: try-catch wraps email listener start - composition root error handling
+            if(emailSetup) {
+                try {
+                    await emailSetup.listener.start();
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                    logger.info({ msg: 'Email listener started' });
+                } catch (err) {
+                    logger.error({
+                        error: err instanceof Error ? err.message : String(err),
+                        msg:   'Failed to start email listener',
+                    });
+                }
+            }
+            // Stryker restore BlockStatement
+
+            // Register slash commands (non-fatal — Discord may be connected but commands fail)
+            // Stryker disable BlockStatement: Composition root — not unit-testable
+            try {
+                await registerAllCommands(config.discord.botToken, config.discord.applicationId, commandBuilders);
+            } catch (err) {
+                logger.warn({
+                    error: err instanceof Error ? err.message : String(err),
+                    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                    msg:   'Slash command registration failed, will retry on next startup',
+                });
+            }
+            // Stryker restore BlockStatement
+
+            // These start regardless of Discord availability
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.start();
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler started');
             }
+
+            // Start saga executor polling loop
+            sagaExecutor.start();
+
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Isambard application started successfully');
         },
+        // Stryker restore BlockStatement
 
+        // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
         stop: async () => {
             if(isStopping) {
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -405,16 +772,76 @@ export async function createApp(): Promise<App> {
 
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Stopping Isambard application...');
+
+            // Stop reconnection loops if running
+            discordReconnectionLoop.stop();
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(emailReconnectionLoop) {
+                emailReconnectionLoop.stop();
+            }
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(bskyReconnectionLoop) {
+                bskyReconnectionLoop.stop();
+            }
+
+            // Stop outbox drainer and saga executor
+            outboxDrainer.stop();
+            sagaExecutor.stop();
+
+            // Unsubscribe health listeners
+            unsubscribeOutboxDrain();
+            unsubscribeSagaRetry();
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe — only registered after first successful start()
+            unsubscribeDiscordRecovery?.();
+            unsubscribeDiscordReconnect();
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe - equivalent mutant
+            unsubscribeEmailReconnect?.();
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe - equivalent mutant
+            unsubscribeBskyReconnect?.();
+
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
             if(storage.reconciliationScheduler) {
                 storage.reconciliationScheduler.stop();
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler stopped');
             }
+
+            // Stop email listener and WildDuck client before bot.stop()
+            // (email lifecycle moved here since listener now starts in app.start())
+            // Stryker disable BlockStatement: try-catch isolates email stop from Discord cleanup
+            if(emailSetup) {
+                try {
+                    await emailSetup.listener.stop();
+                } catch (err) {
+                    logger.error({
+                        error: err instanceof Error ? err.message : String(err),
+                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
+                        msg:   'Email listener stop failed during shutdown',
+                    });
+                }
+                // Stryker restore BlockStatement
+                // Stryker disable BlockStatement: try-catch isolates WildDuck shutdown from Discord cleanup
+                try {
+                    await emailSetup.wildDuckClient.shutdown();
+                } catch (err) {
+                    logger.error({
+                        error: err instanceof Error ? err.message : String(err),
+                        // Stryker disable next-line StringLiteral: log message is not behavior-affecting
+                        msg:   'WildDuck client shutdown failed during email teardown',
+                    });
+                }
+            }
+            // Stryker restore BlockStatement
+
             await bot.stop();
+
+            // Stop health registry after bot.stop() so health subscribers can still
+            // react to service state changes during graceful shutdown.
+            healthRegistry.stop();
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Isambard application stopped');
         },
+        // Stryker restore BlockStatement
     };
 }
 

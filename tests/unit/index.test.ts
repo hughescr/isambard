@@ -194,8 +194,9 @@ describe('createApp', () => {
 
             const discordModule = await import('@/integrations/discord/bot');
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mock(async () => undefined),
+                start:          mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
@@ -360,8 +361,9 @@ describe('createApp', () => {
 
             const discordModule = await import('@/integrations/discord/bot');
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mock(async () => undefined),
+                start:          mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
@@ -534,8 +536,9 @@ describe('createApp', () => {
 
             const discordModule = await import('@/integrations/discord/bot');
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mock(async () => undefined),
+                start:          mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
@@ -664,8 +667,9 @@ describe('createApp', () => {
 
             const discordModule = await import('@/integrations/discord/bot');
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mock(async () => undefined),
+                start:          mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
@@ -798,8 +802,9 @@ describe('createApp', () => {
 
             const discordModule = await import('@/integrations/discord/bot');
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mock(async () => undefined),
+                start:          mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
@@ -941,8 +946,9 @@ describe('createApp', () => {
 
             const discordModule = await import('@/integrations/discord/bot');
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mock(async () => undefined),
+                start:          mock(async () => undefined),
+                stop:           mock(async () => undefined),
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
@@ -1243,8 +1249,9 @@ describe('createApp', () => {
             const discordModule = await import('@/integrations/discord/bot');
             const mockBotStop = mock(async () => undefined);
             const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
-                start: mock(async () => undefined),
-                stop:  mockBotStop,
+                start:          mock(async () => undefined),
+                stop:           mockBotStop,
+                triggerCatchUp: mock(async () => undefined),
             });
             spies.push(createBotSpy);
 
