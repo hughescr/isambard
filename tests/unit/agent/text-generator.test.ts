@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
 import {
@@ -8,7 +8,8 @@ import {
     mockGenerateTextWithSystemPrompt,
     originalGenerateText,
     originalGenerateTextWithSystemPrompt,
-    resetTmpDirForTesting
+    resetTmpDirForTesting,
+    resetMockFs
 } from '../../setup';
 
 /**
@@ -81,8 +82,12 @@ describe('generateText', () => {
         // FIRST call in this test suite actually invokes mkdtemp. Subsequent tests reuse
         // the cached promise. This mockReset + mockImplementation is here for completeness
         // but mkdtemp will only be called once across all tests in this describe block.
-        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockClear();
         mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}mock1`);
+    });
+
+    afterEach(() => {
+        resetMockFs();
     });
 
     describe('successful text generation', () => {
@@ -397,16 +402,20 @@ describe('getTmpDir cached-rejection behavior', () => {
         mockQuery.mockImplementation(() => makeQueryGenerator('Hello'));
     });
 
+    afterEach(() => {
+        resetMockFs();
+    });
+
     test('resetTmpDirForTesting clears cached tmpDirPromise so mkdtemp is called again', async () => {
         // Populate tmpDirPromise with a successful call
-        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockClear();
         mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}first`);
         await generateText('Test prompt');
         expect(mockFsPromises.mkdtemp).toHaveBeenCalledTimes(1);
 
         // After resetting, mkdtemp should be called again on the next generateText call
         resetTmpDirForTesting();
-        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockClear();
         mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}second`);
         await generateText('Test prompt');
         expect(mockFsPromises.mkdtemp).toHaveBeenCalledTimes(1);
@@ -414,7 +423,7 @@ describe('getTmpDir cached-rejection behavior', () => {
 
     test('should not cache a rejected mkdtemp promise — retry succeeds on second call', async () => {
         let callCount = 0;
-        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockClear();
         mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => {
             callCount++;
             if(callCount === 1) {
@@ -451,8 +460,12 @@ describe('generateTextWithSystemPrompt', () => {
         mockQuery.mockImplementation(() => makeQueryGenerator('  Generated response  '));
 
         // Reset mkdtemp — getTmpDir() is a process-lifetime singleton; mkdtemp only executes once per process
-        mockFsPromises.mkdtemp.mockReset();
+        mockFsPromises.mkdtemp.mockClear();
         mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}mock1`);
+    });
+
+    afterEach(() => {
+        resetMockFs();
     });
 
     describe('prompt formatting', () => {

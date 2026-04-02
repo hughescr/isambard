@@ -166,7 +166,7 @@ export class MessageCoordinator {
         // Set up refresh interval (Discord typing lasts ~10 seconds, refresh every 8s)
         state.typingInterval = setInterval(() => {
             // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
-            void state.typingChannel?.sendTyping().catch(() => undefined);
+            state.typingChannel?.sendTyping().catch(() => undefined);
         }, 8000);
     }
 
@@ -188,6 +188,7 @@ export class MessageCoordinator {
      * This avoids extra microtask hops in the interrupted/no-callback paths.
      * Callers are responsible for cleanup (stopTypingIndicator, activeQuery) in their own finally blocks.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Promise<void> | void
     private handleProcessingResult(
         result: ProcessResult,
         state: ChannelState,

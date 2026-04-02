@@ -216,7 +216,7 @@ describe('CalDAVClient.discoverCalendars', () => {
         });
 
         const client = new CalDAVClient();
-        await expect(
+        expect(
             client.discoverCalendars('https://bad.example.com', 'user', 'pass')
         ).rejects.toBeInstanceOf(CaldavAuthError);
     });

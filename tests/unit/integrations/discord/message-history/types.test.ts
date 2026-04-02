@@ -71,7 +71,8 @@ describe('discordAttachmentSchema', () => {
     ])('should validate %s', (_label, override, _shouldPass) => {
         const key = Object.keys(override)[0] as keyof typeof validAttachment;
         const { [key]: _removed, ...base } = validAttachment;
-        const testData = key === 'url' && 'url' in override && override.url !== undefined
+        const overrideRecord = override as Record<string, unknown>;
+        const testData = key === 'url' && 'url' in overrideRecord && overrideRecord.url !== undefined
             ? { ...validAttachment, ...override }
             : base;
         const result = discordAttachmentSchema.safeParse(testData);

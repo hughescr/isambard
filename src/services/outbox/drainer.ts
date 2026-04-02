@@ -10,11 +10,11 @@ export interface OutboxDrainerLogger {
 }
 
 export interface OutboxDrainerDeps {
-    outboxBackend:   OutboxBackend
-    registry:        ServiceHealthRegistry
-    deliverFn:       (item: OutboxItem) => Promise<void>
-    logger:          OutboxDrainerLogger
-    batchSize?:      number
+    outboxBackend:    OutboxBackend
+    registry:         ServiceHealthRegistry
+    deliverFn:        (item: OutboxItem) => Promise<void>
+    logger:           OutboxDrainerLogger
+    batchSize?:       number
     drainIntervalMs?: number
 }
 
@@ -81,12 +81,15 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.warn({ service, itemId: item.id, itemEpoch: item.epoch, currentEpoch }, 'Deleting outbox item from future epoch');
                     // Stryker restore ObjectLiteral,StringLiteral
+                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
                     await outboxBackend.markSent(item);
                     continue;
                 }
 
                 try {
+                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
                     await deliverFn(item);
+                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
                     await outboxBackend.markSent(item);
                     result.delivered += 1;
                 } catch (err: unknown) {
@@ -94,12 +97,14 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
                     logger.error({ service, itemId: item.id, error: message }, 'Failed to deliver outbox item');
                     // Stryker restore ObjectLiteral,StringLiteral
+                    // eslint-disable-next-line no-await-in-loop -- Sequential outbox drain required for ordering guarantees
                     await outboxBackend.markFailed(item, message);
                     result.failed += 1;
                 }
             }
 
             // If the batch was full and the service is still up, schedule another drain
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stopped can be set true by stop() between awaits
             if(items.length === batchSize && registry.isAvailable(service) && !stopped) {
                 pendingTimer = setTimeout(() => {
                     pendingTimer = undefined;

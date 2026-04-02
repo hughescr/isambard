@@ -326,7 +326,7 @@ export async function recall(
         }
 
         // Skip if not in include_layers filter
-        if(params.include_layers && layer !== 'other' && !params.include_layers.includes(layer as LayerName)) {
+        if(params.include_layers && layer !== 'other' && !new Set<string>(params.include_layers).has(layer)) {
             continue;
         }
 

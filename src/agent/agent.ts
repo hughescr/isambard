@@ -329,7 +329,7 @@ export interface ClaudeAgent {
 /**
  * Builds the mcpServers configuration object based on provided servers.
  */
-// eslint-disable-next-line complexity -- mechanical server registration, each branch is trivially independent
+// eslint-disable-next-line complexity, sonarjs/function-return-type -- mechanical server registration; legitimately returns Record | undefined
 function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, contactsMcpServer?: McpServerConfig, userContextMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
     if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer && !bskyMcpServer && !caldavMcpServer && !wikipediaMcpServer && !contactsMcpServer && !userContextMcpServer) {
         return undefined;

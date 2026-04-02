@@ -36,7 +36,7 @@ describe('ChannelRegistryManager', () => {
 
     // Helper to set up Discord client mock for specific channels
     const mockDiscordChannels = (channels: ChannelMetadata[]) => {
-        client.channels.fetch = mock((channelId: string) => {
+        client.channels.fetch = mock((channelId: string): Promise<Channel | null> => {
             const channel = channels.find((ch: ChannelMetadata) => ch.channelId === channelId);
             if(channel) {
                 return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);
@@ -128,7 +128,7 @@ describe('ChannelRegistryManager', () => {
             ]));
 
             // Mock Discord client to return channel names
-            client.channels.fetch = mock((channelId: string) => {
+            client.channels.fetch = mock((channelId: string): Promise<Channel | null> => {
                 if(channelId === channel1.channelId || channelId === channel2.channelId) {
                     return Promise.resolve({ id: channelId, name: 'general' } as unknown as Channel);
                 }
@@ -170,7 +170,7 @@ describe('ChannelRegistryManager', () => {
             });
 
             // Mock Discord client to return DM channel
-            client.channels.fetch = mock((channelId: string) => {
+            client.channels.fetch = mock((channelId: string): Promise<Channel | null> => {
                 if(channelId === dmChannel.channelId) {
                     return Promise.resolve({ id: channelId, name: 'DM - testuser' } as unknown as Channel);
                 }
@@ -370,6 +370,30 @@ describe('ChannelRegistryManager', () => {
             const result = await manager.getChannel(createChannelId('nonexistent'));
 
             expect(result).toBeNull();
+        });
+
+        it('should use @Unknown name for DM channel with non-object Discord channel (type guard — non-object)', async () => {
+            // Mock Discord fetch to return a primitive string — exercises isDMChannelWithRecipient
+            // and hasChannelName type guards with a non-object value
+            const dmChannelId = createChannelId('dm-999');
+            backend.getChannel = mock(() => Promise.resolve({
+                channelId:   dmChannelId,
+                guildId:     'DM' as const,
+                isMuted:     false,
+                isWellKnown: undefined,
+                createdAt:   '2024-01-01T00:00:00.000Z',
+                updatedAt:   '2024-01-01T00:00:00.000Z',
+            }));
+            // Return a truthy non-object (string) from Discord fetch — type guards must not throw
+            // client.channels.cache is already an empty Map from beforeEach, so fetch will be called
+            client.channels.fetch = mock((): Promise<Channel | null> => Promise.resolve('truthy-non-object' as unknown as Channel));
+
+            const result = await manager.getChannel(dmChannelId);
+
+            // isDMChannelWithRecipient('truthy-non-object') → false (not an object)
+            // hasChannelName('truthy-non-object') → false (not an object)
+            // Falls through to default '@Unknown'
+            expect(result?.channelName).toBe('@Unknown');
         });
     });
 

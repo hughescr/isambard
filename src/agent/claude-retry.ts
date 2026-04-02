@@ -10,7 +10,12 @@ export interface ClaudeRetryOptions {
  * Extract retryAfter value from HTTP error headers or response body.
  * Converts seconds to milliseconds if found in headers.
  */
-function extractRetryAfter(error: object): number | undefined {
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number | undefined
+function extractRetryAfter(error: unknown): number | undefined {
+    if(!(typeof error === 'object' && error !== null)) {
+        return undefined;
+    }
+
     // Check response body first (already in ms)
     if('retryAfter' in error) {
         const retryAfter = typeof error.retryAfter === 'string'
@@ -36,18 +41,20 @@ function extractRetryAfter(error: object): number | undefined {
 /**
  * Check if error is a network error by code property
  */
-function isNetworkErrorByCode(error: object): ErrorClassification | undefined {
-    if(!('code' in error) || typeof error.code !== 'string') {
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+function isNetworkErrorByCode(error: unknown): ErrorClassification | undefined {
+    if(!(typeof error === 'object' && error !== null && 'code' in error) || typeof error.code !== 'string') {
         return undefined;
     }
 
-    const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
-    if(!networkErrorCodes.includes(error.code)) {
+    const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
+    if(!networkErrorCodes.has(error.code)) {
         return undefined;
     }
 
-    const message = 'message' in error && typeof error.message === 'string' && error.message
-        ? error.message
+    const errorRecord = error as Record<string, unknown>;
+    const message = typeof errorRecord.message === 'string' && errorRecord.message
+        ? errorRecord.message
         : 'Network error';
 
     return { category: 'transient', message };
@@ -56,7 +63,8 @@ function isNetworkErrorByCode(error: object): ErrorClassification | undefined {
 /**
  * Check if error is a network error by message content
  */
-function isNetworkErrorByMessage(error: object): ErrorClassification | undefined {
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefined {
     if(!(error instanceof Error)) {
         return undefined;
     }
@@ -72,8 +80,9 @@ function isNetworkErrorByMessage(error: object): ErrorClassification | undefined
 /**
  * Classify HTTP status error
  */
-function classifyHttpStatusError(error: object): ErrorClassification | undefined {
-    if(!('status' in error)) {
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+function classifyHttpStatusError(error: unknown): ErrorClassification | undefined {
+    if(!(typeof error === 'object' && error !== null && 'status' in error)) {
         return undefined;
     }
 
@@ -81,8 +90,9 @@ function classifyHttpStatusError(error: object): ErrorClassification | undefined
         ? Number.parseInt(error.status, 10)
         : (error.status as number);
 
-    const message = 'message' in error && typeof error.message === 'string' && error.message
-        ? error.message
+    const errorRecord = error as Record<string, unknown>;
+    const message = typeof errorRecord.message === 'string' && errorRecord.message
+        ? errorRecord.message
         : `HTTP ${status}`;
 
     // Rate limited

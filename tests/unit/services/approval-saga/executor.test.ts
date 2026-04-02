@@ -1,9 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
-import { createSagaExecutor } from '@/services/approval-saga/executor';
 import type { ApprovalSagaBackend } from '@/services/approval-saga/backend';
-import type { ServiceHealthRegistry } from '@/services/health-registry';
+import { createSagaExecutor, type SagaExecutorLogger  } from '@/services/approval-saga/executor';
 import type { ApprovalSaga, ApprovalSagaType } from '@/services/approval-saga/types';
-import type { SagaExecutorLogger } from '@/services/approval-saga/executor';
+import type { ServiceHealthRegistry } from '@/services/health-registry';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 
@@ -29,10 +28,10 @@ describe('createSagaExecutor', () => {
         jest.useFakeTimers();
 
         backend = {
-            listByState:  mock(async (): Promise<ApprovalSaga[]> => []),
-            updateState:  mock(async (): Promise<void> => undefined),
-            create:       mock(async (): Promise<void> => undefined),
-            get:          mock(async (): Promise<ApprovalSaga | undefined> => undefined),
+            listByState: mock(async (): Promise<ApprovalSaga[]> => []),
+            updateState: mock(async (): Promise<void> => undefined),
+            create:      mock(async (): Promise<void> => undefined),
+            get:         mock(async (): Promise<ApprovalSaga | undefined> => undefined),
         } as unknown as ApprovalSagaBackend;
 
         registry = {
@@ -40,13 +39,13 @@ describe('createSagaExecutor', () => {
         } as unknown as ServiceHealthRegistry;
 
         executors = {
-            // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-            bsky_reply:  mock(async (): Promise<void> => undefined),
-            // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-            bsky_dm:     mock(async (): Promise<void> => undefined),
-            // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
-            email_send:  mock(async (): Promise<void> => undefined),
-            // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+
+            bsky_reply: mock(async (): Promise<void> => undefined),
+
+            bsky_dm: mock(async (): Promise<void> => undefined),
+
+            email_send: mock(async (): Promise<void> => undefined),
+
             email_reply: mock(async (): Promise<void> => undefined),
         };
 
@@ -288,7 +287,9 @@ describe('createSagaExecutor', () => {
         test('stop is idempotent when not started', () => {
             const executor = createSagaExecutor({ backend, registry, executors, logger });
             // Should not throw
-            expect(() => { executor.stop(); }).not.toThrow();
+            expect(() => {
+                executor.stop();
+            }).not.toThrow();
         });
 
         test('stopped flag starts as false: interval callback fires executeOnce immediately on first tick', async () => {

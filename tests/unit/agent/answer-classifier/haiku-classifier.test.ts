@@ -25,7 +25,7 @@ describe('classifyWithHaiku', () => {
     };
 
     beforeEach(() => {
-        mockGenerateText.mockReset();
+        mockGenerateText.mockClear();
     });
 
     it('should call text generator with classification prompt', async () => {

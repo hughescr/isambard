@@ -1,6 +1,6 @@
-import { describe, it, expect, mock, spyOn, afterEach } from 'bun:test';
-import * as fsPromises from 'node:fs/promises';
+import { describe, it, expect, mock, afterEach } from 'bun:test';
 import { rm } from 'node:fs/promises';
+import { mockFsPromises, resetMockFs } from '../../../../setup';
 import { processVideo, processLocalVideo } from '@/utils/media/video/processor';
 import type { SpawnRunner, BinarySpawnRunner } from '@/utils/media/video/types';
 
@@ -68,18 +68,16 @@ function makeOrchestrationRunner(ffprobeOutput: string, transcription: string): 
         if(exe.includes('ffprobe')) {
             return { stdout: ffprobeOutput, stderr: '', exitCode: 0 };
         }
-        // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] includes
-        if(exe.includes('ffmpeg') && cmd.includes('null')) {
+        const cmdSet = new Set<string>(cmd);
+        if(exe.includes('ffmpeg') && cmdSet.has('null')) {
             // scdet detection
             return { stdout: '', stderr: SCDET_STDERR, exitCode: 1 };
         }
-        // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] includes
-        if(exe.includes('ffmpeg') && cmd.includes('srt')) {
+        if(exe.includes('ffmpeg') && cmdSet.has('srt')) {
             // subtitle extraction
             return { stdout: SRT_OUTPUT, stderr: '', exitCode: 0 };
         }
-        // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] includes
-        if(exe.includes('ffmpeg') && cmd.includes('copy')) {
+        if(exe.includes('ffmpeg') && cmdSet.has('copy')) {
             // HLS download
             return { stdout: '', stderr: '', exitCode: 0 };
         }
@@ -102,7 +100,7 @@ describe('processLocalVideo', () => {
     const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-local-processor-test-${Date.now()}`;
 
     afterEach(async () => {
-        mock.restore();
+        resetMockFs();
         try {
             await rm(TEST_DIR, { recursive: true });
         } catch{
@@ -111,10 +109,6 @@ describe('processLocalVideo', () => {
     });
 
     it('creates the output directory before processing', async () => {
-        const mkdirSpy = spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
-        // Mock writeFile too so the test doesn't fail on missing dir
-        spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
-
         const run = makeOrchestrationRunner(FFPROBE_OUTPUT, WHISPERKIT_OUTPUT);
         const outputDir = `${TEST_DIR}/mkdir-test-output`;
         await processLocalVideo(`${TEST_DIR}/input/video.mp4`, outputDir, {
@@ -122,7 +116,7 @@ describe('processLocalVideo', () => {
             binaryRun: makeBinaryRunner(),
         });
 
-        expect(mkdirSpy).toHaveBeenCalledWith(outputDir, { recursive: true });
+        expect(mockFsPromises.mkdir).toHaveBeenCalledWith(outputDir, { recursive: true });
     });
 
     it('processes a video file that already exists locally (no download step)', async () => {
@@ -169,7 +163,7 @@ describe('processVideo', () => {
     const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-processor-test-${Date.now()}`;
 
     afterEach(async () => {
-        mock.restore();
+        resetMockFs();
         // Clean up the test output directory
         try {
             await rm(TEST_DIR, { recursive: true });
@@ -216,8 +210,8 @@ describe('processVideo', () => {
             if(exe.includes('ffprobe')) {
                 return { stdout: FFPROBE_OUTPUT, stderr: '', exitCode: 0 };
             }
-            // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] includes
-            if(exe.includes('ffmpeg') && cmd.includes('null')) {
+            const cmdSet2 = new Set<string>(cmd);
+            if(exe.includes('ffmpeg') && cmdSet2.has('null')) {
                 return { stdout: '', stderr: SCDET_STDERR, exitCode: 1 };
             }
             if(exe.includes('whisperkit-cli')) {
@@ -231,8 +225,7 @@ describe('processVideo', () => {
             binaryRun: makeBinaryRunner(),
         });
 
-        // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] includes
-        const ffmpegCopyCmd = capturedCmds.find(c => c.includes('copy'));
+        const ffmpegCopyCmd = capturedCmds.find(c => new Set<string>(c).has('copy'));
         expect(ffmpegCopyCmd).toBeDefined();
     });
 

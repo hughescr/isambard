@@ -571,6 +571,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
         completeCatchUp,
 
+        // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns AbortController | null
         getAbortController(): AbortController | null {
             return currentAbortController;
         },

@@ -3,7 +3,7 @@ import {
     DynamoDBDocumentClient,
     PutCommand,
     GetCommand,
-    QueryCommand,
+    QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import * as loggerModule from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -94,8 +94,8 @@ describe('ApprovalSagaBackend', () => {
         test('returns parsed saga when item is found', async () => {
             ddbMock.on(GetCommand).resolves({
                 Item: {
-                    PK:    'APPROVAL#SAGA',
-                    SK:    `SAGA#${SAGA_UUID}`,
+                    PK: 'APPROVAL#SAGA',
+                    SK: `SAGA#${SAGA_UUID}`,
                     ...BASE_SAGA,
                 },
             });

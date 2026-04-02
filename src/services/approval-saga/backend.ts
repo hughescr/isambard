@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
-import { BaseRepository } from '@/storage';
 import { approvalSagaSchema, type ApprovalSaga, type ApprovalSagaState } from './types';
+import { BaseRepository } from '@/storage';
 
 // Stryker disable StringLiteral: PK/SK key constants are configuration values
 const SAGA_PK        = 'APPROVAL#SAGA';
@@ -25,8 +25,8 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
     async create(saga: ApprovalSaga): Promise<void> {
         await this.putItem({
             // Stryker disable next-line StringLiteral: PK is a configuration constant
-            PK: SAGA_PK,
-            SK: sagaSK(saga.id),
+            PK:  SAGA_PK,
+            SK:  sagaSK(saga.id),
             ...saga,
             // Stryker disable next-line ArithmeticOperator: TTL arithmetic — multiplication order does not affect the result
             TTL: Math.floor(Date.now() / 1000) + (TTL_DAYS * 24 * 60 * 60),
@@ -55,7 +55,7 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
     async updateState(
         id:       string,
         newState: ApprovalSagaState,
-        extra?:   Partial<Pick<ApprovalSaga, 'adminUserId' | 'rejectionReason' | 'lastError'>>,
+        extra?:   Partial<Pick<ApprovalSaga, 'adminUserId' | 'rejectionReason' | 'lastError'>>
     ): Promise<void> {
         const saga = await this.get(id);
         if(saga === undefined) {

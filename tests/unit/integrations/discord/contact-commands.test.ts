@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock, type Mock } from 'bun:test';
-import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type EmbedBuilder } from 'discord.js';
 import {
     buildContactCommand,
     buildContactApprovalEmbed,
@@ -847,9 +847,9 @@ describe('ContactCommandHandler - show subcommand', () => {
 
         await handler.handle(asChatInput);
 
-        const callArgs  = (editReply.mock.calls[0] as [{ embeds: import('discord.js').EmbedBuilder[] }])[0];
-        const embedJson = callArgs.embeds[0]?.toJSON();
-        const fieldNames = (embedJson?.fields ?? []).map((f: { name: string }) => f.name);
+        const callArgs  = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const embedJson = callArgs.embeds[0].toJSON();
+        const fieldNames = (embedJson.fields ?? []).map((f: { name: string }) => f.name);
         expect(fieldNames).toContain('Person ID');
         expect(fieldNames).toContain('Identifiers');
         expect(fieldNames).toContain('Updated');
@@ -870,9 +870,9 @@ describe('ContactCommandHandler - show subcommand', () => {
 
         await handler.handle(asChatInput);
 
-        const callArgs  = (editReply.mock.calls[0] as [{ embeds: import('discord.js').EmbedBuilder[] }])[0];
-        const embedJson = callArgs.embeds[0]?.toJSON();
-        const fieldNames = (embedJson?.fields ?? []).map((f: { name: string }) => f.name);
+        const callArgs  = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const embedJson = callArgs.embeds[0].toJSON();
+        const fieldNames = (embedJson.fields ?? []).map((f: { name: string }) => f.name);
         expect(fieldNames).not.toContain('Notes');
     });
 
@@ -884,9 +884,9 @@ describe('ContactCommandHandler - show subcommand', () => {
 
         await handler.handle(asChatInput);
 
-        const callArgs  = (editReply.mock.calls[0] as [{ embeds: import('discord.js').EmbedBuilder[] }])[0];
-        const embedJson = callArgs.embeds[0]?.toJSON();
-        const fieldNames = (embedJson?.fields ?? []).map((f: { name: string }) => f.name);
+        const callArgs  = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const embedJson = callArgs.embeds[0].toJSON();
+        const fieldNames = (embedJson.fields ?? []).map((f: { name: string }) => f.name);
         expect(fieldNames).toContain('Notes');
     });
 

@@ -14,6 +14,11 @@ import { SendRateLimiter } from '@/integrations/email';
 import type { ApprovalSagaBackend } from '@/services';
 import { retryAsync } from '@/utils';
 
+/** Type guard: check if a Discord channel supports sending messages (has send method). */
+function isSendableChannel(channel: unknown): channel is { send: (options: unknown) => Promise<unknown> } {
+    return typeof channel === 'object' && channel !== null && 'send' in channel;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -36,6 +41,8 @@ export interface BskySetupOptions {
      * when Discord is offline) instead of calling channel.send() directly.
      */
     discordCapability?:    DiscordCapability
+    /** @internal Dependency injection for testing (e.g. fast sleep) */
+    _deps?:                { sleep?: (ms: number) => Promise<void> }
 }
 
 export interface BskySetupResult {
@@ -79,6 +86,8 @@ export interface BskySetupResult {
  */
 export async function setupBsky(options: BskySetupOptions): Promise<BskySetupResult> {
     const { bskyClient, docClient, tableName, client, adminDiscordChannelId } = options;
+    // Stryker disable next-line ObjectLiteral: Dependency injection for testability — sleep override is a no-op in production
+    const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
     // Create and load allowlist from DynamoDB into memory cache
     const allowlist = new BskyAllowlist(docClient, tableName);
@@ -133,12 +142,12 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             )
             : retryAsync(async () => {
                 const channel = await client.channels.fetch(adminDiscordChannelId);
-                if(channel && 'send' in channel) {
+                if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
                     throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
                 }
-            }, { policy: { maxAttempts: 3 } }));
+            }, { policy: { maxAttempts: 3 }, ...retryDeps }));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
@@ -167,12 +176,12 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             )
             : retryAsync(async () => {
                 const channel = await client.channels.fetch(adminDiscordChannelId);
-                if(channel && 'send' in channel) {
+                if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
                     throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
                 }
-            }, { policy: { maxAttempts: 3 } }));
+            }, { policy: { maxAttempts: 3 }, ...retryDeps }));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression,LogicalOperator
 

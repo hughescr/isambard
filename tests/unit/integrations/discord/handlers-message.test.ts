@@ -352,9 +352,9 @@ describe('Discord Event Handlers', () => {
 
                 // Find the "Message received" log call
                 type LogCall = [Record<string, unknown>];
-                const messageReceivedCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
+                const messageReceivedCall = (mockLogger.debug.mock.calls as LogCall[]).find((call): boolean => {
                     const obj = call[0] as { msg?: string };
-                    return obj.msg?.includes('Message received');
+                    return obj.msg?.includes('Message received') ?? false;
                 });
 
                 expect(messageReceivedCall).toBeDefined();
@@ -375,9 +375,9 @@ describe('Discord Event Handlers', () => {
 
                 // Find the "Message received" log call
                 type LogCall = [Record<string, unknown>];
-                const messageReceivedCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
+                const messageReceivedCall = (mockLogger.debug.mock.calls as LogCall[]).find((call): boolean => {
                     const obj = call[0] as { msg?: string };
-                    return obj.msg?.includes('Message received');
+                    return obj.msg?.includes('Message received') ?? false;
                 });
 
                 expect(messageReceivedCall).toBeDefined();
@@ -409,9 +409,9 @@ describe('Discord Event Handlers', () => {
 
                 // Find the filtering call from our captured calls
                 type LogCall = [Record<string, unknown>];
-                const filteringCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
+                const filteringCall = (mockLogger.debug.mock.calls as LogCall[]).find((call): boolean => {
                     const obj = call[0] as { msg?: string, isMention?: boolean };
-                    return obj.msg?.includes('Filtering:') && obj.isMention === true;
+                    return (obj.msg?.includes('Filtering:') ?? false) && obj.isMention === true;
                 });
 
                 expect(filteringCall).toBeDefined();
@@ -450,9 +450,9 @@ describe('Discord Event Handlers', () => {
 
                 // Find the filtering call from our captured calls
                 type LogCall = [Record<string, unknown>];
-                const filteringCall = (mockLogger.debug.mock.calls as LogCall[]).find((call) => {
+                const filteringCall = (mockLogger.debug.mock.calls as LogCall[]).find((call): boolean => {
                     const obj = call[0] as { msg?: string, isDM?: boolean };
-                    return obj.msg?.includes('Filtering:') && obj.isDM === true;
+                    return (obj.msg?.includes('Filtering:') ?? false) && obj.isDM === true;
                 });
 
                 expect(filteringCall).toBeDefined();
@@ -872,7 +872,8 @@ describe('Discord Event Handlers', () => {
                         // Check if it's a transient network error
                         if(typeof error === 'object' && error !== null && 'code' in error) {
                             const code = (error as { code: string }).code;
-                            if(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'].includes(code)) {
+                            const transientErrors = new Set<string>(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED']);
+                            if(transientErrors.has(code)) {
                                 // Retry immediately without delay
                                 return operation();
                             }
@@ -1348,6 +1349,57 @@ describe('Discord Event Handlers', () => {
                     expect.any(String), // channel name or ID fallback
                     expect.any(String)  // guildId
                 );
+            });
+        });
+
+        describe('isTypingChannel type guard', () => {
+            it('should pass undefined as channel arg when message.channel has no sendTyping (type guard — object without method)', async () => {
+                // When message.channel is an object but lacks sendTyping, isTypingChannel returns false
+                // and coordinator.handleMessage should receive undefined as the channel argument
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                });
+
+                // Channel has id (needed for createChannelId) but no sendTyping method
+                const channelWithoutTyping = {
+                    id:        '333333333333333333',
+                    type:      0,
+                    isThread:  mock(() => false),
+                    isDMBased: mock(() => false),
+                } as unknown as typeof mockTextChannel;
+                const messageWithChannelNoTyping = {
+                    ...mockMessage,
+                    channel: channelWithoutTyping,
+                } as unknown as Message;
+
+                await handler(messageWithChannelNoTyping);
+
+                expect(mockCoordinator.handleMessage).toHaveBeenCalled();
+                // Third arg should be undefined: isTypingChannel(obj without sendTyping) → false → channel = undefined
+                const thirdArg = mockCoordinator.handleMessage.mock.calls[0][2];
+                expect(thirdArg).toBeUndefined();
+            });
+
+            it('should pass channel when message.channel has sendTyping (type guard — object with method)', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                });
+
+                // mockTextChannel has sendTyping, so isTypingChannel returns true
+                await handler(mockMessage);
+
+                expect(mockCoordinator.handleMessage).toHaveBeenCalled();
+                // Third arg should be the channel itself
+                const thirdArg = mockCoordinator.handleMessage.mock.calls[0][2];
+                expect(thirdArg).toBe(mockTextChannel);
             });
         });
     });

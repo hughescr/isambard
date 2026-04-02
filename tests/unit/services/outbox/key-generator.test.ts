@@ -150,7 +150,7 @@ describe('OutboxKeyGenerator', () => {
             // XXXXX0#uuid does not start with ITEM# but sk.slice(5) produces "0#<id>"
             // which would parse as a valid result. This test ensures the prefix guard is required.
             expect(OutboxKeyGenerator.parseSK(
-                `XXXXX0#${DEDUPE_KEY}`,
+                `XXXXX0#${DEDUPE_KEY}`
             )).toBeUndefined();
         });
 

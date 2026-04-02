@@ -546,9 +546,9 @@ describe('cleanupSession', () => {
 
         // Should NOT warn about SDK changes
         const warnCalls = mockLogger.warn.mock.calls;
-        const sdkWarnings = warnCalls.filter((call: unknown[]) => {
+        const sdkWarnings = warnCalls.filter((call: unknown[]): boolean => {
             const logObj = call[0] as { msg?: string };
-            return logObj.msg?.includes('SDK projects directory not found');
+            return logObj.msg?.includes('SDK projects directory not found') ?? false;
         });
         expect(sdkWarnings.length).toBe(0);
     });
@@ -624,11 +624,12 @@ describe('cleanupAllStaleSessions', () => {
 
         await cleanupAllStaleSessions();
 
-        // Should have attempted to delete all .jsonl files
+        // Should have attempted to delete all .jsonl files (order not guaranteed with parallel execution)
         expect(mockUnlink).toHaveBeenCalledTimes(3);
-        expect(mockUnlink.mock.calls[0][0]).toContain('session-1.jsonl');
-        expect(mockUnlink.mock.calls[1][0]).toContain('session-2.jsonl');
-        expect(mockUnlink.mock.calls[2][0]).toContain('agent-abc.jsonl');
+        const unlinkPaths = mockUnlink.mock.calls.map((call: unknown[]) => call[0] as string);
+        expect(unlinkPaths.some(p => p.includes('session-1.jsonl'))).toBe(true);
+        expect(unlinkPaths.some(p => p.includes('session-2.jsonl'))).toBe(true);
+        expect(unlinkPaths.some(p => p.includes('agent-abc.jsonl'))).toBe(true);
     });
 
     test('should delete all session-env directories', async () => {
@@ -642,11 +643,12 @@ describe('cleanupAllStaleSessions', () => {
 
         await cleanupAllStaleSessions();
 
-        // Should have attempted to delete all session-env directories
+        // Should have attempted to delete all session-env directories (order not guaranteed with parallel execution)
         expect(mockRm).toHaveBeenCalledTimes(3);
-        expect(mockRm.mock.calls[0][0]).toContain('session-env-1');
-        expect(mockRm.mock.calls[1][0]).toContain('session-env-2');
-        expect(mockRm.mock.calls[2][0]).toContain('session-env-3');
+        const rmPaths = mockRm.mock.calls.map((call: unknown[]) => call[0] as string);
+        expect(rmPaths.some(p => p.includes('session-env-1'))).toBe(true);
+        expect(rmPaths.some(p => p.includes('session-env-2'))).toBe(true);
+        expect(rmPaths.some(p => p.includes('session-env-3'))).toBe(true);
 
         // Verify the exact options object to kill ObjectLiteral and BooleanLiteral mutants
         for(const call of mockRm.mock.calls) {

@@ -42,7 +42,7 @@ async function sendRegistryErrorNotification(
             // Fetch the target channel and send directly
             const targetChannel = await client.channels.fetch(routing.targetChannelId);
             // Stryker disable next-line all: Defensive guard - validated in response-sender.test.ts for normal flow
-            if(targetChannel && 'send' in targetChannel) {
+            if(targetChannel && 'send' in (targetChannel as object)) {
                 await rateLimiter.sendToChannel(targetChannel as TextChannel, routing.content);
                 // Stryker disable all: Logging for observability
                 logger.info({
@@ -182,7 +182,8 @@ export function setupChannelCleanupHandlers(params: {
     // Register channel cleanup event handlers (if coordinator exists)
     // channelDelete: Clean up coordinator state when a channel is deleted
     client.on('channelDelete', (channel) => {
-        if(!('id' in channel)) {
+        const channelUnknown: unknown = channel;
+        if(!(typeof channelUnknown === 'object' && channelUnknown !== null && 'id' in channelUnknown)) {
             return;
         }
 

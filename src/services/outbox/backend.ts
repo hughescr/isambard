@@ -1,6 +1,6 @@
-import { BaseRepository } from '@/storage';
 import { OutboxKeyGenerator } from './key-generator';
 import { outboxItemSchema, type OutboxItem } from './types';
+import { BaseRepository } from '@/storage';
 
 const TTL_HOURS = 24;
 
@@ -31,7 +31,7 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
      * Returns the next `limit` items in delivery order (priority, then oldest first).
      * Does not remove them from the outbox.
      */
-    async dequeue(service: string, limit: number = 10): Promise<OutboxItem[]> {
+    async dequeue(service: string, limit = 10): Promise<OutboxItem[]> {
         // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
         const items = await this.query<Record<string, unknown>>({
             KeyConditionExpression:    '#pk = :pk',

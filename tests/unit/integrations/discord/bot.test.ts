@@ -1707,7 +1707,10 @@ describe('createDiscordBot', () => {
 
             // botStateManager.stop should be called AFTER removeAllListeners
             // (removeAllListeners happens before destroy, which is the last step)
-            expect(callOrder.indexOf('botStateManager.stop')).toBeLessThan(callOrder.indexOf('removeAllListeners'));
+            const callOrderIndex = new Map(callOrder.map((e, i) => [e, i] as [string, number]));
+            const stopIdx = callOrderIndex.get('botStateManager.stop') ?? -1;
+            const listenerIdx = callOrderIndex.get('removeAllListeners') ?? -1;
+            expect(stopIdx).toBeLessThan(listenerIdx);
         });
     });
 

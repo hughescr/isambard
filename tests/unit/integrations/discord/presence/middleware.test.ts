@@ -1154,7 +1154,8 @@ describe('StatusMiddleware', () => {
 
                 const targetPhase = phases.find(p => p.type === phaseType);
                 expect(targetPhase).toBeDefined();
-                expect(targetPhase && 'generatedStatus' in targetPhase ? targetPhase.generatedStatus : undefined).toBe(generatedStatus);
+                const targetPhaseRecord = targetPhase as Record<string, unknown> | undefined;
+                expect(targetPhaseRecord && 'generatedStatus' in targetPhaseRecord ? targetPhaseRecord.generatedStatus : undefined).toBe(generatedStatus);
             });
         });
 

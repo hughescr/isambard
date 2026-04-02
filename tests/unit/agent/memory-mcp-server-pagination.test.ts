@@ -421,7 +421,8 @@ describe.concurrent('Memory MCP Server Pagination', () => {
                 const server = createMemoryMCPServer(mockBackend);
                 const handler = getToolHandler(server, 'search');
                 const tags = ['test'];
-                const layer = 'layer' in handlerArgs ? handlerArgs.layer : undefined;
+                const handlerRecord = handlerArgs as Record<string, unknown>;
+                const layer = 'layer' in handlerRecord ? handlerRecord.layer : undefined;
 
                 await handler({ tags, ...handlerArgs });
 

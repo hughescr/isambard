@@ -36,7 +36,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
 
     // Helper to set up Discord client mock for specific channels
     const mockDiscordChannels = (channels: ChannelMetadata[]) => {
-        client.channels.fetch = mock((channelId: string) => {
+        client.channels.fetch = mock((channelId: string): Promise<Channel | null> => {
             const channel = channels.find((ch: ChannelMetadata) => ch.channelId === channelId);
             if(channel) {
                 return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);

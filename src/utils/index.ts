@@ -27,6 +27,8 @@ export {
     retryAsync,
     retryAsyncGenerator,
     retryPolicySchema,
+    setupRetryContext,
+    calculateDelay,
     type ErrorClassification,
     type ErrorClassifier,
     type RetryLogger,

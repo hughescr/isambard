@@ -908,6 +908,49 @@ describe('processTaskDirectory', () => {
                 })
             );
         });
+
+        test('should count only fulfilled writes as copied when some writeFile calls fail (allSettled filter)', async () => {
+            // This test kills the `writeResults.filter(r => r.status === 'fulfilled').length`
+            // mutant: with two tasks to retain and one failing, copied must be 1 not 2.
+            const previousSessionId = sessionId('old-session');
+            const newSessionId = sessionId('new-session');
+
+            const task1 = createTask({ id: '1', status: 'pending' });
+            const task2 = createTask({ id: '2', status: 'pending' });
+
+            // Setup mocks
+            mockReaddir.mockResolvedValue(['1.json', '2.json']);
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
+                    return JSON.stringify(task1);
+                }
+                if(filePath.includes('2.json')) {
+                    return JSON.stringify(task2);
+                }
+                throw new Error('Unexpected file');
+            });
+            mockMkdir.mockResolvedValue(undefined);
+            // task1 writes successfully, task2 fails
+            let writeCallCount = 0;
+            mockWriteFile.mockImplementation(async () => {
+                writeCallCount++;
+                if(writeCallCount === 2) {
+                    throw new Error('Write failed for task 2');
+                }
+                return undefined;
+            });
+
+            const processor = createTaskCleanupProcessor({
+                logger: mockLogger as unknown as typeof logger,
+                deps:   createTestDeps(() => NOW),
+            });
+
+            const result = await processor.processTaskDirectory(previousSessionId, newSessionId);
+
+            // Only 1 succeeded (task1), 1 failed (task2)
+            expect(result.copied).toBe(1);
+            expect(result.errors).toBe(1);
+        });
     });
 
     describe('Custom Retention Period', () => {

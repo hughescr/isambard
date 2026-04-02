@@ -55,8 +55,8 @@ export class ReviewHandler {
             return;
         }
 
-        const validFolders = Object.values(EmailFolder);
-        if(!folderStr || !validFolders.includes(folderStr as EmailFolder)) {
+        const validFolderSet = new Set<string>(Object.values(EmailFolder));
+        if(!folderStr || !validFolderSet.has(folderStr)) {
             await interaction.reply({
                 // Stryker disable next-line StringLiteral: Error message is UI configuration
                 content: 'Invalid folder in button interaction.',

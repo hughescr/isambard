@@ -338,8 +338,8 @@ describe('getCurrentTimeContext', () => {
             expect(pacificContext.userLocalTime).toBeDefined();
 
             // Extract hours from both contexts
-            const utcHourMatch = utcContext.userLocalTime?.match(/T(\d{2}):/);
-            const pacificHourMatch = pacificContext.userLocalTime?.match(/T(\d{2}):/);
+            const utcHourMatch = /T(\d{2}):/.exec(utcContext.userLocalTime ?? '');
+            const pacificHourMatch = /T(\d{2}):/.exec(pacificContext.userLocalTime ?? '');
             expect(utcHourMatch).toBeTruthy();
             expect(pacificHourMatch).toBeTruthy();
 

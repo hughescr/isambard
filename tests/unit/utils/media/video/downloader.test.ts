@@ -3,6 +3,8 @@ import { rm } from 'node:fs/promises';
 import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
+const originalFetch = globalThis.fetch;
+
 const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-downloader-test-${Date.now()}`;
 
 function makeSuccessRunner(): SpawnRunner {
@@ -35,7 +37,7 @@ describe('isHlsUrl', () => {
 
 describe('downloadVideo', () => {
     afterEach(async () => {
-        mock.restore();
+        globalThis.fetch = originalFetch;
         try {
             await rm(TEST_DIR, { recursive: true });
         } catch{

@@ -27,14 +27,14 @@ export const outboxPayloadSchema = z.object({
 export type OutboxPayload = z.infer<typeof outboxPayloadSchema>;
 
 export const outboxProgressSchema = z.object({
-    lastAttemptAt: z.string().datetime().optional(),
+    lastAttemptAt: z.iso.datetime().optional(),
     lastError:     z.string().optional(),
 });
 export type OutboxProgress = z.infer<typeof outboxProgressSchema>;
 
 export const outboxItemSchema = z.object({
-    id:          z.string().uuid(),
-    createdAt:   z.string().datetime(),
+    id:          z.uuid(),
+    createdAt:   z.iso.datetime(),
     type:        outboxItemTypeSchema,
     service:     z.enum(['discord']),
     destination: z.string(),

@@ -28,9 +28,9 @@ describe('createEmailMCPServer', () => {
         mockLogger.error.mockClear();
         mockLogger.debug.mockClear();
 
-        mockFsPromises.access.mockReset();
-        mockFsPromises.mkdir.mockReset();
-        mockFsPromises.writeFile.mockReset();
+        mockFsPromises.access.mockClear();
+        mockFsPromises.mkdir.mockClear();
+        mockFsPromises.writeFile.mockClear();
 
         mockSendAdminNotification = mock(async () => { /* intentionally empty */ });
 
@@ -77,8 +77,9 @@ describe('createEmailMCPServer', () => {
     // Helper to extract text from CallToolResult
     const getText = (result: CallToolResult): string => {
         const content = result.content[0];
-        if(content && 'text' in content && typeof content.text === 'string') {
-            return content.text;
+        const record = content as Record<string, unknown>;
+        if(record && 'text' in record && typeof record.text === 'string') {
+            return record.text;
         }
         return '';
     };
@@ -723,9 +724,10 @@ describe('createEmailMCPServer', () => {
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
 
             const text = getText(result);
-            const lines = text.split('\n');
-            const toIndex = lines.indexOf('To: recipient@example.com');
-            const subjectIndex = lines.indexOf('Subject: No Blank Line');
+            const lines: string[] = text.split('\n');
+            const lineIndex = new Map(lines.map((l, i) => [l, i] as [string, number]));
+            const toIndex = lineIndex.get('To: recipient@example.com') ?? -1;
+            const subjectIndex = lineIndex.get('Subject: No Blank Line') ?? -1;
             expect(toIndex).toBeGreaterThanOrEqual(0);
             expect(subjectIndex).toBe(toIndex + 1);
         });
@@ -753,9 +755,10 @@ describe('createEmailMCPServer', () => {
 
             const text = getText(result);
             // When cc is empty, the undefined sentinel is filtered out — no blank line between To: and Subject:
-            const splitLines = text.split('\n');
-            const toIndex = splitLines.indexOf('To: recipient@example.com');
-            const subjectIndex = splitLines.indexOf('Subject: No CC Test');
+            const splitLines: string[] = text.split('\n');
+            const splitLineIndex = new Map(splitLines.map((l, i) => [l, i] as [string, number]));
+            const toIndex = splitLineIndex.get('To: recipient@example.com') ?? -1;
+            const subjectIndex = splitLineIndex.get('Subject: No CC Test') ?? -1;
             expect(toIndex).toBeGreaterThanOrEqual(0);
             expect(subjectIndex).toBeGreaterThanOrEqual(0);
             // Subject: immediately follows To: (no blank line between them when cc is absent)

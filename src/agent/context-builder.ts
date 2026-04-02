@@ -177,6 +177,7 @@ export function formatMemoryPreview(
  * Extract a rejection summary line from WildDuck message fields and metadata.
  * Returns a formatted string if the message has rejectedAt + reason + to, else undefined.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined across multiple paths
 function formatRejectedDraftLine(
     subject:    string | undefined,
     to:         { address: string, name?: string }[] | undefined,

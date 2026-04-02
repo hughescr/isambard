@@ -75,6 +75,7 @@ export class MemoryToolBackendQuery {
     /**
      * Encodes LastEvaluatedKey as a base64 cursor.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
     private encodeCursor(lastEvaluatedKey: Record<string, unknown> | undefined): string | undefined {
         if(lastEvaluatedKey) {
             return Buffer.from(JSON.stringify(lastEvaluatedKey)).toString('base64');
@@ -185,7 +186,7 @@ export class MemoryToolBackendQuery {
         // Calculate per-layer limit to distribute evenly
         const perLayerLimit = options?.limit ? Math.ceil(options.limit / layers.length) : undefined;
 
-        for(const l of layers) {
+        const layerResults = await Promise.all(layers.map((l) => {
             const queryParams: Record<string, unknown> = {
                 IndexName:                 'GSI1',
                 KeyConditionExpression:    'GSI1PK = :pk AND GSI1SK BETWEEN :start AND :end',
@@ -203,11 +204,13 @@ export class MemoryToolBackendQuery {
                 queryParams.Limit = perLayerLimit;
             }
 
-            // eslint-disable-next-line no-await-in-loop -- sequential: per-layer DynamoDB query
-            const result = await this.docClient.send(new QueryCommand({
+            return this.docClient.send(new QueryCommand({
                 TableName: this.tableName,
                 ...queryParams,
             }));
+        }));
+
+        for(const result of layerResults) {
             allItems.push(...((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item)));
         }
 

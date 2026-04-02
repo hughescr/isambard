@@ -1,7 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { ServiceHealthRegistry } from '@/services';
-import type { ServiceName, ServiceHealthEntry, ServiceErrorCategory } from '@/services';
-import type { ReconnectionLoop } from '@/services';
+import { type ServiceHealthRegistry, type ServiceName, type ServiceHealthEntry, type ServiceErrorCategory, type ReconnectionLoop  } from '@/services';
 import { formatShortRelativeTime } from '@/utils';
 
 /**
@@ -62,8 +60,7 @@ export function mcpServiceUnavailableResult(
         category = 'offline_retryable_later';
     }
 
-    const parts: string[] = [];
-    parts.push(`The ${service} service is currently ${entry.state}.`);
+    const parts: string[] = [`The ${service} service is currently ${entry.state}.`];
 
     if(entry.lastError) {
         parts.push(`Last error: ${entry.lastError.message}.`);
@@ -143,7 +140,9 @@ export function checkWriteServiceHealth(
 ): CallToolResult | undefined {
     // Check primary service first
     const primaryCheck = checkServiceHealth(registry, primaryService, reconnectionLoop);
-    if(primaryCheck) return primaryCheck;
+    if(primaryCheck) {
+        return primaryCheck;
+    }
 
     // Check approval service
     if(!registry.isAvailable(approvalService)) {

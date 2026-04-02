@@ -6,6 +6,7 @@ import { isCalendarServerId, type CalendarServerEntry } from './types';
  * Tries exact UUID match first, then case-insensitive description match.
  * Returns null if not found, throws AmbiguousCalendarMatchError if multiple match.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CalendarServerEntry | null
 export function resolveServer(servers: CalendarServerEntry[], input: string): CalendarServerEntry | null {
     // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — empty string falls through to matching and returns null anyway (no entity has empty description/label)
     if(!input) {
@@ -32,6 +33,7 @@ export function resolveServer(servers: CalendarServerEntry[], input: string): Ca
  * Tries exact calendarPath match if input looks like a path/URL, else case-insensitive label match.
  * Returns null if not found, throws AmbiguousCalendarMatchError if multiple match.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns object | null
 export function resolveCalendar(
     server: CalendarServerEntry,
     input: string

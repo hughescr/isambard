@@ -29,7 +29,7 @@ export const OutboxKeyGenerator = {
     /**
      * Creates PK and SK for an outbox item.
      */
-    createKeys(item: { service: string; priority: OutboxPriority; dedupeKey: string }): { PK: string; SK: string } {
+    createKeys(item: { service: string, priority: OutboxPriority, dedupeKey: string }): { PK: string, SK: string } {
         return {
             // Stryker disable next-line StringLiteral: PK prefix is a configuration constant
             PK: `${OUTBOX_PK_PREFIX}${item.service}`,
@@ -42,7 +42,8 @@ export const OutboxKeyGenerator = {
      * Parses an SK back into its components.
      * Returns undefined if the SK is not in the expected format.
      */
-    parseSK(sk: string): { priority: OutboxPriority; dedupeKey: string } | undefined {
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns object | undefined
+    parseSK(sk: string): { priority: OutboxPriority, dedupeKey: string } | undefined {
         if(!sk.startsWith(ITEM_SK_PREFIX)) {
             return undefined;
         }
@@ -61,7 +62,7 @@ export const OutboxKeyGenerator = {
             return undefined;
         }
         return {
-            priority:  priorityEntry[0] as OutboxPriority,
+            priority: priorityEntry[0] as OutboxPriority,
             dedupeKey,
         };
     },

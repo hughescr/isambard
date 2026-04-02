@@ -242,6 +242,7 @@ const ALL_SEARCH_MAILBOXES: readonly string[] = [
 /**
  * Normalizes a to-address argument (string, object, array, or undefined) to an array or undefined.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns T[] | undefined
 function normalizeToAddresses<T>(to: T | T[] | undefined): T[] | undefined {
     if(to === undefined) {
         return undefined;
@@ -285,8 +286,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         addressLoadingPromise ??= (async () => {
             try {
                 const addresses = await wildDuckClient.getUserAddresses();
-                const formal    = addresses.find(addr => addr.tags.includes('formal'));
-                const informal  = addresses.find(addr => addr.tags.includes('informal'));
+                const formal    = addresses.find(addr => new Set<string>(addr.tags).has('formal'));
+                const informal  = addresses.find(addr => new Set<string>(addr.tags).has('informal'));
                 if(formal) {
                     formalAddress = { address: formal.address, ...(formal.name ? { name: formal.name } : {}) };
                 }
@@ -704,7 +705,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Normalize to to an array of address objects
                         const toArr = Array.isArray(args.to) ? args.to : [args.to];
-                        const toAddresses = toArr.map((addr) => {
+                        const toAddresses = toArr.map((addr): { name?: string, address: string } => {
                             if(typeof addr === 'string') {
                                 return { address: addr };
                             }
@@ -951,7 +952,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Normalize args.to: undefined → use original recipients; structured/plain string → array
                         const argToArr = normalizeToAddresses(args.to);
                         const argToAddresses = argToArr
-                            ? argToArr.map((addr) => {
+                            ? argToArr.map((addr): { name?: string, address: string } => {
                                 if(typeof addr === 'string') {
                                     return { address: addr };
                                 }

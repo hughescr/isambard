@@ -1,8 +1,22 @@
 import { logger } from '@hughescr/logger';
-import type { Client, Channel } from 'discord.js';
+import type { Client, Channel, DMChannel } from 'discord.js';
 import { createGuildId, type ChannelId, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
+
+/** Type guard: check if a Channel has a 'recipient' property (DMChannel). */
+// Stryker disable ConditionalExpression: Equivalent — guard result irrelevant; callers always pair with secondary truthiness check (e.g. && discordChannel.recipient)
+function isDMChannelWithRecipient(channel: unknown): channel is DMChannel {
+    return typeof channel === 'object' && channel !== null && 'recipient' in channel;
+}
+// Stryker restore ConditionalExpression
+
+/** Type guard: check if a Channel has a 'name' property (guild-based channel). */
+// Stryker disable ConditionalExpression: Equivalent — guard result irrelevant; callers always pair with secondary truthiness check (e.g. && discordChannel.name)
+function hasChannelName(channel: unknown): channel is Extract<Channel, { name: string }> {
+    return typeof channel === 'object' && channel !== null && 'name' in channel;
+}
+// Stryker restore ConditionalExpression
 
 /**
  * Configuration for ChannelRegistryManager.
@@ -455,9 +469,9 @@ export class ChannelRegistryManager {
         // For DM channels, format as @username
         if(record.guildId === 'DM') {
             // Try to get username from Discord DMChannel recipient
-            if('recipient' in discordChannel && discordChannel.recipient) {
+            if(isDMChannelWithRecipient(discordChannel) && discordChannel.recipient) {
                 channelName = `@${discordChannel.recipient.username}`;
-            } else if('name' in discordChannel && discordChannel.name) {
+            } else if(hasChannelName(discordChannel) && discordChannel.name) {
                 // Fallback: if already in "DM - username" format, convert to @username
                 if(discordChannel.name.startsWith('DM - ')) {
                     channelName = `@${discordChannel.name.slice(5)}`;
@@ -472,7 +486,7 @@ export class ChannelRegistryManager {
             }
         } else {
             // Regular channels - use existing logic
-            channelName = ('name' in discordChannel ? discordChannel.name : null) ?? 'Unknown';
+            channelName = (hasChannelName(discordChannel) ? discordChannel.name : null) ?? 'Unknown';
         }
 
         return {

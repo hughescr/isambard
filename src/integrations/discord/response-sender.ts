@@ -8,6 +8,16 @@ import { withDiscordRetry } from './retry';
 import type { BotStateManager, SessionType } from './state';
 import { createChannelId } from './types';
 
+/** Type guard: check if a routing/response result is a RoutingResult (has shouldSend). */
+function isRoutingResult(result: unknown): result is RoutingResult {
+    return typeof result === 'object' && result !== null && 'shouldSend' in result;
+}
+
+/** Type guard: check if a resolveRouting result has a skipResult (not a routing). */
+function hasSkipResult(routeResult: unknown): routeResult is { skipResult: SendResponseResult } {
+    return typeof routeResult === 'object' && routeResult !== null && 'skipResult' in routeResult;
+}
+
 /**
  * Configuration for sending a response.
  */
@@ -76,6 +86,7 @@ export interface SendToWellKnownConfig {
  * Handles a WellKnownChannelNotFoundError during routing.
  * Returns a fallback routing result or a skip result depending on useFallbackOnError.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns RoutingResult | SendResponseResult (discriminated union)
 function handleWellKnownChannelError(
     routeError: WellKnownChannelNotFoundError,
     sessionType: SessionType,
@@ -194,7 +205,7 @@ async function resolveRouting(
     } catch (routeError: unknown) {
         if(routeError instanceof WellKnownChannelNotFoundError) {
             const result = handleWellKnownChannelError(routeError, sessionType, response, message, useFallbackOnError);
-            if('shouldSend' in result) {
+            if(isRoutingResult(result)) {
                 return { routing: result };
             }
             return { skipResult: result };
@@ -223,7 +234,7 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
 
     // Route response based on session type
     const routeResult = await resolveRouting(responseRouter, sessionType, response, message, useFallbackOnError);
-    if('skipResult' in routeResult) {
+    if(hasSkipResult(routeResult)) {
         return routeResult.skipResult;
     }
     const routing = routeResult.routing;
@@ -275,11 +286,11 @@ export async function sendResponse(config: SendResponseConfig): Promise<SendResp
     // Stryker disable all: Integration send helper — tested via bot integration tests
     if(config.discordCapability) {
         let anyQueued = false;
-        for(let i = 0; i < chunks.length; i++) {
+        for(const chunk of chunks) {
             // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering
             const result = await config.discordCapability.sendToChannel(
                 targetChannelId,
-                chunks[i],
+                chunk,
                 { priority: 'high', type: 'agent_response' }
             );
             if(result.status === 'queued' || result.status === 'unavailable') {
@@ -342,6 +353,15 @@ async function sendOneChunkToWellKnownChannel(
  * Sends message chunks to a well-known channel, using capability facade or direct rate-limited send.
  * Returns true if all chunks were sent directly, false if any were queued to the outbox.
  */
+// Stryker disable BlockStatement,StringLiteral,ConditionalExpression,EqualityOperator: Logging only — not behavior-affecting
+function buildChunkLogMsg(isQueued: boolean, chunkIndex: number): string {
+    if(isQueued) {
+        return chunkIndex === 0 ? 'Response queued to outbox for well-known channel' : 'Continuation queued to outbox for well-known channel';
+    }
+    return chunkIndex === 0 ? 'Response sent to well-known channel' : 'Continuation sent to well-known channel';
+}
+// Stryker restore StringLiteral,ConditionalExpression,EqualityOperator
+
 async function sendChunksToWellKnownChannel(
     chunks:            string[],
     sessionType:       'catching_up' | 'perching',
@@ -366,18 +386,16 @@ async function sendChunksToWellKnownChannel(
             anyQueued = true;
         }
         // Stryker restore ConditionalExpression,BlockStatement,BooleanLiteral
-        // Stryker disable ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator: Logging for observability
+        // Stryker disable ObjectLiteral: Logging for observability
         logger.info({
             sessionType,
             channelType,
             targetChannelId,
             chunkIndex:  i,
             totalChunks: chunks.length,
-            msg:         anyQueued
-                ? (i === 0 ? 'Response queued to outbox for well-known channel' : 'Continuation queued to outbox for well-known channel')
-                : (i === 0 ? 'Response sent to well-known channel' : 'Continuation sent to well-known channel'),
+            msg:         buildChunkLogMsg(anyQueued, i),
         });
-        // Stryker restore ObjectLiteral,StringLiteral,ConditionalExpression,EqualityOperator
+        // Stryker restore ObjectLiteral
     }
     return !anyQueued;
 }

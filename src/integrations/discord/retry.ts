@@ -49,8 +49,8 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
 
     // Check for network errors (transient)
     if(typeof error === 'object' && error !== null && 'code' in error) {
-        const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
-        if(typeof error.code === 'string' && networkErrorCodes.includes(error.code)) {
+        const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
+        if(typeof error.code === 'string' && networkErrorCodes.has(error.code)) {
             return {
                 category: 'transient',
                 message,

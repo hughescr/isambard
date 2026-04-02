@@ -116,7 +116,7 @@ export class DiscordHistoryProvider implements PlatformHistoryProvider {
             : unmutedChannels;
 
         for(const channel of channelsToSearch) {
-            // eslint-disable-next-line no-await-in-loop -- sequential: each channel is searched independently; results merged after
+            // eslint-disable-next-line no-await-in-loop -- must stay sequential: seenIds Set is mutated inside searchChannelInto for cross-channel deduplication; parallel calls would race on shared state
             await searchChannelInto(this.searchService, channel.channelId, identifier, startTime, endTime, maxMessages, seenIds, allMessages);
         }
 

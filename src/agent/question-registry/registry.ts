@@ -91,6 +91,7 @@ export class QuestionRegistry {
      * Check if a message might be an answer to a pending question.
      * Returns the pending question if found, null otherwise.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns PendingQuestion | null
     findPendingQuestion(channelId: ChannelId, threadId?: string): PendingQuestion | null {
         const locationKey = this.makeLocationKey(channelId, threadId);
         const stored = this.questionsByLocation.get(locationKey);
@@ -112,6 +113,7 @@ export class QuestionRegistry {
      * Get a question by its ID.
      * Returns the question if found, null otherwise.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns PendingQuestion | null
     getQuestion(questionId: string): PendingQuestion | null {
         const stored = this.questionsById.get(questionId);
         return stored ? stored.question : null;

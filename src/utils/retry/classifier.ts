@@ -26,8 +26,8 @@ interface HttpStatusClassifierOptions {
 /**
  * Extract error message from HTTP error object
  */
-function getHttpErrorMessage(error: object & { message?: unknown }, status: number): string {
-    if('message' in error && typeof error.message === 'string' && error.message) {
+function getHttpErrorMessage(error: unknown, status: number): string {
+    if(typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string' && error.message) {
         return error.message;
     }
     return `HTTP ${status}`;
@@ -36,9 +36,10 @@ function getHttpErrorMessage(error: object & { message?: unknown }, status: numb
 /**
  * Extract retry after value from HTTP error
  */
-function getRetryAfter(error: object & { retryAfter?: unknown }): number | undefined {
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number | undefined
+function getRetryAfter(error: unknown): number | undefined {
     // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for retryAfter field, return undefined on missing property
-    if(!('retryAfter' in error)) {
+    if(!(typeof error === 'object' && error !== null && 'retryAfter' in error)) {
         return undefined;
     }
 
@@ -52,18 +53,24 @@ function getRetryAfter(error: object & { retryAfter?: unknown }): number | undef
 /**
  * Classify HTTP status error
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
 function classifyHttpStatus(
-    error: object & { status: unknown, message?: unknown, retryAfter?: unknown },
+    error: unknown,
     permanentStatuses: number[]
 ): ErrorClassification | undefined {
+    if(!(typeof error === 'object' && error !== null && 'status' in error)) {
+        return undefined;
+    }
+
     const status = typeof error.status === 'string'
         ? Number.parseInt(error.status, 10)
         : (error.status as number);
 
     const message = getHttpErrorMessage(error, status);
 
-    // Check custom permanent statuses first
-    if(permanentStatuses.includes(status)) {
+    // Check custom permanent statuses first — use Set for O(1) lookup with correct typing
+    const permanentStatusSet = new Set<number>(permanentStatuses);
+    if(permanentStatusSet.has(status)) {
         return { category: 'permanent', message };
     }
 
@@ -93,18 +100,20 @@ function classifyHttpStatus(
 /**
  * Classify network error
  */
-function classifyNetworkError(error: object & { code?: unknown, message?: unknown }): ErrorClassification | undefined {
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+function classifyNetworkError(error: unknown): ErrorClassification | undefined {
     // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for code field
-    if(!('code' in error)) {
+    if(!(typeof error === 'object' && error !== null && 'code' in error)) {
         return undefined;
     }
 
     // Stryker disable next-line StringLiteral: Network error code configuration — exact strings are protocol constants
-    const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
+    const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
 
-    if(typeof error.code === 'string' && networkErrorCodes.includes(error.code)) {
-        const message = 'message' in error && typeof error.message === 'string' && error.message
-            ? error.message
+    if(typeof error.code === 'string' && networkErrorCodes.has(error.code)) {
+        const errorRecord = error as Record<string, unknown>;
+        const message = typeof errorRecord.message === 'string' && errorRecord.message
+            ? errorRecord.message
             : 'Unknown error';
 
         return { category: 'transient', message };
@@ -132,14 +141,14 @@ export const createHttpStatusClassifier = (
         // Try HTTP status classification
         // Stryker disable next-line ConditionalExpression: always-true mutant is equivalent — classifyHttpStatus with no status returns undefined, falling through to same behavior
         if('status' in error) {
-            const result = classifyHttpStatus(error as object & { status: unknown }, permanentStatuses);
+            const result = classifyHttpStatus(error, permanentStatuses);
             if(result) {
                 return result;
             }
         }
 
         // Try network error classification
-        const networkResult = classifyNetworkError(error as object & { code?: unknown });
+        const networkResult = classifyNetworkError(error);
         if(networkResult) {
             return networkResult;
         }

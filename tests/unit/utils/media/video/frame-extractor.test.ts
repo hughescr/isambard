@@ -27,8 +27,7 @@ function makeFailingRunner(): BinarySpawnRunner {
 /** Returns a runner that captures the -ss timestamp from the ffmpeg command. */
 function makeTrackingRunner(capturedTimestamps: number[]): BinarySpawnRunner {
     return async (cmd: string[]): Promise<{ stdout: Buffer, stderr: string, exitCode: number }> => {
-        // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] indexOf
-        const ssIdx = cmd.indexOf('-ss');
+        const ssIdx = [...cmd.entries()].find(([, v]) => v === '-ss')?.[0] ?? -1;
         if(ssIdx !== -1) {
             capturedTimestamps.push(Number(cmd[ssIdx + 1] ?? '0'));
         }
@@ -39,8 +38,7 @@ function makeTrackingRunner(capturedTimestamps: number[]): BinarySpawnRunner {
 /** Runner that fails for a specific timestamp, succeeds for all others. */
 function makePartialRunner(failTimestamp: number): BinarySpawnRunner {
     return async (cmd: string[]): Promise<{ stdout: Buffer, stderr: string, exitCode: number }> => {
-        // eslint-disable-next-line sonarjs/argument-type -- string literal is valid for string[] indexOf
-        const ssIdx = cmd.indexOf('-ss');
+        const ssIdx = [...cmd.entries()].find(([, v]) => v === '-ss')?.[0] ?? -1;
         const ts    = ssIdx === -1 ? -1 : Number(cmd[ssIdx + 1] ?? '0');
         if(Math.abs(ts - failTimestamp) < 0.001) {
             return { stdout: Buffer.alloc(0), stderr: 'frame error', exitCode: 1 };

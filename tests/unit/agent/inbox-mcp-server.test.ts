@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
@@ -48,8 +47,9 @@ describe('createInboxMCPServer', () => {
     };
 
     // Helper function to extract text content from CallToolResult
+    // eslint-disable-next-line sonarjs/function-return-type -- Returns string or undefined depending on content type
     const getTextContent = (result: CallToolResult): string | undefined => {
-        const content = result.content[0];
+        const content = result.content[0] as Record<string, unknown> | undefined;
         if(content && 'text' in content && typeof content.text === 'string') {
             return content.text;
         }
@@ -426,7 +426,8 @@ describe('createInboxMCPServer', () => {
                 isRead:      false,
             };
 
-            mockInboxManager.getMessage = mock((_channelId, messageId) => {
+            // eslint-disable-next-line sonarjs/function-return-type -- Returns UnreadMessage or undefined based on message ID lookup
+            mockInboxManager.getMessage = mock((_channelId, messageId): UnreadMessage | undefined => {
                 if(messageId === '111') {
                     return message1;
                 }
@@ -468,7 +469,8 @@ describe('createInboxMCPServer', () => {
                 isRead:      false,
             };
 
-            mockInboxManager.getMessage = mock((_channelId, messageId) => {
+            // eslint-disable-next-line sonarjs/function-return-type -- Returns UnreadMessage or undefined based on message ID lookup
+            mockInboxManager.getMessage = mock((_channelId, messageId): UnreadMessage | undefined => {
                 if(messageId === '111') {
                     return message1;
                 }

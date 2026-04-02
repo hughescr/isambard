@@ -164,7 +164,9 @@ describe('event-summarizer', () => {
 
             const call = mockGenerateText.mock.calls[0]?.[0] as string | undefined;
             expect(call).toBeDefined();
-            const contentInPrompt = call?.match(/1h ago\): (.+)/)?.[1];
+            const promptText = call ?? '';
+            const contentMatch = /1h ago\): (.+)/u.exec(promptText);
+            const contentInPrompt = contentMatch?.[1];
             expect(contentInPrompt).toBeDefined();
             expect(contentInPrompt!.length).toBeLessThanOrEqual(200);
         });

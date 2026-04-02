@@ -641,8 +641,7 @@ export async function createApp(): Promise<App> {
             try {
                 const failed = await approvalSagaBackend.listByState('failed');
                 for(const saga of failed) {
-                    // eslint-disable-next-line sonarjs/argument-type -- saga.type and sagaTypes are both ApprovalSagaType; sonarjs infers string incorrectly
-                    if(sagaTypes.includes(saga.type)) {
+                    if(new Set(sagaTypes).has(saga.type)) {
                         // eslint-disable-next-line no-await-in-loop -- sequential: saga state updates must be ordered
                         await approvalSagaBackend.updateState(saga.id, 'approved');
                     }

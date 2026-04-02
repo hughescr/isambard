@@ -422,6 +422,7 @@ export class WildDuckClient {
      * Look up the WildDuck internal mailbox ID for a given mailbox path.
      * Returns undefined if the mailbox path is not found in the current map.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined (Map.get return type)
     getMailboxId(mailboxPath: string): string | undefined {
         return this.reverseMailboxMap.get(mailboxPath);
     }
@@ -430,6 +431,7 @@ export class WildDuckClient {
      * Get the current authentication token (for use in SSE or other HTTP connections).
      * Returns null if not yet authenticated or after shutdown.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | null
     getAuthToken(): string | null {
         return this.token;
     }

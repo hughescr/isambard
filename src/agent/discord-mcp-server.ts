@@ -55,6 +55,7 @@ export function clearConversationContext(): void {
  * Helper: Validates thread creation parameters.
  * Returns error result if createThread is true but threadName is missing, null otherwise.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CallToolResult | null
 function validateThreadCreation(createThread?: boolean, threadName?: string): CallToolResult | null {
     if(createThread && !threadName) {
         // Stryker disable next-line all: Logging for observability
@@ -65,6 +66,11 @@ function validateThreadCreation(createThread?: boolean, threadName?: string): Ca
         };
     }
     return null;
+}
+
+/** Type guard: check if a channel/normalize result is an error result (has error property). */
+function isErrorResult(result: unknown): result is { error: CallToolResult } {
+    return typeof result === 'object' && result !== null && 'error' in result;
 }
 
 /**
@@ -166,6 +172,7 @@ async function createThreadIfRequested(
  * Helper: Validates options count for askUserQuestion.
  * Returns error result if options exceed Discord's 25-button limit, null otherwise.
  */
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CallToolResult | null
 function validateQuestionOptions(options?: { label: string, value: string }[]): CallToolResult | null {
     // Stryker disable next-line EqualityOperator: 25 options is valid max
     if(options && options.length > 25) {
@@ -713,7 +720,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         // Fetch and validate channel
                         const channelResult = await fetchAndValidateChannel(client, resolvedChannelId, retryHelper);
-                        if('error' in channelResult) {
+                        if(isErrorResult(channelResult)) {
                             return channelResult.error;
                         }
 
@@ -810,7 +817,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         // 3. Normalize channel ID (handles threads)
                         const normalizeResult = await normalizeChannelId(client, channelId, retryHelper);
-                        if('error' in normalizeResult) {
+                        if(isErrorResult(normalizeResult)) {
                             return normalizeResult.error;
                         }
 
@@ -907,7 +914,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
                         // Fetch and validate channel
                         const channelResult = await fetchAndValidateChannel(client, channelId, retryHelper);
-                        if('error' in channelResult) {
+                        if(isErrorResult(channelResult)) {
                             return channelResult.error;
                         }
 

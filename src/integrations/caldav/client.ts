@@ -81,7 +81,7 @@ export class CalDAVClient {
             }
 
             try {
-                // eslint-disable-next-line no-await-in-loop -- sequential server connections are intentional; each server is independent
+                // eslint-disable-next-line no-await-in-loop -- must stay sequential: #consecutiveFailures shared state would be corrupted by concurrent #recordSuccess/#recordFailure calls
                 const serverEvents = await this.#fetchServerEvents(server, start, end);
                 this.#cache.set(cacheKey, {
                     events:    serverEvents,
@@ -276,6 +276,7 @@ export class CalDAVClient {
         };
     }
 
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
     #extractParameterValue(value: ical.ParameterValue | undefined): string | undefined {
         if(value === undefined) {
             return undefined;
@@ -288,6 +289,7 @@ export class CalDAVClient {
         return str.length > 0 ? str : undefined;
     }
 
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string[] | undefined
     #extractAttendees(vevent: ical.VEvent): string[] | undefined {
         if(!vevent.attendee) {
             return undefined;
@@ -324,6 +326,7 @@ export class CalDAVClient {
         return start.dateOnly === true;
     }
 
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CalendarEvent['status'] (union with undefined)
     #normalizeStatus(status?: string): CalendarEvent['status'] {
         if(!status) {
             return undefined;

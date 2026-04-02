@@ -412,9 +412,9 @@ describe('MemoryToolBackend - Date Filtering', () => {
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(3);
 
-            const layers = calls.map((call) => {
-                return call.args[0].input.ExpressionAttributeValues?.[':pk'] as string | undefined;
-            });
+            const layers = calls.map((call): string | undefined =>
+                call.args[0].input.ExpressionAttributeValues?.[':pk'] as string | undefined
+            );
             expect(layers).toContain('LAYER#identity');
             expect(layers).toContain('LAYER#state');
             expect(layers).toContain('LAYER#events');

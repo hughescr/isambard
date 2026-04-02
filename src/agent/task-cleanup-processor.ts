@@ -201,6 +201,7 @@ function getRetentionReason(
     }
 
     // Must be blocking an active task
+    // eslint-disable-next-line sonarjs/function-return-type -- blockedTask && ... legitimately returns boolean-ish union
     const activeBlocked = task.blocks.filter((id) => {
         const blockedTask = allTasks.get(id);
         return blockedTask && blockedTask.status !== 'completed';
@@ -239,7 +240,6 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
         processTaskDirectory: async (
             previousSessionId: SessionId,
             newSessionId: SessionId
-        // eslint-disable-next-line sonarjs/cognitive-complexity -- sequential task cleanup pipeline: load, filter, evaluate retention, copy/delete; each step has necessary branching
         ): Promise<TaskCleanupResult> => {
             const sourcePath = getTaskDirectoryPathImpl(previousSessionId);
             const destPath = getTaskDirectoryPathImpl(newSessionId);
@@ -292,18 +292,18 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                 }
             }
 
-            // Build memo and evaluate tasks
+            // Build memo and evaluate tasks (synchronous decision phase)
             const memo = new Map<string, boolean>();
             const nowMs = now();
-            let copied = 0;
             let deleted = 0;
+
+            const toRetain: { taskId: string, task: Task }[] = [];
 
             for(const [taskId, task] of allTasks) {
                 const visited = new Set<string>();
                 const shouldDelete = canDelete(task, allTasks, memo, visited, tasksWithoutCompletedAt, retentionMs, nowMs);
 
                 if(shouldDelete) {
-                    // Delete task
                     deleted++;
                     // Stryker disable next-line ObjectLiteral: Logger debug object for observability
                     logger.debug({
@@ -312,34 +312,41 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                         msg: 'Deleting task (old and completed)',
                     });
                 } else {
-                    // Retain task - write to destination
-                    const destFile = path.join(destPath, `${taskId}.json`);
-                    try {
-                        // eslint-disable-next-line no-await-in-loop -- sequential: per-task file write
-                        await writeFileFn(destFile, JSON.stringify(task, null, 2));
-                        copied++;
-
-                        const reason = getRetentionReason(task, allTasks, retentionMs, nowMs);
-                        // Stryker disable next-line ObjectLiteral: Logger debug object for observability
-                        logger.debug({
-                            taskId,
-                            reason,
-                            // Stryker disable next-line StringLiteral: Log message for observability only
-                            msg: 'Retaining task',
-                        });
-                    } catch (error) {
-                        const errorMsg = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
-                        logger.warn({
-                            taskId,
-                            error: errorMsg,
-                            // Stryker disable next-line StringLiteral: Log message for observability only
-                            msg:   'Failed to write task to destination',
-                        });
-                        errors++;
-                    }
+                    toRetain.push({ taskId, task });
                 }
             }
+
+            // Write retained tasks in parallel (independent per-file I/O)
+            const writeResults = await Promise.allSettled(
+                toRetain.map(({ taskId, task }) => {
+                    const destFile = path.join(destPath, `${taskId}.json`);
+                    return writeFileFn(destFile, JSON.stringify(task, null, 2))
+                        .then(() => {
+                            const reason = getRetentionReason(task, allTasks, retentionMs, nowMs);
+                            // Stryker disable next-line ObjectLiteral: Logger debug object for observability
+                            return logger.debug({
+                                taskId,
+                                reason,
+                                // Stryker disable next-line StringLiteral: Log message for observability only
+                                msg: 'Retaining task',
+                            });
+                        })
+                        .catch((error: unknown) => {
+                            const errorMsg = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+                            logger.warn({
+                                taskId,
+                                error: errorMsg,
+                                // Stryker disable next-line StringLiteral: Log message for observability only
+                                msg:   'Failed to write task to destination',
+                            });
+                            throw error;
+                        });
+                })
+            );
+
+            const copied = writeResults.filter(r => r.status === 'fulfilled').length;
+            errors += writeResults.filter(r => r.status === 'rejected').length;
 
             // Stryker disable next-line ObjectLiteral: Logger info object for observability
             logger.info({

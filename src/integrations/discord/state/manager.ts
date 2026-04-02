@@ -22,6 +22,13 @@ import {
     createDefaultBotState
 } from './types';
 
+/** Type guard: check if a ModeContext is a CatchingUpModeContext (has unreadCount). */
+// Stryker disable ConditionalExpression,StringLiteral: Equivalent — markChannelViewed creates new Set via spread, never mutates in place
+function isCatchingUpContext(context: unknown): context is CatchingUpModeContext {
+    return typeof context === 'object' && context !== null && 'unreadCount' in context;
+}
+// Stryker restore ConditionalExpression,StringLiteral
+
 // Re-export for convenience
 
 /**
@@ -95,9 +102,10 @@ export class BotStateManagerImpl implements BotStateManager {
      * Deep clone mode context.
      * Handles catching_up context with Set<ChannelId>.
      */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ModeContext (discriminated union member)
     private cloneModeContext(context: ModeContext): ModeContext {
         // Stryker disable StringLiteral,BlockStatement: Equivalent — cloning with/without viewedChannels deep copy has same behavior since markChannelViewed always creates a new Set via spread (never mutates in place)
-        if('unreadCount' in context) {
+        if(isCatchingUpContext(context)) {
             // CatchingUpModeContext - identified by unique property
             return {
                 ...context,

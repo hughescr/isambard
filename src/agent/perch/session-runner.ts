@@ -538,6 +538,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             suspendedState = null;
         },
 
+        // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns AbortController | null
         getAbortController(): AbortController | null {
             return currentAbortController;
         },

@@ -90,6 +90,7 @@ export class BskyOutboundApprovalHandler {
         // Stryker restore BlockStatement
     }
 
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns BskyRejectionItem (discriminated union)
     private extractRejectionItem(prefix: string, embed: { description?: string | null, fields?: { name: string, value: string }[] }, reason: string, uuid: string): BskyRejectionItem {
         // Stryker disable next-line StringLiteral: '' fallback for null/undefined description is defensive configuration
         const text       = embed.description ?? '';

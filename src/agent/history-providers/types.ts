@@ -11,8 +11,6 @@ import type { PlatformType } from '@/storage';
 const directionSchema = z.enum(['inbound', 'outbound', 'mutual']);
 // Stryker restore all
 
-type Direction = z.infer<typeof directionSchema>;
-
 /**
  * A single history interaction entry across any platform.
  */

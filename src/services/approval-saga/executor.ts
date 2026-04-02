@@ -74,7 +74,9 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
             }
 
             try {
+                // eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees
                 await executors[saga.type](saga.params);
+                // eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees
                 await backend.updateState(saga.id, 'executed');
                 result.executed += 1;
                 // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
@@ -82,6 +84,7 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
                 // Stryker restore ObjectLiteral,StringLiteral
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : String(err);
+                // eslint-disable-next-line no-await-in-loop -- Sequential saga execution required for ordering guarantees
                 await backend.updateState(saga.id, 'failed', { lastError: message });
                 result.failed += 1;
                 // Stryker disable ObjectLiteral,StringLiteral: Logging for observability

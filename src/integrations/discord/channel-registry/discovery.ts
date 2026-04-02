@@ -6,6 +6,11 @@ import type { ChannelMetadata } from './types';
 
 // Note: We only discover channels, not threads. Threads inherit mute state from their parent channel.
 
+/** Type guard: check if a channel has a 'guild' property (GuildChannel-like). */
+function hasGuild(channel: unknown): channel is GuildChannel {
+    return typeof channel === 'object' && channel !== null && 'guild' in channel;
+}
+
 export interface DiscoveryResult {
     /** Number of channels discovered (newly added) */
     discovered: number
@@ -168,7 +173,7 @@ export function setupChannelEventHandlers(
     // Channel created
     client.on('channelCreate', (channel) => {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: channel.guild typed non-nullable but DM/unknown channels may lack guild at runtime
-        if(!('guild' in channel) || !channel.guild) {
+        if(!hasGuild(channel) || !channel.guild) {
             return;
         }
         if(!isTextBasedChannel(channel as GuildChannel)) {
@@ -182,7 +187,7 @@ export function setupChannelEventHandlers(
     // Channel updated (name change, etc.)
     client.on('channelUpdate', (_oldChannel, newChannel) => {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: newChannel.guild typed non-nullable but DM/unknown channels may lack guild at runtime
-        if(!('guild' in newChannel) || !newChannel.guild) {
+        if(!hasGuild(newChannel) || !newChannel.guild) {
             return;
         }
         if(!isTextBasedChannel(newChannel as GuildChannel)) {
@@ -190,22 +195,25 @@ export function setupChannelEventHandlers(
         }
 
         const channelId = createChannelId(newChannel.id);
-        void manager.getChannel(channelId).then((existing) => {
-            if(existing) {
-                // Update name if changed
-                return manager.upsertChannel({
-                    ...existing,
-                    channelName: (newChannel as GuildChannel).name,
-                    updatedAt:   new Date().toISOString(),
-                });
+        void manager.getChannel(channelId).then(
+            // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Promise<void> | undefined
+            (existing) => {
+                if(existing) {
+                    // Update name if changed
+                    return manager.upsertChannel({
+                        ...existing,
+                        channelName: (newChannel as GuildChannel).name,
+                        updatedAt:   new Date().toISOString(),
+                    });
+                }
+                return undefined;
             }
-            return undefined;
-        });
+        );
     });
 
     // Channel deleted
     client.on('channelDelete', (channel) => {
-        if(!('id' in channel)) {
+        if(!('id' in (channel as object))) {
             return;
         }
 

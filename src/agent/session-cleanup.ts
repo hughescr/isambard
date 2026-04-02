@@ -246,16 +246,11 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
         const files = await readdir(projectsDir);
         const sessionFiles = files.filter(file => file.endsWith('.jsonl'));
 
-        // Delete each file
-        for(const file of sessionFiles) {
-            try {
-                // eslint-disable-next-line no-await-in-loop -- sequential: best-effort per-file deletion
-                await unlink(path.join(projectsDir, file));
-                cleanedCount++;
-            } catch{
-                // Ignore individual file errors
-            }
-        }
+        // Delete all files in parallel; count successes
+        const unlinkResults = await Promise.allSettled(
+            sessionFiles.map(file => unlink(path.join(projectsDir, file)))
+        );
+        cleanedCount += unlinkResults.filter(r => r.status === 'fulfilled').length;
     } catch{
         // Directory doesn't exist - nothing to clean
     }
@@ -264,15 +259,11 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
     try {
         await access(sessionEnvDir);
         const envDirs = await readdir(sessionEnvDir);
-        for(const dir of envDirs) {
-            try {
-                // eslint-disable-next-line no-await-in-loop -- sequential: best-effort per-directory removal
-                await rm(path.join(sessionEnvDir, dir), { recursive: true, force: true });
-                cleanedCount++;
-            } catch{
-                // Ignore individual directory errors
-            }
-        }
+        // Remove all directories in parallel; count successes
+        const rmResults = await Promise.allSettled(
+            envDirs.map(dir => rm(path.join(sessionEnvDir, dir), { recursive: true, force: true }))
+        );
+        cleanedCount += rmResults.filter(r => r.status === 'fulfilled').length;
     } catch{
         // Directory doesn't exist
     }

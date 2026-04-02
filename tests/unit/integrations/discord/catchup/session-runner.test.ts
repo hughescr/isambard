@@ -847,7 +847,8 @@ describe('CatchUpSessionRunner', () => {
             mockModeContext.viewedChannels = new Set([viewedChannel1, viewedChannel2]);
 
             // Mock channel name resolution
-            const mockResolveChannelName = mock((channelId: ChannelId) => {
+            // eslint-disable-next-line sonarjs/function-return-type -- Returns channel name or undefined based on channelId lookup
+            const mockResolveChannelName = mock((channelId: ChannelId): string | undefined => {
                 if(channelId === viewedChannel1) {
                     return 'general';
                 }

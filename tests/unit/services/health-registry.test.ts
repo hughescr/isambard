@@ -1,8 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import {
     ServiceHealthRegistryImpl,
-    type ServiceHealthRegistryLogger,
-    type ServiceHealthRegistryDeps,
+    type ServiceHealthRegistryLogger
 } from '@/services/health-registry';
 import type { ServiceHealthChange, ServiceName } from '@/services/types';
 
@@ -125,7 +124,7 @@ describe('ServiceHealthRegistryImpl', () => {
         test('should return frozen result', () => {
             const all = registry.getAll();
             expect(() => {
-                (all as Record<string, unknown>)['newService'] = {};
+                (all as Record<string, unknown>).newService = {};
             }).toThrow();
         });
 
@@ -134,8 +133,8 @@ describe('ServiceHealthRegistryImpl', () => {
             registry.sendEvent('discord', 'CONNECT_SUCCESS');
 
             const all = registry.getAll();
-            expect(all['discord'].state).toBe('online');
-            expect(all['email'].state).toBe('disabled');
+            expect(all.discord.state).toBe('online');
+            expect(all.email.state).toBe('disabled');
         });
     });
 
@@ -317,8 +316,12 @@ describe('ServiceHealthRegistryImpl', () => {
             const changes1: ServiceHealthChange[] = [];
             const changes2: ServiceHealthChange[] = [];
 
-            registry.subscribe((change) => { changes1.push(change); });
-            registry.subscribe((change) => { changes2.push(change); });
+            registry.subscribe((change) => {
+                changes1.push(change);
+            });
+            registry.subscribe((change) => {
+                changes2.push(change);
+            });
 
             registry.sendEvent('email', 'CONNECT_SUCCESS'); // starting → online
 

@@ -38,7 +38,7 @@ export const VALID_TRANSITIONS: Record<OperationalMode, OperationalMode[]> = {
  * @returns true if the transition is allowed, false otherwise
  */
 export function isValidTransition(from: OperationalMode, to: OperationalMode): boolean {
-    return VALID_TRANSITIONS[from].includes(to);
+    return new Set(VALID_TRANSITIONS[from]).has(to);
 }
 
 /**

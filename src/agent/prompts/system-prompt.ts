@@ -322,6 +322,11 @@ export interface BuildSystemPromptOptions {
     channelList?:    string[]
 }
 
+/** Type guard: check if options is a ContextBuilder (has loadCoreIdentity method). */
+function isContextBuilder(options: unknown): options is ContextBuilder {
+    return typeof options === 'object' && options !== null && 'loadCoreIdentity' in options;
+}
+
 /**
  * Build system prompt with optional core identity and channel context.
  * @param options Either a ContextBuilder (legacy) or BuildSystemPromptOptions
@@ -335,7 +340,7 @@ export async function buildSystemPrompt(
     let contextBuilder: ContextBuilder | undefined;
     let channelList: string[] | undefined;
 
-    if(options && 'loadCoreIdentity' in options) {
+    if(isContextBuilder(options)) {
         // Legacy signature: options is a ContextBuilder
         contextBuilder = options;
     } else if(options) {

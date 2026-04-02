@@ -382,6 +382,36 @@ describe('discovery', () => {
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
             });
+
+            it('should ignore a string value (hasGuild type guard — non-object)', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
+
+                await handler('not-a-channel' as unknown as GuildChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore a number value (hasGuild type guard — non-object)', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
+
+                await handler(42 as unknown as GuildChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore undefined (hasGuild type guard — non-object)', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
+
+                await handler(undefined as unknown as GuildChannel);
+
+                expect(mockManager.upsertChannel).not.toHaveBeenCalled();
+            });
         });
 
         describe('channelUpdate handler', () => {
@@ -515,6 +545,26 @@ describe('discovery', () => {
                 } as unknown as GuildChannel;
 
                 await handler(oldChannel, newChannel);
+
+                expect(mockManager.getChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore string newChannel (hasGuild type guard — non-object)', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
+
+                await handler({} as unknown as GuildChannel, 'not-a-channel' as unknown as GuildChannel);
+
+                expect(mockManager.getChannel).not.toHaveBeenCalled();
+            });
+
+            it('should ignore undefined newChannel (hasGuild type guard — non-object)', async () => {
+                setupChannelEventHandlers(mockClient, mockManager);
+
+                const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
+
+                await handler({} as unknown as GuildChannel, undefined as unknown as GuildChannel);
 
                 expect(mockManager.getChannel).not.toHaveBeenCalled();
             });

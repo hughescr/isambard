@@ -27,6 +27,45 @@ export interface ServiceHealthRegistryDeps {
 
 const SERVICE_NAMES = serviceNameSchema.options;
 
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
+function buildRetryPart(nextRetryAt: Date, now: Date): string | undefined {
+    const retryMs = nextRetryAt.getTime() - now.getTime();
+    if(retryMs <= 0) {
+        return undefined;
+    }
+    const retrySec = Math.ceil(retryMs / 1000);
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: boundary between seconds and minutes display
+    return retrySec >= 60
+        ? `retry in ~${Math.ceil(retrySec / 60)}m`
+        : `retry in ~${retrySec}s`;
+}
+
+// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
+function buildServiceStatusLine(name: ServiceName, entry: ServiceHealthEntry, now: Date): string | undefined {
+    if(entry.state === 'online' || entry.state === 'disabled') {
+        return undefined;
+    }
+
+    const parts: string[] = [`${name}: ${entry.state}`];
+
+    if(entry.lastOfflineAt !== undefined) {
+        parts.push(`(offline ${formatShortRelativeTime(entry.lastOfflineAt, now)})`);
+    }
+
+    if(entry.lastError !== undefined) {
+        parts.push(`[${entry.lastError.code}: ${entry.lastError.message}]`);
+    }
+
+    if(entry.nextRetryAt !== undefined) {
+        const retryPart = buildRetryPart(entry.nextRetryAt, now);
+        if(retryPart !== undefined) {
+            parts.push(retryPart);
+        }
+    }
+
+    return parts.join(' ');
+}
+
 function snapshotToEntry(actor: ServiceLifecycleActor): ServiceHealthEntry {
     const snapshot = actor.getSnapshot();
     const ctx = snapshot.context;
@@ -141,34 +180,10 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
 
         for(const name of SERVICE_NAMES) {
             const entry = snapshotToEntry(this.actors[name]);
-            if(entry.state === 'online' || entry.state === 'disabled') {
-                continue;
+            const line = buildServiceStatusLine(name, entry, now);
+            if(line !== undefined) {
+                lines.push(line);
             }
-
-            const parts: string[] = [`${name}: ${entry.state}`];
-
-            if(entry.lastOfflineAt !== undefined) {
-                parts.push(`(offline ${formatShortRelativeTime(entry.lastOfflineAt, now)})`);
-            }
-
-            if(entry.lastError !== undefined) {
-                parts.push(`[${entry.lastError.code}: ${entry.lastError.message}]`);
-            }
-
-            if(entry.nextRetryAt !== undefined) {
-                const retryMs = entry.nextRetryAt.getTime() - now.getTime();
-                if(retryMs > 0) {
-                    const retrySec = Math.ceil(retryMs / 1000);
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: boundary between seconds and minutes display
-                    if(retrySec >= 60) {
-                        parts.push(`retry in ~${Math.ceil(retrySec / 60)}m`);
-                    } else {
-                        parts.push(`retry in ~${retrySec}s`);
-                    }
-                }
-            }
-
-            lines.push(parts.join(' '));
         }
 
         // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — both paths produce same result for empty lines

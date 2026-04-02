@@ -1,8 +1,6 @@
-import { calculateDelay } from '@/utils/retry/delay';
-import { setupRetryContext } from '@/utils/retry/defaults';
-import type { RetryDeps, RetryPolicy } from '@/utils/retry/types';
 import type { ServiceHealthRegistry } from './health-registry';
 import type { ServiceName } from './types';
+import { setupRetryContext, calculateDelay, type RetryDeps, type RetryPolicy } from '@/utils';
 
 export interface ReconnectionLoopOptions {
     service:   ServiceName
@@ -32,7 +30,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
     const { service, registry, connectFn } = options;
     const { policy, deps } = setupRetryContext(
         { ...DEFAULT_POLICY, ...options.policy },
-        options.deps ?? {},
+        options.deps ?? {}
     );
 
     let running = false;

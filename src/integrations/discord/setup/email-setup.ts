@@ -23,6 +23,11 @@ import {
 import type { ApprovalSagaBackend, ReconnectionLoop, ServiceHealthRegistry } from '@/services';
 import { retryAsync } from '@/utils';
 
+/** Type guard: check if a Discord channel supports sending messages (has send method). */
+function isSendableChannel(channel: unknown): channel is { send: (options: unknown) => Promise<unknown> } {
+    return typeof channel === 'object' && channel !== null && 'send' in channel;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -35,6 +40,8 @@ export interface EmailSetupOptions {
     client:              Client
     /** Admin Discord user ID for authorization checks */
     adminDiscordUserId:  string
+    /** @internal Dependency injection for testing (e.g. fast sleep) */
+    _deps?:              { sleep?: (ms: number) => Promise<void> }
     /** Optional activity logger for recording approval events */
     activityLogger?:     ActivityLogger
     /**
@@ -72,6 +79,8 @@ export interface EmailSetupResult {
     allowlist:               EmailAllowlist
     /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
     adminChannelId:          ChannelId
+    /** sendApprovalRequest callback — exposed for testing the isSendableChannel type guard */
+    sendApprovalRequest:     (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +102,8 @@ export interface EmailSetupResult {
  */
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
     const { emailConfig, docClient, tableName, client, adminDiscordUserId } = options;
+    // Stryker disable next-line ObjectLiteral: Dependency injection for testability — sleep override is a no-op in production
+    const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
     // Create classifier, allowlist
     const classifier = new EmailClassifier();
@@ -215,12 +226,12 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
             )
             : retryAsync(async () => {
                 const channel = await client.channels.fetch(emailConfig.adminDiscordChannelId);
-                if(channel && 'send' in channel) {
+                if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
                     throw new Error(`Admin channel ${emailConfig.adminDiscordChannelId} is not a sendable text channel`);
                 }
-            }, { policy: { maxAttempts: 3 } }));
+            }, { policy: { maxAttempts: 3 }, ...retryDeps }));
     };
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression
 
@@ -276,6 +287,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         wildDuckClient,
         allowlist,
         adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),
+        sendApprovalRequest,
     };
 }
 
@@ -305,7 +317,7 @@ async function sendToAdminChannel(
             }, { priority: 'high', type: 'email_notification' });
         } else {
             const channel = await client.channels.fetch(channelId);
-            if(channel && 'send' in channel) {
+            if(isSendableChannel(channel)) {
                 await channel.send(payload);
             }
         }

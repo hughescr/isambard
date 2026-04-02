@@ -242,7 +242,7 @@ describe('runReconciliation', () => {
             const queryCalls = ddbMock.commandCalls(QueryCommand);
             const gsi1Calls = queryCalls.filter(call =>
                 call.args[0].input.IndexName === 'GSI1'
-                && ['LAYER#identity', 'LAYER#state', 'LAYER#events'].includes(call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] as string));
+                && new Set<string>(['LAYER#identity', 'LAYER#state', 'LAYER#events']).has(call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] as string));
 
             expect(gsi1Calls).toHaveLength(3);
         });

@@ -63,6 +63,34 @@ describe('BotStateManager', () => {
                 });
             });
 
+            it('should deep-clone viewedChannels Set in catching_up context (isCatchingUpContext type guard)', () => {
+                // isCatchingUpContext must return true for CatchingUpModeContext.
+                // If the guard's condition were replaced with `false`, cloneModeContext would
+                // do a shallow clone of the Set — this test catches that mutant.
+                const viewedChannels = new Set<ChannelId>([testChannelId]);
+                const context: CatchingUpModeContext = {
+                    viewedChannels,
+                    sessionId:           null,
+                    startedAt:           new Date(),
+                    unreadCount:         5,
+                    channelNames:        [],
+                    topAuthors:          [],
+                    timeSinceLastActive: null,
+                };
+
+                manager.startCatchUp(context);
+
+                // Mutate the original set — deep clone should be unaffected
+                const anotherChannelId = createChannelId('another-channel');
+                viewedChannels.add(anotherChannelId);
+
+                const state = manager.getState();
+                const modeCtx = state.modeContext as CatchingUpModeContext;
+                // Deep-cloned Set only has the original channel, not the later-added one
+                expect(modeCtx.viewedChannels.has(testChannelId)).toBe(true);
+                expect(modeCtx.viewedChannels.has(anotherChannelId)).toBe(false);
+            });
+
             it('should throw TransitionError when not in idle mode', () => {
                 const context: CatchingUpModeContext = {
                     viewedChannels:      new Set(),
@@ -91,6 +119,17 @@ describe('BotStateManager', () => {
                 const context = state.modeContext as { channelId: ChannelId, userMessage: string };
                 expect(context.channelId).toBe(testChannelId);
                 expect(context.userMessage).toBe('Hello world');
+            });
+
+            it('should NOT add viewedChannels to processing_message context (isCatchingUpContext type guard)', () => {
+                // isCatchingUpContext must return false for ProcessingMessageModeContext.
+                // If the guard's condition were replaced with `true`, cloneModeContext would
+                // spread viewedChannels onto the context — this test catches that mutant.
+                manager.startProcessingMessage(testChannelId, 'Hello world');
+
+                const state = manager.getState();
+                const context = state.modeContext as Record<string, unknown>;
+                expect('viewedChannels' in context).toBe(false);
             });
 
             it('should throw TransitionError when not in idle mode', () => {

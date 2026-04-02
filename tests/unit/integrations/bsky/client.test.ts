@@ -93,7 +93,8 @@ mock.module('@atproto/api', () => ({
         detectFacets = mockDetectFacets;
         get graphemeLength() { return mockRichTextState.graphemeLength; }
         get text()           { return mockRichTextState.text; }
-        get facets()         { return mockRichTextState.facets; }
+        // eslint-disable-next-line sonarjs/function-return-type -- Getter returns the mock state which can be undefined
+        get facets(): Record<string, unknown>[] | undefined { return mockRichTextState.facets; }
     },
     ChatBskyConvoDefs: {
         isMessageView: (v: unknown) => {
@@ -2185,7 +2186,7 @@ describe.concurrent('BlueskyClient', () => {
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const post   = await client.getPost(POST_VIEW.uri);
             expect(post.embed).toMatchObject({ type: 'video', video: { cid: 'bafyvideo456' } });
-            expect((post.embed as { type: 'video', video: { thumbnail?: string } })?.video.thumbnail).toBeUndefined();
+            expect((post.embed as { type: 'video', video: { thumbnail?: string } }).video.thumbnail).toBeUndefined();
         });
 
         test('normalizes video embed with aspect ratio', async () => {
@@ -2250,7 +2251,7 @@ describe.concurrent('BlueskyClient', () => {
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const post   = await client.getPost(POST_VIEW.uri);
             expect(post.embed).toMatchObject({ type: 'external' });
-            expect((post.embed as { type: 'external', external: { thumbnail?: string } })?.external.thumbnail).toBeUndefined();
+            expect((post.embed as { type: 'external', external: { thumbnail?: string } }).external.thumbnail).toBeUndefined();
         });
 
         test('normalizes record embed (quote post)', async () => {
@@ -2419,8 +2420,8 @@ describe.concurrent('BlueskyClient', () => {
             const post   = await client.getPost(POST_VIEW.uri);
             expect(post.embed).toMatchObject({ type: 'record' });
             const recordEmbed = post.embed as { type: 'record', record: { embeds?: { type: string }[] } };
-            expect(recordEmbed?.record.embeds).toHaveLength(1);
-            expect(recordEmbed?.record.embeds?.[0]).toMatchObject({ type: 'images' });
+            expect(recordEmbed.record.embeds).toHaveLength(1);
+            expect(recordEmbed.record.embeds?.[0]).toMatchObject({ type: 'images' });
         });
     });
 

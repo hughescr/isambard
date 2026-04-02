@@ -11,6 +11,11 @@ import type { BotStateManager } from './state';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
 import type { QuestionRegistry, AnswerClassifier, PerchSessionRunner } from '@/agent';
 
+/** Type guard: check if a channel supports typing indicators (has sendTyping). */
+function isTypingChannel(channel: unknown): channel is { sendTyping(): Promise<void> } {
+    return typeof channel === 'object' && channel !== null && 'sendTyping' in channel;
+}
+
 /**
  * Helper function to extract attachment metadata from a Discord message.
  * Converts Discord.js Attachment objects to AttachmentMetadata.
@@ -592,7 +597,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Convert Discord.js Message to DiscordMessageContext
         const context = createContext(message);
         // Hand off to coordinator (it will handle batching, interruption, and onResponse)
-        const channel = 'sendTyping' in message.channel ? message.channel : undefined;
+        const channel = isTypingChannel(message.channel) ? message.channel : undefined;
         coordinator.handleMessage(context, message, channel);
 
         // Update checkpoint to mark this message as "seen" for catch-up purposes

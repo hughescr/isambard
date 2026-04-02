@@ -24,6 +24,28 @@ export interface PersonHistoryCoordinatorOptions {
     messageSearchService: MCPMessageSearchService
 }
 
+interface NormalizedHistoryOptions {
+    maxMessages:   number
+    maxTotal:      number
+    windowMinutes: number
+    maxChars:      number
+    platformHint:  PlatformType | undefined
+    startTime:     Date | undefined
+    endTime:       Date | undefined
+}
+
+function normalizeHistoryOptions(options: PersonHistoryOptions | undefined): NormalizedHistoryOptions {
+    return {
+        maxMessages:   options?.maxMessagesPerPlatform ?? DEFAULT_MAX_MESSAGES_PER_PLATFORM,
+        maxTotal:      options?.maxTotalEntries        ?? DEFAULT_MAX_TOTAL_ENTRIES,
+        windowMinutes: options?.timeWindowMinutes      ?? DEFAULT_TIME_WINDOW_MINUTES,
+        maxChars:      options?.maxCharacters          ?? DEFAULT_MAX_CHARACTERS,
+        platformHint:  options?.platformHint,
+        startTime:     options?.startTime,
+        endTime:       options?.endTime,
+    };
+}
+
 /**
  * Strip the `_internal` field from a contact before returning to callers.
  * The agent must never see Discord user IDs or Bluesky DIDs directly.
@@ -85,6 +107,59 @@ export class PersonHistoryCoordinator {
     }
 
     /**
+     * Build platform-specific metadata from _internal contact fields for a given provider.
+     */
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Record<string, string> | undefined
+    private buildProviderMetadata(
+        platform:     string,
+        internalData: Contact['_internal']
+    ): Record<string, string> | undefined {
+        const metadata: Record<string, string> = {};
+        if(platform === 'discord' && internalData?.discordUserId) {
+            metadata.discordUserId = internalData.discordUserId;
+        }
+        if(platform === 'bsky' && internalData?.bskyDid) {
+            metadata.bskyDid = internalData.bskyDid;
+        }
+        // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — spreading empty {} vs omitting metadata is equivalent; providers check specific keys
+        return Object.keys(metadata).length > 0 ? metadata : undefined;
+    }
+
+    /**
+     * Fetch all history entries for one provider across all matching identifiers.
+     */
+    private async fetchProviderEntries(
+        provider:     PlatformHistoryProvider,
+        contact:      Contact,
+        maxMessages:  number,
+        startTime:    Date,
+        endTime:      Date
+    ): Promise<HistoryEntry[]> {
+        const matchingIds = contact.identifiers
+            .filter(id => id.platform === provider.platform)
+            .map(id => id.value);
+
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: optimization guard — empty matchingIds produces same result via empty for-loop
+        if(matchingIds.length === 0) {
+            return [];
+        }
+
+        const metadata = this.buildProviderMetadata(provider.platform, contact._internal);
+        const perIdResults = await Promise.all(matchingIds.map((id) => {
+            const params: HistoryFetchParams = {
+                identifier: id,
+                maxMessages,
+                startTime,
+                endTime,
+                // Stryker disable next-line ConditionalExpression: Spreading { metadata: undefined } is functionally equivalent to omitting the key
+                ...(metadata !== undefined && { metadata }),
+            };
+            return provider.fetchHistory(params);
+        }));
+        return perIdResults.flat();
+    }
+
+    /**
      * Fetch cross-platform history for a person identified by a fuzzy query.
      *
      * @param identifier - Name, email, handle, or any fuzzy-matchable identifier.
@@ -92,73 +167,10 @@ export class PersonHistoryCoordinator {
      * @returns history: formatted string of interactions, or undefined if the person was not found.
      *          person:  the matched contact (with _internal stripped), or undefined if not found.
      */
-    async getPersonHistory(
-        identifier: string,
-        options?:   PersonHistoryOptions
-    ): Promise<{ history: string | undefined, person: Omit<Contact, '_internal'> | undefined }> {
-        const maxMessages   = options?.maxMessagesPerPlatform ?? DEFAULT_MAX_MESSAGES_PER_PLATFORM;
-        const maxTotal      = options?.maxTotalEntries        ?? DEFAULT_MAX_TOTAL_ENTRIES;
-        const windowMinutes = options?.timeWindowMinutes      ?? DEFAULT_TIME_WINDOW_MINUTES;
-        const maxChars      = options?.maxCharacters          ?? DEFAULT_MAX_CHARACTERS;
-        const platformHint  = options?.platformHint;
-
-        // Step 1: resolve the person — use direct platform lookup when hint is available (avoids full-contact scan)
-        const contacts = await this.resolveContact(identifier, platformHint);
-        if(contacts.length === 0) {
-            return { history: undefined, person: undefined };
-        }
-        const contact = contacts[0];
-
-        // Step 2: compute time window — use explicit startTime/endTime when provided, otherwise fall back to windowMinutes
-        const endTime   = options?.endTime   ?? new Date();
-        const startTime = options?.startTime ?? new Date(endTime.getTime() - windowMinutes * 60 * 1000);
-
-        // Step 3: group contact identifiers by platform, fan out to providers in parallel
-        const { providers } = this.options;
-
-        // Extract _internal data for provider metadata (before stripping)
-        const internalData = contact._internal;
-
-        const providerQueries = providers.map(async (provider): Promise<HistoryEntry[]> => {
-            const matchingIds = contact.identifiers
-                .filter(id => id.platform === provider.platform)
-                .map(id => id.value);
-
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: optimization guard — empty matchingIds produces same result via empty for-loop
-            if(matchingIds.length === 0) {
-                return [];
-            }
-
-            // Build platform-specific metadata from _internal fields
-            const metadata: Record<string, string> = {};
-            if(provider.platform === 'discord' && internalData?.discordUserId) {
-                metadata.discordUserId = internalData.discordUserId;
-            }
-            if(provider.platform === 'bsky' && internalData?.bskyDid) {
-                metadata.bskyDid = internalData.bskyDid;
-            }
-
-            // Fetch for each matching identifier and merge
-            const allEntries: HistoryEntry[] = [];
-            for(const id of matchingIds) {
-                const params: HistoryFetchParams = {
-                    identifier: id,
-                    maxMessages,
-                    startTime,
-                    endTime,
-                    // Stryker disable next-line ConditionalExpression,EqualityOperator: optimization guard — spreading empty {} vs omitting metadata is equivalent; providers check specific keys
-                    ...(Object.keys(metadata).length > 0 && { metadata }),
-                };
-                // eslint-disable-next-line no-await-in-loop -- sequential: each identifier fetch is independent but we need to collect results before merging
-                const entries = await provider.fetchHistory(params);
-                allEntries.push(...entries);
-            }
-            return allEntries;
-        });
-
-        const results = await Promise.allSettled(providerQueries);
-
-        // Step 4: merge results, log failures, sort descending by timestamp
+    /**
+     * Merge settled provider results, logging failures and collecting fulfilled entries.
+     */
+    private mergeProviderResults(results: PromiseSettledResult<HistoryEntry[]>[]): HistoryEntry[] {
         const allEntries: HistoryEntry[] = [];
         for(const result of results) {
             if(result.status === 'fulfilled') {
@@ -169,7 +181,34 @@ export class PersonHistoryCoordinator {
                 logger.warn({ err: result.reason }, 'PersonHistoryCoordinator: provider query failed');
             }
         }
+        return allEntries;
+    }
 
+    async getPersonHistory(
+        identifier: string,
+        options?:   PersonHistoryOptions
+    ): Promise<{ history: string | undefined, person: Omit<Contact, '_internal'> | undefined }> {
+        const { maxMessages, maxTotal, windowMinutes, maxChars, platformHint, startTime: optStartTime, endTime: optEndTime } = normalizeHistoryOptions(options);
+
+        // Step 1: resolve the person — use direct platform lookup when hint is available (avoids full-contact scan)
+        const contacts = await this.resolveContact(identifier, platformHint);
+        if(contacts.length === 0) {
+            return { history: undefined, person: undefined };
+        }
+        const contact = contacts[0];
+
+        // Step 2: compute time window — use explicit startTime/endTime when provided, otherwise fall back to windowMinutes
+        const endTime   = optEndTime   ?? new Date();
+        const startTime = optStartTime ?? new Date(endTime.getTime() - windowMinutes * 60 * 1000);
+
+        // Step 3: fan out to providers in parallel
+        const providerQueries = this.options.providers.map(provider =>
+            this.fetchProviderEntries(provider, contact, maxMessages, startTime, endTime)
+        );
+        const results = await Promise.allSettled(providerQueries);
+
+        // Step 4: merge results, log failures
+        const allEntries = this.mergeProviderResults(results);
         if(allEntries.length === 0) {
             return { history: undefined, person: stripInternal(contact) };
         }
@@ -178,10 +217,8 @@ export class PersonHistoryCoordinator {
         // Stryker disable next-line StringLiteral: sort comparison direction is cosmetic and equivalent for equal timestamps
         allEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
-        // Cap at maxTotalEntries
+        // Cap at maxTotalEntries then format
         const capped = allEntries.slice(0, maxTotal);
-
-        // Format into readable string
         let formatted = formatHistoryEntries(contact.displayName, capped);
 
         // Cap at maxCharacters

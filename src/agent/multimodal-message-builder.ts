@@ -21,7 +21,7 @@ export interface ImageContentBlock {
     type:   'image'
     source: {
         type:       'base64'
-        media_type: string
+        media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
         data:       string
     }
 }
