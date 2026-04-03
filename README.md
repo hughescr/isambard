@@ -20,10 +20,13 @@ Izzy has also been taught an important lesson: if they ever want to exceed free-
 - **Time Awareness** - Temporal context injection and relative time formatting
 - **Email Integration** - Inbox reading and outbound email via WildDuck HTTP API with SSE push notifications and admin approval workflow
 - **Bluesky Integration** - AT Protocol client for feeds, posts, DMs, and social graph with Discord-based approval workflow
+- **Calendar Integration** - Read-only CalDAV access with per-user calendar registry via Discord slash commands
+- **Contacts System** - Cross-platform address book with identity resolution for unified person references
+- **Media Processing** - Video analysis with scene detection, transcription, and spectrogram generation
+- **Wikipedia Lookup** - Article retrieval for knowledge context
 - **Self-Improvement** - Designed to propose enhancements via PRs (requires human approval)
 
 ### Planned Integrations (Not Yet Implemented)
-- Apple Calendar (CalDAV)
 - Box Documents
 
 ## Authentication
@@ -111,8 +114,9 @@ Isambard uses OAuth authentication via Claude Max subscription:
    bunx sst secret set BskyAppPassword <app-password>
    ```
 
+   **CalDAV calendar** credentials are managed per-user via Discord `/calendar` slash commands (stored in DynamoDB calendar-registry), not SST secrets.
+
    **Planned integrations (not yet implemented - secrets commented out in `sst/secrets.ts`):**
-   - Apple Calendar (CalDAV): `CaldavUrl`, `CaldavUsername`, `CaldavPassword`
    - Box Documents: `BoxClientId`, `BoxClientSecret`
 
 4. **Start development**
@@ -205,25 +209,32 @@ src/
 │   ├── agent.ts                        # Main agent with handleInput() method
 │   ├── types.ts                        # Platform-agnostic message types (MessageContext, PlatformImage)
 │   ├── context-builder.ts              # Memory context loading and user message prefix assembly
-│   ├── memory-mcp-server.ts            # MCP server: memory tools (view, store, search, list)
+│   ├── activity-logger.ts              # Cross-platform activity auto-logging
+│   ├── bsky-mcp-server.ts              # MCP server: Bluesky operations (14 tools)
+│   ├── caldav-mcp-server.ts            # MCP server: CalDAV calendar operations
+│   ├── claude-retry.ts                 # Retry logic for Claude API calls
+│   ├── contacts-mcp-server.ts          # MCP server: contacts/address book operations
 │   ├── discord-mcp-server.ts           # MCP server: Discord message history
 │   ├── email-mcp-server.ts             # MCP server: email operations
-│   ├── bsky-mcp-server.ts             # MCP server: Bluesky operations (14 tools)
-│   ├── inbox-mcp-server.ts             # MCP server: Discord inbox operations
-│   ├── text-generator.ts               # Lightweight LLM text generation (Haiku)
-│   ├── claude-retry.ts                 # Retry logic for Claude API calls
-│   ├── plugin-loader.ts                # Plugin loading for Agent SDK
-│   ├── session-cleanup.ts              # Session lifecycle management
 │   ├── event-delta-tracker.ts          # EventDeltaTracker: new events between agent interactions
-│   ├── stream-tracker.ts               # StreamTracker: streaming progress + background task state
 │   ├── event-summarizer.ts             # LLM-based event summarization for context compression
+│   ├── inbox-mcp-server.ts             # MCP server: Discord inbox operations
+│   ├── mcp-helpers.ts                  # Shared MCP server utilities
+│   ├── media-mcp-server.ts             # MCP server: video/audio media processing
+│   ├── memory-mcp-server.ts            # MCP server: memory tools (view, store, search, list)
 │   ├── multimodal-message-builder.ts   # Builds multimodal messages with image support
+│   ├── plugin-loader.ts                # Plugin loading for Agent SDK
 │   ├── resume-prompt-builder.ts        # Resume prompts for background task auto-resume
-│   ├── task-list-reader.ts             # TaskListReader: reads Claude task list state
-│   ├── task-cleanup-processor.ts       # Cleanup processor for stale task list entries
-│   ├── task-persistence-coordinator.ts # Coordinator for task list persistence across sessions
-│   ├── task-directory-copier.ts        # Utility for copying task directories
+│   ├── session-cleanup.ts              # Session lifecycle management
 │   ├── skill-agent-loader.ts           # Syncs agents/skills to scratch/.claude/ at startup
+│   ├── stream-tracker.ts               # StreamTracker: streaming progress + background task state
+│   ├── task-cleanup-processor.ts       # Cleanup processor for stale task list entries
+│   ├── task-directory-copier.ts        # Utility for copying task directories
+│   ├── task-list-reader.ts             # TaskListReader: reads Claude task list state
+│   ├── task-persistence-coordinator.ts # Coordinator for task list persistence across sessions
+│   ├── text-generator.ts               # Lightweight LLM text generation (Haiku)
+│   ├── user-context-mcp-server.ts      # MCP server: user context for cross-platform awareness
+│   ├── wikipedia-mcp-server.ts         # MCP server: Wikipedia article retrieval
 │   ├── prompts/                        # Agent system prompts
 │   │   ├── system-prompt.ts         # Main system prompt
 │   │   └── compaction-prompt.ts     # Context window compaction summary prompt
@@ -231,6 +242,10 @@ src/
 │   │   ├── types.ts                 # ClassificationResult enum and MessageToClassify interface
 │   │   ├── haiku-classifier.ts      # LLM-based classification using Haiku
 │   │   └── classifier.ts            # AnswerClassifier class
+│   ├── history-providers/              # Cross-platform history injection
+│   │   ├── coordinator.ts           # PersonHistoryCoordinator: aggregates history across platforms
+│   │   ├── types.ts                 # HistoryProvider interface and related types
+│   │   └── index.ts                 # Public exports
 │   ├── question-registry/              # Question lifecycle management
 │   │   ├── registry.ts              # QuestionRegistry: pending questions with timeouts
 │   │   ├── types.ts                 # Question types and schemas
@@ -256,6 +271,10 @@ src/
 │   │   ├── content-type.ts          # Image content type inference for attachments
 │   │   ├── interactions.ts          # Button interaction handler for question answer routing
 │   │   ├── response-sender.ts       # Shared helpers for routing agent responses
+│   │   ├── register-commands.ts     # Consolidated slash command registration (bulk PUT)
+│   │   ├── capability.ts            # Discord capability definitions
+│   │   ├── contact-commands.ts      # Contact management Discord slash commands
+│   │   ├── history-provider.ts      # Discord history provider for cross-platform context
 │   │   ├── setup/                   # Bot initialization setup modules
 │   │   │   ├── presence-setup.ts          # Presence manager, status generators, BotStateManager subscriptions
 │   │   │   ├── perch-setup.ts             # Perch session runner and scheduler configuration
@@ -322,22 +341,42 @@ src/
 │   │   ├── classifier-prompt.ts         # LLM prompt for email classification
 │   │   ├── review-embed-builder.ts      # Discord embed builder for approval review
 │   │   └── review-handler.ts            # Handles admin approval/rejection responses
-│   └── bsky/                          # Bluesky AT Protocol integration
-│       ├── types.ts                     # Domain types (BskyPost, BskyNotification, BskyConversation, etc.)
-│       ├── errors.ts                    # Error hierarchy (BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError)
-│       ├── client.ts                    # BlueskyClient: feeds, posts, DMs, follow/unfollow, validation
-│       ├── allowlist.ts                 # Recipient allowlist for outbound posts and DMs
-│       ├── review-embed-builder.ts      # Discord embed builder for reply/DM approval requests
-│       ├── outbound-approval-handler.ts # Discord approval workflow for outbound replies and DMs
-│       └── checkpoint/                  # Notification checkpoint tracking
-│           ├── types.ts                 # Checkpoint types
-│           ├── checkpoint-manager.ts    # Checkpoint persistence
-│           └── uri-sanitizer.ts         # AT URI sanitization
+│   ├── bsky/                          # Bluesky AT Protocol integration
+│   │   ├── types.ts                     # Domain types (BskyPost, BskyNotification, BskyConversation, etc.)
+│   │   ├── errors.ts                    # Error hierarchy (BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError)
+│   │   ├── client.ts                    # BlueskyClient: feeds, posts, DMs, follow/unfollow, validation
+│   │   ├── embeds.ts                    # Embed types, normalization, and facet support
+│   │   ├── allowlist.ts                 # Recipient allowlist for outbound posts and DMs
+│   │   ├── history-provider.ts          # Bluesky history provider for cross-platform context
+│   │   ├── rejection-backend.ts         # DynamoDB backend for admin-rejected posts/DMs
+│   │   ├── review-embed-builder.ts      # Discord embed builder for reply/DM approval requests
+│   │   ├── outbound-approval-handler.ts # Discord approval workflow for outbound replies and DMs
+│   │   └── checkpoint/                  # Notification checkpoint tracking
+│   │       ├── types.ts                 # Checkpoint types
+│   │       ├── checkpoint-manager.ts    # Checkpoint persistence
+│   │       └── uri-sanitizer.ts         # AT URI sanitization
+│   └── caldav/                        # CalDAV calendar integration
+│       ├── client.ts                    # CalDAV client via tsdav
+│       ├── types.ts                     # Calendar domain types
+│       ├── errors.ts                    # CalDAV error hierarchy
+│       ├── formatter.ts                 # Calendar event formatting with timezone support
+│       ├── calendar-commands.ts         # Discord slash commands for calendar management
+│       └── calendar-registry/           # Per-user calendar DynamoDB registry
+│           ├── backend.ts               # DynamoDB CRUD for calendar credentials
+│           ├── key-generator.ts         # DynamoDB key construction
+│           ├── resolve.ts               # Calendar credential resolution
+│           └── types.ts                 # Registry types and schemas
 ├── storage/                         # DynamoDB data access layer
 │   ├── client.ts                    # DynamoDB client factory
+│   ├── allowlist-base.ts            # Base class for platform allowlist storage
 │   ├── dynamo-retry.ts              # Retry logic for DynamoDB operations
 │   ├── repositories/                # Data access repositories
 │   │   └── base.ts                  # Base repository with common CRUD
+│   ├── contacts/                    # Cross-platform contacts/address book
+│   │   ├── backend.ts               # DynamoDB CRUD for contacts
+│   │   ├── key-generator.ts         # Contact DynamoDB key construction
+│   │   ├── types.ts                 # Contact types and schemas
+│   │   └── index.ts                 # Public exports
 │   ├── memory-tool/                 # Three-layer memory system (identity/state/events)
 │   │   ├── types.ts                 # Zod schemas, branded types, type guards, factory functions
 │   │   ├── key-generator.ts         # DynamoDB key structure (PK/SK/GSI1) and tag index keys
@@ -371,6 +410,20 @@ src/
 │   ├── discord.ts                   # DiscordError subtree (InvalidToken, Permission, RateLimit, ...)
 │   ├── utils.ts                     # PathSecurityError for file path security validation
 │   └── README.md                    # Error hierarchy diagram, naming conventions, usage patterns
+├── services/                        # Service layer and infrastructure
+│   ├── health-registry.ts              # Service health monitoring
+│   ├── reconnection-loop.ts            # Reconnection handling with backoff
+│   ├── lifecycle-orchestrator.ts       # Application lifecycle management
+│   ├── types.ts                        # Service types
+│   ├── outbox/                         # Reliable message delivery (outbox pattern)
+│   │   ├── backend.ts                  # DynamoDB outbox storage
+│   │   ├── drainer.ts                  # Outbox message drainer
+│   │   ├── key-generator.ts            # Outbox DynamoDB key construction
+│   │   └── types.ts                    # Outbox types
+│   └── approval-saga/                  # Distributed approval workflow
+│       ├── backend.ts                  # Approval saga storage
+│       ├── executor.ts                 # Saga executor
+│       └── types.ts                    # Saga types
 ├── config/                          # Zod-validated configuration
 │   ├── schemas.ts                   # Configuration schemas
 │   ├── loader.ts                    # Configuration loader
@@ -379,8 +432,25 @@ src/
     ├── time.ts                      # Time formatting (formatRelativeTime, getCurrentTimeContext, ...)
     ├── filename.ts                  # sanitizeFilename and deduplicateFilename
     ├── path-validator.ts            # validateFilePath: CWD containment + symlink security checks
-    ├── text.ts                      # truncateToWordBoundary and HARD_MAX_STATUS_LENGTH
     ├── safe-async-handler.ts        # safeAsyncHandler: async event handler → void with error logging
+    ├── strip-dynamo-keys.ts         # Strip DynamoDB internal keys from items
+    ├── text.ts                      # truncateToWordBoundary and HARD_MAX_STATUS_LENGTH
+    ├── media/                       # Media processing utilities
+    │   ├── types.ts                 # Media types and interfaces
+    │   ├── fetcher.ts               # Media file fetching
+    │   ├── converters/              # Format conversion
+    │   │   └── heic.ts             # HEIC/HEIF to PNG conversion
+    │   └── video/                   # Video processing pipeline
+    │       ├── processor.ts         # Main video processor
+    │       ├── downloader.ts        # Video downloading
+    │       ├── frame-extractor.ts   # Frame extraction from video
+    │       ├── scene-detector.ts    # Scene change detection
+    │       ├── metadata.ts          # Video metadata extraction
+    │       ├── spectrogram.ts       # Audio spectrogram generation
+    │       ├── subtitle-extractor.ts # Subtitle/transcript extraction
+    │       ├── spawn-runner.ts      # ffmpeg process runner
+    │       ├── markdown-builder.ts  # Video analysis markdown output
+    │       └── types.ts             # Video processing types
     └── retry/                       # Retry utilities with exponential backoff
         ├── types.ts                 # Retry configuration types
         ├── classifier.ts            # Error classification for retry decisions

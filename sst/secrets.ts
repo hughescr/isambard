@@ -15,7 +15,7 @@ export const discordApplicationId = new sst.Secret('DiscordApplicationId');
 // PERCH_TEST_MODE_FORCE_SLOT (default: undefined)
 // PERCH_TEST_MODE_TRIGGER_ON_STARTUP (default: 'false')
 
-// Planned - uncomment when implemented:
+// CalDAV uses per-user credentials via Discord /calendar commands (stored in DynamoDB calendar-registry), not SST secrets:
 // // Apple Calendar (CalDAV)
 // export const caldavUrl = new sst.Secret('CaldavUrl');
 // export const caldavUsername = new sst.Secret('CaldavUsername');

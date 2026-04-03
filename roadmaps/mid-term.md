@@ -10,6 +10,7 @@
 After read-only integrations are stable:
 - ✅ Bluesky posting and replying (AT Protocol — full read/write/DM integration complete)
 - ✅ Bluesky DM support (listConversations, getDirectMessages, sendDirectMessage with approval)
+- ✅ Calendar read-only access (CalDAV with per-user registry); CalDAV write still upcoming
 - Calendar event creation (CalDAV write)
 - Box Documents (box-node-sdk)
 

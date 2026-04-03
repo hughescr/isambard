@@ -57,7 +57,8 @@ Isambard can propose improvements to its own code:
 ### Directory Structure
 - `src/agent/` - Claude Agent SDK integration
 - `src/storage/` - DynamoDB models, repositories, and storage backends
-- `src/integrations/` - External services (Discord, Email, Bluesky)
+- `src/integrations/` - External services (Discord, Email, Bluesky, CalDAV)
+- `src/services/` - Service infrastructure (health monitoring, reconnection, outbox, approval saga)
 - `src/config/` - Configuration with Zod validation
 - `src/app/` - Application composition root (composition layer for createApp decomposition)
 - `src/errors/` - Centralized error hierarchy (IsambardError base with StorageError, DiscordError subtrees)
@@ -95,10 +96,20 @@ The agent subsystem connects Discord to Claude with persistent memory:
   - `registry.ts` - `QuestionRegistry` class for tracking pending questions with timeouts
   - `types.ts` - Question types (PendingQuestion, QuestionAnswer, QuestionOption, QuestionState)
   - `index.ts` - Public exports
+- `src/agent/history-providers/` - Cross-platform history injection
+  - `coordinator.ts` - `PersonHistoryCoordinator` aggregating history from Discord, Email, and Bluesky providers
+  - `types.ts` - `HistoryProvider` interface and related types
+  - `index.ts` - Public exports
 - `src/agent/email-mcp-server.ts` - MCP server for email operations (checkInbox, getEmailContent, archiveEmail, searchEmail, sendEmail, replyToEmail, deleteDraft, amendAndResubmitDraft)
 - `src/agent/bsky-mcp-server.ts` - MCP server for Bluesky operations (getFeed, getNotifications, searchPosts, getPost, getProfile, getAuthorFeed, likePost, follow, unfollow, sendPost, replyToPost, listConversations, getDirectMessages, sendDirectMessage, listRejectedPosts, clearRejection, clearAllRejections)
 - `src/agent/inbox-mcp-server.ts` - MCP server for Discord inbox operations (getUnreadOverview, getChannelSummary, fetchMessages, markAsRead, markChannelRead)
+- `src/agent/caldav-mcp-server.ts` - MCP server for CalDAV calendar operations (getCalendarEvents, getUpcomingEvents, listUserCalendars)
+- `src/agent/contacts-mcp-server.ts` - MCP server for contacts/address book operations (lookupContact, searchContacts, createContact, updateContact, deleteContact)
 - `src/agent/media-mcp-server.ts` - MCP server for media processing (analyzeVideoFromUrl, analyzeLocalVideo, getVideoFrames, generateSpectrogramFromAudio)
+- `src/agent/user-context-mcp-server.ts` - MCP server for user context and cross-platform awareness
+- `src/agent/wikipedia-mcp-server.ts` - MCP server for Wikipedia article retrieval (getArticle)
+- `src/agent/activity-logger.ts` - Cross-platform activity auto-logging
+- `src/agent/mcp-helpers.ts` - Shared MCP server utilities
 - `src/agent/event-summarizer.ts` - LLM-based event summarization for context compression
 - `src/agent/multimodal-message-builder.ts` - Builds multimodal messages with image support
 - `src/agent/resume-prompt-builder.ts` - Builds resume prompts for background task auto-resume
@@ -133,6 +144,9 @@ The Discord integration provides bot functionality:
 - `src/integrations/discord/content-type.ts` - Infers image content type from filename for Discord attachments lacking MIME type
 - `src/integrations/discord/interactions.ts` - Discord button interaction handler for question answer routing
 - `src/integrations/discord/response-sender.ts` - Shared helpers for routing and sending agent responses to Discord channels
+- `src/integrations/discord/register-commands.ts` - Consolidated Discord slash command registration (single bulk PUT)
+- `src/integrations/discord/capability.ts` - Discord capability definitions
+- `src/integrations/discord/contact-commands.ts` - Contact management Discord slash commands (/contact add, /contact delete, /contact list)
 - `src/integrations/discord/setup/` - Bot initialization setup modules (extracted from bot.ts)
   - `presence-stream-handler.ts` - Shared utility for creating stream event handlers for presence updates
   - `presence-setup.ts` - Presence manager creation, status generators, and BotStateManager subscriptions
@@ -236,12 +250,29 @@ AT Protocol client for feeds, posts, DMs, and social graph:
 - `src/integrations/bsky/review-embed-builder.ts` - Discord embed builder for reply and DM approval requests with type discriminator
 - `src/integrations/bsky/outbound-approval-handler.ts` - Discord button/modal approval workflow for outbound Bluesky replies and DMs (bsky-send-* and bsky-dm-* prefixes). Persists rejection data to `BskyRejectionBackend` for agent feedback.
 - `src/integrations/bsky/rejection-backend.ts` - `BskyRejectionBackend` DynamoDB backend (PK=`BSKY#REJECTED`, SK=`REJECTION#{uuid}`) storing admin-rejected posts/DMs with all MCP tool retry parameters. 30-day TTL. Discriminated union: reply (text, targetHandle, parentUri, parentCid, rootUri, rootCid) vs DM (text, recipientHandles, convoId).
+- `src/integrations/bsky/embeds.ts` - Embed types, normalization, and facet support for rich post content
+- `src/integrations/bsky/history-provider.ts` - Bluesky history provider for cross-platform context injection
 - `src/integrations/bsky/checkpoint/` - Feed and notification progress tracking for idempotent feed consumption
   - `types.ts` - `BskyFeedCheckpoint`, `BskyNotificationCheckpoint` Zod schemas with processed URI tracking
   - `checkpoint-manager.ts` - `BskyCheckpointManager` class persisting feed/notification checkpoints in memory tool backend
   - `uri-sanitizer.ts` - Feed name sanitization for safe checkpoint path construction
   - `index.ts` - Public exports
 - `src/integrations/bsky/index.ts` - Public exports
+
+### CalDAV Integration
+CalDAV calendar access with per-user credential management:
+- `src/integrations/caldav/types.ts` - Calendar domain types (CalendarEvent, CalendarInfo, CalDAVCredentials)
+- `src/integrations/caldav/errors.ts` - CalDAV error hierarchy
+- `src/integrations/caldav/client.ts` - CalDAV client via tsdav (event queries, calendar listing, recurring event expansion)
+- `src/integrations/caldav/formatter.ts` - Calendar event formatting with multi-timezone display
+- `src/integrations/caldav/calendar-commands.ts` - Discord slash commands for calendar credential management (/calendar add, /calendar list, /calendar remove, /calendar select)
+- `src/integrations/caldav/calendar-registry/` - Per-user calendar DynamoDB registry
+  - `types.ts` - Registry types and Zod schemas
+  - `backend.ts` - DynamoDB CRUD for per-user calendar credentials
+  - `key-generator.ts` - DynamoDB key construction for calendar registry
+  - `resolve.ts` - Calendar registry resolution utilities
+  - `index.ts` - Public exports
+- `src/integrations/caldav/index.ts` - Public exports
 
 ### Memory Tool Subsystem
 Custom memory tool implementation with DynamoDB backend and three-layer architecture:
@@ -281,6 +312,14 @@ DynamoDB integration and data access layer:
   - `strip-keys.ts` - Utility to strip DynamoDB internal keys
   - `index.ts` - Public exports
 
+### Contacts Storage
+Cross-platform address book with identity resolution:
+- `src/storage/contacts/types.ts` - Contact types and Zod schemas (ContactRecord, ContactIdentifier, PlatformType)
+- `src/storage/contacts/key-generator.ts` - DynamoDB key construction for contacts (PK/SK, CONTACT_LOOKUP GSI)
+- `src/storage/contacts/backend.ts` - DynamoDB CRUD for contacts with cross-platform identifier lookup
+- `src/storage/contacts/index.ts` - Public exports
+- `src/storage/allowlist-base.ts` - Base class for platform allowlist storage (shared by email and Bluesky)
+
 ### Application Composition Root
 Factory functions that wire together all subsystem components:
 - `src/app/storage-layer.ts` - `createStorageLayer` factory creating DynamoDB client, memory backend, task persistence coordinator, and optional reconciliation scheduler
@@ -290,6 +329,25 @@ Factory functions that wire together all subsystem components:
 - `src/app/catchup-signal-adapter.ts` - `createCatchUpSignalAdapter` adapter persisting catch-up completion and in-progress signals via memory tool backend
 - `src/app/identity-loader.ts` - `loadIdentityContext` helper loading bot identity from memory for presence status generation
 - `src/app/index.ts` - Public exports
+
+### Services Layer
+Service infrastructure for resilience and lifecycle management:
+- `src/services/types.ts` - Service types and interfaces
+- `src/services/health-registry.ts` - Service health monitoring with registration and status tracking
+- `src/services/reconnection-loop.ts` - Reconnection handling with exponential backoff for external services
+- `src/services/lifecycle-orchestrator.ts` - Application lifecycle management (startup sequencing, graceful shutdown)
+- `src/services/outbox/` - Reliable message delivery (outbox pattern)
+  - `types.ts` - Outbox item types and schemas
+  - `backend.ts` - DynamoDB outbox storage
+  - `drainer.ts` - Outbox message drainer with retry
+  - `key-generator.ts` - Outbox DynamoDB key construction
+  - `index.ts` - Public exports
+- `src/services/approval-saga/` - Distributed approval workflow orchestration
+  - `types.ts` - Saga types and state machine definitions
+  - `backend.ts` - Saga persistence in DynamoDB
+  - `executor.ts` - Saga executor for multi-step approval workflows
+  - `index.ts` - Public exports
+- `src/services/index.ts` - Public exports
 
 ### Error Hierarchy
 Centralized error classes for all Isambard operations:
@@ -314,6 +372,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - `src/utils/path-validator.ts` - `validateFilePath`/`validateFilePaths` security checks (CWD containment, no symlinks, file-only)
 - `src/utils/text.ts` - `truncateToWordBoundary` for status length limiting; `HARD_MAX_STATUS_LENGTH` constant
 - `src/utils/safe-async-handler.ts` - `safeAsyncHandler` wrapper converting async event handlers to void-returning functions with error logging
+- `src/utils/strip-dynamo-keys.ts` - Strip DynamoDB internal keys from response items
 - `src/utils/retry/` - Retry utilities with exponential backoff
   - `types.ts` - Retry configuration types
   - `classifier.ts` - Error classification for retry decisions
@@ -321,6 +380,27 @@ Zod-validated configuration loading with env-var for type-safe environment varia
   - `retry-async.ts` - Retry wrapper for async functions
   - `retry-async-generator.ts` - Retry wrapper for async generators
   - `index.ts` - Public exports
+
+### Media Processing
+Video and audio analysis utilities:
+- `src/utils/media/types.ts` - Media types and interfaces
+- `src/utils/media/fetcher.ts` - Media file fetching from URLs
+- `src/utils/media/converters/` - Format conversion utilities
+  - `heic.ts` - HEIC/HEIF to PNG conversion using heic-convert
+  - `index.ts` - Public exports
+- `src/utils/media/video/` - Video processing pipeline
+  - `processor.ts` - Main video processor orchestrating analysis pipeline
+  - `downloader.ts` - Video downloading from URLs
+  - `frame-extractor.ts` - Frame extraction at intervals or scene changes
+  - `scene-detector.ts` - Scene change detection via ffmpeg
+  - `metadata.ts` - Video metadata extraction (duration, resolution, codec)
+  - `spectrogram.ts` - Audio spectrogram generation
+  - `subtitle-extractor.ts` - Subtitle/transcript extraction
+  - `spawn-runner.ts` - ffmpeg/ffprobe process runner
+  - `markdown-builder.ts` - Video analysis markdown output builder
+  - `types.ts` - Video processing types
+  - `index.ts` - Public exports
+- `src/utils/media/index.ts` - Public exports
 
 ### Key Patterns
 - **Repository Pattern** for data access
@@ -343,6 +423,12 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - **Type Guards and Factory Functions** for branded types — `createLayerName()`, `createContentType()`, `isLayerName()`, `isContentType()` replace unsafe `as` casts with runtime-validated factories
 - **Class-Based Components** — `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator`, `BotStateManagerImpl` use proper TypeScript classes with private fields instead of closure-based factories
 - **Background Task Auto-Resume** — `StreamTracker` counts background task launches vs `TaskOutput` collections; `handleInput` auto-resumes (max 1 attempt) when uncollected tasks detected, preserving initial response on failure
+- **Allowlist Base Class** — `AllowlistBase` in `src/storage/allowlist-base.ts` provides shared DynamoDB allowlist CRUD for email and Bluesky platforms
+- **Per-User Calendar Registry** — CalDAV credentials stored per-user in DynamoDB via Discord `/calendar` commands, not SST secrets
+- **Service Health Monitoring** — `HealthRegistry` tracks service status; `ReconnectionLoop` handles auto-reconnect with backoff
+- **Outbox Pattern** — Reliable message delivery via DynamoDB outbox with background drainer for eventual consistency
+- **Cross-Platform History Injection** — `PersonHistoryCoordinator` aggregates history from platform-specific providers (Discord, Email, Bluesky) keyed by contact identity
+- **Activity Auto-Logging** — `ActivityLogger` records cross-platform interactions for context awareness
 
 ## Roadmaps
 - [Short-term (Weeks 1-2)](../roadmaps/short-term.md)

@@ -19,6 +19,36 @@
 - ✅ MCP tools: `getCalendarEvents`, `getUpcomingEvents`, `listUserCalendars`
 - ✅ Calendar context injected into user message prefix and perch context via `context-builder.ts`
 
+## Completed: Contacts System
+- ✅ DynamoDB-backed contact storage with cross-platform identity resolution
+- ✅ Contact key generator with CONTACT_LOOKUP GSI for identifier-based lookups
+- ✅ Discord slash commands: `/contact add`, `/contact list`, `/contact delete` with confirmation buttons
+- ✅ Contacts MCP server for agent access (lookupContact, searchContacts, createContact, updateContact, deleteContact)
+- ✅ Fuzzy name matching and multi-platform identifier support (Discord, Email, Bluesky)
+- ✅ 100% mutation score
+
+## Completed: Cross-Platform History & Activity Logging
+- ✅ `PersonHistoryCoordinator` aggregating history from Discord, Email, and Bluesky providers
+- ✅ Platform-specific history providers (Discord message history, Bluesky feed, email)
+- ✅ Activity auto-logger for recording cross-platform interactions
+- ✅ User context MCP server for cross-platform awareness
+- ✅ 100% mutation score
+
+## Completed: Video/Media Processing
+- ✅ Full video processing pipeline: scene detection, frame extraction, transcription, spectrogram
+- ✅ Media MCP server extracted as generic cross-platform tool (analyzeVideoFromUrl, analyzeLocalVideo, getVideoFrames, generateSpectrogramFromAudio)
+- ✅ ffmpeg-based processing with spawn runner and timeout protection
+- ✅ Video analysis markdown builder for structured output
+- ✅ 100% mutation score
+
+## Completed: Service Infrastructure
+- ✅ Health registry for service status monitoring
+- ✅ Reconnection loop with exponential backoff for external service resilience
+- ✅ Lifecycle orchestrator for startup sequencing and graceful shutdown
+- ✅ Outbox pattern for reliable message delivery (DynamoDB-backed with drainer)
+- ✅ Approval saga for distributed multi-step approval workflows
+- ✅ 100% mutation score
+
 ## Current Focus: RSS Feed Aggregation
 
 ### RSS Feed Reader

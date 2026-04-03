@@ -9,7 +9,7 @@
 ## Advanced Capabilities
 - Proactive improvement cycles
 - Advanced knowledge synthesis
-- Multi-modal capabilities (image understanding, generation)
+- ✅ Video/media processing (scene detection, transcription, spectrogram); image generation still upcoming
 - Voice integration
-- Additional communication channels
+- ✅ CalDAV calendar, contacts system; RSS in progress; Box planned
 - Expanded tool ecosystem
