@@ -155,7 +155,7 @@ describe('buildContactCommand()', () => {
         expect(json.description).toBe('Manage the contacts address book');
     });
 
-    test('has add, link, unlink, list, show, and delete subcommands', () => {
+    test('has add, link, unlink, list, show, edit, and delete subcommands', () => {
         const cmd          = buildContactCommand();
         const json         = cmd.toJSON();
         const subcommands  = json.options ?? [];
@@ -165,7 +165,27 @@ describe('buildContactCommand()', () => {
         expect(names).toContain('unlink');
         expect(names).toContain('list');
         expect(names).toContain('show');
+        expect(names).toContain('edit');
         expect(names).toContain('delete');
+    });
+
+    test('edit subcommand has required person option and optional name and notes options', () => {
+        const cmd        = buildContactCommand();
+        const json       = cmd.toJSON();
+        const editCmd    = (json.options ?? []).find((o: { name: string }) => o.name === 'edit');
+        expect(editCmd).toBeDefined();
+        const editOptions: { name: string, required?: boolean, min_length?: number }[] = (editCmd as { options?: { name: string, required?: boolean, min_length?: number }[] }).options ?? [];
+        const personOpt = editOptions.find(o => o.name === 'person');
+        expect(personOpt).toBeDefined();
+        expect(personOpt?.required).toBe(true);
+        const nameOpt = editOptions.find(o => o.name === 'name');
+        expect(nameOpt).toBeDefined();
+        expect(nameOpt?.required).toBeFalsy();
+        expect(nameOpt?.min_length).toBe(1);
+        const notesOpt = editOptions.find(o => o.name === 'notes');
+        expect(notesOpt).toBeDefined();
+        expect(notesOpt?.required).toBeFalsy();
+        expect(notesOpt?.min_length).toBe(0);
     });
 
     test('delete subcommand has required person option', () => {
@@ -1463,5 +1483,155 @@ describe('ContactApprovalHandler - delete confirmation', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('error occurred') as unknown as string })
         );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ContactCommandHandler - edit subcommand
+// ---------------------------------------------------------------------------
+
+describe('ContactCommandHandler - edit subcommand', () => {
+    let backend: ReturnType<typeof createMockBackend>;
+    let handler: ContactCommandHandler;
+
+    beforeEach(() => {
+        backend = createMockBackend();
+        handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
+        mockLogger.info.mockClear();
+    });
+
+    test('updates notes when provided', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'alice-wonderland',
+            notes:  'Updated notes',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.putContact).toHaveBeenCalledWith(
+            expect.objectContaining({ notes: 'Updated notes' }) as unknown as Contact
+        );
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('updated') as unknown as string })
+        );
+    });
+
+    test('clears notes when empty string provided', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'alice-wonderland',
+            notes:  '',
+        });
+
+        await handler.handle(asChatInput);
+
+        const putArgs = (backend.putContact.mock.calls[0] as [Contact])[0];
+        expect(putArgs.notes).toBeUndefined();
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('updated') as unknown as string })
+        );
+    });
+
+    test('updates display name and name identifier in identifiers array', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'alice-wonderland',
+            name:   'Alice Smith',
+        });
+
+        await handler.handle(asChatInput);
+
+        const putArgs = (backend.putContact.mock.calls[0] as [Contact])[0];
+        expect(putArgs.displayName).toBe('Alice Smith');
+        const nameId = putArgs.identifiers.find(id => id.platform === 'name');
+        expect(nameId?.value).toBe('Alice Smith');
+        // Other identifiers remain unchanged
+        const emailId = putArgs.identifiers.find(id => id.platform === 'email');
+        expect(emailId?.value).toBe('alice@example.com');
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Alice Smith') as unknown as string })
+        );
+    });
+
+    test('updates both name and notes together', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'alice-wonderland',
+            name:   'Alice Smith',
+            notes:  'New notes',
+        });
+
+        await handler.handle(asChatInput);
+
+        const putArgs = (backend.putContact.mock.calls[0] as [Contact])[0];
+        expect(putArgs.displayName).toBe('Alice Smith');
+        expect(putArgs.notes).toBe('New notes');
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('updated') as unknown as string })
+        );
+    });
+
+    test('replies "No changes specified." when neither name nor notes provided', async () => {
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.putContact).not.toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: 'No changes specified.' })
+        );
+    });
+
+    test('replies not found when contact does not exist', async () => {
+        backend.getContact.mockImplementation(async () => undefined);
+        backend.fuzzyLookup.mockImplementation(async () => []);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'no-such-person',
+            notes:  'Some notes',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.putContact).not.toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('No contact found') as unknown as string })
+        );
+    });
+
+    test('replies with error on putContact failure', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        backend.putContact.mockImplementation(async () => {
+            throw new Error('DynamoDB failure');
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'edit', {
+            person: 'alice-wonderland',
+            notes:  'Something',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Failed to edit contact') as unknown as string })
+        );
+        expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    test('rejects non-admin users', async () => {
+        const { asChatInput, reply } = createMockInteraction('non-admin-id', 'edit', {
+            person: 'alice-wonderland',
+            notes:  'Something',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(reply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Only the admin') as unknown as string })
+        );
+        expect(backend.putContact).not.toHaveBeenCalled();
     });
 });

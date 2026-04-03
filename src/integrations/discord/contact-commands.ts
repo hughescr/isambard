@@ -265,6 +265,31 @@ export function buildContactCommand(): SlashCommandBuilder {
         )
         .addSubcommand(sub =>
             sub
+                .setName('edit')
+                .setDescription('Edit a contact\'s name or notes')
+                .addStringOption(opt =>
+                    opt
+                        .setName('person')
+                        .setDescription('Contact personId or fuzzy name')
+                        .setRequired(true)
+                )
+                .addStringOption(opt =>
+                    opt
+                        .setName('name')
+                        .setDescription('New display name')
+                        .setRequired(false)
+                        .setMinLength(1)
+                )
+                .addStringOption(opt =>
+                    opt
+                        .setName('notes')
+                        .setDescription('New notes (leave empty to clear)')
+                        .setRequired(false)
+                        .setMinLength(0)
+                )
+        )
+        .addSubcommand(sub =>
+            sub
                 .setName('delete')
                 .setDescription('Delete a contact')
                 .addStringOption(opt =>
@@ -377,6 +402,10 @@ export class ContactCommandHandler {
             }
             case 'list': {
                 await this.handleList(interaction);
+                break;
+            }
+            case 'edit': {
+                await this.handleEdit(interaction);
                 break;
             }
             case 'delete': {
@@ -575,6 +604,53 @@ export class ContactCommandHandler {
             logger.error({ err, personRaw, msg: 'Failed to show contact' });
             // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Failed to show contact: ${err instanceof Error ? err.message : String(err)}` });
+        }
+        // Stryker restore BlockStatement
+    }
+
+    private async handleEdit(interaction: ChatInputCommandInteraction): Promise<void> {
+        // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
+        const personRaw = interaction.options.getString('person') ?? '';
+        const name      = interaction.options.getString('name');
+        const notes     = interaction.options.getString('notes');
+
+        if(name === null && notes === null) {
+            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
+            await interaction.editReply({ content: 'No changes specified.' });
+            return;
+        }
+
+        // Stryker disable BlockStatement: try/catch is integration boundary
+        try {
+            const contact = await this.resolveContact(interaction, personRaw);
+            if(!contact) {
+                return;
+            }
+
+            const updatedIdentifiers = name === null
+                ? contact.identifiers
+                : contact.identifiers.map(id => (id.platform === 'name' ? { platform: 'name' as const, value: name } : id));
+
+            const updatedNotes = notes === null
+                ? contact.notes
+                : (notes || undefined);
+
+            const updated = {
+                ...contact,
+                displayName: name ?? contact.displayName,
+                identifiers: updatedIdentifiers,
+                notes:       updatedNotes,
+                updatedAt:   new Date().toISOString(),
+            };
+            await this.backend.putContact(updated);
+            const displayName = updated.displayName;
+            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
+            await interaction.editReply({ content: `Contact **${displayName}** updated.` });
+        } catch (err: unknown) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
+            logger.error({ err, personRaw, msg: 'Failed to edit contact' });
+            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
+            await interaction.editReply({ content: `Failed to edit contact: ${err instanceof Error ? err.message : String(err)}` });
         }
         // Stryker restore BlockStatement
     }
