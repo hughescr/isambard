@@ -3,6 +3,7 @@ import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction,
 import {
     buildContactCommand,
     buildContactApprovalEmbed,
+    buildDeleteConfirmationEmbed,
     ContactCommandHandler,
     ContactApprovalHandler,
     generatePersonId,
@@ -154,7 +155,7 @@ describe('buildContactCommand()', () => {
         expect(json.description).toBe('Manage the contacts address book');
     });
 
-    test('has add, link, unlink, list, and show subcommands', () => {
+    test('has add, link, unlink, list, show, and delete subcommands', () => {
         const cmd          = buildContactCommand();
         const json         = cmd.toJSON();
         const subcommands  = json.options ?? [];
@@ -164,6 +165,18 @@ describe('buildContactCommand()', () => {
         expect(names).toContain('unlink');
         expect(names).toContain('list');
         expect(names).toContain('show');
+        expect(names).toContain('delete');
+    });
+
+    test('delete subcommand has required person option', () => {
+        const cmd       = buildContactCommand();
+        const json      = cmd.toJSON();
+        const deleteCmd = (json.options ?? []).find((o: { name: string }) => o.name === 'delete');
+        expect(deleteCmd).toBeDefined();
+        const deleteOptions: { name: string, required?: boolean }[] = (deleteCmd as { options?: { name: string, required?: boolean }[] }).options ?? [];
+        const personOpt = deleteOptions.find(o => o.name === 'person');
+        expect(personOpt).toBeDefined();
+        expect(personOpt?.required).toBe(true);
     });
 
     test('add subcommand has required name option', () => {
@@ -1150,5 +1163,305 @@ describe('ContactApprovalHandler - handleButton()', () => {
         expect(backend.putContact).toHaveBeenCalledTimes(1);
         const contact = (backend.putContact.mock.calls[0] as [Contact])[0];
         expect(String(contact.personId)).toBe('bob-smith-2');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildDeleteConfirmationEmbed tests
+// ---------------------------------------------------------------------------
+
+describe('buildDeleteConfirmationEmbed()', () => {
+    test('returns embed and actionRow', () => {
+        const { embed, actionRow } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        expect(embed).toBeDefined();
+        expect(actionRow).toBeDefined();
+    });
+
+    test('embed contains contact display name as title', () => {
+        const { embed } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        const json      = embed.toJSON();
+        expect(json.title).toBe('Alice Wonderland');
+    });
+
+    test('embed contains "Are you sure" description', () => {
+        const { embed } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        const json      = embed.toJSON();
+        expect(json.description).toContain('Are you sure');
+    });
+
+    test('embed contains Person ID field', () => {
+        const { embed } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        const json      = embed.toJSON();
+        const field     = json.fields?.find((f: { name: string }) => f.name === 'Person ID');
+        expect(field).toBeDefined();
+        expect(field?.value).toBe('alice-wonderland');
+    });
+
+    test('embed contains Identifiers field', () => {
+        const { embed } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        const json      = embed.toJSON();
+        const field     = json.fields?.find((f: { name: string }) => f.name === 'Identifiers');
+        expect(field).toBeDefined();
+    });
+
+    test('embed contains Updated field', () => {
+        const { embed } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        const json      = embed.toJSON();
+        const field     = json.fields?.find((f: { name: string }) => f.name === 'Updated');
+        expect(field).toBeDefined();
+    });
+
+    test('actionRow has confirm and cancel buttons with correct customId prefixes', () => {
+        const uuid          = 'my-test-uuid';
+        const { actionRow } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, uuid);
+        const json          = actionRow.toJSON();
+        expect(json.components.length).toBe(2);
+        const components = json.components as unknown as { custom_id?: string }[];
+        expect(components.some(c => c.custom_id === `contact-delete-confirm:${uuid}`)).toBe(true);
+        expect(components.some(c => c.custom_id === `contact-delete-cancel:${uuid}`)).toBe(true);
+    });
+
+    test('confirm button has Success style, cancel has Secondary style', () => {
+        const { actionRow } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, 'test-uuid');
+        const json          = actionRow.toJSON();
+        const components    = json.components as unknown as { style: number, custom_id?: string }[];
+        const confirmBtn    = components.find(c => c.custom_id?.startsWith('contact-delete-confirm:'));
+        const cancelBtn     = components.find(c => c.custom_id?.startsWith('contact-delete-cancel:'));
+        // ButtonStyle.Success = 3, ButtonStyle.Secondary = 2
+        expect(confirmBtn?.style).toBe(3);
+        expect(cancelBtn?.style).toBe(2);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ContactCommandHandler — delete subcommand
+// ---------------------------------------------------------------------------
+
+describe('ContactCommandHandler - delete subcommand', () => {
+    let backend:         ReturnType<typeof createMockBackend>;
+    let approvalHandler: ContactApprovalHandler;
+    let handler:         ContactCommandHandler;
+
+    beforeEach(() => {
+        backend         = createMockBackend();
+        approvalHandler = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        handler         = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, approvalHandler);
+        mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
+        mockLogger.info.mockClear();
+    });
+
+    test('shows confirmation embed when contact found by exact personId', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.getContact).toHaveBeenCalled();
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({
+                embeds:     expect.arrayContaining([expect.anything()]) as unknown as unknown[],
+                components: expect.arrayContaining([expect.anything()]) as unknown as unknown[],
+            })
+        );
+    });
+
+    test('shows confirmation embed when contact found by fuzzy lookup', async () => {
+        backend.getContact.mockImplementation(async () => undefined);
+        backend.fuzzyLookup.mockImplementation(async () => [SAMPLE_CONTACT]);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', {
+            person: 'alice',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(backend.fuzzyLookup).toHaveBeenCalledWith('alice');
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({
+                embeds:     expect.arrayContaining([expect.anything()]) as unknown as unknown[],
+                components: expect.arrayContaining([expect.anything()]) as unknown as unknown[],
+            })
+        );
+    });
+
+    test('replies not found when no contact matches', async () => {
+        backend.getContact.mockImplementation(async () => undefined);
+        backend.fuzzyLookup.mockImplementation(async () => []);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', {
+            person: 'unknown-person',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('No contact found') as unknown as string })
+        );
+    });
+
+    test('replies not available when no approvalHandler', async () => {
+        const handlerWithoutApproval = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', {
+            person: 'alice-wonderland',
+        });
+
+        await handlerWithoutApproval.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('not available') as unknown as string })
+        );
+    });
+
+    test('stores pending deletion in approval handler', async () => {
+        backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
+        const storeSpy = mock(() => {});
+        approvalHandler.storePendingDeletion = storeSpy as unknown as typeof approvalHandler.storePendingDeletion;
+
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'delete', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(storeSpy).toHaveBeenCalledWith(
+            expect.any(String) as unknown as string,
+            SAMPLE_CONTACT.personId
+        );
+    });
+
+    test('replies with error on backend failure', async () => {
+        backend.getContact.mockImplementation(async () => {
+            throw new Error('Backend error');
+        });
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'delete', {
+            person: 'alice-wonderland',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Failed') as unknown as string })
+        );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ContactApprovalHandler — delete confirmation
+// ---------------------------------------------------------------------------
+
+describe('ContactApprovalHandler - delete confirmation', () => {
+    let backend: ReturnType<typeof createMockBackend>;
+    let handler: ContactApprovalHandler;
+
+    beforeEach(() => {
+        backend = createMockBackend();
+        handler = new ContactApprovalHandler(backend as unknown as ContactBackend);
+        mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
+        mockLogger.info.mockClear();
+    });
+
+    test('confirm button calls deleteContact and shows Deleted embed', async () => {
+        const uuid = 'delete-confirm-uuid';
+        handler.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction, deferUpdate, editReply } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        expect(deferUpdate).toHaveBeenCalledTimes(1);
+        expect(backend.deleteContact).toHaveBeenCalledWith(SAMPLE_CONTACT.personId);
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toContain('Deleted');
+    });
+
+    test('cancel button shows Cancelled embed without calling deleteContact', async () => {
+        const uuid = 'delete-cancel-uuid';
+        handler.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction, deferUpdate, editReply } = makeButtonInteraction(`contact-delete-cancel:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        expect(deferUpdate).toHaveBeenCalledTimes(1);
+        expect(backend.deleteContact).not.toHaveBeenCalled();
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toContain('Cancelled');
+    });
+
+    test('confirm with unknown UUID shows Request Not Found', async () => {
+        const { interaction, editReply } = makeButtonInteraction('contact-delete-confirm:nonexistent-uuid');
+
+        await handler.handleButton(interaction);
+
+        expect(backend.deleteContact).not.toHaveBeenCalled();
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toBe('Request Not Found');
+    });
+
+    test('cancel with unknown UUID shows Request Not Found', async () => {
+        const { interaction, editReply } = makeButtonInteraction('contact-delete-cancel:nonexistent-uuid');
+
+        await handler.handleButton(interaction);
+
+        expect(backend.deleteContact).not.toHaveBeenCalled();
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toBe('Request Not Found');
+    });
+
+    test('confirm removes pending deletion from map', async () => {
+        const uuid = 'delete-confirm-remove-uuid';
+        handler.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+        await handler.handleButton(interaction);
+
+        // Second press should show not-found (pending removed)
+        const { interaction: interaction2, editReply: editReply2 } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+        await handler.handleButton(interaction2);
+
+        expect(backend.deleteContact).toHaveBeenCalledTimes(1);
+        const callArgs = (editReply2.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toBe('Request Not Found');
+    });
+
+    test('cancel removes pending deletion from map', async () => {
+        const uuid = 'delete-cancel-remove-uuid';
+        handler.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction } = makeButtonInteraction(`contact-delete-cancel:${uuid}`);
+        await handler.handleButton(interaction);
+
+        // Second press should show not-found (pending removed)
+        const { interaction: interaction2, editReply: editReply2 } = makeButtonInteraction(`contact-delete-cancel:${uuid}`);
+        await handler.handleButton(interaction2);
+
+        expect(backend.deleteContact).not.toHaveBeenCalled();
+        const callArgs = (editReply2.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toBe('Request Not Found');
+    });
+
+    test('error during deleteContact shows error reply', async () => {
+        const uuid = 'delete-error-uuid';
+        handler.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+        backend.deleteContact.mockImplementation(async () => {
+            throw new Error('DynamoDB failure');
+        });
+
+        const { interaction, editReply } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('error occurred') as unknown as string })
+        );
     });
 });

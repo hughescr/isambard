@@ -565,7 +565,7 @@ export async function createApp(): Promise<App> {
         : undefined;
 
     // Create contacts command handler
-    const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId);
+    const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId, contactApprovalHandler);
 
     // Create Discord bot
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting

@@ -430,9 +430,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await emailSetup.reviewHandler.handleButton(interaction);
                     return;
                 }
-                // Route contact-approve-* and contact-reject-* buttons to contact approval handler
+                // Route contact-approve:*, contact-reject:*, contact-delete-confirm:*, and contact-delete-cancel:* buttons to contact approval handler
                 // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
-                if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:'))) {
+                if(contactApprovalHandler && (interaction.customId.startsWith('contact-approve:') || interaction.customId.startsWith('contact-reject:') || interaction.customId.startsWith('contact-delete-confirm:') || interaction.customId.startsWith('contact-delete-cancel:'))) {
                     await contactApprovalHandler.handleButton(interaction);
                     return;
                 }

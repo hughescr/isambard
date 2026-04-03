@@ -262,8 +262,48 @@ export function buildContactCommand(): SlashCommandBuilder {
                         .setDescription('Contact personId or fuzzy name')
                         .setRequired(true)
                 )
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('delete')
+                .setDescription('Delete a contact')
+                .addStringOption(opt =>
+                    opt
+                        .setName('person')
+                        .setDescription('Contact personId or fuzzy name')
+                        .setRequired(true)
+                )
         ) as SlashCommandBuilder;
     // Stryker restore all
+}
+
+/**
+ * Build a Discord embed + action row for confirming a contact deletion.
+ */
+export function buildDeleteConfirmationEmbed(contact: Contact, uuid: string): {
+    embed:     EmbedBuilder
+    actionRow: ActionRowBuilder<ButtonBuilder>
+} {
+    const embed = buildContactEmbed(contact);
+    // Stryker disable next-line StringLiteral: UI description is configuration
+    embed.setDescription('Are you sure you want to delete this contact?');
+
+    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`contact-delete-confirm:${uuid}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Confirm')
+            .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+            // Stryker disable next-line StringLiteral: Button customId is UI configuration
+            .setCustomId(`contact-delete-cancel:${uuid}`)
+            // Stryker disable next-line StringLiteral: Button label is UI configuration
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
+    return { embed, actionRow };
 }
 
 /**
@@ -299,10 +339,12 @@ function buildNotFoundEmbed(): EmbedBuilder {
 export class ContactCommandHandler {
     private readonly backend:            ContactBackend;
     private readonly adminDiscordUserId: string;
+    private readonly approvalHandler?:   ContactApprovalHandler;
 
-    constructor(backend: ContactBackend, adminDiscordUserId: string) {
+    constructor(backend: ContactBackend, adminDiscordUserId: string, approvalHandler?: ContactApprovalHandler) {
         this.backend            = backend;
         this.adminDiscordUserId = adminDiscordUserId;
+        this.approvalHandler    = approvalHandler;
     }
 
     async handle(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -335,6 +377,10 @@ export class ContactCommandHandler {
             }
             case 'list': {
                 await this.handleList(interaction);
+                break;
+            }
+            case 'delete': {
+                await this.handleDelete(interaction);
                 break;
             }
             default: {
@@ -476,40 +522,49 @@ export class ContactCommandHandler {
         // Stryker restore BlockStatement
     }
 
+    private async resolveContact(interaction: ChatInputCommandInteraction, personRaw: string): Promise<Contact | undefined> {
+        // Try exact lookup first, then fuzzy
+        let contact: Contact | undefined;
+        const looksLikePersonId = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/.test(personRaw);
+        if(looksLikePersonId) {
+            // Stryker disable BlockStatement: inner try/catch handles invalid ContactId format gracefully
+            try {
+                const parsedId = createContactId(personRaw);
+                contact = await this.backend.getContact(parsedId);
+            } catch (error: unknown) {
+                // If it was a real backend error (not just invalid format), re-throw
+                // Stryker disable next-line ConditionalExpression: instanceof check distinguishes format errors from backend errors
+                if(!(error instanceof z.ZodError)) {
+                    throw error;
+                }
+                // Not a valid ContactId format — fall through to fuzzy lookup
+            }
+            // Stryker restore BlockStatement
+        }
+
+        if(!contact) {
+            const results = await this.backend.fuzzyLookup(personRaw);
+            contact = results[0];
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- results[0] may be undefined at runtime; noUncheckedIndexedAccess is not enabled
+        if(!contact) {
+            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
+            await interaction.editReply({ content: `No contact found matching \`${personRaw}\`.` });
+            return undefined;
+        }
+
+        return contact;
+    }
+
     private async handleShow(interaction: ChatInputCommandInteraction): Promise<void> {
         // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
         const personRaw = interaction.options.getString('person') ?? '';
 
         // Stryker disable BlockStatement: try/catch is integration boundary
         try {
-            // Try exact lookup first, then fuzzy
-            let contact: Contact | undefined;
-            const looksLikePersonId = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/.test(personRaw);
-            if(looksLikePersonId) {
-                // Stryker disable BlockStatement: inner try/catch handles invalid ContactId format gracefully
-                try {
-                    const parsedId = createContactId(personRaw);
-                    contact = await this.backend.getContact(parsedId);
-                } catch (error: unknown) {
-                    // If it was a real backend error (not just invalid format), re-throw
-                    // Stryker disable next-line ConditionalExpression: instanceof check distinguishes format errors from backend errors
-                    if(!(error instanceof z.ZodError)) {
-                        throw error;
-                    }
-                    // Not a valid ContactId format — fall through to fuzzy lookup
-                }
-                // Stryker restore BlockStatement
-            }
-
+            const contact = await this.resolveContact(interaction, personRaw);
             if(!contact) {
-                const results = await this.backend.fuzzyLookup(personRaw);
-                contact = results[0];
-            }
-
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- results[0] may be undefined at runtime; noUncheckedIndexedAccess is not enabled
-            if(!contact) {
-                // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
-                await interaction.editReply({ content: `No contact found matching \`${personRaw}\`.` });
                 return;
             }
 
@@ -523,6 +578,36 @@ export class ContactCommandHandler {
         }
         // Stryker restore BlockStatement
     }
+
+    private async handleDelete(interaction: ChatInputCommandInteraction): Promise<void> {
+        // Stryker disable next-line StringLiteral: fallback '' is unreachable - person is required option
+        const personRaw = interaction.options.getString('person') ?? '';
+
+        // Stryker disable BlockStatement: try/catch is integration boundary
+        try {
+            const contact = await this.resolveContact(interaction, personRaw);
+            if(!contact) {
+                return;
+            }
+
+            if(!this.approvalHandler) {
+                // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
+                await interaction.editReply({ content: 'Contact deletion is not available.' });
+                return;
+            }
+
+            const uuid                = crypto.randomUUID();
+            const { embed, actionRow } = buildDeleteConfirmationEmbed(contact, uuid);
+            this.approvalHandler.storePendingDeletion(uuid, contact.personId);
+            await interaction.editReply({ embeds: [embed], components: [actionRow] });
+        } catch (err: unknown) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
+            logger.error({ err, personRaw, msg: 'Failed to delete contact' });
+            // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
+            await interaction.editReply({ content: `Failed to delete contact: ${err instanceof Error ? err.message : String(err)}` });
+        }
+        // Stryker restore BlockStatement
+    }
 }
 
 /**
@@ -531,17 +616,21 @@ export class ContactCommandHandler {
  * Supports button customIds:
  * - contact-approve:{uuid}
  * - contact-reject:{uuid}
+ * - contact-delete-confirm:{uuid}
+ * - contact-delete-cancel:{uuid}
  *
  * Pending requests are stored in-memory keyed by UUID.
  * Call `storePendingRequest()` before sending the approval embed to admin.
  */
 export class ContactApprovalHandler {
-    private readonly backend:         ContactBackend;
-    private readonly pendingRequests: Map<string, ContactApprovalRequest>;
+    private readonly backend:          ContactBackend;
+    private readonly pendingRequests:  Map<string, ContactApprovalRequest>;
+    private readonly pendingDeletions: Map<string, Contact['personId']>;
 
     constructor(backend: ContactBackend) {
-        this.backend         = backend;
-        this.pendingRequests = new Map();
+        this.backend          = backend;
+        this.pendingRequests  = new Map();
+        this.pendingDeletions = new Map();
     }
 
     /**
@@ -553,7 +642,14 @@ export class ContactApprovalHandler {
     }
 
     /**
-     * Handle a contact-approve or contact-reject button interaction.
+     * Store a pending deletion before sending the confirmation embed.
+     */
+    storePendingDeletion(uuid: string, personId: Contact['personId']): void {
+        this.pendingDeletions.set(uuid, personId);
+    }
+
+    /**
+     * Handle a contact-approve, contact-reject, contact-delete-confirm, or contact-delete-cancel button interaction.
      */
     async handleButton(interaction: ButtonInteraction): Promise<void> {
         const parts  = interaction.customId.split(':');
@@ -565,7 +661,7 @@ export class ContactApprovalHandler {
         const uuid   = parts[1];
 
         // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
-        if(prefix !== 'contact-approve' && prefix !== 'contact-reject') {
+        if(prefix !== 'contact-approve' && prefix !== 'contact-reject' && prefix !== 'contact-delete-confirm' && prefix !== 'contact-delete-cancel') {
             return;
         }
 
@@ -577,8 +673,14 @@ export class ContactApprovalHandler {
 
         // Stryker disable BlockStatement: try-catch wraps button handler - error handling
         try {
-            // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
-            await (prefix === 'contact-approve' ? this.handleApprove(interaction, uuid) : this.handleReject(interaction, uuid));
+            if(prefix === 'contact-delete-confirm') {
+                await this.handleDeleteConfirm(interaction, uuid);
+            } else if(prefix === 'contact-delete-cancel') {
+                await this.handleDeleteCancel(interaction, uuid);
+            } else {
+                // Stryker disable next-line StringLiteral,ConditionalExpression: prefix check is configuration
+                await (prefix === 'contact-approve' ? this.handleApprove(interaction, uuid) : this.handleReject(interaction, uuid));
+            }
         } catch (err) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uuid, prefix, msg: 'Contact approval button handler failed' });
@@ -693,5 +795,44 @@ export class ContactApprovalHandler {
             .setColor(RED);
 
         await interaction.editReply({ embeds: [rejectedEmbed], components: [] });
+    }
+
+    private async handleDeleteConfirm(interaction: ButtonInteraction, uuid: string): Promise<void> {
+        const personId = this.pendingDeletions.get(uuid);
+        if(!personId) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ uuid, msg: 'Contact delete confirm: no pending deletion found for uuid' });
+            await interaction.editReply({ embeds: [buildNotFoundEmbed()], components: [] });
+            return;
+        }
+
+        await this.backend.deleteContact(personId);
+        this.pendingDeletions.delete(uuid);
+
+        const deletedEmbed = new EmbedBuilder()
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            .setTitle('Deleted \u2713')
+            .setColor(GREEN);
+
+        await interaction.editReply({ embeds: [deletedEmbed], components: [] });
+    }
+
+    private async handleDeleteCancel(interaction: ButtonInteraction, uuid: string): Promise<void> {
+        const personId = this.pendingDeletions.get(uuid);
+        if(!personId) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ uuid, msg: 'Contact delete cancel: no pending deletion found for uuid' });
+            await interaction.editReply({ embeds: [buildNotFoundEmbed()], components: [] });
+            return;
+        }
+
+        this.pendingDeletions.delete(uuid);
+
+        const cancelledEmbed = new EmbedBuilder()
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            .setTitle('Cancelled')
+            .setColor(AMBER);
+
+        await interaction.editReply({ embeds: [cancelledEmbed], components: [] });
     }
 }
