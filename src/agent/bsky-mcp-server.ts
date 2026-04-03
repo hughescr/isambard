@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -7,8 +6,6 @@ import { mcpErrorResult, mcpJsonResult, mcpTextResult, checkServiceHealth, check
 import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend, BskyDirectMessage } from '@/integrations/bsky';
 import type { SendRateLimiter } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
-import { processVideo, processLocalVideo, extractFramesInRange, generateSpectrogram, createSpawnRunner, createBinarySpawnRunner, validateFilePath } from '@/utils';
-
 /** Shared pagination schema fields for feed tools that support checkpointing. */
 const FEED_PAGINATION_SCHEMA = {
     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -116,7 +113,7 @@ function buildVideoEmbedHint(playlists: string[]): string | undefined {
     const label = playlists.length === 1 ? 'This response contains a video embed' : 'This response contains video embeds';
     const lines  = playlists.map(url => `  - ${url}`);
     // Stryker disable next-line StringLiteral: hint message is informational only
-    return `Note: ${label}. Use the processVideoEmbed tool to analyze:\n${lines.join('\n')}`;
+    return `Note: ${label}. Use the analyzeVideoFromUrl tool to analyze:\n${lines.join('\n')}`;
 }
 
 export function createBskyMCPServer(options: BskyMCPServerOptions) {
@@ -838,182 +835,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 { annotations: { title: 'Clear All Rejections', readOnlyHint: false, destructiveHint: true, idempotentHint: false } }
             ),
 
-            tool(
-                // Stryker disable next-line StringLiteral: tool name is configuration
-                'processVideoEmbed',
-                // Stryker disable next-line StringLiteral: tool description is configuration
-                'Download and analyze a Bluesky video embed. Extracts scene-based frames, metadata, and subtitles/transcription.',
-                {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    url:       z.string().describe('Video URL or HLS playlist URL'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    outputDir: z.string().describe('Directory to save video files and frames'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    alt:       z.string().optional().describe('Alt text for the video'),
-                },
-                // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'bluesky', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    const resolved = path.resolve(process.cwd(), args.outputDir);
-                    const relative = path.relative(process.cwd(), resolved);
-                    if(!relative || relative.startsWith('..')) {
-                        return mcpErrorResult('Output directory must be within the working directory');
-                    }
-                    try {
-                        const result = await processVideo(args.url, args.outputDir, {
-                            run:       createSpawnRunner(),
-                            binaryRun: createBinarySpawnRunner(),
-                            alt:       args.alt,
-                        });
-                        return {
-                            content: [
-                                { type: 'text', text: result.metadataMarkdown },
-                                ...result.frames.map(f => ({
-                                    type:     'image' as const,
-                                    data:     f.base64Data,
-                                    mimeType: f.mediaType,
-                                })),
-                            ],
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                },
-                // Stryker restore all
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Process Video Embed', readOnlyHint: false, idempotentHint: false } }
-            ),
-
-            tool(
-                // Stryker disable next-line StringLiteral: tool name is configuration
-                'processLocalVideoEmbed',
-                // Stryker disable next-line StringLiteral: tool description is configuration
-                'Analyze a video file already saved to disk. Extracts scene-based frames, metadata, and subtitles/transcription.',
-                {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    videoPath: z.string().describe('Path to the local video file'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    outputDir: z.string().describe('Directory to save analysis output (frames, metadata)'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    alt:       z.string().optional().describe('Alt text description of the video'),
-                },
-                async (args): Promise<CallToolResult> => {
-                    const resolved = path.resolve(process.cwd(), args.outputDir);
-                    const relative = path.relative(process.cwd(), resolved);
-                    if(!relative || relative.startsWith('..')) {
-                        return mcpErrorResult('Output directory must be within the working directory');
-                    }
-                    // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                    try {
-                        const safeVideoPath = await validateFilePath(args.videoPath);
-                        const result = await processLocalVideo(safeVideoPath, args.outputDir, {
-                            run:       createSpawnRunner(),
-                            binaryRun: createBinarySpawnRunner(),
-                            alt:       args.alt,
-                        });
-                        return {
-                            content: [
-                                { type: 'text', text: result.metadataMarkdown },
-                                ...result.frames.map(f => ({
-                                    type:     'image' as const,
-                                    data:     f.base64Data,
-                                    mimeType: f.mediaType,
-                                })),
-                            ],
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                    // Stryker restore all
-                },
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Process Local Video', readOnlyHint: false, idempotentHint: false } }
-            ),
-
-            tool(
-                // Stryker disable next-line StringLiteral: tool name is configuration
-                'getVideoFrames',
-                // Stryker disable next-line StringLiteral: tool description is configuration
-                'Extract additional frames from a previously downloaded video. Use to focus on specific time ranges.',
-                {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    videoPath: z.string().describe('Path to the local video file'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    startTime: z.number().describe('Start time in seconds'),
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    endTime:   z.number().describe('End time in seconds'),
-                    // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .max(20) is Zod schema configuration
-                    count:     z.number().int().positive().max(20).describe('Number of frames to extract (max 20)'),
-                },
-                // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                async (args): Promise<CallToolResult> => {
-                    try {
-                        const safeVideoPath = await validateFilePath(args.videoPath);
-                        if(args.endTime <= args.startTime) {
-                            return mcpErrorResult('endTime must be greater than startTime');
-                        }
-                        const frames = await extractFramesInRange(
-                            safeVideoPath,
-                            args.startTime,
-                            args.endTime,
-                            args.count,
-                            createBinarySpawnRunner()
-                        );
-                        if(frames.length === 0) {
-                            return mcpErrorResult('No frames could be extracted in the specified range');
-                        }
-                        return {
-                            content: frames.map(f => ({
-                                type:     'image' as const,
-                                data:     f.base64Data,
-                                mimeType: f.mediaType,
-                            })),
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                },
-                // Stryker restore all
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Get Video Frames', readOnlyHint: true, idempotentHint: true } }
-            ),
-
-            tool(
-                // Stryker disable next-line StringLiteral: tool name is configuration
-                'generateVideoSpectrogram',
-                // Stryker disable next-line StringLiteral: tool description is configuration
-                'Generate an audio spectrogram image from a video file. Useful for identifying speech patterns and audio content.',
-                {
-                    // Stryker disable next-line StringLiteral: describe() is documentation only
-                    videoPath: z.string().describe('Path to the local video file'),
-                },
-                // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                async (args): Promise<CallToolResult> => {
-                    try {
-                        const safeVideoPath = await validateFilePath(args.videoPath);
-                        const image = await generateSpectrogram(safeVideoPath, createBinarySpawnRunner());
-                        return {
-                            content: [{
-                                type:     'image' as const,
-                                data:     image.base64Data,
-                                mimeType: image.mediaType,
-                            }],
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                },
-                // Stryker restore all
-                // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
-                { annotations: { title: 'Generate Video Spectrogram', readOnlyHint: true, idempotentHint: true } }
-            ),
         ],
     });
 }

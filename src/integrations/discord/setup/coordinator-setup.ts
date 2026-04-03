@@ -88,7 +88,7 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
                 if(stored) {
                     if(stored.contentType.startsWith('video/')) {
                         contentAdditions.push(
-                            `[Video file saved: ${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)}). Use processLocalVideoEmbed to analyze this video for scene frames, metadata, and transcription.]`
+                            `[Video file saved: ${stored.localPath} (${stored.contentType}, ${formatBytes(stored.size)}). Use analyzeLocalVideo to analyze this video for scene frames, metadata, and transcription.]`
                         );
                     } else {
                         contentAdditions.push(

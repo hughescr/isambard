@@ -525,6 +525,7 @@ export async function createApp(): Promise<App> {
         bskyMcpServer:              mcpServers.bskyMcpServer,
         caldavMcpServer:            mcpServers.caldavMcpServer,
         wikipediaMcpServer:         mcpServers.wikipediaMcpServer,
+        mediaMcpServer:             mcpServers.mediaMcpServer,
         contactsMcpServer:          mcpServers.contactsMcpServer,
         userContextMcpServer:       mcpServers.userContextMcpServer,
         plugins,

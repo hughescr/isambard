@@ -1,6 +1,6 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
@@ -181,7 +181,7 @@ export interface MCPServers {
     /**
      * Wikipedia MCP server for random article discovery.
      */
-    wikipediaMcpServer?: McpServerConfig
+    wikipediaMcpServer: McpServerConfig
 
     /**
      * Contacts MCP server for address book management.
@@ -192,17 +192,27 @@ export interface MCPServers {
      * User context MCP server for cross-platform person history.
      */
     userContextMcpServer?: McpServerConfig
+
+    /**
+     * Media MCP server for video and audio processing tools.
+     */
+    mediaMcpServer: McpServerConfig
 }
 
 /**
  * Creates all MCP servers for the Claude agent.
  *
- * This factory consolidates the creation of five MCP servers:
+ * This factory consolidates the creation of ten MCP servers:
  * 1. Memory MCP server - for deep memory access (view, store, search)
  * 2. Discord MCP server - for message history and sending messages
  * 3. Inbox MCP server - for unread message management
  * 4. Bluesky MCP server - for AT Protocol feed reading and interaction (optional)
- * 5. Wikipedia MCP server - for random article discovery during perch time
+ * 5. CalDAV MCP server - for calendar queries (optional)
+ * 6. Wikipedia MCP server - for random article discovery during perch time
+ * 7. Contacts MCP server - for address book management (optional)
+ * 8. User context MCP server - for cross-platform person history (optional)
+ * 9. Media MCP server - for video and audio processing tools
+ * 10. Email MCP server - created separately in email-setup.ts
  *
  * @param options - Options containing all required dependencies
  * @returns Object containing all MCP server configurations
@@ -293,6 +303,8 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         ? createUserContextMCPServer({ coordinator: options.historyCoordinator })
         : undefined;
 
+    const mediaMcpServer = createMediaMCPServer();
+
     return {
         memoryMcpServer,
         discordMcpServer,
@@ -302,5 +314,6 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         wikipediaMcpServer,
         contactsMcpServer,
         userContextMcpServer,
+        mediaMcpServer,
     };
 }

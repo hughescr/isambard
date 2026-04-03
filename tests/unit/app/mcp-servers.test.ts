@@ -4,6 +4,7 @@ import { mockLogger } from '../../setup';
 import * as bskyMcpModule from '@/agent/bsky-mcp-server';
 import * as discordMcpModule from '@/agent/discord-mcp-server';
 import * as inboxMcpModule from '@/agent/inbox-mcp-server';
+import * as mediaMcpModule from '@/agent/media-mcp-server';
 import * as memoryMcpModule from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
@@ -71,7 +72,10 @@ describe('createMCPServers', () => {
         const mockWikipediaMcpServer = { name: 'wikipedia', version: '1.0.0' } as unknown as McpServerInstance;
         const createWikipediaMcpServerSpy = spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockReturnValue(mockWikipediaMcpServer);
 
-        spies.push(createMemoryMcpServerSpy, createDiscordMcpServerSpy, createInboxMcpServerSpy, createWikipediaMcpServerSpy);
+        const mockMediaMcpServer = { name: 'media', version: '1.0.0' } as unknown as McpServerInstance;
+        const createMediaMcpServerSpy = spyOn(mediaMcpModule, 'createMediaMCPServer').mockReturnValue(mockMediaMcpServer);
+
+        spies.push(createMemoryMcpServerSpy, createDiscordMcpServerSpy, createInboxMcpServerSpy, createWikipediaMcpServerSpy, createMediaMcpServerSpy);
 
         const result = mcpServersModule.createMCPServers(mockOptions);
 
@@ -81,6 +85,7 @@ describe('createMCPServers', () => {
         expect(result.discordMcpServer).toBe(mockDiscordMcpServer);
         expect(result.inboxMcpServer).toBe(mockInboxMcpServer);
         expect(result.wikipediaMcpServer).toBe(mockWikipediaMcpServer);
+        expect(result.mediaMcpServer).toBe(mockMediaMcpServer);
     });
 
     test('should always create wikipedia MCP server', () => {
@@ -99,6 +104,24 @@ describe('createMCPServers', () => {
         expect(result.wikipediaMcpServer).toBe(mockWikipediaMcpServer);
         expect(createWikipediaMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createWikipediaMcpServerSpy).toHaveBeenCalledWith();
+    });
+
+    test('should always create media MCP server', () => {
+        const mockMediaMcpServer = { name: 'media', version: '1.0.0' } as unknown as McpServerInstance;
+        const createMediaMcpServerSpy = spyOn(mediaMcpModule, 'createMediaMCPServer').mockReturnValue(mockMediaMcpServer);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createMediaMcpServerSpy
+        );
+
+        const result = mcpServersModule.createMCPServers(mockOptions);
+
+        expect(result.mediaMcpServer).toBe(mockMediaMcpServer);
+        expect(createMediaMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(createMediaMcpServerSpy).toHaveBeenCalledWith();
     });
 
     test('should pass correct args to createMemoryMCPServer', () => {

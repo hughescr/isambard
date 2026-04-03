@@ -98,6 +98,7 @@ The agent subsystem connects Discord to Claude with persistent memory:
 - `src/agent/email-mcp-server.ts` - MCP server for email operations (checkInbox, getEmailContent, archiveEmail, searchEmail, sendEmail, replyToEmail, deleteDraft, amendAndResubmitDraft)
 - `src/agent/bsky-mcp-server.ts` - MCP server for Bluesky operations (getFeed, getNotifications, searchPosts, getPost, getProfile, getAuthorFeed, likePost, follow, unfollow, sendPost, replyToPost, listConversations, getDirectMessages, sendDirectMessage, listRejectedPosts, clearRejection, clearAllRejections)
 - `src/agent/inbox-mcp-server.ts` - MCP server for Discord inbox operations (getUnreadOverview, getChannelSummary, fetchMessages, markAsRead, markChannelRead)
+- `src/agent/media-mcp-server.ts` - MCP server for media processing (analyzeVideoFromUrl, analyzeLocalVideo, getVideoFrames, generateSpectrogramFromAudio)
 - `src/agent/event-summarizer.ts` - LLM-based event summarization for context compression
 - `src/agent/multimodal-message-builder.ts` - Builds multimodal messages with image support
 - `src/agent/resume-prompt-builder.ts` - Builds resume prompts for background task auto-resume

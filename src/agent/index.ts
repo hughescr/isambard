@@ -48,6 +48,9 @@ export { createBskyMCPServer } from './bsky-mcp-server';
 // CalDAV MCP Server
 export { createCaldavMCPServer } from './caldav-mcp-server';
 
+// Media MCP Server
+export { createMediaMCPServer } from './media-mcp-server';
+
 // Wikipedia MCP Server
 export { createWikipediaMCPServer } from './wikipedia-mcp-server';
 

@@ -616,6 +616,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers.wikipedia).toEqual(mockWikipediaServer);
         });
 
+        test('should configure media MCP server when provided', async () => {
+            const mockMediaServer = { command: 'node', args: ['media-server.js'] };
+            const agent = createClaudeAgent({ mediaMcpServer: mockMediaServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.media).toEqual(mockMediaServer);
+        });
+
         test('should configure caldav MCP server when provided', async () => {
             const mockCaldavServer = { command: 'node', args: ['caldav-server.js'] };
             const agent = createClaudeAgent({ caldavMcpServer: mockCaldavServer });
@@ -834,6 +844,17 @@ describe('createClaudeAgent', () => {
                 'Bash(ls:*)',
                 'mcp__wikipedia__*',
             ]);
+        });
+
+        test('should include media tools when media MCP server provided', async () => {
+            const mockMediaServer = { command: 'node', args: ['media-server.js'] };
+            const agent = createClaudeAgent({ mediaMcpServer: mockMediaServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            expect(allowedTools).toContain('mcp__media__*');
         });
 
         test('should include caldav tools when caldav MCP server provided', async () => {

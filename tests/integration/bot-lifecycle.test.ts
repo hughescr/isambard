@@ -281,6 +281,7 @@ describe('Bot Lifecycle Integration', () => {
                 bskyMcpServer:              undefined,
                 caldavMcpServer:            expect.any(Object),
                 wikipediaMcpServer:         expect.any(Object),
+                mediaMcpServer:             expect.any(Object),
                 contactsMcpServer:          expect.any(Object),
                 userContextMcpServer:       expect.any(Object),
                 plugins:                    expect.any(Array),
