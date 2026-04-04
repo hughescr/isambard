@@ -219,27 +219,6 @@ async function saveEmailAttachments(
  * This server wraps WildDuckClient for use with the Claude Agent SDK.
  */
 /**
- * Mailboxes searched when mailbox='all-regular' (or omitted).
- */
-// Stryker disable next-line ArrayDeclaration: Regular search mailboxes are configuration
-const REGULAR_SEARCH_MAILBOXES: readonly string[] = [EmailFolder.CleanInbox, EmailFolder.Archive];
-
-/**
- * All mailboxes searched when mailbox='all'.
- */
-// Stryker disable next-line ArrayDeclaration: All-mailboxes list is configuration
-const ALL_SEARCH_MAILBOXES: readonly string[] = [
-    EmailFolder.CleanInbox,
-    EmailFolder.Archive,
-    EmailFolder.Sent,
-    EmailFolder.Drafts,
-    EmailFolder.Junk,
-    EmailFolder.Trash,
-    EmailFolder.Quarantine,
-    EmailFolder.Review,
-];
-
-/**
  * Normalizes a to-address argument (string, object, array, or undefined) to an array or undefined.
  */
 // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns T[] | undefined
@@ -600,7 +579,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             EmailFolder.Quarantine, EmailFolder.Junk, EmailFolder.Trash,
                             EmailFolder.Drafts, EmailFolder.Sent,
                         ]),
-                    ]).optional().describe("Mailbox scope. 'all-regular' = CleanInbox+Archive (default). 'all' = every folder. Or a specific folder name."),
+                    ]).optional().describe("Mailbox scope. 'all-regular' = all regular mailboxes excluding Junk and Trash (default). 'all' = every folder. Or a specific folder name."),
                     // Stryker restore StringLiteral,ArrayDeclaration
                 },
                 async (args): Promise<CallToolResult> => {
@@ -614,15 +593,14 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     // Stryker restore BlockStatement
                     // Stryker disable BlockStatement: try-catch wraps WildDuck API operations - error handling
                     try {
-                        // Determine which mailboxes to search
-                        let mailboxes: string[];
-                        if(!args.mailbox || args.mailbox === 'all-regular') {
-                            mailboxes = [...REGULAR_SEARCH_MAILBOXES];
-                        } else if(args.mailbox === 'all') {
-                            mailboxes = [...ALL_SEARCH_MAILBOXES];
-                        } else {
-                            mailboxes = [args.mailbox];
-                        }
+                        // Build search params based on mailbox selection
+                        // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent conditions — all three cases produce undefined mailboxParam for the "search all/all-regular" paths
+                        const mailboxParam = (!args.mailbox || args.mailbox === 'all-regular' || args.mailbox === 'all')
+                            ? undefined
+                            : args.mailbox;
+                        const searchableParam = (!args.mailbox || args.mailbox === 'all-regular')
+                            ? true as const
+                            : undefined;
 
                         const results = await wildDuckClient.search({
                             query: {
@@ -632,7 +610,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 since:         args.since,
                                 header:        args.header,
                             },
-                            mailboxes,
+                            mailbox:    mailboxParam,
+                            searchable: searchableParam,
                         });
 
                         // Stryker disable next-line ConditionalExpression,StringLiteral: empty results vs found results

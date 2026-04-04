@@ -1350,7 +1350,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('No emails found');
         });
 
-        test('should search CleanInbox and Archive when no mailbox specified (all-regular default)', async () => {
+        test('should use searchable=true and no mailbox when no mailbox specified (all-regular default)', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
@@ -1358,46 +1358,30 @@ describe('createEmailMCPServer', () => {
 
             expect(mockSearch).toHaveBeenCalledTimes(1);
             const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.mailboxes).toContain('CleanInbox');
-            expect(params.mailboxes).toContain('Archive');
-            expect(params.mailboxes).not.toContain('Sent Mail');
-            expect(params.mailboxes).not.toContain('Junk');
-            expect(params.mailboxes).not.toContain('Trash');
-            expect(params.mailboxes).not.toContain('Drafts');
-            expect(params.mailboxes).not.toContain('Quarantine');
+            expect(params.searchable).toBe(true);
+            expect(params.mailbox).toBeUndefined();
         });
 
-        test("should search CleanInbox and Archive when mailbox is 'all-regular'", async () => {
+        test("should use searchable=true and no mailbox when mailbox is 'all-regular'", async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ mailbox: 'all-regular' });
 
             const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.mailboxes).toContain('CleanInbox');
-            expect(params.mailboxes).toContain('Archive');
-            expect(params.mailboxes).not.toContain('Sent Mail');
-            expect(params.mailboxes).not.toContain('Junk');
-            expect(params.mailboxes).not.toContain('Trash');
-            expect(params.mailboxes).not.toContain('Drafts');
-            expect(params.mailboxes).not.toContain('Quarantine');
+            expect(params.searchable).toBe(true);
+            expect(params.mailbox).toBeUndefined();
         });
 
-        test("should search all folders when mailbox is 'all'", async () => {
+        test("should omit mailbox and searchable when mailbox is 'all'", async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
             const handler = getToolHandler(server, 'searchEmail');
 
             await handler({ mailbox: 'all' });
 
             const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.mailboxes).toContain('CleanInbox');
-            expect(params.mailboxes).toContain('Archive');
-            expect(params.mailboxes).toContain('Sent Mail');
-            expect(params.mailboxes).toContain('Junk');
-            expect(params.mailboxes).toContain('Trash');
-            expect(params.mailboxes).toContain('Drafts');
-            expect(params.mailboxes).toContain('Quarantine');
-            expect(params.mailboxes).toContain('Review');
+            expect(params.mailbox).toBeUndefined();
+            expect(params.searchable).toBeUndefined();
         });
 
         test('should search only specified mailbox when a specific folder name is provided', async () => {
@@ -1407,7 +1391,8 @@ describe('createEmailMCPServer', () => {
             await handler({ mailbox: 'Archive' });
 
             const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.mailboxes).toEqual(['Archive']);
+            expect(params.mailbox).toBe('Archive');
+            expect(params.searchable).toBeUndefined();
         });
 
         test('should pass correspondent to search query', async () => {

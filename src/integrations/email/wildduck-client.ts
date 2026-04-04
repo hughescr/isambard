@@ -51,8 +51,9 @@ export interface SearchCriteria {
 }
 
 export interface WildDuckSearchParams {
-    query?:     SearchCriteria
-    mailboxes?: string[]
+    query?:      SearchCriteria
+    mailbox?:    string
+    searchable?: boolean
 }
 
 export interface WildDuckSearchResult {
@@ -323,8 +324,8 @@ export class WildDuckClient {
     async searchByKeyword(mailboxPath: string, keyword: string): Promise<number[]> {
         const results = await this.search({
             // Stryker disable next-line ObjectLiteral: query object is configuration wiring
-            query:     { keyword },
-            mailboxes: [mailboxPath],
+            query:   { keyword },
+            mailbox: mailboxPath,
         });
         const uids = results.map((result) => {
             const colonIdx = result.message.lastIndexOf(':');
@@ -555,18 +556,18 @@ export class WildDuckClient {
             searchParams.set('keyword', query.keyword);
         }
 
-        // Map mailbox names to WildDuck IDs
-        // Stryker disable next-line EqualityOperator,ConditionalExpression: length > 0 and length >= 0 are equivalent since the loop body runs 0 times for empty arrays; ConditionalExpression → true would still run 0 times when array is empty
-        if(params.mailboxes && params.mailboxes.length > 0) {
-            for(const folderName of params.mailboxes) {
-                const mailboxId = this.reverseMailboxMap.get(folderName);
-                if(mailboxId) {
-                    searchParams.append('mailbox', mailboxId);
-                } else {
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.warn({ folderName, msg: 'WildDuck search: unknown mailbox name skipped' });
-                }
+        // Map mailbox name to WildDuck ID
+        if(params.mailbox) {
+            const mailboxId = this.reverseMailboxMap.get(params.mailbox);
+            if(mailboxId) {
+                searchParams.set('mailbox', mailboxId);
+            } else {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ folderName: params.mailbox, msg: 'WildDuck search: unknown mailbox name skipped' });
             }
+        }
+        if(params.searchable) {
+            searchParams.set('searchable', 'true');
         }
 
         const url = `/users/me/search?${searchParams.toString()}`;

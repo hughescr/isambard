@@ -8,10 +8,6 @@ const MAX_SUBJECT_CHARS = 100;
 /** Default maximum messages to return */
 const DEFAULT_MAX_MESSAGES = 10;
 
-/** Mailboxes to search for email history */
-// Stryker disable next-line StringLiteral,ArrayDeclaration: mailbox names are static configuration
-const SEARCH_MAILBOXES = ['CleanInbox', 'Sent Mail'];
-
 /**
  * Extract the folder name from a WildDuck search result message field.
  * The message field is in the format 'FolderName:uid'.
@@ -91,8 +87,8 @@ export class EmailHistoryProvider implements PlatformHistoryProvider {
         const maxMessages = params.maxMessages ?? DEFAULT_MAX_MESSAGES;
 
         const searchParams: WildDuckSearchParams = {
-            query:     { correspondent: params.identifier },
-            mailboxes: SEARCH_MAILBOXES,
+            query:      { correspondent: params.identifier },
+            searchable: true,
         };
 
         let results: WildDuckSearchResult[];

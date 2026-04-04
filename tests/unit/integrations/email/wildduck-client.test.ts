@@ -279,16 +279,15 @@ describe('WildDuckClient', () => {
             expect(searchUrl).toContain('datestart=2025-01-01');
         });
 
-        test('maps mailbox names to WildDuck IDs in query params', async () => {
+        test('maps mailbox name to WildDuck ID in query params', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ mailboxes: ['CleanInbox', 'Archive'] });
+            await client.search({ mailbox: 'CleanInbox' });
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(searchUrl).toContain('mailbox=mbx-clean');
-            expect(searchUrl).toContain('mailbox=mbx-archive');
         });
 
         test('skips unknown mailbox names when mapping', async () => {
@@ -297,19 +296,18 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
             // 'AllMail' is not in our mailbox map
-            await client.search({ mailboxes: ['CleanInbox', 'AllMail'] });
+            await client.search({ mailbox: 'AllMail' });
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(searchUrl).toContain('mailbox=mbx-clean');
-            expect(searchUrl).not.toContain('AllMail');
+            expect(searchUrl).not.toContain('mailbox=');
         });
 
-        test('logs a warning for each unknown mailbox name skipped', async () => {
+        test('logs a warning for unknown mailbox name skipped', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ mailboxes: ['CleanInbox', 'UnknownBox'] });
+            await client.search({ mailbox: 'UnknownBox' });
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 folderName: 'UnknownBox',
@@ -321,9 +319,31 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ mailboxes: ['CleanInbox', 'Archive'] });
+            await client.search({ mailbox: 'CleanInbox' });
 
             expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('includes searchable=true when searchable option is set', async () => {
+            const client = await makeSearchInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.search({ searchable: true });
+
+            const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(searchUrl).toContain('searchable=true');
+        });
+
+        test('does not include searchable param when searchable is undefined', async () => {
+            const client = await makeSearchInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.search({});
+
+            const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(searchUrl).not.toContain('searchable=');
         });
 
         test('maps search result mailbox ID to folder name in "FolderName:UID" format', async () => {
@@ -450,12 +470,12 @@ describe('WildDuckClient', () => {
             expect(results).toHaveLength(0);
         });
 
-        test('does not include mailbox param when mailboxes list is empty', async () => {
+        test('does not include mailbox param when mailbox is undefined', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ mailboxes: [] });
+            await client.search({});
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(searchUrl).not.toContain('mailbox=');
@@ -478,7 +498,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ mailboxes: ['CleanInbox'] });
+            await client.search({ mailbox: 'CleanInbox' });
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(options.method).toBe('GET');
@@ -1744,6 +1764,7 @@ describe('WildDuckClient', () => {
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(searchUrl).toContain('keyword=TestFlag');
             expect(searchUrl).toContain('mailbox=mbx-clean');
+            expect(searchUrl).not.toContain('searchable=');
             // Verify UIDs are correctly parsed (separator between mailbox and UID)
             expect(uids).toEqual([42, 99]);
         });

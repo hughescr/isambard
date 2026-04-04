@@ -44,7 +44,7 @@ describe('EmailHistoryProvider', () => {
         expect(provider.platform).toBe('email');
     });
 
-    test('searches by correspondent with CleanInbox and Sent Mail mailboxes', async () => {
+    test('searches by correspondent with searchable=true (all regular mailboxes)', async () => {
         mockSearch.mockResolvedValueOnce([]);
 
         await provider.fetchHistory({ identifier: 'alice@example.com' });
@@ -52,8 +52,8 @@ describe('EmailHistoryProvider', () => {
         expect(mockSearch).toHaveBeenCalledTimes(1);
         const [params] = mockSearch.mock.calls[0] as [WildDuckSearchParams];
         expect(params.query?.correspondent).toBe('alice@example.com');
-        expect(params.mailboxes).toContain('CleanInbox');
-        expect(params.mailboxes).toContain('Sent Mail');
+        expect(params.searchable).toBe(true);
+        expect(params.mailbox).toBeUndefined();
     });
 
     test('returns empty array when search returns no results', async () => {
