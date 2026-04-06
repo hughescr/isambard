@@ -22,7 +22,7 @@ export { getTaskDirectoryPath } from './task-directory-copier';
 
 export interface TaskCleanupProcessorOptions {
     logger:         Logger
-    retentionDays?: number  // Default: 14
+    retentionDays?: number  // Default: 1
     deps?:          Partial<TaskCleanupDeps>  // For testing
 }
 
@@ -222,7 +222,7 @@ function getRetentionReason(
  * @returns TaskCleanupProcessor instance
  */
 export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions): TaskCleanupProcessor {
-    const { logger, retentionDays = 14, deps = {} } = options;
+    const { logger, retentionDays = 1, deps = {} } = options;
 
     // Dependency injection for testing
     const {

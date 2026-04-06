@@ -4,7 +4,7 @@
  * The task cleanup processor handles cleaning up old completed tasks during
  * session migration. It evaluates which tasks can be safely deleted based on:
  * - Task status (only completed tasks are candidates)
- * - Age (retention period, default 14 days)
+ * - Age (retention period, default 1 day)
  * - Dependencies (tasks that block active tasks must be retained)
  */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
@@ -91,9 +91,9 @@ describe('getTaskDirectoryPath', () => {
 describe('processTaskDirectory', () => {
     // Use a fixed timestamp for deterministic tests
     const NOW = new Date('2025-01-29T00:00:00.000Z').getTime();
-    const FOURTEEN_DAYS_AGO = new Date('2025-01-15T00:00:00.000Z').toISOString();
-    const FIFTEEN_DAYS_AGO = new Date('2025-01-14T00:00:00.000Z').toISOString();
-    const TEN_DAYS_AGO = new Date('2025-01-19T00:00:00.000Z').toISOString();
+    const ONE_DAY_AGO = new Date('2025-01-28T00:00:00.000Z').toISOString();
+    const TWO_DAYS_AGO = new Date('2025-01-27T00:00:00.000Z').toISOString();
+    const TWELVE_HOURS_AGO = new Date('2025-01-28T12:00:00.000Z').toISOString();
 
     beforeEach(() => {
         // Reset all mocks
@@ -108,7 +108,7 @@ describe('processTaskDirectory', () => {
     });
 
     describe('Basic Deletion', () => {
-        test('should delete old completed task (>14 days old)', async () => {
+        test('should delete old completed task (>1 day old)', async () => {
             const previousSessionId = sessionId('old-session');
             const newSessionId = sessionId('new-session');
 
@@ -116,7 +116,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -205,7 +205,7 @@ describe('processTaskDirectory', () => {
             );
         });
 
-        test('should retain recently completed task (<14 days old)', async () => {
+        test('should retain recently completed task (<1 day old)', async () => {
             const previousSessionId = sessionId('old-session');
             const newSessionId = sessionId('new-session');
             const destDir = getTaskDirectoryPath(newSessionId);
@@ -214,7 +214,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: TEN_DAYS_AGO },
+                metadata: { completedAt: TWELVE_HOURS_AGO },
             });
 
             // Setup mocks
@@ -230,7 +230,7 @@ describe('processTaskDirectory', () => {
 
             const result = await processor.processTaskDirectory(previousSessionId, newSessionId);
 
-            // Task should be retained (within 14 days)
+            // Task should be retained (within 1 day)
             expect(result.copied).toBe(1);
             expect(result.deleted).toBe(0);
             expect(mockWriteFile).toHaveBeenCalledWith(
@@ -239,15 +239,15 @@ describe('processTaskDirectory', () => {
             );
         });
 
-        test('should retain task exactly at 14 days boundary', async () => {
+        test('should retain task exactly at 1 day boundary', async () => {
             const previousSessionId = sessionId('old-session');
             const newSessionId = sessionId('new-session');
 
-            // Create task completed exactly 14 days ago
+            // Create task completed exactly 1 day ago
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: FOURTEEN_DAYS_AGO },
+                metadata: { completedAt: ONE_DAY_AGO },
             });
 
             // Setup mocks
@@ -263,7 +263,7 @@ describe('processTaskDirectory', () => {
 
             const result = await processor.processTaskDirectory(previousSessionId, newSessionId);
 
-            // Task at exactly 14 days should be retained (< not <=)
+            // Task at exactly 1 day should be retained (< not <=)
             expect(result.copied).toBe(1);
             expect(result.deleted).toBe(0);
         });
@@ -279,7 +279,7 @@ describe('processTaskDirectory', () => {
                 id:       '1',
                 status:   'completed',
                 blocks:   ['2'],
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             const task2 = createTask({
@@ -323,14 +323,14 @@ describe('processTaskDirectory', () => {
                 id:       '1',
                 status:   'completed',
                 blocks:   ['2'],
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             const task2 = createTask({
                 id:        '2',
                 status:    'completed',
                 blockedBy: ['1'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -367,7 +367,7 @@ describe('processTaskDirectory', () => {
                 id:       'A',
                 status:   'completed',
                 blocks:   ['B'],
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             const taskB = createTask({
@@ -375,7 +375,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['C'],
                 blockedBy: ['A'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskC = createTask({
@@ -422,7 +422,7 @@ describe('processTaskDirectory', () => {
                 id:       'A',
                 status:   'completed',
                 blocks:   ['B'],
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             const taskB = createTask({
@@ -430,14 +430,14 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['C'],
                 blockedBy: ['A'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskC = createTask({
                 id:        'C',
                 status:    'completed',
                 blockedBy: ['B'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -480,7 +480,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['B'],
                 blockedBy: ['B'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskB = createTask({
@@ -488,7 +488,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['A'],
                 blockedBy: ['A'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -527,7 +527,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['B'],
                 blockedBy: ['C'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskB = createTask({
@@ -535,7 +535,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['C'],
                 blockedBy: ['A'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskC = createTask({
@@ -543,7 +543,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['A'],
                 blockedBy: ['B'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -586,7 +586,7 @@ describe('processTaskDirectory', () => {
                 id:       '1',
                 status:   'completed',
                 blocks:   ['999'],
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -613,7 +613,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -682,7 +682,7 @@ describe('processTaskDirectory', () => {
             const fileStats = {
                 isDirectory: () => false,
                 isFile:      () => true,
-                mtime:       new Date(FIFTEEN_DAYS_AGO),
+                mtime:       new Date(TWO_DAYS_AGO),
             };
 
             // Setup mocks
@@ -706,7 +706,7 @@ describe('processTaskDirectory', () => {
             // Verify completedAt was added
             const writeCall = mockWriteFile.mock.calls[0];
             const writtenTask = JSON.parse(writeCall[1]);
-            expect(writtenTask.metadata.completedAt).toBe(FIFTEEN_DAYS_AGO);
+            expect(writtenTask.metadata.completedAt).toBe(TWO_DAYS_AGO);
         });
 
         test('should preserve existing completedAt', async () => {
@@ -716,7 +716,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: TEN_DAYS_AGO },
+                metadata: { completedAt: TWELVE_HOURS_AGO },
             });
 
             // Setup mocks
@@ -738,7 +738,7 @@ describe('processTaskDirectory', () => {
             // Verify completedAt was preserved
             const writeCall = mockWriteFile.mock.calls[0];
             const writtenTask = JSON.parse(writeCall[1]);
-            expect(writtenTask.metadata.completedAt).toBe(TEN_DAYS_AGO);
+            expect(writtenTask.metadata.completedAt).toBe(TWELVE_HOURS_AGO);
         });
 
         test('should filter out non-JSON files', async () => {
@@ -748,7 +748,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks - directory contains .json and other files
@@ -858,7 +858,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -1031,7 +1031,7 @@ describe('processTaskDirectory', () => {
             const task2 = createTask({
                 id:       '2',
                 status:   'completed',
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -1107,7 +1107,7 @@ describe('processTaskDirectory', () => {
             const task1 = createTask({
                 id:       '1',
                 status:   'completed',
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
@@ -1142,7 +1142,7 @@ describe('processTaskDirectory', () => {
                 id:       'A',
                 status:   'completed',
                 blocks:   ['B', 'C'],
-                metadata: { completedAt: FIFTEEN_DAYS_AGO },
+                metadata: { completedAt: TWO_DAYS_AGO },
             });
 
             const taskB = createTask({
@@ -1150,7 +1150,7 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['D'],
                 blockedBy: ['A'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskC = createTask({
@@ -1158,14 +1158,14 @@ describe('processTaskDirectory', () => {
                 status:    'completed',
                 blocks:    ['D'],
                 blockedBy: ['A'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             const taskD = createTask({
                 id:        'D',
                 status:    'completed',
                 blockedBy: ['B', 'C'],
-                metadata:  { completedAt: FIFTEEN_DAYS_AGO },
+                metadata:  { completedAt: TWO_DAYS_AGO },
             });
 
             // Setup mocks
