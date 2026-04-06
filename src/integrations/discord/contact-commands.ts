@@ -1,12 +1,9 @@
 import { logger } from '@hughescr/logger';
 import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
 import { z } from 'zod';
+import { GREEN, RED, AMBER } from './colors';
 import { ContactNotFoundError } from '@/errors';
 import { contactIdentifierSchema, type Contact, type ContactBackend, type ContactIdentifier, type PersonAllowlist, createContactId, generatePersonId, findAvailablePersonId } from '@/storage';
-
-const GREEN = 0x00_AA_00;
-const RED   = 0xFF_00_00;
-const AMBER = 0xFF_AA_00;
 
 /**
  * Format a list of contact identifiers into a human-readable string.

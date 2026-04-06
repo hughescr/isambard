@@ -2,6 +2,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { BLUE } from '../colors';
 import { createEmailMCPServer, type ActivityLogger } from '@/agent';
 import type { EmailConfig } from '@/config';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
@@ -189,7 +190,6 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,BooleanLiteral,ArrayDeclaration,ConditionalExpression: sendApprovalRequest callback is integration wiring
     const sendApprovalRequest = async (to: string, subject: string, draftUid: number, cc?: string[]): Promise<void> => {
-        const BLUE = 0x00_99_FF;
         const embed = new EmbedBuilder()
             .setTitle('Outbound Email Approval Required')
             .setColor(BLUE)

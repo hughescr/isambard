@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
-import { MessageFlags, SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
-import { type ContactBackend, type PersonAllowlist, createContactId  } from '@/storage';
+import { EmbedBuilder, MessageFlags, SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
+import { GREEN } from './colors';
+import { type ContactBackend, type ContactId, type PersonAllowlist, createContactId  } from '@/storage';
 
 /**
  * Build the /allowlist slash command with list, add, and remove subcommands.
@@ -87,6 +88,65 @@ export class AllowlistCommandHandler {
         }
     }
 
+    private async buildEntryFields(
+        entries:          { personId: ContactId, notes?: string }[],
+        contactCommandId: string | undefined
+    ): Promise<{ name: string, value: string }[]> {
+        // Stryker disable StringLiteral: Embed field names and formatting strings are UI configuration
+        const fields: { name: string, value: string }[] = [];
+        for(const entry of entries) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: loading contacts for display one-by-one
+            const contact = await this.contactBackend.getContact(entry.personId);
+            if(contact) {
+                const personLink = contactCommandId
+                    ? `</contact show:${contactCommandId}> \`${contact.personId}\``
+                    : `\`${contact.personId}\``;
+                const platforms = contact.identifiers.map(id => id.platform).join(', ');
+                const parts = [personLink, `Platforms: ${platforms}`];
+                if(entry.notes) {
+                    parts.push(`Allowlist: ${entry.notes}`);
+                }
+                if(contact.notes) {
+                    parts.push(`Contact: ${contact.notes}`);
+                }
+                fields.push({ name: contact.displayName, value: parts.join('\n') });
+            } else {
+                fields.push({ name: entry.personId, value: '_(contact not found)_' });
+            }
+        }
+        // Stryker restore StringLiteral
+        return fields;
+    }
+
+    private buildEmbeds(fields: { name: string, value: string }[], totalCount: number): EmbedBuilder[] {
+        const FIELDS_PER_EMBED = 25;
+        const embeds: EmbedBuilder[] = [];
+        for(let i = 0; i < fields.length; i += FIELDS_PER_EMBED) {
+            const chunk = fields.slice(i, i + FIELDS_PER_EMBED);
+            const embed = new EmbedBuilder().setColor(GREEN);
+            if(i === 0) {
+                // Stryker disable next-line StringLiteral,ConditionalExpression: Embed title/description are UI configuration
+                embed.setTitle('Allowlist');
+                // Stryker disable next-line StringLiteral,ConditionalExpression: Embed description is UI configuration
+                embed.setDescription(`${totalCount} allowed ${totalCount === 1 ? 'person' : 'people'}`);
+            }
+            for(const field of chunk) {
+                embed.addFields(field);
+            }
+            embeds.push(embed);
+        }
+        // Discord limits messages to 10 embeds (250 entries at 25 per embed)
+        const MAX_EMBEDS = 10;
+        if(embeds.length > MAX_EMBEDS) {
+            const shownCount = MAX_EMBEDS * FIELDS_PER_EMBED;
+            const omittedCount = totalCount - shownCount;
+            embeds.length = MAX_EMBEDS;
+            // Stryker disable next-line StringLiteral: Footer text is UI configuration
+            embeds[MAX_EMBEDS - 1].setFooter({ text: `… and ${omittedCount} more not shown` });
+        }
+        return embeds;
+    }
+
     private async handleList(interaction: ChatInputCommandInteraction): Promise<void> {
         // Stryker disable BlockStatement: try/catch is integration boundary
         try {
@@ -97,25 +157,14 @@ export class AllowlistCommandHandler {
                 return;
             }
 
-            const lines: string[] = [];
-            for(const entry of entries) {
-                // eslint-disable-next-line no-await-in-loop -- sequential: loading contacts for display one-by-one
-                const contact = await this.contactBackend.getContact(entry.personId);
-                if(contact) {
-                    const parts = [`\u2022 **${contact.displayName}** (${contact.identifiers.length} identifiers)`];
-                    if(entry.notes) {
-                        parts.push(`  Allowlist: ${entry.notes}`);
-                    }
-                    if(contact.notes) {
-                        parts.push(`  Contact: ${contact.notes}`);
-                    }
-                    lines.push(parts.join('\n'));
-                } else {
-                    lines.push(`\u2022 ${entry.personId} _(contact not found)_`);
-                }
-            }
+            // Look up /contact command ID from cache (populated at registration)
+            const contactCmd       = interaction.client.application.commands.cache.find(cmd => cmd.name === 'contact');
+            const contactCommandId = contactCmd?.id;
 
-            await interaction.editReply({ content: lines.join('\n') });
+            const fields = await this.buildEntryFields(entries, contactCommandId);
+            const embeds = this.buildEmbeds(fields, entries.length);
+
+            await interaction.editReply({ embeds });
         } catch (err: unknown) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log content is not behavior-affecting
             logger.error({ err, msg: 'Failed to list allowlist entries' });

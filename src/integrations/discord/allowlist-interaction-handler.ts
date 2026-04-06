@@ -9,11 +9,9 @@ import {
     type ButtonInteraction,
     type ModalSubmitInteraction
 } from 'discord.js';
+import { BRIGHT_GREEN, BLUE, RED } from './colors';
 import type { AllowlistSagaExecutor, AllowlistSagaStarter, SagaStepResult } from '@/services';
 import type { ContactBackend, Contact, ContactId } from '@/storage';
-
-const GREEN = 0x00_FF_00;
-const BLUE  = 0x00_99_FF;
 
 export interface AllowlistInteractionHandlerDeps {
     executor:       AllowlistSagaExecutor
@@ -206,7 +204,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                     .setTitle('Added to Allowlist \u2713')
                     // Stryker disable next-line StringLiteral,TemplateLiteral: embed description is UI configuration
                     .setDescription(`**${result.displayName}** has been added to the allowlist.`)
-                    .setColor(GREEN);
+                    .setColor(BRIGHT_GREEN);
                 await interaction.editReply({ embeds: [embed], components: [] });
                 break;
             }
@@ -294,7 +292,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 .setTitle('Error')
                 // Stryker disable next-line StringLiteral: error description is UI configuration
                 .setDescription('An error occurred processing the allowlist flow.')
-                .setColor(0xFF_00_00);
+                .setColor(RED);
             await interaction.editReply({ embeds: [embed], components: [] });
         } catch{
             /* best effort */

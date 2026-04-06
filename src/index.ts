@@ -743,7 +743,7 @@ export async function createApp(): Promise<App> {
             // Register slash commands (non-fatal — Discord may be connected but commands fail)
             // Stryker disable BlockStatement: Composition root — not unit-testable
             try {
-                await registerAllCommands(config.discord.botToken, config.discord.applicationId, commandBuilders);
+                await registerAllCommands(discordInfra.discordClient, commandBuilders);
             } catch (err) {
                 logger.warn({
                     error: err instanceof Error ? err.message : String(err),
