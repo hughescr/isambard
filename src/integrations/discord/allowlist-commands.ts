@@ -3,6 +3,11 @@ import { EmbedBuilder, MessageFlags, SlashCommandBuilder, InteractionContextType
 import { GREEN } from './colors';
 import { type ContactBackend, type ContactId, type PersonAllowlist, createContactId  } from '@/storage';
 
+// Stryker disable next-line ObjectLiteral: Platform emoji mapping is UI configuration
+const PLATFORM_EMOJI: Record<string, string> = { discord: '🤖', bsky: '🦋', email: '📩' };
+// Stryker disable next-line ArrayDeclaration: Platform filter list is UI configuration
+const EXCLUDED_PLATFORMS = new Set(['name', 'nickname']);
+
 /**
  * Build the /allowlist slash command with list, add, and remove subcommands.
  * The `person` option accepts a personId from the contacts system.
@@ -89,8 +94,7 @@ export class AllowlistCommandHandler {
     }
 
     private async buildEntryFields(
-        entries:          { personId: ContactId, notes?: string }[],
-        contactCommandId: string | undefined
+        entries: { personId: ContactId, notes?: string }[]
     ): Promise<{ name: string, value: string }[]> {
         // Stryker disable StringLiteral: Embed field names and formatting strings are UI configuration
         const fields: { name: string, value: string }[] = [];
@@ -98,18 +102,33 @@ export class AllowlistCommandHandler {
             // eslint-disable-next-line no-await-in-loop -- sequential: loading contacts for display one-by-one
             const contact = await this.contactBackend.getContact(entry.personId);
             if(contact) {
-                const personLink = contactCommandId
-                    ? `</contact show:${contactCommandId}> \`${contact.personId}\``
-                    : `\`${contact.personId}\``;
-                const platforms = contact.identifiers.map(id => id.platform).join(', ');
-                const parts = [personLink, `Platforms: ${platforms}`];
+                const personIdLine = `Person: \`${contact.personId}\``;
+                const uniquePlatforms = [...new Set(
+                    contact.identifiers
+                        .map(id => id.platform)
+                        .filter(p => !EXCLUDED_PLATFORMS.has(p))
+                )];
+                const platformDisplay = uniquePlatforms
+                    .map(p => (PLATFORM_EMOJI[p] ? `${PLATFORM_EMOJI[p]} ${p}` : p))
+                    .join('  ');
+                const parts = [personIdLine];
+                if(platformDisplay.length > 0) {
+                    parts.push(platformDisplay);
+                }
                 if(entry.notes) {
                     parts.push(`Allowlist: ${entry.notes}`);
                 }
                 if(contact.notes) {
                     parts.push(`Contact: ${contact.notes}`);
                 }
-                fields.push({ name: contact.displayName, value: parts.join('\n') });
+                const nicknames = contact.identifiers
+                    .filter(id => id.platform === 'nickname')
+                    .map(id => id.value);
+                const nicknameLabel = nicknames.length === 1 ? 'nickname' : 'nicknames';
+                const displayName = nicknames.length > 0
+                    ? `${contact.displayName} (${nicknameLabel}: ${nicknames.join(', ')})`
+                    : contact.displayName;
+                fields.push({ name: displayName, value: parts.join('\n') });
             } else {
                 fields.push({ name: entry.personId, value: '_(contact not found)_' });
             }
@@ -157,11 +176,7 @@ export class AllowlistCommandHandler {
                 return;
             }
 
-            // Look up /contact command ID from cache (populated at registration)
-            const contactCmd       = interaction.client.application.commands.cache.find(cmd => cmd.name === 'contact');
-            const contactCommandId = contactCmd?.id;
-
-            const fields = await this.buildEntryFields(entries, contactCommandId);
+            const fields = await this.buildEntryFields(entries);
             const embeds = this.buildEmbeds(fields, entries.length);
 
             await interaction.editReply({ embeds });
