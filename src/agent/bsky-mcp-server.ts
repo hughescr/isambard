@@ -3,9 +3,10 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpErrorResult, mcpJsonResult, mcpTextResult, checkServiceHealth, checkWriteServiceHealth } from './mcp-helpers';
-import type { BskyAllowlist, BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend, BskyDirectMessage } from '@/integrations/bsky';
+import type { BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend, BskyDirectMessage } from '@/integrations/bsky';
 import type { SendRateLimiter } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+import type { PersonAllowlist } from '@/storage';
 /** Shared pagination schema fields for feed tools that support checkpointing. */
 const FEED_PAGINATION_SCHEMA = {
     // Stryker disable next-line StringLiteral: describe() is documentation only
@@ -57,7 +58,7 @@ export interface BskyMCPServerOptions {
     client:               BlueskyClient
     checkpointManager?:   BskyCheckpointManager
     rateLimiter?:         SendRateLimiter
-    allowlist?:           BskyAllowlist
+    allowlist?:           PersonAllowlist
     rejectionBackend?:    BskyRejectionBackend
     sendApprovalRequest?: (text: string, targetHandle: string, parentUri: string, parentCid: string,
         rootUri?: string, rootCid?: string) => Promise<void>
@@ -503,7 +504,6 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         // Fetch parent post to determine the target author and resolve thread root
                         const parentPost   = await client.getPost(args.parentUri);
                         const targetHandle = parentPost.author.handle;
-                        const targetDid    = parentPost.author.did;
 
                         // Auto-resolve root: both explicit args must be present to override auto-resolved root.
                         // Treating them as an atomic pair prevents mixing a URI from args with a CID from replyRef.
@@ -516,8 +516,8 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
 
                         // Check if target is allowlisted (by handle or DID).
                         // Self-replies and missing allowlist are always allowed.
-                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-reply, no-allowlist, handle, and DID checks all needed
-                        const isAllowed = isSelfReply || !allowlist || allowlist.isAllowed(targetHandle) || allowlist.isAllowed(targetDid);
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-reply, no-allowlist, and handle check all needed
+                        const isAllowed = isSelfReply || !allowlist || allowlist.isAllowed('bsky', targetHandle);
 
                         if(isAllowed) {
                             // Allowlisted — send immediately
@@ -690,9 +690,9 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                         const isSelfDM = resolvedRecipients.length === 1 && resolvedRecipients[0]?.handle === client.ownHandle;
 
                         // Check if all recipients are allowlisted (by handle or DID)
-                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-DM, no-allowlist, handle, and DID checks all needed
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-DM, no-allowlist, and handle check all needed
                         const allAllowed = isSelfDM || !allowlist || resolvedRecipients.every(
-                            r => allowlist.isAllowed(r.handle) || allowlist.isAllowed(r.did)
+                            r => allowlist.isAllowed('bsky', r.handle)
                         );
 
                         const dids  = resolvedRecipients.map(r => r.did);

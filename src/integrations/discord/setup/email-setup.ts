@@ -4,11 +4,11 @@ import { logger } from '@hughescr/logger';
 import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { createEmailMCPServer, type ActivityLogger } from '@/agent';
 import type { EmailConfig } from '@/config';
+import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 import {
     EmailClassifier,
-    EmailAllowlist,
     EmailProcessor,
     WildDuckListener,
     ReviewHandler,
@@ -21,6 +21,7 @@ import {
     OutboundApprovalHandler
 } from '@/integrations/email';
 import type { ApprovalSagaBackend, ReconnectionLoop, ServiceHealthRegistry } from '@/services';
+import type { PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
@@ -33,40 +34,44 @@ function isSendableChannel(channel: unknown): channel is { send: (options: unkno
 // ---------------------------------------------------------------------------
 
 export interface EmailSetupOptions {
-    emailConfig:         EmailConfig
-    docClient:           DynamoDBDocumentClient
-    tableName:           string
+    emailConfig:                 EmailConfig
+    docClient:                   DynamoDBDocumentClient
+    tableName:                   string
     /** Discord client instance */
-    client:              Client
+    client:                      Client
     /** Admin Discord user ID for authorization checks */
-    adminDiscordUserId:  string
+    adminDiscordUserId:          string
     /** @internal Dependency injection for testing (e.g. fast sleep) */
-    _deps?:              { sleep?: (ms: number) => Promise<void> }
+    _deps?:                      { sleep?: (ms: number) => Promise<void> }
     /** Optional activity logger for recording approval events */
-    activityLogger?:     ActivityLogger
+    activityLogger?:             ActivityLogger
     /**
      * Pre-created WildDuckClient to reuse.
      * When provided, client creation and init() are skipped — the caller is
      * responsible for calling init() separately (e.g. as part of a reconnection loop).
      */
-    wildDuckClient?:     WildDuckClient
+    wildDuckClient?:             WildDuckClient
     /**
      * Optional service health registry for fast-fail guards in MCP tool handlers.
      */
-    healthRegistry?:     ServiceHealthRegistry
+    healthRegistry?:             ServiceHealthRegistry
     /**
      * Optional reconnection loop for email. When provided, the email MCP server can
      * trigger an immediate reconnection attempt on health-guard failures.
      */
-    reconnectionLoop?:   ReconnectionLoop
+    reconnectionLoop?:           ReconnectionLoop
     /**
      * Optional Discord capability facade.
      * When provided, admin channel notifications use the facade (with outbox fallback
      * when Discord is offline) instead of calling channel.send() directly.
      */
-    discordCapability?:  DiscordCapability
+    discordCapability?:          DiscordCapability
     /** Approval saga backend for durable approval workflows */
-    approvalSagaBackend: ApprovalSagaBackend
+    approvalSagaBackend:         ApprovalSagaBackend
+    /** Pre-loaded PersonAllowlist for gating outbound email recipients */
+    personAllowlist:             PersonAllowlist
+    /** Allowlist interaction handler for the saga-based allowlist flow */
+    allowlistInteractionHandler: AllowlistInteractionHandler
 }
 
 export interface EmailSetupResult {
@@ -75,8 +80,8 @@ export interface EmailSetupResult {
     emailMcpServer:          McpServerConfig
     outboundApprovalHandler: OutboundApprovalHandler
     wildDuckClient:          WildDuckClient
-    /** The email allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
-    allowlist:               EmailAllowlist
+    /** The person allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
+    allowlist:               PersonAllowlist
     /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
     adminChannelId:          ChannelId
     /** sendApprovalRequest callback — exposed for testing the isSendableChannel type guard */
@@ -101,16 +106,13 @@ export interface EmailSetupResult {
  * @returns Email components for lifecycle management
  */
 export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetupResult> {
-    const { emailConfig, docClient, tableName, client, adminDiscordUserId } = options;
+    const { emailConfig, client, adminDiscordUserId } = options;
     // Stryker disable next-line ObjectLiteral: Dependency injection for testability — sleep override is a no-op in production
     const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
-    // Create classifier, allowlist
+    // Create classifier; use the pre-loaded PersonAllowlist passed in by the caller
     const classifier = new EmailClassifier();
-    const allowlist  = new EmailAllowlist(docClient, tableName);
-
-    // Load allowlist from DynamoDB into memory cache
-    await allowlist.load();
+    const allowlist  = options.personAllowlist;
 
     // Use pre-created client if provided; otherwise create and init a new one.
     // When a pre-created client is passed in, the caller is responsible for having
@@ -146,7 +148,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 await sendToAdminChannel(
                     client,
                     emailConfig.adminDiscordChannelId,
-                    { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nUse \`/allowlist add ${email.from.address}\` to add to allowlist.` },
+                    { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nTo allowlist: first \`/contact add\` (if needed), then \`/allowlist add <personId>\`.` },
                     'Failed to send safe-but-not-allowlisted notification to admin channel',
                     options.discordCapability
                 );
@@ -177,7 +179,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
-    const reviewHandler = new ReviewHandler({ wildDuckClient, allowlist, adminDiscordUserId });
+    const reviewHandler = new ReviewHandler({ wildDuckClient, adminDiscordUserId, allowlistInteractionHandler: options.allowlistInteractionHandler });
 
     // Create rate limiter for outbound email
     // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
@@ -248,9 +250,9 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new OutboundApprovalHandler({
         wildDuckClient,
-        allowlist,
-        sagaBackend:    options.approvalSagaBackend,
-        activityLogger: options.activityLogger,
+        sagaBackend:                 options.approvalSagaBackend,
+        activityLogger:              options.activityLogger,
+        allowlistInteractionHandler: options.allowlistInteractionHandler,
     });
 
     // Create email MCP server for Claude agent

@@ -1,9 +1,6 @@
 // Client
 export { createDynamoDBClient } from './client';
 
-// Allowlist base
-export { DynamoAllowlist } from './allowlist-base';
-
 // Base repository
 export { BaseRepository } from './repositories/base';
 
@@ -18,3 +15,6 @@ export { withDynamoTimeout } from './dynamo-retry';
 
 // Contacts
 export * from './contacts';
+
+// Person Allowlist
+export { PersonAllowlist, type PersonAllowlistEntry } from './person-allowlist';

@@ -7,8 +7,9 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { mcpErrorResult, mcpTextResult, checkServiceHealth, checkWriteServiceHealth } from './mcp-helpers';
-import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter, type EmailAllowlist  } from '@/integrations/email';
+import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter  } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
 /**
  * Format an email address for display to Claude in MCP tool responses.
@@ -67,7 +68,7 @@ export interface EmailMCPServerOptions {
     /** Optional rate limiter for outbound email sends */
     rateLimiter?:           SendRateLimiter
     /** Optional email allowlist for outbound recipient gating */
-    allowlist?:             EmailAllowlist
+    allowlist?:             PersonAllowlist
     /** Optional callback to send outbound approval request to admin */
     sendApprovalRequest?:   (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
     /** Optional service health registry for fast-fail guards */
@@ -335,7 +336,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         isAllowedOverride?: boolean
     ): Promise<string> {
         // Stryker disable next-line ConditionalExpression,EqualityOperator,BooleanLiteral: isAllowedOverride false forces approval path; ?? false default unreachable when allowlist always provided
-        const isAllowed = isAllowedOverride ?? (allowlist?.isAllowed(toAddress) ?? false);
+        const isAllowed = isAllowedOverride ?? (allowlist?.isAllowed('email', toAddress) ?? false);
 
         if(isAllowed) {
             await wildDuckClient.submitMessage(EmailFolder.Drafts, draftUid);
@@ -710,7 +711,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
                         // Stryker disable next-line BooleanLiteral: ?? false unreachable when allowlist always provided
-                        const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed(addr.address) ?? false);
+                        const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed('email', addr.address) ?? false);
                         const toStr        = toAddresses.map(addr => addr.address).join(', ');
                         const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
                         return mcpTextResult(text);

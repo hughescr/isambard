@@ -11,3 +11,9 @@ export {
 
 // Backend
 export { ContactBackend } from './backend';
+
+// Utilities
+export { generatePersonId, findAvailablePersonId } from './utils';
+
+// Find or create helper
+export { findOrCreateContact } from './find-or-create';

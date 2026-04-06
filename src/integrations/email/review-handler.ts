@@ -1,16 +1,16 @@
 import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, EmbedBuilder  } from 'discord.js';
-import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
+import type { AllowlistSagaStarter } from '@/services';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 
 interface ReviewHandlerDeps {
-    wildDuckClient:     WildDuckClient
-    allowlist:          EmailAllowlist
-    adminDiscordUserId: string
+    wildDuckClient:              WildDuckClient
+    adminDiscordUserId:          string
+    allowlistInteractionHandler: AllowlistSagaStarter
 }
 
 /**
@@ -18,14 +18,14 @@ interface ReviewHandlerDeps {
  * Supports four actions: trash, junk, allow, and allow+allowlist.
  */
 export class ReviewHandler {
-    private readonly wildDuckClient:     WildDuckClient;
-    private readonly allowlist:          EmailAllowlist;
-    private readonly adminDiscordUserId: string;
+    private readonly wildDuckClient:              WildDuckClient;
+    private readonly adminDiscordUserId:          string;
+    private readonly allowlistInteractionHandler: AllowlistSagaStarter;
 
     constructor(deps: ReviewHandlerDeps) {
-        this.wildDuckClient     = deps.wildDuckClient;
-        this.allowlist          = deps.allowlist;
-        this.adminDiscordUserId = deps.adminDiscordUserId;
+        this.wildDuckClient              = deps.wildDuckClient;
+        this.adminDiscordUserId          = deps.adminDiscordUserId;
+        this.allowlistInteractionHandler = deps.allowlistInteractionHandler;
     }
 
     // eslint-disable-next-line complexity -- approval handler has inherent branching: allow/reject/allowlist x auth x error paths
@@ -164,36 +164,21 @@ export class ReviewHandler {
 
         await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.CleanInbox);
 
+        // Kick off allowlist saga with sender address. startFromApproval is called after deferUpdate
+        // so it uses followUp (not showModal) for the saga prompt.
+        const senderAddress = email.from.address;
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- name can be '', and '' should map to undefined (|| intentional)
+        const senderName    = email.from.name || undefined;
+        await this.allowlistInteractionHandler.startFromApproval(interaction, 'email', senderAddress, senderName);
+
         const updatedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration
-            .setTitle('Allowed + Added to allowlist')
+            .setTitle('Allowed \u2713')
             .setColor(GREEN);
 
-        // allowlist add — best-effort with Discord recovery message
-        // Stryker disable BlockStatement: try-catch wraps allowlist write — best-effort with recovery message
-        try {
-            await this.allowlist.addEntry({
-                email:   email.from.address,
-                ...(email.from.name ? { name: email.from.name } : {}),
-                addedAt: new Date().toISOString(),
-                // Stryker disable next-line StringLiteral: addedBy value is configuration
-                addedBy: 'discord-review',
-            });
-            await interaction.editReply({
-                embeds:     [updatedEmbed],
-                components: [],
-            });
-        } catch (error) {
-            const errMsg = error instanceof Error ? error.message : String(error);
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message is not behavior-affecting
-            logger.warn({ error: errMsg, email: email.from.address, msg: 'Failed to add sender to allowlist after allow' });
-            await interaction.editReply({
-                // Stryker disable next-line ObjectLiteral,StringLiteral: error recovery message
-                embeds:     [updatedEmbed],
-                // Stryker disable next-line ArrayDeclaration: empty components array removes buttons
-                components: [],
-                content:    `Email moved to CleanInbox, but failed to add to allowlist: ${errMsg}. Use \`/allowlist add ${email.from.address}\` to retry.`,
-            });
-        }
+        await interaction.editReply({
+            embeds:     [updatedEmbed],
+            components: [],
+        });
     }
 }

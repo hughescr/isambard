@@ -85,6 +85,18 @@ export {
     type ContactApprovalRequest
 } from './contact-commands';
 
+// Allowlist commands
+export {
+    AllowlistCommandHandler,
+    buildAllowlistCommand
+} from './allowlist-commands';
+
+// Allowlist interaction handler (saga-based flow)
+export {
+    AllowlistInteractionHandler,
+    type AllowlistInteractionHandlerDeps
+} from './allowlist-interaction-handler';
+
 // Consolidated slash command registration
 export {
     registerAllCommands

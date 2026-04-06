@@ -6,12 +6,11 @@ import {
     buildDeleteConfirmationEmbed,
     ContactCommandHandler,
     ContactApprovalHandler,
-    generatePersonId,
     type ContactApprovalRequest
 } from '../../../../src/integrations/discord/contact-commands';
 import { mockLogger } from '../../../setup';
 import { ContactNotFoundError, ContactLastIdentifierError } from '@/errors';
-import type { Contact, ContactBackend } from '@/storage';
+import type { Contact, ContactBackend, PersonAllowlist } from '@/storage';
 
 // ---------------------------------------------------------------------------
 // Test constants
@@ -107,36 +106,6 @@ function makeButtonInteraction(customId: string): {
     } as unknown as ButtonInteraction;
     return { interaction, deferUpdate, editReply };
 }
-
-// ---------------------------------------------------------------------------
-// generatePersonId tests
-// ---------------------------------------------------------------------------
-
-describe('generatePersonId()', () => {
-    test('lowercases and replaces spaces with hyphens', () => {
-        expect(generatePersonId('Alice Wonderland')).toBe('alice-wonderland');
-    });
-
-    test('handles multiple spaces', () => {
-        expect(generatePersonId('John   Doe')).toBe('john-doe');
-    });
-
-    test('strips leading and trailing hyphens', () => {
-        expect(generatePersonId(' Craig ')).toBe('craig');
-    });
-
-    test('replaces special characters with hyphens', () => {
-        expect(generatePersonId('O\'Brien')).toBe('o-brien');
-    });
-
-    test('collapses consecutive non-alphanumeric runs into single hyphen', () => {
-        expect(generatePersonId('Alice & Bob')).toBe('alice-bob');
-    });
-
-    test('handles already-lowercase single word', () => {
-        expect(generatePersonId('alice')).toBe('alice');
-    });
-});
 
 // ---------------------------------------------------------------------------
 // buildContactCommand tests
@@ -635,6 +604,7 @@ describe('ContactCommandHandler - link subcommand', () => {
         backend = createMockBackend();
         handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('calls addIdentifier with correct arguments', async () => {
@@ -685,6 +655,58 @@ describe('ContactCommandHandler - link subcommand', () => {
             expect.objectContaining({ content: expect.stringContaining('Failed to link') as unknown as string })
         );
     });
+
+    test('calls refreshPerson after successful addIdentifier', async () => {
+        const mockPersonAllowlist = {
+            refreshPerson: mock(async (): Promise<void> => {}),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const handlerWithAllowlist = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, undefined, mockPersonAllowlist);
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handlerWithAllowlist.handle(asChatInput);
+
+        expect((mockPersonAllowlist.refreshPerson as Mock<(...args: unknown[]) => Promise<void>>)).toHaveBeenCalledWith(expect.stringContaining('alice-wonderland'));
+    });
+
+    test('logs warning and does not throw when refreshPerson fails', async () => {
+        const mockPersonAllowlist = {
+            refreshPerson: mock(async (): Promise<void> => { throw new Error('refresh failed'); }),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const handlerWithAllowlist = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, undefined, mockPersonAllowlist);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handlerWithAllowlist.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Added') as unknown as string })
+        );
+        expect(mockLogger.warn).toHaveBeenCalled();
+    });
+
+    test('does not crash when personAllowlist is undefined', async () => {
+        // handler without 4th arg
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handler.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Added') as unknown as string })
+        );
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -699,6 +721,7 @@ describe('ContactCommandHandler - unlink subcommand', () => {
         backend = createMockBackend();
         handler = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID);
         mockLogger.error.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     test('calls removeIdentifier with correct arguments', async () => {
@@ -748,6 +771,43 @@ describe('ContactCommandHandler - unlink subcommand', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('Failed to remove') as unknown as string })
         );
+    });
+
+    test('calls refreshPerson after successful removeIdentifier', async () => {
+        const mockPersonAllowlist = {
+            refreshPerson: mock(async (): Promise<void> => {}),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const handlerWithAllowlist = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, undefined, mockPersonAllowlist);
+        const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'unlink', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handlerWithAllowlist.handle(asChatInput);
+
+        expect((mockPersonAllowlist.refreshPerson as Mock<(...args: unknown[]) => Promise<void>>)).toHaveBeenCalledWith(expect.stringContaining('alice-wonderland'));
+    });
+
+    test('logs warning and does not throw when refreshPerson fails on unlink', async () => {
+        const mockPersonAllowlist = {
+            refreshPerson: mock(async (): Promise<void> => { throw new Error('refresh failed'); }),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const handlerWithAllowlist = new ContactCommandHandler(backend as unknown as ContactBackend, ADMIN_USER_ID, undefined, mockPersonAllowlist);
+        const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'unlink', {
+            person:   'alice-wonderland',
+            platform: 'email',
+            id:       'alice@example.com',
+        });
+
+        await handlerWithAllowlist.handle(asChatInput);
+
+        expect(editReply).toHaveBeenCalledWith(
+            expect.objectContaining({ content: expect.stringContaining('Removed') as unknown as string })
+        );
+        expect(mockLogger.warn).toHaveBeenCalled();
     });
 });
 
@@ -1483,6 +1543,55 @@ describe('ContactApprovalHandler - delete confirmation', () => {
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('error occurred') as unknown as string })
         );
+    });
+
+    test('calls removePerson after successful deleteContact', async () => {
+        const mockPersonAllowlist = {
+            refreshPerson: mock(async (): Promise<void> => {}),
+            removePerson:  mock(async (): Promise<void> => {}),
+        } as unknown as PersonAllowlist;
+        const handlerWithAllowlist = new ContactApprovalHandler(backend as unknown as ContactBackend, mockPersonAllowlist);
+        const uuid = 'delete-allowlist-uuid';
+        handlerWithAllowlist.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+
+        await handlerWithAllowlist.handleButton(interaction);
+
+        expect((mockPersonAllowlist.removePerson as Mock<(...args: unknown[]) => Promise<void>>)).toHaveBeenCalledWith(SAMPLE_CONTACT.personId);
+    });
+
+    test('logs warning and does not throw when removePerson fails', async () => {
+        const mockPersonAllowlist = {
+            refreshPerson: mock(async (): Promise<void> => {}),
+            removePerson:  mock(async (): Promise<void> => { throw new Error('remove failed'); }),
+        } as unknown as PersonAllowlist;
+        const handlerWithAllowlist = new ContactApprovalHandler(backend as unknown as ContactBackend, mockPersonAllowlist);
+        const uuid = 'delete-allowlist-fail-uuid';
+        handlerWithAllowlist.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction, editReply } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+
+        await handlerWithAllowlist.handleButton(interaction);
+
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toContain('Deleted');
+        expect(mockLogger.warn).toHaveBeenCalled();
+    });
+
+    test('does not crash when personAllowlist is undefined in ContactApprovalHandler', async () => {
+        // handler without 2nd arg (personAllowlist undefined)
+        const uuid = 'delete-no-allowlist-uuid';
+        handler.storePendingDeletion(uuid, SAMPLE_CONTACT.personId);
+
+        const { interaction, editReply } = makeButtonInteraction(`contact-delete-confirm:${uuid}`);
+
+        await handler.handleButton(interaction);
+
+        const callArgs = (editReply.mock.calls[0] as [{ embeds: EmbedBuilder[] }])[0];
+        const title    = callArgs.embeds[0].toJSON().title;
+        expect(title).toContain('Deleted');
     });
 });
 

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on cast values for defensive access */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
-import type { EmailAllowlist } from '../../../../src/integrations/email/allowlist';
+import type { AllowlistInteractionHandler } from '../../../../src/integrations/discord/allowlist-interaction-handler';
 import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
 import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
@@ -84,19 +84,20 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
         getMessage:            mock(async () => ({ id: 42, to: [{ address: 'recipient@example.com' }] })),
     } as unknown as WildDuckClient;
 
-    const mockAllowlist: EmailAllowlist = {
-        addEntry:  mock(async () => { /* intentionally empty */ }),
-        isAllowed: mock(() => false),
-    } as unknown as EmailAllowlist;
-
     const mockSagaBackend: ApprovalSagaBackend = {
         create: mock(async () => { /* intentionally empty */ }),
     } as unknown as ApprovalSagaBackend;
 
+    const mockAllowlistInteractionHandler = {
+        startFromApproval: mock(async () => ({ allowlistSuffix: '' })),
+        handleButton:      mock(async () => {}),
+        handleModalSubmit: mock(async () => {}),
+    } as unknown as AllowlistInteractionHandler;
+
     return {
-        wildDuckClient: mockWildDuck,
-        allowlist:      mockAllowlist,
-        sagaBackend:    mockSagaBackend,
+        wildDuckClient:              mockWildDuck,
+        sagaBackend:                 mockSagaBackend,
+        allowlistInteractionHandler: mockAllowlistInteractionHandler,
         ...overrides,
     };
 }
@@ -177,14 +178,14 @@ describe('OutboundApprovalHandler', () => {
                 expect(createArg.params.uid).toBe(99);
             });
 
-            test('should NOT add recipient to allowlist on plain approve', async () => {
+            test('should NOT call allowlist interaction handler on plain approve', async () => {
                 const deps    = makeDeps();
                 const handler = new OutboundApprovalHandler(deps);
                 const { interaction } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
 
-                expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
             test('should show "Approved ✓" embed in green after successful approve', async () => {
@@ -665,21 +666,18 @@ describe('OutboundApprovalHandler', () => {
             expect(createArg.params.uid).toBe(99);
         });
 
-        test('should add each selected recipient to allowlist', async () => {
+        test('should create saga and kick off allowlist saga for each selected recipient (person-based saga flow)', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com', 'b@example.com']);
 
             await handler.handleSelectMenu(interaction);
 
-            expect(deps.allowlist.addEntry).toHaveBeenCalledTimes(2);
-            const firstArg = (deps.allowlist.addEntry as ReturnType<typeof mock>).mock.calls[0]?.[0];
-            expect(firstArg.email).toBe('a@example.com');
-            const secondArg = (deps.allowlist.addEntry as ReturnType<typeof mock>).mock.calls[1]?.[0];
-            expect(secondArg.email).toBe('b@example.com');
+            expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+            expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenCalledTimes(2);
         });
 
-        test('should create saga without adding to allowlist when no recipients selected', async () => {
+        test('should create saga and not call startFromApproval when no recipients selected', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
             const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', []);
@@ -687,19 +685,7 @@ describe('OutboundApprovalHandler', () => {
             await handler.handleSelectMenu(interaction);
 
             expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
-            expect(deps.allowlist.addEntry).not.toHaveBeenCalled();
-        });
-
-        test('should log warning but still succeed when allowlist.addEntry fails for one recipient', async () => {
-            const deps = makeDeps();
-            (deps.allowlist.addEntry as ReturnType<typeof mock>).mockRejectedValue(new Error('allowlist write failed'));
-            const handler = new OutboundApprovalHandler(deps);
-            const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['addr@example.com']);
-
-            expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
-            expect(mockLogger.warn).toHaveBeenCalled();
-            // Edit reply still called to show success
-            expect(editReply).toHaveBeenCalledTimes(1);
+            expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
         });
 
         test('should show error editReply when sagaBackend.create throws', async () => {

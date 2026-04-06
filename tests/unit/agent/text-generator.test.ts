@@ -88,6 +88,10 @@ describe('generateText', () => {
 
     afterEach(() => {
         resetMockFs();
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
     describe('successful text generation', () => {
@@ -404,6 +408,10 @@ describe('getTmpDir cached-rejection behavior', () => {
 
     afterEach(() => {
         resetMockFs();
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
     test('resetTmpDirForTesting clears cached tmpDirPromise so mkdtemp is called again', async () => {
@@ -466,6 +474,10 @@ describe('generateTextWithSystemPrompt', () => {
 
     afterEach(() => {
         resetMockFs();
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
     describe('prompt formatting', () => {

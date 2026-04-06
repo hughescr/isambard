@@ -2,21 +2,11 @@ import { logger } from '@hughescr/logger';
 import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
 import { z } from 'zod';
 import { ContactNotFoundError } from '@/errors';
-import { contactIdentifierSchema, type Contact, type ContactBackend, type ContactIdentifier, createContactId } from '@/storage';
+import { contactIdentifierSchema, type Contact, type ContactBackend, type ContactIdentifier, type PersonAllowlist, createContactId, generatePersonId, findAvailablePersonId } from '@/storage';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 const AMBER = 0xFF_AA_00;
-
-/**
- * Generate a kebab-case personId from a display name.
- * E.g., "Alice Wonderland" → "alice-wonderland"
- *
- * @internal Only exported for unit testing; not part of the public API.
- */
-export function generatePersonId(displayName: string): string {
-    return displayName.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-|-$/g, '');
-}
 
 /**
  * Format a list of contact identifiers into a human-readable string.
@@ -332,20 +322,6 @@ export function buildDeleteConfirmationEmbed(contact: Contact, uuid: string): {
 }
 
 /**
- * Find an available personId by appending -2, -3, etc. until no collision is found.
- */
-async function findAvailablePersonId(backend: ContactBackend, baseId: string): Promise<ReturnType<typeof createContactId>> {
-    let candidateId = baseId;
-    let suffix = 2;
-    // eslint-disable-next-line no-await-in-loop -- sequential: each check depends on the prior candidate
-    while(await backend.getContact(createContactId(candidateId))) {
-        candidateId = `${baseId}-${suffix}`;
-        suffix++;
-    }
-    return createContactId(candidateId);
-}
-
-/**
  * Build a "Request Not Found" embed for already-processed or expired requests.
  */
 function buildNotFoundEmbed(): EmbedBuilder {
@@ -365,11 +341,13 @@ export class ContactCommandHandler {
     private readonly backend:            ContactBackend;
     private readonly adminDiscordUserId: string;
     private readonly approvalHandler?:   ContactApprovalHandler;
+    private readonly personAllowlist?:   PersonAllowlist;
 
-    constructor(backend: ContactBackend, adminDiscordUserId: string, approvalHandler?: ContactApprovalHandler) {
+    constructor(backend: ContactBackend, adminDiscordUserId: string, approvalHandler?: ContactApprovalHandler, personAllowlist?: PersonAllowlist) {
         this.backend            = backend;
         this.adminDiscordUserId = adminDiscordUserId;
         this.approvalHandler    = approvalHandler;
+        this.personAllowlist    = personAllowlist;
     }
 
     async handle(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -491,6 +469,15 @@ export class ContactCommandHandler {
             const personId   = createContactId(personRaw);
             const identifier: ContactIdentifier = contactIdentifierSchema.parse({ platform: platformRaw, value: idValue });
             await this.backend.addIdentifier(personId, identifier);
+            // Best-effort allowlist cache refresh
+            // Stryker disable BlockStatement: defensive catch — refresh failure must not prevent success reply
+            try {
+                await this.personAllowlist?.refreshPerson(personId);
+            } catch (error) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after link' });
+            }
+            // Stryker restore BlockStatement
             // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Added ${platformRaw}: ${idValue} to contact \`${personRaw}\`.` });
         } catch (err: unknown) {
@@ -512,6 +499,15 @@ export class ContactCommandHandler {
         try {
             const personId = createContactId(personRaw);
             await this.backend.removeIdentifier(personId, platformRaw as Parameters<ContactBackend['removeIdentifier']>[1], idValue);
+            // Best-effort allowlist cache refresh
+            // Stryker disable BlockStatement: defensive catch — refresh failure must not prevent success reply
+            try {
+                await this.personAllowlist?.refreshPerson(personId);
+            } catch (error) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after unlink' });
+            }
+            // Stryker restore BlockStatement
             // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `Removed ${platformRaw}: ${idValue} from contact \`${personRaw}\`.` });
         } catch (err: unknown) {
@@ -702,11 +698,13 @@ export class ContactApprovalHandler {
     private readonly backend:          ContactBackend;
     private readonly pendingRequests:  Map<string, ContactApprovalRequest>;
     private readonly pendingDeletions: Map<string, Contact['personId']>;
+    private readonly personAllowlist?: PersonAllowlist;
 
-    constructor(backend: ContactBackend) {
+    constructor(backend: ContactBackend, personAllowlist?: PersonAllowlist) {
         this.backend          = backend;
         this.pendingRequests  = new Map();
         this.pendingDeletions = new Map();
+        this.personAllowlist  = personAllowlist;
     }
 
     /**
@@ -842,6 +840,15 @@ export class ContactApprovalHandler {
                 await this.backend.putContact({ ...existing, notes: request.notes, updatedAt: now });
             }
         }
+        // Best-effort allowlist cache refresh after identifier changes
+        // Stryker disable BlockStatement: try/catch is defensive — refresh failure must not block approval
+        try {
+            await this.personAllowlist?.refreshPerson(personId);
+        } catch (error) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err: error, personId, msg: 'Failed to refresh allowlist cache after contact update' });
+        }
+        // Stryker restore BlockStatement
         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ personId, msg: 'Contact updated via admin approval' });
     }
@@ -884,6 +891,16 @@ export class ContactApprovalHandler {
 
         await this.backend.deleteContact(personId);
         this.pendingDeletions.delete(uuid);
+
+        // Auto-remove from allowlist (best-effort)
+        // Stryker disable BlockStatement: defensive catch — allowlist removal failure must not prevent success reply
+        try {
+            await this.personAllowlist?.removePerson(personId);
+        } catch (error) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err: error, personId, msg: 'Failed to remove person from allowlist after contact deletion' });
+        }
+        // Stryker restore BlockStatement
 
         const deletedEmbed = new EmbedBuilder()
             // Stryker disable next-line StringLiteral: UI label is configuration

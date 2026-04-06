@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import { mockGenerateText, mockLogger } from '../../../../setup';
+import { mockGenerateText, mockLogger, originalGenerateText } from '../../../../setup';
 import {
     createDynamicStatusGenerator,
     resetCooldownState,
@@ -128,6 +128,8 @@ describe('DynamicStatusGenerator', () => {
         resetCooldownState();
         // Reset system time in case any test used setSystemTime
         setSystemTime();
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
     });
 
     describe('generateSynopsis', () => {

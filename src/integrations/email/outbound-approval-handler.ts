@@ -3,9 +3,9 @@ import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, EmbedBuilder, ActionRowBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder  } from 'discord.js';
 import { chain } from 'lodash-es';
 import type { ActivityLogger } from '@/agent';
-import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
+import type { AllowlistSagaStarter } from '@/services';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
@@ -33,10 +33,10 @@ export interface SagaWriter {
 }
 
 export interface OutboundApprovalHandlerDeps {
-    wildDuckClient:  WildDuckClient
-    allowlist:       EmailAllowlist
-    sagaBackend:     SagaWriter
-    activityLogger?: ActivityLogger
+    wildDuckClient:              WildDuckClient
+    sagaBackend:                 SagaWriter
+    activityLogger?:             ActivityLogger
+    allowlistInteractionHandler: AllowlistSagaStarter
 }
 
 /**
@@ -58,16 +58,16 @@ export interface OutboundApprovalHandlerDeps {
  * Discord channel-level ACL is the enforcement boundary.
  */
 export class OutboundApprovalHandler {
-    private readonly wildDuckClient:  WildDuckClient;
-    private readonly allowlist:       EmailAllowlist;
-    private readonly sagaBackend:     SagaWriter;
-    private readonly activityLogger?: ActivityLogger;
+    private readonly wildDuckClient:              WildDuckClient;
+    private readonly sagaBackend:                 SagaWriter;
+    private readonly activityLogger?:             ActivityLogger;
+    private readonly allowlistInteractionHandler: AllowlistSagaStarter;
 
     constructor(deps: OutboundApprovalHandlerDeps) {
-        this.wildDuckClient  = deps.wildDuckClient;
-        this.allowlist       = deps.allowlist;
-        this.sagaBackend     = deps.sagaBackend;
-        this.activityLogger  = deps.activityLogger;
+        this.wildDuckClient              = deps.wildDuckClient;
+        this.sagaBackend                 = deps.sagaBackend;
+        this.activityLogger              = deps.activityLogger;
+        this.allowlistInteractionHandler = deps.allowlistInteractionHandler;
     }
 
     async handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -248,8 +248,6 @@ export class OutboundApprovalHandler {
 
         // Stryker disable BlockStatement: try-catch wraps select menu handler - error handling
         try {
-            const selectedRecipients = interaction.values;
-
             // Rate limiter is intentionally not incremented here — Craig's manual approval
             // is itself the rate control mechanism for non-allowlisted sends.
 
@@ -268,22 +266,11 @@ export class OutboundApprovalHandler {
             // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
             void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch(() => undefined);
 
-            // Add selected recipients to allowlist (best-effort)
-            for(const email of selectedRecipients) {
-                // Stryker disable BlockStatement: try-catch wraps allowlist write - best-effort
-                try {
-                    // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB write per recipient
-                    await this.allowlist.addEntry({
-                        email,
-                        addedAt: new Date().toISOString(),
-                        // Stryker disable next-line StringLiteral: addedBy value is configuration
-                        addedBy: 'outbound-approval',
-                    });
-                } catch (error) {
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.warn({ err: error, uid, email, msg: 'Failed to add recipient to allowlist' });
-                }
-                // Stryker restore BlockStatement
+            // Kick off the allowlist saga for each selected recipient address.
+            // Uses followUp (not showModal) since deferUpdate was already called.
+            for(const emailAddress of interaction.values) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: each saga start depends on the prior completing before the next followUp
+                await this.allowlistInteractionHandler.startFromApproval(interaction, 'email', emailAddress);
             }
 
             const updatedEmbed = new EmbedBuilder()

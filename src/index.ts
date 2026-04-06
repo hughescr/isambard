@@ -11,9 +11,10 @@ import { createStorageLayer, createContextLayer, createDiscordInfrastructure, cr
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { AllowlistCommandHandler, buildAllowlistCommand, EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
-import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
+import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
+import { PersonAllowlist } from '@/storage';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -95,6 +96,27 @@ export async function createApp(): Promise<App> {
     // Activity logger (always available — uses memoryBackend)
     const activityLogger = createActivityLogger(storage.memoryBackend);
 
+    // Create unified PersonAllowlist singleton (always available — shared by email + bsky)
+    const personAllowlist = new PersonAllowlist(storage.docClient, storage.tableName, storage.contactBackend);
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Loading person allowlist...');
+    await personAllowlist.load();
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Person allowlist loaded');
+
+    // Create AllowlistSagaBackend, AllowlistSagaExecutor, and AllowlistInteractionHandler.
+    // These are shared between email and bsky approval flows to start the allowlist saga.
+    const allowlistSagaBackend = new AllowlistSagaBackend(storage.docClient, storage.tableName);
+    const allowlistSagaExecutor = new AllowlistSagaExecutor({
+        contactBackend: storage.contactBackend,
+        personAllowlist,
+        allowlistSagaBackend,
+    });
+    const allowlistInteractionHandler = new AllowlistInteractionHandler({
+        executor:       allowlistSagaExecutor,
+        contactBackend: storage.contactBackend,
+    });
+
     // Set up email integration if email config is present (conditional — non-fatal)
     // Must happen before contextLayer so the email service can be wired into the perch prompt
     //
@@ -154,6 +176,8 @@ export async function createApp(): Promise<App> {
                 reconnectionLoop:   emailReconnectionLoop,
                 discordCapability,
                 approvalSagaBackend,
+                personAllowlist,
+                allowlistInteractionHandler,
             });
         } catch (err) {
             // Non-WildDuck setup failure (e.g. allowlist DynamoDB load) — log and skip email.
@@ -264,6 +288,8 @@ export async function createApp(): Promise<App> {
                 activityLogger,
                 discordCapability,
                 approvalSagaBackend,
+                personAllowlist,
+                allowlistInteractionHandler,
             });
         } catch (err) {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -456,7 +482,7 @@ export async function createApp(): Promise<App> {
     );
 
     // Set up Contacts approval handler (always available — DynamoDB is required)
-    const contactApprovalHandler = new ContactApprovalHandler(storage.contactBackend);
+    const contactApprovalHandler = new ContactApprovalHandler(storage.contactBackend, personAllowlist);
 
     // Build sendContactApprovalRequest callback — posts approval embed to admin channel
     // Only wired when email config provides the admin channel ID
@@ -542,30 +568,16 @@ export async function createApp(): Promise<App> {
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Identity context loaded');
 
-    // Construct allowlist command handler externally (after both email and bsky setups are done)
-    // so it can manage both the email and Bluesky allowlists from a single /allowlist command.
-    const activeBskyClient = bskyClient; // capture for closure — TypeScript narrowing
-    // Stryker disable BlockStatement,ConditionalExpression: Composition root — optional handle resolver closure not unit-testable
-    const resolveHandleToDid = activeBskyClient
-        ? async (handle: string): Promise<string | undefined> => {
-            const profile = await activeBskyClient.getProfile(handle);
-            return profile.did;
-        }
-        : undefined;
-    // Stryker restore BlockStatement,ConditionalExpression
-    // Stryker disable next-line ConditionalExpression: Composition root — optional allowlist handler wiring
-    const allowlistHandler = emailSetup
-        ? new AllowlistCommandHandler(
-            emailSetup.allowlist,
-            // Stryker disable next-line ConditionalExpression,ObjectLiteral: optional bsky allowlist wiring
-            bskySetup?.allowlist ?? { addEntry: async () => { /* no-op */ }, removeEntry: async () => { /* no-op */ }, list: async () => [] },
-            config.adminDiscordUserId,
-            resolveHandleToDid
-        )
-        : undefined;
+    // Construct allowlist command handler using the unified PersonAllowlist
+    // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
+    const allowlistHandler = new AllowlistCommandHandler(
+        personAllowlist,
+        storage.contactBackend,
+        config.adminDiscordUserId
+    );
 
     // Create contacts command handler
-    const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId, contactApprovalHandler);
+    const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId, contactApprovalHandler, personAllowlist);
 
     // Create Discord bot
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -586,6 +598,7 @@ export async function createApp(): Promise<App> {
         emailSetup,
         bskySetup,
         allowlistHandler,
+        allowlistInteractionHandler,
         calendarHandler,
         contactHandler:    contactCommandHandler,
         contactApprovalHandler,
@@ -599,12 +612,7 @@ export async function createApp(): Promise<App> {
 
     // Collect slash command builders for bulk registration at startup
     // Stryker disable BlockStatement,ArrayDeclaration: Composition root — command builder list construction is not unit-testable
-    const commandBuilders: (() => SlashCommandBuilder)[] = [buildCalendarCommand, buildContactCommand];
-    // Stryker disable next-line ConditionalExpression,BlockStatement: optional allowlist command — equivalent mutant for non-allowlist path
-    if(allowlistHandler) {
-        commandBuilders.push(buildAllowlistCommand);
-    }
-    // Stryker restore BlockStatement
+    const commandBuilders: (() => SlashCommandBuilder)[] = [buildCalendarCommand, buildContactCommand, buildAllowlistCommand];
 
     // Wire Discord client into the capability facade now (client may not be logged in yet,
     // but the facade checks isReady() before sending, so this is safe to set eagerly).

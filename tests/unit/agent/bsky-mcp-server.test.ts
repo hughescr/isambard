@@ -1,12 +1,13 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createBskyMCPServer } from '../../../src/agent/bsky-mcp-server';
-import type { BskyAllowlist, BskyCheckpointManager } from '../../../src/integrations/bsky';
+import type { BskyCheckpointManager } from '../../../src/integrations/bsky';
 import type { BlueskyClient } from '../../../src/integrations/bsky/client';
 import type { BskyEmbeddedRecord } from '../../../src/integrations/bsky/embeds';
 import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integrations/bsky/rejection-backend';
 import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import type { SendRateLimiter } from '../../../src/integrations/email';
+import type { PersonAllowlist } from '../../../src/storage';
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -1199,8 +1200,8 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should send immediately when target is on allowlist (by handle)', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => true) };
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist });
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => true) };
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1214,10 +1215,10 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(mockClient.replyToPost).toHaveBeenCalledTimes(1);
         });
 
-        test('should check allowlist by handle then DID', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+        test('should check allowlist by handle', async () => {
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval = mock(async (): Promise<void> => { /* intentionally empty */ });
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -1226,15 +1227,14 @@ describe.concurrent('createBskyMCPServer', () => {
                 parentCid: 'bafyreiparent',
             });
 
-            // isAllowed called with handle first, then DID
-            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('alice.bsky.social');
-            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('did:plc:abc123');
+            // isAllowed called with platform 'bsky' and handle
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('bsky', 'alice.bsky.social');
         });
 
         test('should request approval when target is not on allowlist', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1257,9 +1257,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should pass rootUri and rootCid to approval request when provided', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -1281,8 +1281,8 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should return informational message when no allowlist and no approval handler but target would need approval', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist });
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1297,11 +1297,11 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should return error result when approval callback throws', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => {
                 throw new Error('Discord unavailable');
             });
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1316,13 +1316,13 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should call rateLimiter.increment() after allowlisted send', async () => {
-            const mockAllowlist   = { isAllowed: mock((_actor: string) => true) };
+            const mockAllowlist   = { isAllowed: mock((_platform: string, _value: string) => true) };
             const mockRateLimiter = {
                 isAtLimit:       mock(() => false),
                 increment:       mock(() => { /* intentionally empty */ }),
                 tokensRemaining: mock(() => 22),
             };
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -1335,13 +1335,13 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should append rate limit warning when at limit after allowlisted send', async () => {
-            const mockAllowlist   = { isAllowed: mock((_actor: string) => true) };
+            const mockAllowlist   = { isAllowed: mock((_platform: string, _value: string) => true) };
             const mockRateLimiter = {
                 isAtLimit:       mock(() => true),
                 increment:       mock(() => { /* intentionally empty */ }),
                 tokensRemaining: mock(() => 0),
             };
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1355,12 +1355,12 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should send immediately when replying to own post (self-reply bypass)', async () => {
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             // Return a post authored by the bot itself
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> =>
                 mockPost({ author: { did: 'did:plc:botself', handle: 'bot.bsky.social' } })
             );
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1432,9 +1432,9 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.validatePostText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
             });
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1640,9 +1640,9 @@ describe.concurrent('createBskyMCPServer', () => {
             });
             (mockClient.getPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<BskyPost> => nestedParent);
 
-            const mockAllowlist = { isAllowed: mock((_actor: string) => false) };
+            const mockAllowlist = { isAllowed: mock((_platform: string, _value: string) => false) };
             const mockApproval  = mock(async (): Promise<void> => { /* intentionally empty */ });
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as BskyAllowlist, sendApprovalRequest: mockApproval });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, sendApprovalRequest: mockApproval });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -2025,9 +2025,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should resolve handles to profiles before checking allowlist', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => true),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => true),
+            } as unknown as PersonAllowlist;
 
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
             const handler = getToolHandler(server, 'sendDirectMessage');
@@ -2038,9 +2038,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should send DM immediately when recipient is on allowlist', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => true),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => true),
+            } as unknown as PersonAllowlist;
 
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
             const handler = getToolHandler(server, 'sendDirectMessage');
@@ -2063,9 +2063,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should send DM immediately when recipient is own handle (self-DM)', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             // getProfile returns own handle
             (mockClient.getProfile as ReturnType<typeof mock>).mockResolvedValueOnce({
                 did: 'did:plc:bot', handle: 'bot.bsky.social',
@@ -2081,9 +2081,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should trigger approval when recipient is not on allowlist', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
 
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
@@ -2098,9 +2098,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should call sendDMApprovalRequest with text, handles, and convoId', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
 
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });
@@ -2112,9 +2112,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should return informational text when not allowed and no approval callback', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
 
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist });
             const handler = getToolHandler(server, 'sendDirectMessage');
@@ -2126,9 +2126,9 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should return error when approval request fails', async () => {
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => {
                 throw new Error('Discord channel not found');
             });
@@ -2171,9 +2171,9 @@ describe.concurrent('createBskyMCPServer', () => {
 
         test('should NOT treat multi-recipient DM as self-DM even when first recipient is own handle', async () => {
             // Mutant 3: isSelfDM → true would bypass allowlist and send immediately even with 2 recipients
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
             // First recipient resolves to bot's own handle; second resolves to someone else
             (mockClient.getProfile as ReturnType<typeof mock>)
@@ -2193,10 +2193,10 @@ describe.concurrent('createBskyMCPServer', () => {
 
         test('should require ALL recipients to be allowlisted (not just any one)', async () => {
             // Mutant 5: every → some — if "some" were used, one allowlisted recipient would bypass approval
-            const isAllowedMock = mock((handleOrDid: string) => handleOrDid === 'alice.bsky.social');
-            const mockAllowlist: BskyAllowlist = {
+            const isAllowedMock = mock((_platform: string, value: string) => value === 'alice.bsky.social');
+            const mockAllowlist: PersonAllowlist = {
                 isAllowed: isAllowedMock,
-            } as unknown as BskyAllowlist;
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
             // Two recipients: alice (allowlisted by handle), bob (not allowlisted)
             (mockClient.getProfile as ReturnType<typeof mock>)
@@ -2214,13 +2214,11 @@ describe.concurrent('createBskyMCPServer', () => {
             expect(result.isError).toBeUndefined();
         });
 
-        test('should allow DM when recipient handle is allowlisted (handle OR DID check)', async () => {
-            // Mutant 6: || → && — if AND were used, handle-allowlisted recipients without DID allowlist would be blocked
-            const isAllowedMock = mock((handleOrDid: string) => handleOrDid === 'alice.bsky.social');
-            const mockAllowlist: BskyAllowlist = {
+        test('should allow DM when recipient handle is allowlisted', async () => {
+            const isAllowedMock = mock((_platform: string, value: string) => value === 'alice.bsky.social');
+            const mockAllowlist: PersonAllowlist = {
                 isAllowed: isAllowedMock,
-            } as unknown as BskyAllowlist;
-            // getProfile returns alice's handle; DID is NOT in the allowlist
+            } as unknown as PersonAllowlist;
             (mockClient.getProfile as ReturnType<typeof mock>)
                 .mockResolvedValueOnce({ did: 'did:plc:aliceabc', handle: 'alice.bsky.social' });
 
@@ -2237,10 +2235,10 @@ describe.concurrent('createBskyMCPServer', () => {
         test('should include all recipients in approval request (not just non-allowlisted)', async () => {
             // Approval request receives ALL resolved handles, regardless of allowlist status.
             // The embed shows all participants so the admin knows who the DM is for.
-            const isAllowedMock = mock((handleOrDid: string) => handleOrDid === 'alice.bsky.social');
-            const mockAllowlist: BskyAllowlist = {
+            const isAllowedMock = mock((_platform: string, value: string) => value === 'alice.bsky.social');
+            const mockAllowlist: PersonAllowlist = {
                 isAllowed: isAllowedMock,
-            } as unknown as BskyAllowlist;
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
             // Two recipients: alice (allowlisted by handle, not DID), bob (not allowlisted)
             (mockClient.getProfile as ReturnType<typeof mock>)
@@ -2261,9 +2259,9 @@ describe.concurrent('createBskyMCPServer', () => {
             (mockClient.validateDMText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('DM text exceeds 1000 graphemes (1001)', { graphemeLength: 1001 });
             });
-            const mockAllowlist: BskyAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as BskyAllowlist;
+            const mockAllowlist: PersonAllowlist = {
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             const sendDMApprovalRequest = mock(async (): Promise<void> => { /* intentionally empty */ });
 
             const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist, sendDMApprovalRequest });

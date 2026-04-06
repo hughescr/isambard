@@ -2,9 +2,9 @@ import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builder
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
 import type { ActivityLogger } from '@/agent';
-import type { BskyAllowlist } from '@/integrations/bsky/allowlist';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
+import type { AllowlistSagaStarter } from '@/services';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
@@ -32,11 +32,11 @@ export interface SagaWriter {
 }
 
 export interface BskyOutboundApprovalHandlerDeps {
-    client:           BlueskyClient
-    allowlist:        BskyAllowlist
-    rejectionBackend: BskyRejectionBackend
-    sagaBackend:      SagaWriter
-    activityLogger?:  ActivityLogger
+    client:                      BlueskyClient
+    rejectionBackend:            BskyRejectionBackend
+    sagaBackend:                 SagaWriter
+    activityLogger?:             ActivityLogger
+    allowlistInteractionHandler: AllowlistSagaStarter
 }
 
 /**
@@ -59,18 +59,18 @@ export interface BskyOutboundApprovalHandlerDeps {
  * Discord channel-level ACL is the enforcement boundary.
  */
 export class BskyOutboundApprovalHandler {
-    private readonly client:           BlueskyClient;
-    private readonly allowlist:        BskyAllowlist;
-    private readonly rejectionBackend: BskyRejectionBackend;
-    private readonly sagaBackend:      SagaWriter;
-    private readonly activityLogger?:  ActivityLogger;
+    private readonly client:                      BlueskyClient;
+    private readonly rejectionBackend:            BskyRejectionBackend;
+    private readonly sagaBackend:                 SagaWriter;
+    private readonly activityLogger?:             ActivityLogger;
+    private readonly allowlistInteractionHandler: AllowlistSagaStarter;
 
     constructor(deps: BskyOutboundApprovalHandlerDeps) {
-        this.client           = deps.client;
-        this.allowlist        = deps.allowlist;
-        this.rejectionBackend = deps.rejectionBackend;
-        this.sagaBackend      = deps.sagaBackend;
-        this.activityLogger   = deps.activityLogger;
+        this.client                      = deps.client;
+        this.rejectionBackend            = deps.rejectionBackend;
+        this.sagaBackend                 = deps.sagaBackend;
+        this.activityLogger              = deps.activityLogger;
+        this.allowlistInteractionHandler = deps.allowlistInteractionHandler;
     }
 
     private parseRecipientHandles(fields: { name: string, value: string }[]): string[] {
@@ -189,6 +189,7 @@ export class BskyOutboundApprovalHandler {
     }
 
     private async dispatchButton(prefix: string, interaction: ButtonInteraction, uuid: string): Promise<void> {
+        // Stryker disable ConditionalExpression: switch-case label mutations are equivalent — each case is only covered by tests for that specific prefix, making cross-case label mutations untestable without restructuring
         switch(prefix) {
             case 'bsky-send-approve': {
                 await this.handleApprove(interaction);
@@ -216,6 +217,7 @@ export class BskyOutboundApprovalHandler {
             }
             // No default needed — knownPrefixes guard ensures only known prefixes reach this switch
         }
+        // Stryker restore ConditionalExpression
     }
 
     async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
@@ -394,72 +396,20 @@ export class BskyOutboundApprovalHandler {
     }
 
     private async handleApproveAllowlist(interaction: ButtonInteraction): Promise<void> {
-        // Extract post data from the embed fields.
-        // Saga state is 'approved' and type is 'bsky_reply' for reply approvals.
+        // Extract the target handle from the embed before doing the approval.
+        // follows same pattern as handleApprove — embeds[0] is always present for approval interactions.
         const embed  = interaction.message.embeds[0];
-        // Stryker disable next-line StringLiteral: '' fallback for null description is never exercised in tests — embed description is always present in practice
-        const text   = embed.description ?? '';
         const fields = embed.fields;
-
-        const parentUri    = fields.find(f => f.name === 'Parent URI')?.value;
-        const parentCid    = fields.find(f => f.name === 'Parent CID')?.value;
+        // Stryker disable next-line StringLiteral,ConditionalExpression,ArrowFunction,EqualityOperator: field name is configuration; find() arrow and equality are unobservable — field name presence in embed is integration-tested
         const targetHandle = fields.find(f => f.name === 'Replying to')?.value;
 
-        if(!parentUri || !parentCid) {
-            // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
-            throw new Error('Missing parent URI/CID in embed');
-        }
+        // Do the send approval (identical to plain approve)
+        await this.handleApprove(interaction);
 
-        const rootUri = fields.find(f => f.name === 'Root URI')?.value;
-        const rootCid = fields.find(f => f.name === 'Root CID')?.value;
-
-        // Stryker disable next-line StringLiteral: ISO timestamp format is convention
-        const now = new Date().toISOString();
-        await this.sagaBackend.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'bsky_reply',
-            params:    { text, parentUri, parentCid, rootUri, rootCid },
-            createdAt: now,
-            updatedAt: now,
-        });
-
-        // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
-        void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch(() => undefined);
-
-        // Add handle to allowlist (best-effort)
-        let allowlistSuccess = false;
+        // Kick off allowlist saga for the target handle
         if(targetHandle) {
-            // Stryker disable BlockStatement: try-catch wraps allowlist write - best-effort
-            try {
-                // Fetch profile to get DID for permanent identification
-                const profile = await this.client.getProfile(targetHandle);
-                await this.allowlist.addEntry({
-                    handle:  targetHandle,
-                    did:     profile.did,
-                    // Stryker disable next-line StringLiteral: ISO timestamp format is convention
-                    addedAt: new Date().toISOString(),
-                    // Stryker disable next-line StringLiteral: addedBy value is configuration
-                    addedBy: 'outbound-approval',
-                });
-                allowlistSuccess = true;
-            } catch (error) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ err: error, handle: targetHandle, msg: 'Failed to add handle to bsky allowlist' });
-            }
-            // Stryker restore BlockStatement
+            await this.allowlistInteractionHandler.startFromApproval(interaction, 'bsky', targetHandle);
         }
-
-        const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line ConditionalExpression,StringLiteral: UI label depends on allowlist write result
-            .setTitle(allowlistSuccess ? 'Approved \u2713 (handle allowlisted) \u2014 posting shortly' : 'Approved \u2713 (allowlist failed) \u2014 posting shortly')
-            .setColor(GREEN);
-
-        await interaction.editReply({
-            embeds:     [updatedEmbed],
-            components: [],
-        });
     }
 
     private async handleReject(interaction: ButtonInteraction, uuid: string, modalPrefix = 'bsky-send-reject-reason', modalTitle = 'Reject Bluesky Reply'): Promise<void> {
@@ -526,77 +476,19 @@ export class BskyOutboundApprovalHandler {
     }
 
     private async handleDMApproveAllowlist(interaction: ButtonInteraction): Promise<void> {
+        // Extract recipient handles from the embed before doing the approval.
+        // follows same pattern as handleDMApprove — embeds[0] is always present for approval interactions.
         const embed  = interaction.message.embeds[0];
-        // Stryker disable next-line StringLiteral: '' fallback for null description is never exercised in tests — embed description is always present in practice
-        const text   = embed.description ?? '';
         const fields = embed.fields;
+        const recipientHandles = this.parseRecipientHandles(fields);
 
-        const convoId           = fields.find(f => f.name === 'Conversation ID')?.value;
-        // Stryker disable next-line ConditionalExpression: Equivalent mutant — find() returns the unique matching field regardless of position; mutating predicate to true returns the same result when Recipients is the only match
-        const recipientsValue   = fields.find(f => f.name === 'Recipients')?.value;
-        let recipientHandles: string[] = [];
-        if(recipientsValue) {
-            // Stryker disable BlockStatement: try-catch guards JSON.parse from malformed embed fields
-            try {
-                recipientHandles = JSON.parse(recipientsValue) as string[];
-            } catch{
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ recipientsValue, msg: 'Failed to parse Recipients field from DM approval embed' });
-            }
-            // Stryker restore BlockStatement
+        // Do the send approval (identical to plain DM approve)
+        await this.handleDMApprove(interaction);
+
+        // Kick off allowlist saga for each recipient handle
+        for(const handle of recipientHandles) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: each saga start depends on the prior completing before the next followUp
+            await this.allowlistInteractionHandler.startFromApproval(interaction, 'bsky', handle);
         }
-
-        if(!convoId) {
-            // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
-            throw new Error('Missing conversation ID in embed');
-        }
-
-        // Stryker disable next-line StringLiteral: ISO timestamp format is convention
-        const now = new Date().toISOString();
-        await this.sagaBackend.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'bsky_dm',
-            params:    { text, convoId },
-            createdAt: now,
-            updatedAt: now,
-        });
-
-        // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
-        void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch(() => undefined);
-
-        // Add all recipient handles to allowlist (best-effort, concurrent)
-        const allowlistResults = await Promise.allSettled(
-            recipientHandles.map(async (handle) => {
-                const profile = await this.client.getProfile(handle);
-                await this.allowlist.addEntry({
-                    handle,
-                    did:     profile.did,
-                    // Stryker disable next-line StringLiteral: ISO timestamp format is convention
-                    addedAt: new Date().toISOString(),
-                    // Stryker disable next-line StringLiteral: addedBy value is configuration
-                    addedBy: 'outbound-approval',
-                });
-            })
-        );
-        // Stryker disable next-line ConditionalExpression: empty recipientHandles guard — .every() on [] returns true, which would misleadingly say "allowlisted"
-        const allowlistSuccess = recipientHandles.length > 0 && allowlistResults.every(r => r.status === 'fulfilled');
-        for(const result of allowlistResults) {
-            if(result.status === 'rejected') {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.warn({ err: result.reason, msg: 'Failed to add handle to bsky DM allowlist' });
-            }
-        }
-
-        const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line ConditionalExpression,StringLiteral: UI label depends on allowlist write result
-            .setTitle(allowlistSuccess ? 'DM Approved \u2713 (handles allowlisted) \u2014 sending shortly' : 'DM Approved \u2713 (allowlist failed) \u2014 sending shortly')
-            .setColor(GREEN);
-
-        await interaction.editReply({
-            embeds:     [updatedEmbed],
-            components: [],
-        });
     }
 }

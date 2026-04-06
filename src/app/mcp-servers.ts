@@ -1,12 +1,12 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
-import { BskyCheckpointManager, type BskyAllowlist, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
+import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { SendRateLimiter } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
-import type { MemoryToolBackend, MemoryPath, ContactBackend } from '@/storage';
+import type { MemoryToolBackend, MemoryPath, ContactBackend, PersonAllowlist } from '@/storage';
 
 /**
  * Options for creating MCP servers.
@@ -68,7 +68,7 @@ export interface MCPServersOptions {
     /**
      * Optional Bluesky allowlist for gating outbound posts.
      */
-    bskyAllowlist?: BskyAllowlist
+    bskyAllowlist?: PersonAllowlist
 
     /**
      * Optional rate limiter for Bluesky outbound posts.

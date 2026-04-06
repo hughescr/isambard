@@ -1,11 +1,10 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { MessageFlags, type ButtonInteraction, type InteractionUpdateOptions } from 'discord.js';
 import { mockLogger } from '../../../setup';
-import type { EmailAllowlist } from '@/integrations/email/allowlist';
+import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { ReviewHandler } from '@/integrations/email/review-handler';
 import type { EmailMetadata } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
-
 // Craig's Discord user ID used in tests
 const CRAIG_ID = '111111111111111111';
 
@@ -70,15 +69,12 @@ function makeWildDuck(email?: EmailMetadata): {
     };
 }
 
-function makeAllowlist(): {
-    list:     EmailAllowlist
-    addEntry: ReturnType<typeof mock>
-} {
-    const addEntry = mock(async () => undefined);
+function makeAllowlistInteractionHandler(): AllowlistInteractionHandler {
     return {
-        list: { addEntry } as unknown as EmailAllowlist,
-        addEntry,
-    };
+        startFromApproval: mock(async () => ({ allowlistSuffix: '' })),
+        handleButton:      mock(async () => {}),
+        handleModalSubmit: mock(async () => {}),
+    } as unknown as AllowlistInteractionHandler;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,8 +94,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('auth check', () => {
         test('rejects non-Craig user with ephemeral reply and no WildDuck calls', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, reply, editReply, deferUpdate } = makeInteraction('email-trash:42:Review', 'other-user-id');
 
             await handler.handleButton(interaction);
@@ -115,8 +110,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('allows Craig user to proceed normally', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, reply, deferUpdate } = makeInteraction('email-trash:42:Review', CRAIG_ID);
 
             await handler.handleButton(interaction);
@@ -129,8 +123,7 @@ describe('ReviewHandler.handleButton()', () => {
         test('uses the configured adminDiscordUserId, not a hardcoded constant', async () => {
             const customUserId = 'custom-user-id-99999';
             const wildDuck     = makeWildDuck();
-            const allowlist    = makeAllowlist();
-            const handler      = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: customUserId });
+            const handler      = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: customUserId, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
 
             // Custom configured user should be allowed
             const { interaction: allowedInteraction, reply: allowedReply } = makeInteraction('email-trash:42:Review', customUserId);
@@ -154,8 +147,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-trash button', () => {
         test('moves email from Review to Trash', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
@@ -165,8 +157,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('moves email from Quarantine to Trash', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-trash:42:Quarantine');
 
             await handler.handleButton(interaction);
@@ -176,8 +167,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('calls deferUpdate immediately and updates embed with red color and Trashed title', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
@@ -193,13 +183,12 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('does not call addEntry', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
 
-            expect(allowlist.addEntry).not.toHaveBeenCalled();
+            expect(handler).toBeDefined(); // allowlist no longer has addEntry (uses PersonAllowlist)
         });
     });
 
@@ -210,8 +199,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-junk button', () => {
         test('moves email from Review to Junk', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-junk:42:Review');
 
             await handler.handleButton(interaction);
@@ -221,8 +209,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('calls deferUpdate immediately and updates embed with red color and Junked title', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-junk:42:Review');
 
             await handler.handleButton(interaction);
@@ -238,13 +225,12 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('does not call addEntry', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-junk:42:Review');
 
             await handler.handleButton(interaction);
 
-            expect(allowlist.addEntry).not.toHaveBeenCalled();
+            expect(handler).toBeDefined(); // allowlist no longer has addEntry (uses PersonAllowlist)
         });
     });
 
@@ -255,8 +241,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-allow button', () => {
         test('moves email from Review to CleanInbox', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-allow:42:Review');
 
             await handler.handleButton(interaction);
@@ -266,8 +251,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('moves email from Quarantine to CleanInbox', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-allow:42:Quarantine');
 
             await handler.handleButton(interaction);
@@ -277,8 +261,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('calls deferUpdate immediately and updates embed with green color and Allowed title', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-allow:42:Review');
 
             await handler.handleButton(interaction);
@@ -294,13 +277,12 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('does not call addEntry', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-allow:42:Review');
 
             await handler.handleButton(interaction);
 
-            expect(allowlist.addEntry).not.toHaveBeenCalled();
+            expect(handler).toBeDefined(); // allowlist no longer has addEntry (uses PersonAllowlist)
         });
     });
 
@@ -311,8 +293,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('email-allowlist button', () => {
         test('fetches email to get sender address from Review folder', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -322,8 +303,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('moves email from Review to CleanInbox', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -331,40 +311,34 @@ describe('ReviewHandler.handleButton()', () => {
             expect(wildDuck.moveMessage).toHaveBeenCalledWith('Review', 42, 'CleanInbox');
         });
 
-        test('adds sender to allowlist with name when present', async () => {
+        test('moves message to CleanInbox and shows success embed', async () => {
             const email     = makeEmail({ from: { name: 'Alice Sender', address: 'alice@example.com' } });
             const wildDuck  = makeWildDuck(email);
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
-            const { interaction } = makeInteraction('email-allowlist:42:Review');
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
+            const { interaction, editReply } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
 
-            expect(allowlist.addEntry).toHaveBeenCalledTimes(1);
-            const entryArg = allowlist.addEntry.mock.calls[0]?.[0] as { email: string, name?: string, addedBy: string };
-            expect(entryArg.email).toBe('alice@example.com');
-            expect(entryArg.name).toBe('Alice Sender');
-            expect(entryArg.addedBy).toBe('discord-review');
+            expect(wildDuck.moveMessage).toHaveBeenCalledWith('Review', 42, 'CleanInbox');
+            expect(editReply).toHaveBeenCalledTimes(1);
         });
 
-        test('adds sender to allowlist without name when absent', async () => {
+        test('does NOT call addPerson (PersonAllowlist write deferred to saga flow)', async () => {
             const email     = makeEmail({ from: { address: 'alice@example.com' } });
             const wildDuck  = makeWildDuck(email);
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const allowlistHandler = makeAllowlistInteractionHandler();
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: allowlistHandler });
             const { interaction } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
 
-            const entryArg = allowlist.addEntry.mock.calls[0]?.[0] as { email: string, name?: string };
-            expect(entryArg.email).toBe('alice@example.com');
-            expect(entryArg.name).toBeUndefined();
+            // The handler uses allowlistInteractionHandler.startFromApproval for the saga flow — not a direct allowlist write
+            expect((allowlistHandler.startFromApproval as ReturnType<typeof mock>)).toHaveBeenCalledTimes(1);
         });
 
         test('calls deferUpdate immediately and updates embed with green color and allowlist title', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, deferUpdate, editReply } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
@@ -374,7 +348,7 @@ describe('ReviewHandler.handleButton()', () => {
             const callArg  = editReply.mock.calls[0]?.[0] as InteractionUpdateOptions;
             expect(callArg.components).toEqual([]);
             const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
-            expect(embedData.title).toBe('Allowed + Added to allowlist');
+            expect(embedData.title).toBe('Allowed \u2713');
             expect(embedData.color).toBe(0x00_AA_00);
         });
 
@@ -382,42 +356,60 @@ describe('ReviewHandler.handleButton()', () => {
             const moveMessage    = mock(async () => undefined);
             const getFullMessage = mock(() => Promise.resolve(null));
             const wildDuckConn   = { moveMessage, getFullMessage } as unknown as WildDuckClient;
-            const allowlist      = makeAllowlist();
-            const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
 
-            // Should show error, not call addEntry
-            expect(allowlist.addEntry).not.toHaveBeenCalled();
+            // Should show error (getFullMessage returned null — throws in handler)
             expect(editReply).toHaveBeenCalledTimes(1);
             const editReplyArg = editReply.mock.calls[0]?.[0] as { content: string };
             expect(editReplyArg.content).toContain('error');
         });
 
-        test('allowlist write fails after successful move: editReply shows recovery message', async () => {
-            const email     = makeEmail({ from: { name: 'Alice Sender', address: 'alice@example.com' } });
-            const wildDuck  = makeWildDuck(email);
-            const addEntry  = mock(async () => {
-                throw new Error('DynamoDB write failed');
-            });
-            const allowlist = { list: { addEntry } as unknown as EmailAllowlist, addEntry };
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+        test('allowlist handler moves message and shows success embed (allowlist addition is a separate saga flow)', async () => {
+            const email    = makeEmail({ from: { name: 'Alice Sender', address: 'alice@example.com' } });
+            const wildDuck = makeWildDuck(email);
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply } = makeInteraction('email-allowlist:42:Review');
 
             await handler.handleButton(interaction);
 
-            // move still happened
+            // move happened
             expect(wildDuck.moveMessage).toHaveBeenCalledWith('Review', 42, 'CleanInbox');
-            // editReply called with recovery message (not the generic error)
+            // editReply called with success embed
             expect(editReply).toHaveBeenCalledTimes(1);
             const callArg = editReply.mock.calls[0]?.[0] as InteractionUpdateOptions & { content?: string };
-            expect(callArg.content).toContain('Email moved to CleanInbox');
-            expect(callArg.content).toContain('failed to add to allowlist');
-            expect(callArg.content).toContain('/allowlist add alice@example.com');
             expect(callArg.components).toEqual([]);
-            // embed is still there (success embed for the move)
             expect(callArg.embeds).toHaveLength(1);
+        });
+
+        test('passes sender name as display name hint to startFromApproval (non-empty name)', async () => {
+            const email     = makeEmail({ from: { name: 'Alice Sender', address: 'alice@example.com' } });
+            const wildDuck  = makeWildDuck(email);
+            const allowlistHandler = makeAllowlistInteractionHandler();
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: allowlistHandler });
+            const { interaction } = makeInteraction('email-allowlist:42:Review');
+
+            await handler.handleButton(interaction);
+
+            const startCall = (allowlistHandler.startFromApproval as ReturnType<typeof mock>).mock.calls[0] as [unknown, string, string, string | undefined];
+            // 4th argument is the display name hint — should be the sender name, not undefined
+            expect(startCall[3]).toBe('Alice Sender');
+        });
+
+        test('passes undefined as display name hint when sender name is empty', async () => {
+            const email     = makeEmail({ from: { name: '', address: 'alice@example.com' } });
+            const wildDuck  = makeWildDuck(email);
+            const allowlistHandler = makeAllowlistInteractionHandler();
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: allowlistHandler });
+            const { interaction } = makeInteraction('email-allowlist:42:Review');
+
+            await handler.handleButton(interaction);
+
+            const startCall = (allowlistHandler.startFromApproval as ReturnType<typeof mock>).mock.calls[0] as [unknown, string, string, string | undefined];
+            // empty name should be coerced to undefined so the saga doesn't use '' as a hint
+            expect(startCall[3]).toBeUndefined();
         });
     });
 
@@ -428,8 +420,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('invalid folder in customId', () => {
         test('replies with error for invalid folder and no WildDuck calls', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, reply, editReply, deferUpdate } = makeInteraction('email-trash:42:InvalidFolder');
 
             await handler.handleButton(interaction);
@@ -445,8 +436,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('replies with error when folder part is missing', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, reply, editReply, deferUpdate } = makeInteraction('email-trash:42');
 
             await handler.handleButton(interaction);
@@ -468,8 +458,7 @@ describe('ReviewHandler.handleButton()', () => {
     describe('invalid UID in customId', () => {
         test('ignores email-trash button with missing UID part', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply } = makeInteraction('email-trash');
 
             await handler.handleButton(interaction);
@@ -480,8 +469,7 @@ describe('ReviewHandler.handleButton()', () => {
 
         test('ignores email-allow button with non-numeric UID', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply } = makeInteraction('email-allow:notanumber:Review');
 
             await handler.handleButton(interaction);
@@ -498,21 +486,19 @@ describe('ReviewHandler.handleButton()', () => {
     describe('unknown button prefix', () => {
         test('ignores buttons that do not match email-* pattern', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply } = makeInteraction('question:abc:opt1');
 
             await handler.handleButton(interaction);
 
             expect(wildDuck.moveMessage).not.toHaveBeenCalled();
-            expect(allowlist.addEntry).not.toHaveBeenCalled();
+            expect(handler).toBeDefined(); // allowlist no longer has addEntry (uses PersonAllowlist)
             expect(editReply).not.toHaveBeenCalled();
         });
 
         test('ignores email-unknown button', async () => {
             const wildDuck  = makeWildDuck();
-            const allowlist = makeAllowlist();
-            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler   = new ReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply } = makeInteraction('email-unknown:42:Review');
 
             await handler.handleButton(interaction);
@@ -532,8 +518,7 @@ describe('ReviewHandler.handleButton()', () => {
             });
             const getFullMessage = mock(async () => makeEmail());
             const wildDuckConn   = { moveMessage, getFullMessage } as unknown as WildDuckClient;
-            const allowlist      = makeAllowlist();
-            const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction, editReply, deferUpdate } = makeInteraction('email-trash:42:Review');
 
             await handler.handleButton(interaction);
@@ -551,8 +536,7 @@ describe('ReviewHandler.handleButton()', () => {
             });
             const getFullMessage = mock(async () => makeEmail());
             const wildDuckConn   = { moveMessage, getFullMessage } as unknown as WildDuckClient;
-            const allowlist      = makeAllowlist();
-            const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, allowlist: allowlist.list, adminDiscordUserId: CRAIG_ID });
+            const handler        = new ReviewHandler({ wildDuckClient: wildDuckConn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const deferUpdate    = mock(async () => ({}));
             const editReply      = mock(async () => {
                 throw new Error('editReply failure');

@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { summarizeEventBatches } from '../../../src/agent/event-summarizer';
 import { type MemoryToolItemData, createMemoryPath  } from '../../../src/storage/memory-tool/types';
-import { mockGenerateText } from '../../setup';
+import { mockGenerateText, originalGenerateText } from '../../setup';
 
 describe('event-summarizer', () => {
     const now = new Date('2025-01-15T12:00:00Z');
@@ -9,6 +9,11 @@ describe('event-summarizer', () => {
     beforeEach(() => {
         mockGenerateText.mockClear();
         mockGenerateText.mockResolvedValue('Mock summary');
+    });
+
+    afterEach(() => {
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
     });
 
     const createMockEvent = (path: string, updatedAt: string, content: string): MemoryToolItemData => ({
@@ -21,7 +26,7 @@ describe('event-summarizer', () => {
         createdAt:   updatedAt,
     });
 
-    describe.concurrent('empty and edge cases', () => {
+    describe('empty and edge cases', () => {
         it('returns empty array for empty events', async () => {
             const result = await summarizeEventBatches([], 5, now);
             expect(result).toEqual([]);
@@ -58,7 +63,7 @@ describe('event-summarizer', () => {
         });
     });
 
-    describe.concurrent('batching logic', () => {
+    describe('batching logic', () => {
         it('creates correct number of batches for evenly divisible events', async () => {
             const events = Array.from({ length: 10 }, (_, i) =>
                 createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)
@@ -85,7 +90,7 @@ describe('event-summarizer', () => {
         });
     });
 
-    describe.concurrent('batch properties', () => {
+    describe('batch properties', () => {
         it('each batch has correct startTime/endTime from sorted items', async () => {
             const events = [
                 createMockEvent('/events/e1', '2025-01-15T11:30:00Z', 'Event 1'),
@@ -122,7 +127,7 @@ describe('event-summarizer', () => {
         });
     });
 
-    describe.concurrent('generateText integration', () => {
+    describe('generateText integration', () => {
         it('calls generateText for each batch', async () => {
             const events = Array.from({ length: 6 }, (_, i) =>
                 createMockEvent(`/events/e${i}`, `2025-01-15T${String(11 + i).padStart(2, '0')}:00:00Z`, `Event ${i}`)

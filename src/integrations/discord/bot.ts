@@ -1,5 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
+import type { AllowlistCommandHandler } from './allowlist-commands';
+import type { AllowlistInteractionHandler } from './allowlist-interaction-handler';
 import type { DiscordCapability } from './capability';
 import {
     type CatchUpSessionRunner,
@@ -32,7 +34,6 @@ import {
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
-import type { AllowlistCommandHandler } from '@/integrations/email';
 import type { ServiceHealthRegistry } from '@/services';
 
 /**
@@ -152,6 +153,12 @@ export interface DiscordBotOptions {
     allowlistHandler?: AllowlistCommandHandler
 
     /**
+     * Optional allowlist interaction handler for the saga-based allowlist flow.
+     * If provided, handles allowlist-* button and modal interactions (modal submission, yes/next/create buttons).
+     */
+    allowlistInteractionHandler?: AllowlistInteractionHandler
+
+    /**
      * Optional calendar command handler for the /calendar slash command.
      * If provided, handles /calendar interactions for CalDAV calendar management.
      */
@@ -267,7 +274,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -436,6 +443,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await contactApprovalHandler.handleButton(interaction);
                     return;
                 }
+                // Route allowlist-* buttons (yes/next/create/startmodal) to allowlist interaction handler
+                // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
+                if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-')) {
+                    await allowlistInteractionHandler.handleButton(interaction);
+                    return;
+                }
                 await interactionHandler.handleButtonInteraction(interaction);
             } else if(interaction.isModalSubmit()) {
                 // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
@@ -443,6 +456,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await bskySetup.outboundApprovalHandler.handleModalSubmit(interaction);
                 } else if(emailSetup && interaction.customId.startsWith('email-send-reject-reason:')) {
                     await emailSetup.outboundApprovalHandler.handleModalSubmit(interaction);
+                } else if(allowlistInteractionHandler && interaction.customId.startsWith('allowlist-name:')) {
+                    // Stryker disable next-line BlockStatement: composition root interaction routing — not covered by unit tests
+                    await allowlistInteractionHandler.handleModalSubmit(interaction);
                 }
             } else if(interaction.isStringSelectMenu() && interaction.customId.startsWith('email-allowlist-select:')) {
                 // Stryker disable next-line StringLiteral: error message is not behavior-affecting

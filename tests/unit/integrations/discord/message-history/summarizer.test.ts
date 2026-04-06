@@ -16,8 +16,8 @@
  * - Over-testing of semaphore internals (4 concurrency tests with weak assertions)
  * - Tests covered by other tests (ID preservation covered by single message test)
  */
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { mockGenerateText } from '../../../../setup';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mockGenerateText, originalGenerateText } from '../../../../setup';
 import { createMessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import type { DiscordSearchResult } from '@/integrations/discord/message-history/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
@@ -56,6 +56,11 @@ describe('createMessageSummarizer', () => {
     beforeEach(() => {
         mockGenerateText.mockReset();
         mockGenerateText.mockResolvedValue('This is a test summary.');
+    });
+
+    afterEach(() => {
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
     });
 
     describe('summarizeMessages', () => {

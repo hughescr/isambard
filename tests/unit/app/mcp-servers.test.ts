@@ -11,7 +11,6 @@ import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import * as wikipediaMcpModule from '@/agent/wikipedia-mcp-server';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { MCPServersOptions } from '@/app/mcp-servers';
-import type { BskyAllowlist } from '@/integrations/bsky/allowlist';
 import { BskyCheckpointManager } from '@/integrations/bsky/checkpoint/checkpoint-manager';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
@@ -19,6 +18,7 @@ import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { BotStateManager } from '@/integrations/discord/state/types';
 import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
+import type { PersonAllowlist } from '@/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
@@ -316,14 +316,14 @@ describe('createMCPServers', () => {
         );
 
         const mockBskyClient       = {} as unknown as BlueskyClient;
-        const mockBskyAllowlist    = {} as unknown as BskyAllowlist;
+        const mockPersonAllowlist    = {} as unknown as PersonAllowlist;
         const mockBskyRateLimiter  = {} as unknown as SendRateLimiter;
         const mockSendApproval     = mock(async () => { /* no-op */ });
 
         mcpServersModule.createMCPServers({
             ...mockOptions,
             bskyClient:              mockBskyClient,
-            bskyAllowlist:           mockBskyAllowlist,
+            bskyAllowlist:           mockPersonAllowlist,
             bskyRateLimiter:         mockBskyRateLimiter,
             bskySendApprovalRequest: mockSendApproval,
         });
@@ -333,7 +333,7 @@ describe('createMCPServers', () => {
             client:              mockBskyClient,
             checkpointManager:   expect.any(BskyCheckpointManager),
             rateLimiter:         mockBskyRateLimiter,
-            allowlist:           mockBskyAllowlist,
+            allowlist:           mockPersonAllowlist,
             sendApprovalRequest: mockSendApproval,
         });
     });

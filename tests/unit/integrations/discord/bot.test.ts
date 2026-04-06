@@ -4,6 +4,7 @@ import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { DiscordConfig } from '@/config/schemas';
+import type { AllowlistCommandHandler } from '@/integrations/discord/allowlist-commands';
 import { createDiscordBot } from '@/integrations/discord/bot';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
@@ -15,7 +16,6 @@ import type { PresenceManager } from '@/integrations/discord/presence/manager';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state/manager';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
-import type { AllowlistCommandHandler } from '@/integrations/email/allowlist-commands';
 
 describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];

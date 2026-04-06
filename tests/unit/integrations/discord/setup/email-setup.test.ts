@@ -11,9 +11,11 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
+import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupEmail, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
 import type { WildDuckClient } from '@/integrations/email';
 import type { ApprovalSagaBackend } from '@/services';
+import type { PersonAllowlist } from '@/storage';
 
 /** Build a mock DynamoDB document client whose send() always returns {} (empty item). */
 function makeMockDocClient(): DynamoDBDocumentClient {
@@ -57,7 +59,21 @@ describe('setupEmail — isSendableChannel type guard', () => {
                 getMessage:         mock(async () => null),
             } as unknown as WildDuckClient,
             approvalSagaBackend: {} as unknown as ApprovalSagaBackend,
-            _deps:               { sleep: noopSleep },
+            personAllowlist:     {
+                isAllowed:       mock((_platform: string, _value: string) => false),
+                isPersonAllowed: mock(() => false),
+                addPerson:       mock(async () => {}),
+                removePerson:    mock(async () => {}),
+                load:            mock(async () => {}),
+                list:            mock(async () => []),
+                refreshPerson:   mock(async () => {}),
+            } as unknown as PersonAllowlist,
+            allowlistInteractionHandler: {
+                startFromApproval: mock(async () => ({ allowlistSuffix: '' })),
+                handleButton:      mock(async () => {}),
+                handleModalSubmit: mock(async () => {}),
+            } as unknown as AllowlistInteractionHandler,
+            _deps: { sleep: noopSleep },
         };
     });
 

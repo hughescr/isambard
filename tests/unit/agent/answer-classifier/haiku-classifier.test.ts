@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { mockGenerateText } from '../../../setup';
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { mockGenerateText, originalGenerateText } from '../../../setup';
 import { classifyWithHaiku } from '@/agent/answer-classifier/haiku-classifier';
 import type { MessageToClassify } from '@/agent/answer-classifier/types';
 import type { PendingQuestion } from '@/agent/question-registry/types';
@@ -26,6 +26,11 @@ describe('classifyWithHaiku', () => {
 
     beforeEach(() => {
         mockGenerateText.mockClear();
+    });
+
+    afterEach(() => {
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
     });
 
     it('should call text generator with classification prompt', async () => {

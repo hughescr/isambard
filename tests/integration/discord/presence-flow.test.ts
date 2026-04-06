@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { ActivityType, type Client, type TextChannel  } from 'discord.js';
-import { mockGenerateText, mockGenerateTextWithSystemPrompt } from '../../setup';
+import { mockGenerateText, mockGenerateTextWithSystemPrompt, originalGenerateText, originalGenerateTextWithSystemPrompt } from '../../setup';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { MessageContext, AgentStreamEvent } from '@/agent/types';
 import { PresenceManager } from '@/integrations/discord/presence/manager';
@@ -50,6 +50,10 @@ describe('Discord Presence Flow (Integration)', () => {
     afterEach(() => {
         jest.clearAllTimers();     // Clear while still in fake mode
         jest.useRealTimers();      // Then restore real timers
+        mockGenerateText.mockReset();
+        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
     it('should handle errors gracefully without crashing', async () => {

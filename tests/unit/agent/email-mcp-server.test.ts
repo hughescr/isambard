@@ -2,9 +2,9 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
-import type { EmailAllowlist } from '../../../src/integrations/email/allowlist';
 import type { SendRateLimiter } from '../../../src/integrations/email/send-rate-limiter';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
+import type { PersonAllowlist } from '../../../src/storage';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 
 interface RegisteredTool {
@@ -1560,7 +1560,7 @@ describe('createEmailMCPServer', () => {
     describe('sendEmail tool', () => {
         let mockSendWildDuck:        WildDuckClient;
         let mockRateLimiter:         SendRateLimiter;
-        let mockAllowlist:           EmailAllowlist;
+        let mockAllowlist:           PersonAllowlist;
         let mockSendApprovalRequest: ReturnType<typeof mock>;
         let mockUploadMessage:       ReturnType<typeof mock>;
         let mockSubmitMessage:       ReturnType<typeof mock>;
@@ -1587,13 +1587,13 @@ describe('createEmailMCPServer', () => {
                 increment:       mock(() => undefined),
             } as unknown as SendRateLimiter;
             mockAllowlist = {
-                isAllowed: mock(() => false),
-            } as unknown as EmailAllowlist;
+                isAllowed: mock((_platform: string, _value: string) => false),
+            } as unknown as PersonAllowlist;
             mockSendApprovalRequest = mock(() => undefined);
         });
 
         test('should upload to Drafts and submit immediately when recipient is on allowlist', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1612,7 +1612,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should upload to Drafts with correct payload for formal identity', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1631,7 +1631,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should NOT include flags field in sendEmail upload payload', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1646,7 +1646,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should use formalAddress from getUserAddresses for formal identity', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1662,7 +1662,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should use informalAddress from getUserAddresses for informal identity', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1678,7 +1678,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass structured to object { name, email_address } to uploadMessage as { name, address }', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1693,7 +1693,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass plain string to as { address } object', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1708,7 +1708,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should handle array with mixed structured and plain string to addresses', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1731,7 +1731,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should check allowlist using address field from structured to object', async () => {
-            const mockIsAllowed = mock((addr: string) => addr === 'craig@rungie.com');
+            const mockIsAllowed = mock((_platform: string, addr: string) => addr === 'craig@rungie.com');
             mockAllowlist.isAllowed = mockIsAllowed;
 
             const server = createEmailMCPServer({
@@ -1744,11 +1744,11 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toContain('Sent successfully');
-            expect(mockIsAllowed).toHaveBeenCalledWith('craig@rungie.com');
+            expect(mockIsAllowed).toHaveBeenCalledWith('email', 'craig@rungie.com');
         });
 
         test('should upload to WildDuck Drafts and NOT submit when recipient not on allowlist', async () => {
-            mockAllowlist.isAllowed = mock(() => false);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
 
             const server = createEmailMCPServer({
                 wildDuckClient:      mockSendWildDuck,
@@ -1766,7 +1766,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should call sendApprovalRequest with to, subject, WildDuck UID, and undefined cc when not allowlisted', async () => {
-            mockAllowlist.isAllowed     = mock(() => false);
+            mockAllowlist.isAllowed     = mock((_platform: string, _value: string) => false);
             mockUploadMessage           = mock(() => Promise.resolve(99));
             mockSendWildDuck.uploadMessage = mockUploadMessage;
 
@@ -1783,7 +1783,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should accept an array of to addresses and upload all to WildDuck', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1800,7 +1800,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should route to approval when array to has any recipient not on allowlist', async () => {
-            mockAllowlist.isAllowed = mock((addr: string) => addr === 'alice@example.com');
+            mockAllowlist.isAllowed = mock((_platform: string, addr: string) => addr === 'alice@example.com');
 
             const server = createEmailMCPServer({
                 wildDuckClient:      mockSendWildDuck,
@@ -1817,7 +1817,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should fast-path when all addresses in array are allowlisted', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1833,7 +1833,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should pass joined to addresses to sendApprovalRequest when array not allowlisted', async () => {
-            mockAllowlist.isAllowed        = mock(() => false);
+            mockAllowlist.isAllowed        = mock((_platform: string, _value: string) => false);
             mockUploadMessage              = mock(() => Promise.resolve(99));
             mockSendWildDuck.uploadMessage = mockUploadMessage;
 
@@ -1850,7 +1850,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should include rate limit warning when over limit', async () => {
-            mockAllowlist.isAllowed         = mock(() => true);
+            mockAllowlist.isAllowed         = mock((_platform: string, _value: string) => true);
             mockRateLimiter.isAtLimit       = mock(() => true);
             mockRateLimiter.tokensRemaining = mock(() => 0);
 
@@ -1868,7 +1868,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should handle uploadMessage error gracefully', async () => {
-            mockAllowlist.isAllowed        = mock(() => true);
+            mockAllowlist.isAllowed        = mock((_platform: string, _value: string) => true);
             mockSendWildDuck.uploadMessage = mock(async () => {
                 throw new Error('WildDuck upload failed');
             });
@@ -1886,7 +1886,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should return failure message when sendApprovalRequest fails', async () => {
-            mockAllowlist.isAllowed = mock(() => false);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
@@ -1909,7 +1909,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
-            mockAllowlist.isAllowed = mock(() => false);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1925,7 +1925,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should not include rate limit warning in result when limit is not reached', async () => {
-            mockAllowlist.isAllowed   = mock(() => true);
+            mockAllowlist.isAllowed   = mock((_platform: string, _value: string) => true);
             mockRateLimiter.isAtLimit = mock(() => false);
 
             const server = createEmailMCPServer({
@@ -1949,7 +1949,7 @@ describe('createEmailMCPServer', () => {
                 throw new Error('WildDuck unavailable');
             });
             mockSendWildDuck.getUserAddresses = mockGetUserAddresses;
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1967,7 +1967,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should NOT retry getUserAddresses on second sendEmail call after first call succeeds', async () => {
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockSendWildDuck,
@@ -1997,7 +1997,7 @@ describe('createEmailMCPServer', () => {
     describe('replyToEmail tool', () => {
         let mockReplyWildDuck:    WildDuckClient;
         let mockRateLimiter:      SendRateLimiter;
-        let mockAllowlist:        EmailAllowlist;
+        let mockAllowlist:        PersonAllowlist;
         let mockUploadMessage:    ReturnType<typeof mock>;
         let mockSubmitMessage:    ReturnType<typeof mock>;
         let mockGetMailboxId:     ReturnType<typeof mock>;
@@ -2035,8 +2035,8 @@ describe('createEmailMCPServer', () => {
                 increment:       mock(() => undefined),
             } as unknown as SendRateLimiter;
             mockAllowlist = {
-                isAllowed: mock(() => true),
-            } as unknown as EmailAllowlist;
+                isAllowed: mock((_platform: string, _value: string) => true),
+            } as unknown as PersonAllowlist;
         });
 
         test('should deny reply to message in Quarantine mailbox', async () => {
@@ -2196,7 +2196,7 @@ describe('createEmailMCPServer', () => {
 
         test('should pass undefined cc to sendApprovalRequest in plain reply mode', async () => {
             const mockSendApprovalRequestReply = mock(async () => { /* intentionally empty */ });
-            mockAllowlist.isAllowed = mock(() => false);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
 
             const server = createEmailMCPServer({
                 wildDuckClient:      mockReplyWildDuck,
@@ -2245,7 +2245,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should upload to Drafts and NOT submit when recipient not on allowlist', async () => {
-            mockAllowlist.isAllowed = mock(() => false);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockReplyWildDuck,
@@ -2330,7 +2330,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should NOT store metaData with to address in upload payload (to is a message field)', async () => {
-            mockAllowlist.isAllowed = mock(() => false);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockReplyWildDuck,
@@ -2352,7 +2352,7 @@ describe('createEmailMCPServer', () => {
                 replyTo: { address: 'john@example.com', name: 'John Smith' },
             }));
             mockReplyWildDuck.getMessage = mockGetMessage;
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockReplyWildDuck,
@@ -2364,7 +2364,7 @@ describe('createEmailMCPServer', () => {
 
             // Should succeed using the pre-parsed replyTo.address
             expect(result.isError).toBeUndefined();
-            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('john@example.com');
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('email', 'john@example.com');
         });
 
         test('should fall back to from.address when replyTo is absent in WildDuck message', async () => {
@@ -2374,7 +2374,7 @@ describe('createEmailMCPServer', () => {
                 // no replyTo field
             }));
             mockReplyWildDuck.getMessage = mockGetMessage;
-            mockAllowlist.isAllowed = mock(() => true);
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockReplyWildDuck,
@@ -2385,7 +2385,7 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', identity: 'formal' });
 
             // from.address is 'alice@example.com'
-            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('alice@example.com');
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('email', 'alice@example.com');
         });
 
         test('should pass allowlist check for allowlisted replyTo.address from WildDuck', async () => {
@@ -2396,7 +2396,7 @@ describe('createEmailMCPServer', () => {
             }));
             mockReplyWildDuck.getMessage = mockGetMessage;
             // Allowlist allows only the bare address
-            mockAllowlist.isAllowed = mock((addr: string) => addr === 'john@example.com');
+            mockAllowlist.isAllowed = mock((_platform: string, addr: string) => addr === 'john@example.com');
 
             const server = createEmailMCPServer({
                 wildDuckClient: mockReplyWildDuck,
@@ -2465,7 +2465,7 @@ describe('createEmailMCPServer', () => {
 
     describe('replyToEmail tool - replyAll mode always requires approval', () => {
         let mockWildDuckReplyAll:            WildDuckClient;
-        let mockAllowlistReplyAll:           EmailAllowlist;
+        let mockAllowlistReplyAll:           PersonAllowlist;
         let mockUploadMessageReplyAll:       ReturnType<typeof mock>;
         let mockSubmitMessageReplyAll:       ReturnType<typeof mock>;
         let mockSendApprovalRequestReplyAll: ReturnType<typeof mock>;
@@ -2497,8 +2497,8 @@ describe('createEmailMCPServer', () => {
                 updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
             mockAllowlistReplyAll = {
-                isAllowed: mock(() => true),
-            } as unknown as EmailAllowlist;
+                isAllowed: mock((_platform: string, _value: string) => true),
+            } as unknown as PersonAllowlist;
         });
 
         test('replyAll should always route to approval even when primary recipient is on allowlist', async () => {

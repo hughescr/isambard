@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { mockLogger, mockGenerateTextWithSystemPrompt } from '../../../setup';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mockLogger, mockGenerateTextWithSystemPrompt, originalGenerateTextWithSystemPrompt } from '../../../setup';
 import { EmailClassifier } from '@/integrations/email/classifier';
 import { ClassifierError } from '@/integrations/email/errors';
 import type { EmailMetadata } from '@/integrations/email/types';
@@ -46,6 +46,11 @@ describe('EmailClassifier', () => {
         mockGenerateTextWithSystemPrompt.mockResolvedValue(
             makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'Default safe response' })
         );
+    });
+
+    afterEach(() => {
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
     describe('constructor apiKey guard', () => {

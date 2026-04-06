@@ -4,8 +4,6 @@ export * from './errors';
 export * from './classifier-prompt';
 export * from './classifier';
 export * from './email-processor';
-export * from './allowlist';
-export * from './allowlist-commands';
 export * from './wildduck-listener';
 export * from './review-embed-builder';
 export * from './review-handler';

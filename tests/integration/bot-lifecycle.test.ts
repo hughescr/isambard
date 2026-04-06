@@ -18,6 +18,7 @@ import * as channelRegistryBackendModule from '@/integrations/discord/channel-re
 import * as channelRegistryManagerModule from '@/integrations/discord/channel-registry/manager';
 import * as registerCommandsModule from '@/integrations/discord/register-commands';
 import { createGuildId } from '@/integrations/discord/types';
+import * as storageModule from '@/storage';
 import * as dynamoClient from '@/storage/client';
 
 /**
@@ -259,12 +260,17 @@ describe('Bot Lifecycle Integration', () => {
             const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as unknown as ContextBuilder);
             const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            }));
             spies.push(
                 createDynamoDBClientSpy,
                 createContextBuilderSpy,
                 createMemoryMCPServerSpy,
                 createClaudeAgentSpy,
-                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
+                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot),
+                PersonAllowlistSpy
             );
 
             await createApp();
@@ -441,12 +447,17 @@ describe('Bot Lifecycle Integration', () => {
             const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            }));
             spies.push(
                 createDynamoDBClientSpy,
                 createContextBuilderSpy,
                 createMemoryMCPServerSpy,
                 createClaudeAgentSpy,
-                createDiscordBotSpy
+                createDiscordBotSpy,
+                PersonAllowlistSpy
             );
 
             // Create app (which will trigger memoryBackend creation)

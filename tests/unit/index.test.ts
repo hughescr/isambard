@@ -235,6 +235,13 @@ describe('createApp', () => {
             const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
+            const personAllowlistModule = await import('@/storage');
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            spies.push(PersonAllowlistSpy);
+
             const contextBuilderModule = await import('@/agent/context-builder');
             const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
@@ -280,6 +287,28 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
+
+            // Mock WildDuckClient to prevent real HTTP calls in email setup
+            const wildDuckClientModule = await import('@/integrations/email');
+            // @ts-expect-error - Mocking constructor
+            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+                init: mock(async () => {}),
+            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            spies.push(WildDuckClientSpy);
+
+            // Mock setupEmail to prevent real email integration setup
+            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
+            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:     mock(async () => {}),
+            });
+            spies.push(setupEmailSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
             const configModule = await import('@/config/loader');
@@ -402,6 +431,13 @@ describe('createApp', () => {
             const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
+            const personAllowlistModule = await import('@/storage');
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            spies.push(PersonAllowlistSpy);
+
             const contextBuilderModule = await import('@/agent/context-builder');
             const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
@@ -447,6 +483,28 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
+
+            // Mock WildDuckClient to prevent real HTTP calls in email setup
+            const wildDuckClientModule = await import('@/integrations/email');
+            // @ts-expect-error - Mocking constructor
+            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+                init: mock(async () => {}),
+            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            spies.push(WildDuckClientSpy);
+
+            // Mock setupEmail to prevent real email integration setup
+            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
+            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:     mock(async () => {}),
+            });
+            spies.push(setupEmailSpy);
 
             // Mock loadConfig with empty oauthToken
             const configModule = await import('@/config/loader');
@@ -576,6 +634,35 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
+
+            const personAllowlistModule = await import('@/storage');
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            spies.push(PersonAllowlistSpy);
+
+            // Mock WildDuckClient to prevent real HTTP calls in email setup
+            const wildDuckClientModule = await import('@/integrations/email');
+            // @ts-expect-error - Mocking constructor
+            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+                init: mock(async () => {}),
+            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            spies.push(WildDuckClientSpy);
+
+            // Mock setupEmail to prevent real email integration setup
+            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
+            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:     mock(async () => {}),
+            });
+            spies.push(setupEmailSpy);
 
             // Mock loadConfig with valid oauthToken
             const configModule = await import('@/config/loader');
@@ -707,6 +794,35 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
+
+            const personAllowlistModule = await import('@/storage');
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            spies.push(PersonAllowlistSpy);
+
+            // Mock WildDuckClient to prevent real HTTP calls in email setup
+            const wildDuckClientModule = await import('@/integrations/email');
+            // @ts-expect-error - Mocking constructor
+            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+                init: mock(async () => {}),
+            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            spies.push(WildDuckClientSpy);
+
+            // Mock setupEmail to prevent real email integration setup
+            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
+            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:     mock(async () => {}),
+            });
+            spies.push(setupEmailSpy);
 
             // Mock loadConfig with valid oauthToken
             const configModule = await import('@/config/loader');
@@ -842,6 +958,35 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
+
+            const personAllowlistModule = await import('@/storage');
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            spies.push(PersonAllowlistSpy);
+
+            // Mock WildDuckClient to prevent real HTTP calls in email setup
+            const wildDuckClientModule = await import('@/integrations/email');
+            // @ts-expect-error - Mocking constructor
+            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+                init: mock(async () => {}),
+            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            spies.push(WildDuckClientSpy);
+
+            // Mock setupEmail to prevent real email integration setup
+            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
+            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:     mock(async () => {}),
+            });
+            spies.push(setupEmailSpy);
 
             // Mock loadConfig with valid oauthToken
             const configModule = await import('@/config/loader');
@@ -1290,6 +1435,13 @@ describe('createApp', () => {
             const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
+            const personAllowlistModule = await import('@/storage');
+            // @ts-expect-error - Mocking constructor
+            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+                load: mock(async () => {}),
+            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            spies.push(PersonAllowlistSpy);
+
             const contextBuilderModule = await import('@/agent/context-builder');
             const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
@@ -1335,6 +1487,28 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
+
+            // Mock WildDuckClient to prevent real HTTP calls in email setup
+            const wildDuckClientModule = await import('@/integrations/email');
+            // @ts-expect-error - Mocking constructor
+            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+                init: mock(async () => {}),
+            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            spies.push(WildDuckClientSpy);
+
+            // Mock setupEmail to prevent real email integration setup
+            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
+            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:     mock(async () => {}),
+            });
+            spies.push(setupEmailSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
             const configModule = await import('@/config/loader');

@@ -3,15 +3,16 @@ import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import type { ActivityLogger } from '@/agent';
 import {
-    BskyAllowlist,
     BskyOutboundApprovalHandler,
     BskyRejectionBackend,
     buildBskyApprovalEmbed,
     type BlueskyClient
 } from '@/integrations/bsky';
+import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { SendRateLimiter } from '@/integrations/email';
 import type { ApprovalSagaBackend } from '@/services';
+import type { PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
@@ -24,29 +25,33 @@ function isSendableChannel(channel: unknown): channel is { send: (options: unkno
 // ---------------------------------------------------------------------------
 
 export interface BskySetupOptions {
-    bskyClient:            BlueskyClient
-    docClient:             DynamoDBDocumentClient
-    tableName:             string
+    bskyClient:                  BlueskyClient
+    docClient:                   DynamoDBDocumentClient
+    tableName:                   string
     /** Discord client instance */
-    client:                Client
+    client:                      Client
     /** Discord channel ID for admin approval embeds */
-    adminDiscordChannelId: string
+    adminDiscordChannelId:       string
     /** Approval saga backend for durable approval workflows */
-    approvalSagaBackend:   ApprovalSagaBackend
+    approvalSagaBackend:         ApprovalSagaBackend
     /** Optional activity logger for recording approval events */
-    activityLogger?:       ActivityLogger
+    activityLogger?:             ActivityLogger
     /**
      * Optional Discord capability facade.
      * When provided, approval embeds are sent via the facade (with outbox fallback
      * when Discord is offline) instead of calling channel.send() directly.
      */
-    discordCapability?:    DiscordCapability
+    discordCapability?:          DiscordCapability
     /** @internal Dependency injection for testing (e.g. fast sleep) */
-    _deps?:                { sleep?: (ms: number) => Promise<void> }
+    _deps?:                      { sleep?: (ms: number) => Promise<void> }
+    /** Pre-loaded PersonAllowlist for gating outbound Bluesky posts and DMs */
+    personAllowlist:             PersonAllowlist
+    /** Allowlist interaction handler for the saga-based allowlist flow */
+    allowlistInteractionHandler: AllowlistInteractionHandler
 }
 
 export interface BskySetupResult {
-    allowlist:               BskyAllowlist
+    allowlist:               PersonAllowlist
     rateLimiter:             SendRateLimiter
     rejectionBackend:        BskyRejectionBackend
     outboundApprovalHandler: BskyOutboundApprovalHandler
@@ -75,7 +80,7 @@ export interface BskySetupResult {
  * Initialize all Bluesky integration components for Discord wiring.
  *
  * Creates:
- * - BskyAllowlist (loaded from DynamoDB)
+ * - PersonAllowlist (loaded from DynamoDB, passed in via options)
  * - SendRateLimiter (capacity=24, refill=1/hr)
  * - sendApprovalRequest callback (posts approval embed to admin channel, retries 3x)
  * - sendDMApprovalRequest callback (posts DM approval embed to admin channel, retries 3x)
@@ -89,11 +94,8 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     // Stryker disable next-line ObjectLiteral: Dependency injection for testability — sleep override is a no-op in production
     const retryDeps = options._deps?.sleep ? { deps: { sleep: options._deps.sleep } } : {};
 
-    // Create and load allowlist from DynamoDB into memory cache
-    const allowlist = new BskyAllowlist(docClient, tableName);
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Loading Bluesky allowlist...');
-    await allowlist.load();
+    // Use the pre-loaded PersonAllowlist passed in by the caller
+    const allowlist = options.personAllowlist;
 
     // Create rejection backend for persisting admin-rejected posts/DMs
     const rejectionBackend = new BskyRejectionBackend(docClient, tableName);
@@ -188,11 +190,11 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     // Create outbound approval handler (handles bsky-send-* and bsky-dm-* button/modal interactions)
     // Stryker disable next-line ObjectLiteral: outbound approval handler wiring is integration-only
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({
-        client:         bskyClient,
-        allowlist,
+        client:                      bskyClient,
         rejectionBackend,
-        sagaBackend:    options.approvalSagaBackend,
-        activityLogger: options.activityLogger,
+        sagaBackend:                 options.approvalSagaBackend,
+        activityLogger:              options.activityLogger,
+        allowlistInteractionHandler: options.allowlistInteractionHandler,
     });
 
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting

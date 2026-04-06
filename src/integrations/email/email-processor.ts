@@ -1,13 +1,13 @@
 import { logger } from '@hughescr/logger';
-import type { EmailAllowlist } from '@/integrations/email/allowlist';
 import { checkAuthentication } from '@/integrations/email/auth-checker';
 import type { EmailClassifier } from '@/integrations/email/classifier';
 import { EmailProcessingError } from '@/integrations/email/errors';
 import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
+import type { PersonAllowlist } from '@/storage';
 
 interface EmailProcessorDeps {
-    allowlist:      EmailAllowlist
+    allowlist:      PersonAllowlist
     classifier:     EmailClassifier
     wildDuckClient: WildDuckClient
 }
@@ -28,7 +28,7 @@ interface ProcessingResult {
 }
 
 export class EmailProcessor {
-    private readonly allowlist:      EmailAllowlist;
+    private readonly allowlist:      PersonAllowlist;
     private readonly classifier:     EmailClassifier;
     private readonly wildDuckClient: WildDuckClient;
     private readonly callbacks:      ProcessEmailCallbacks;
@@ -48,7 +48,7 @@ export class EmailProcessor {
      * Returns the processing result (verdict, destination folder, whether allowlist bypassed)
      */
     async processEmail(email: EmailMetadata): Promise<ProcessingResult> {
-        const senderAllowed = this.allowlist.isAllowed(email.from.address);
+        const senderAllowed = this.allowlist.isAllowed('email', email.from.address);
 
         if(senderAllowed) {
             const auth = checkAuthentication(email.headers.authenticationResults, email.from.address);

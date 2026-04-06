@@ -96,15 +96,6 @@ export interface EmailHeaders {
     xRspamdScore?:          string
 }
 
-// Allowlist entry stored in DynamoDB
-export interface AllowlistEntry {
-    email:   string
-    name?:   string
-    notes?:  string
-    addedAt: string
-    addedBy: string
-}
-
 // Auth check result
 export interface AuthCheckResult {
     spfPass:  boolean
