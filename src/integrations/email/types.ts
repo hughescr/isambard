@@ -57,27 +57,29 @@ export interface AttachmentData {
 // Email metadata (from WildDuck API)
 export interface EmailMetadata {
     /** Message UID */
-    uid:            number
+    uid:                  number
     /** Message-ID header */
-    messageId:      string
+    messageId:            string
     /** From header (parsed) */
-    from:           EmailAddress
+    from:                 EmailAddress
     /** To header (parsed) */
-    to:             EmailAddress[]
+    to:                   EmailAddress[]
     /** CC header (parsed, may be empty) */
-    cc:             EmailAddress[]
+    cc:                   EmailAddress[]
     /** Subject */
-    subject:        string
+    subject:              string
     /** Date header */
-    date:           Date
+    date:                 Date
     /** Plain text body (truncated at maxBodySizeBytes) */
-    bodyText:       string
+    bodyText:             string
     /** Whether message has attachments */
-    hasAttachments: boolean
+    hasAttachments:       boolean
     /** Selected headers map */
-    headers:        EmailHeaders
+    headers:              EmailHeaders
+    /** WildDuck pre-parsed email verification results */
+    verificationResults?: VerificationResults
     /** Fetched attachment data (present when fetched via fetchMessage) */
-    attachments:    AttachmentData[]
+    attachments:          AttachmentData[]
 }
 
 // Parsed email address
@@ -94,6 +96,14 @@ export interface EmailHeaders {
     authenticationResults?: string
     xRspamdReport?:         string
     xRspamdScore?:          string
+}
+
+/** WildDuck pre-parsed email verification results */
+export interface VerificationResults {
+    /** Domain that passed SPF, or false/undefined if SPF did not pass */
+    spf?:  string | false
+    /** Domain that passed DKIM, or false/undefined if DKIM did not pass */
+    dkim?: string | false
 }
 
 // Auth check result

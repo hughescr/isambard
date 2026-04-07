@@ -23,9 +23,12 @@ function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
         bodyText:       'This is a normal email body.',
         hasAttachments: false,
         headers:        {
-            messageId:             '<test-123@example.com>',
-            authenticationResults: 'mx.rungie.com; spf=pass smtp.mailfrom=alice@example.com; dkim=pass header.d=example.com',
-            xRspamdScore:          '1.2',
+            messageId:    '<test-123@example.com>',
+            xRspamdScore: '1.2',
+        },
+        verificationResults: {
+            spf:  'example.com',
+            dkim: 'example.com',
         },
         attachments: [],
         ...overrides,
@@ -101,7 +104,7 @@ describe('EmailProcessor', () => {
 
         test('sender on allowlist + DKIM pass (no SPF) → CleanInbox bypass', async () => {
             const email = makeEmail({
-                headers: { authenticationResults: 'mx.rungie.com; spf=fail smtp.mailfrom=other@other.com; dkim=pass header.d=example.com' },
+                verificationResults: { dkim: 'example.com' },
             });
             const classifier = makeClassifier(makeVerdict('safe'));
             const { conn, moveMessage } = makeImap();
@@ -123,7 +126,7 @@ describe('EmailProcessor', () => {
 
         test('sender on allowlist but no auth pass → falls through to classifier', async () => {
             const email = makeEmail({
-                headers: { authenticationResults: 'mx.rungie.com; spf=fail smtp.mailfrom=spammer@evil.com; dkim=fail' },
+                verificationResults: { spf: false, dkim: false },
             });
             const classifier = makeClassifier(makeVerdict('safe'));
             const { conn, moveMessage } = makeImap();
@@ -143,8 +146,8 @@ describe('EmailProcessor', () => {
             expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.CleanInbox);
         });
 
-        test('sender on allowlist with no authentication-results header → falls through to classifier', async () => {
-            const email = makeEmail({ headers: {} });
+        test('sender on allowlist with no verificationResults → falls through to classifier', async () => {
+            const email = makeEmail({ verificationResults: undefined });
             const classifier = makeClassifier(makeVerdict('spam'));
             const { conn, moveMessage } = makeImap();
 
@@ -160,6 +163,111 @@ describe('EmailProcessor', () => {
             expect(classifier.classify).toHaveBeenCalledTimes(1);
             expect(result.destinationFolder).toBe(EmailFolder.Junk);
             expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Junk);
+        });
+
+        test('sender on allowlist + auth failed → onAuthFailed callback invoked', async () => {
+            const email      = makeEmail({ verificationResults: { spf: false, dkim: false } });
+            const classifier = makeClassifier(makeVerdict('safe'));
+            const { conn }   = makeImap();
+            const onAuthFailed = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist:      makeAllowlist(true),
+                    classifier,
+                    wildDuckClient: conn,
+                },
+                { onAuthFailed }
+            );
+
+            const result = await processor.processEmail(email);
+
+            expect(onAuthFailed).toHaveBeenCalledWith(email);
+            expect(result.allowlistBypassed).toBe(false);
+            expect(classifier.classify).toHaveBeenCalledTimes(1);
+        });
+
+        test('sender on allowlist + auth failed + classified safe → onAuthFailed fires, onSafe does NOT fire', async () => {
+            const email        = makeEmail({ verificationResults: { spf: false, dkim: false } });
+            const classifier   = makeClassifier(makeVerdict('safe'));
+            const { conn }     = makeImap();
+            const onAuthFailed = mock(async () => undefined);
+            const onSafe       = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist:      makeAllowlist(true),
+                    classifier,
+                    wildDuckClient: conn,
+                },
+                { onAuthFailed, onSafe }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onAuthFailed).toHaveBeenCalledWith(email);
+            expect(onSafe).not.toHaveBeenCalled();
+        });
+
+        test('sender on allowlist + auth failed + classified unsafe → both onAuthFailed and onUnsafe fire', async () => {
+            const email        = makeEmail({ verificationResults: { spf: false, dkim: false } });
+            const verdict      = makeVerdict('unsafe');
+            const classifier   = makeClassifier(verdict);
+            const { conn }     = makeImap();
+            const onAuthFailed = mock(async () => undefined);
+            const onUnsafe     = mock(async () => undefined);
+            const onSafe       = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist:      makeAllowlist(true),
+                    classifier,
+                    wildDuckClient: conn,
+                },
+                { onAuthFailed, onUnsafe, onSafe }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onAuthFailed).toHaveBeenCalledWith(email);
+            expect(onUnsafe).toHaveBeenCalledWith(email, verdict);
+            expect(onSafe).not.toHaveBeenCalled();
+        });
+
+        test('sender on allowlist + auth failed → onAuthFailed not called when not provided', async () => {
+            const email      = makeEmail({ verificationResults: { spf: false, dkim: false } });
+            const classifier = makeClassifier(makeVerdict('safe'));
+            const { conn }   = makeImap();
+
+            const processor = new EmailProcessor({
+                allowlist:      makeAllowlist(true),
+                classifier,
+                wildDuckClient: conn,
+            });
+
+            // Should not throw when onAuthFailed is not provided
+            const result = await processor.processEmail(email);
+            expect(result.allowlistBypassed).toBe(false);
+        });
+
+        test('sender not on allowlist → onAuthFailed never called', async () => {
+            const email        = makeEmail({ verificationResults: { spf: false, dkim: false } });
+            const classifier   = makeClassifier(makeVerdict('safe'));
+            const { conn }     = makeImap();
+            const onAuthFailed = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                {
+                    allowlist:      makeAllowlist(false),
+                    classifier,
+                    wildDuckClient: conn,
+                },
+                { onAuthFailed }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onAuthFailed).not.toHaveBeenCalled();
         });
     });
 

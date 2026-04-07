@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { checkAuthentication } from '@/integrations/email/auth-checker';
+import { checkVerificationResults } from '@/integrations/email/auth-checker';
 import type { EmailClassifier } from '@/integrations/email/classifier';
 import { EmailProcessingError } from '@/integrations/email/errors';
 import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
@@ -14,11 +14,13 @@ interface EmailProcessorDeps {
 
 interface ProcessEmailCallbacks {
     /** Called when an email is classified as 'safe' but sender is not on allowlist — used for Discord admin notification */
-    onSafe?:   (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
+    onSafe?:       (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
     /** Called when an email is classified as 'uncertain' — used for Discord review embed */
-    onReview?: (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
+    onReview?:     (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
     /** Called when an email is classified as 'unsafe' — used for Discord alert to Craig */
-    onUnsafe?: (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
+    onUnsafe?:     (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
+    /** Called when an allowlisted sender's email fails auth — used for Discord admin warning */
+    onAuthFailed?: (email: EmailMetadata) => Promise<void>
 }
 
 interface ProcessingResult {
@@ -51,13 +53,16 @@ export class EmailProcessor {
         const senderAllowed = this.allowlist.isAllowed('email', email.from.address);
 
         if(senderAllowed) {
-            const auth = checkAuthentication(email.headers.authenticationResults, email.from.address);
+            const auth = checkVerificationResults(email.verificationResults, email.from.address);
             if(auth.spfPass || auth.dkimPass) {
                 return this.routeAllowlistBypass(email);
             }
+            if(this.callbacks.onAuthFailed) {
+                await this.callbacks.onAuthFailed(email);
+            }
         }
 
-        return this.routeViaClassifier(email);
+        return this.routeViaClassifier(email, senderAllowed);
     }
 
     private async routeAllowlistBypass(email: EmailMetadata): Promise<ProcessingResult> {
@@ -90,7 +95,7 @@ export class EmailProcessor {
         };
     }
 
-    private async routeViaClassifier(email: EmailMetadata): Promise<ProcessingResult> {
+    private async routeViaClassifier(email: EmailMetadata, senderAllowed: boolean): Promise<ProcessingResult> {
         let verdict: ClassifierVerdict;
         // Stryker disable BlockStatement — external classifier call; catch re-throws as typed EmailProcessingError
         try {
@@ -120,7 +125,7 @@ export class EmailProcessor {
         }
         // Stryker restore BlockStatement
 
-        await this.invokeCallback(email, verdict);
+        await this.invokeCallback(email, verdict, senderAllowed);
 
         // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({
@@ -154,8 +159,10 @@ export class EmailProcessor {
         }
     }
 
-    private async invokeCallback(email: EmailMetadata, verdict: ClassifierVerdict): Promise<void> {
-        if(verdict.verdict === 'safe' && this.callbacks.onSafe) {
+    // onSafe is suppressed for allowlisted senders — onAuthFailed already handles that case.
+    // onReview/onUnsafe still fire regardless: admin must know about suspicious emails even from known senders.
+    private async invokeCallback(email: EmailMetadata, verdict: ClassifierVerdict, senderAllowed: boolean): Promise<void> {
+        if(verdict.verdict === 'safe' && !senderAllowed && this.callbacks.onSafe) {
             await this.callbacks.onSafe(email, verdict);
         } else if(verdict.verdict === 'uncertain' && this.callbacks.onReview) {
             await this.callbacks.onReview(email, verdict);

@@ -174,6 +174,15 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                     options.discordCapability
                 );
             },
+            onAuthFailed: async (email) => {
+                await sendToAdminChannel(
+                    client,
+                    emailConfig.adminDiscordChannelId,
+                    { content: `Allowlisted sender **${email.from.address}** failed SPF/DKIM auth check.\nSubject: ${email.subject}\nEmail was sent to classifier instead of auto-approved.` },
+                    'Failed to send auth-failure notification to admin channel',
+                    options.discordCapability
+                );
+            },
         }
     );
     // Stryker restore ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral

@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
 import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
-import { type EmailMetadata, type EmailAddress, type EmailHeaders, EmailFolder  } from '@/integrations/email/types';
+import { type EmailMetadata, type EmailAddress, type EmailHeaders, type VerificationResults, EmailFolder  } from '@/integrations/email/types';
 
 export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
 
@@ -214,19 +214,24 @@ interface MessageListResponse {
 }
 
 interface FullMessageResponse {
-    success:      boolean
-    id:           number
-    messageId?:   string
-    from?:        { address: string, name?: string }
-    to?:          { address: string, name?: string }[]
-    cc?:          { address: string, name?: string }[]
-    replyTo?:     { address: string, name?: string }
-    subject?:     string
-    date:         string
-    text?:        string
-    html?:        string
-    headers?:     Record<string, string>
-    attachments?: { id: string, filename: string, contentType: string, sizeKb: number }[]
+    success:              boolean
+    id:                   number
+    messageId?:           string
+    from?:                { address: string, name?: string }
+    to?:                  { address: string, name?: string }[]
+    cc?:                  { address: string, name?: string }[]
+    replyTo?:             { address: string, name?: string }
+    subject?:             string
+    date:                 string
+    text?:                string
+    html?:                string
+    headers?:             Record<string, string>
+    attachments?:         { id: string, filename: string, contentType: string, sizeKb: number }[]
+    verificationResults?: VerificationResults & {
+        tls?:  unknown
+        arc?:  boolean
+        bimi?: boolean
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -751,19 +756,20 @@ export class WildDuckClient {
     }
     // Stryker restore StringLiteral
 
-    private mapFullMessage(response: FullMessageResponse): WildDuckEmailMetadata {
+    private extractBodyText(response: FullMessageResponse): string {
         const maxBodySizeBytes = this.options.maxBodySizeBytes ?? 50_000;
-
-        // Determine body text
-        let bodyText: string;
         if(response.text) {
-            bodyText = extractBody(response.text, false, maxBodySizeBytes);
-        } else if(response.html) {
-            bodyText = extractBody(response.html, true, maxBodySizeBytes);
-        } else {
-            // Stryker disable next-line StringLiteral: empty string fallback is correct for missing body
-            bodyText = '';
+            return extractBody(response.text, false, maxBodySizeBytes);
         }
+        if(response.html) {
+            return extractBody(response.html, true, maxBodySizeBytes);
+        }
+        // Stryker disable next-line StringLiteral: empty string fallback is correct for missing body
+        return '';
+    }
+
+    private mapFullMessage(response: FullMessageResponse): WildDuckEmailMetadata {
+        const bodyText = this.extractBodyText(response);
 
         // Map addresses
         const from = response.from ? mapAddress(response.from) : { address: '' };
@@ -781,6 +787,10 @@ export class WildDuckClient {
             sizeKb:      att.sizeKb,
         }));
 
+        const verificationResults: VerificationResults | undefined = response.verificationResults
+            ? { spf: response.verificationResults.spf, dkim: response.verificationResults.dkim }
+            : undefined;
+
         return {
             uid:            response.id,
             // Stryker disable next-line StringLiteral: empty string fallback for missing messageId
@@ -794,6 +804,7 @@ export class WildDuckClient {
             bodyText,
             hasAttachments: (response.attachments?.length ?? 0) > 0,
             headers,
+            verificationResults,
             attachments:    [],
             attachmentMeta,
         };

@@ -2385,6 +2385,13 @@ describe('WildDuckClient', () => {
                 'x-rspamd-report':        'report-data',
                 'x-rspamd-score':         '1.5',
             },
+            verificationResults: {
+                spf:  'example.com',
+                dkim: 'example.com',
+                tls:  { name: 'TLS_AES_256', standardName: 'TLS_AES_256', version: 'TLSv1.3' },
+                arc:  false,
+                bimi: false,
+            },
         };
 
         test('calls GET /users/me/mailboxes/{mailboxId}/messages/{uid}', async () => {
@@ -2428,6 +2435,32 @@ describe('WildDuckClient', () => {
             expect(result?.bodyText).toBe('Plain text body here.');
             expect(result?.hasAttachments).toBe(false);
             expect(result?.attachments).toEqual([]);
+            expect(result?.verificationResults).toEqual({ spf: 'example.com', dkim: 'example.com' });
+        });
+
+        test('maps verificationResults when not present → undefined', async () => {
+            const client = await makeInitializedClient();
+
+            const noVerification = { ...FULL_MESSAGE_RESPONSE, verificationResults: undefined };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(noVerification));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.verificationResults).toBeUndefined();
+        });
+
+        test('maps verificationResults with false values', async () => {
+            const client = await makeInitializedClient();
+
+            const falseVerification = {
+                ...FULL_MESSAGE_RESPONSE,
+                verificationResults: { spf: false as const, dkim: false as const, tls: {}, arc: false, bimi: false },
+            };
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(falseVerification));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.verificationResults).toEqual({ spf: false, dkim: false });
         });
 
         test('maps headers to EmailHeaders', async () => {
