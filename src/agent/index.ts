@@ -67,7 +67,7 @@ export { StreamTracker, type StreamProgress } from './stream-tracker';
 export { type ResumeContext } from './resume-prompt-builder';
 
 // Activity Logger
-export { createActivityLogger, type ActivityLogger, type ActivityLogEntry, type ActivityType } from './activity-logger';
+export { createActivityLogger, type ActivityLogger } from './activity-logger';
 
 // History Providers
 export type { HistoryEntry, HistoryFetchParams, PlatformHistoryProvider } from './history-providers';

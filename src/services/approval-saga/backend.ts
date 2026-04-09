@@ -28,8 +28,7 @@ export class ApprovalSagaBackend extends BaseRepository<ApprovalSaga> {
             PK:  SAGA_PK,
             SK:  sagaSK(saga.id),
             ...saga,
-            // Stryker disable next-line ArithmeticOperator: TTL arithmetic — multiplication order does not affect the result
-            TTL: Math.floor(Date.now() / 1000) + (TTL_DAYS * 24 * 60 * 60),
+            TTL: ApprovalSagaBackend.ttlFromDays(TTL_DAYS),
         });
     }
 

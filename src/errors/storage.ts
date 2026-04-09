@@ -206,21 +206,12 @@ export class ReconciliationError extends MemoryToolError {
 /**
  * Base error class for all contact-related errors.
  */
-export class ContactError extends StorageError {
-    constructor(
-        message: string,
-        code: ErrorCode = ErrorCode.CONTACT_ERROR,
-        context?: Record<string, unknown>
-    ) {
-        super(message, code, context);
-        this.name = 'ContactError';
-    }
-}
+// REMOVED: ContactError intermediate base class — ContactNotFoundError and ContactLastIdentifierError now extend StorageError directly
 
 /**
  * Error thrown when a contact is not found.
  */
-export class ContactNotFoundError extends ContactError {
+export class ContactNotFoundError extends StorageError {
     declare public readonly context: { personId: string };
 
     constructor(personId: string) {
@@ -232,7 +223,7 @@ export class ContactNotFoundError extends ContactError {
 /**
  * Error thrown when trying to remove the last identifier from a contact.
  */
-export class ContactLastIdentifierError extends ContactError {
+export class ContactLastIdentifierError extends StorageError {
     declare public readonly context: { personId: string };
 
     constructor(personId: string) {

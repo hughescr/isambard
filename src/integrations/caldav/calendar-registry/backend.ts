@@ -1,15 +1,10 @@
-import {
-    type DynamoDBDocumentClient,
-    PutCommand,
-    GetCommand,
-    ScanCommand
-} from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { CalendarRegistryKeyGenerator, type CalendarRegistryKeys } from './key-generator';
 import {
     type CalendarRegistryRecord,
     type CalendarServerEntry
 } from './types';
-import { withDynamoTimeout } from '@/storage';
+import { BaseRepository } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
 /**
@@ -17,12 +12,14 @@ import { stripDynamoKeys } from '@/utils';
  * Stores per-user calendar server associations with credentials and calendar paths.
  * Also supports a shared record for public calendars available to all users.
  */
-export class CalendarRegistryBackend {
+export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryRecord> {
     constructor(
-        private readonly docClient: DynamoDBDocumentClient,
-        private readonly tableName: string,
-        private readonly timeoutMs = 10_000
-    ) {}
+        docClient: DynamoDBDocumentClient,
+        tableName: string,
+        timeoutMs = 10_000
+    ) {
+        super(docClient, tableName, timeoutMs);
+    }
 
     /**
      * Gets all calendar servers for a user, merging user-specific and shared servers.
@@ -154,54 +151,41 @@ export class CalendarRegistryBackend {
      */
     async listRegisteredUserIds(): Promise<string[]> {
         // Stryker disable StringLiteral,ObjectLiteral: DynamoDB scan configuration — filter expression and attribute values are API config, not behavior
-        const command = new ScanCommand({
-            TableName:                 this.tableName,
-            FilterExpression:          'begins_with(PK, :prefix) AND SK = :sk',
-            ExpressionAttributeValues: {
-                ':prefix': 'CALCAL#',
-                ':sk':     'CALENDARS',
+        const items = await this.scan<Record<string, unknown>>(
+            {
+                FilterExpression:          'begins_with(PK, :prefix) AND SK = :sk',
+                ExpressionAttributeValues: {
+                    ':prefix': 'CALCAL#',
+                    ':sk':     'CALENDARS',
+                },
+                ProjectionExpression: 'PK',
             },
-            ProjectionExpression: 'PK',
-        });
+            'CalendarRegistry.listRegisteredUserIds'
+        );
         // Stryker restore StringLiteral,ObjectLiteral
 
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
-            { timeoutMs: this.timeoutMs, operation: 'CalendarRegistry.listRegisteredUserIds' }
-        );
-
-        return (result.Items ?? [])
+        return items
             .map(item => CalendarRegistryKeyGenerator.parseUserId(item.PK as string))
             .filter(id => id !== 'SHARED');
     }
 
     async #getRecord(keys: CalendarRegistryKeys): Promise<CalendarRegistryRecord | null> {
-        const command = new GetCommand({
-            TableName: this.tableName,
-            Key:       { PK: keys.PK, SK: keys.SK },
-        });
-
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
-            { timeoutMs: this.timeoutMs, operation: 'CalendarRegistry.getRecord' }
+        const result = await this.getItem<Record<string, unknown>>(
+            { PK: keys.PK, SK: keys.SK },
+            'CalendarRegistry.getRecord'
         );
 
-        if(!result.Item) {
+        if(!result) {
             return null;
         }
 
-        return stripDynamoKeys(result.Item) as CalendarRegistryRecord;
+        return stripDynamoKeys(result) as CalendarRegistryRecord;
     }
 
     async #putRecord(keys: CalendarRegistryKeys, record: CalendarRegistryRecord): Promise<void> {
-        const command = new PutCommand({
-            TableName: this.tableName,
-            Item:      { ...record, PK: keys.PK, SK: keys.SK },
-        });
-
-        await withDynamoTimeout(
-            () => this.docClient.send(command),
-            { timeoutMs: this.timeoutMs, operation: 'CalendarRegistry.putRecord' }
+        await this.putItem(
+            { ...record, PK: keys.PK, SK: keys.SK },
+            'CalendarRegistry.putRecord'
         );
     }
 

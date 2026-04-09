@@ -122,7 +122,7 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
 /**
  * Parameters for setting up coordinator integration.
  */
-export interface SetupCoordinatorParams {
+interface SetupCoordinatorParams {
     agent:                    ClaudeAgent
     presenceManager:          PresenceManager | undefined
     dynamicStatusGenerator:   ReturnType<typeof createDynamicStatusGenerator> | undefined

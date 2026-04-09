@@ -4,7 +4,7 @@ import { generateText } from './text-generator';
 import type { MemoryToolItemData } from '@/storage';
 import { formatShortRelativeTime } from '@/utils';
 
-export interface EventBatchSummary {
+interface EventBatchSummary {
     startTime: string    // ISO8601 of earliest event in batch
     endTime:   string    // ISO8601 of latest event in batch
     count:     number

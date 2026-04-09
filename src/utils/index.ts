@@ -29,6 +29,10 @@ export {
     retryPolicySchema,
     setupRetryContext,
     calculateDelay,
+    defaultClassifier,
+    createHttpStatusClassifier,
+    classifyNetworkError,
+    classifyHttpStatus,
     type ErrorClassification,
     type ErrorClassifier,
     type RetryLogger,
@@ -65,10 +69,7 @@ export {
     isSupportedImageType,
     needsConversion,
     convert,
-    type ConversionResult,
     FETCH_TIMEOUT_MS as MediaFetchTimeoutMs,
     fetchImage as fetchMediaImage,
-    fetchImages as fetchMediaImages,
-    type FetchImageResult as MediaFetchImageResult,
-    type FetchImagesResult as MediaFetchImagesResult
+    fetchImages as fetchMediaImages
 } from './media';

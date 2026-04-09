@@ -10,7 +10,7 @@ import {
 
 export const FETCH_TIMEOUT_MS = 30_000;
 
-export type FetchImageResult = {
+type FetchImageResult = {
     success: true
     image:   FetchedImage
 } | {
@@ -18,7 +18,7 @@ export type FetchImageResult = {
     failure: FailedMedia
 };
 
-export interface FetchImagesResult {
+interface FetchImagesResult {
     images:   FetchedImage[]
     failures: FailedMedia[]
 }

@@ -10,7 +10,6 @@
 export type {
     HistoryEntry,
     HistoryFetchParams,
-    PersonHistoryOptions,
     PlatformHistoryProvider
 } from './types';
 

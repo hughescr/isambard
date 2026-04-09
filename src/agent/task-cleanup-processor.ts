@@ -20,7 +20,7 @@ import type { SessionId } from '@/storage';
 // Re-export for tests
 export { getTaskDirectoryPath } from './task-directory-copier';
 
-export interface TaskCleanupProcessorOptions {
+interface TaskCleanupProcessorOptions {
     logger:         Logger
     retentionDays?: number  // Default: 1
     deps?:          Partial<TaskCleanupDeps>  // For testing

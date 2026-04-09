@@ -20,7 +20,8 @@ import {
     InvalidPathError,
     InvalidLineNumberError,
     TextNotFoundError,
-    TextNotUniqueError
+    TextNotUniqueError,
+    ContentTooLargeError
 } from '@/errors';
 import { formatShortRelativeTime } from '@/utils';
 
@@ -78,6 +79,11 @@ export async function create(
     const memoryPath = validatePath(params.path);
     const contentType = detectContentType(params.path);
 
+    const contentBytes = new TextEncoder().encode(params.file_text).length;
+    if(contentBytes > 350_000) {
+        throw new ContentTooLargeError(params.path, contentBytes);
+    }
+
     await backend.create({
         path:    memoryPath,
         content: params.file_text,
@@ -113,6 +119,11 @@ export async function insert(
     // Insert the new text
     lines.splice(params.insert_line, 0, params.insert_text);
     const newContent = lines.join('\n');
+
+    const contentBytes = new TextEncoder().encode(newContent).length;
+    if(contentBytes > 350_000) {
+        throw new ContentTooLargeError(params.path, contentBytes);
+    }
 
     await backend.update(memoryPath, { content: newContent });
 
@@ -150,6 +161,11 @@ export async function str_replace(
 
     // Replace the text
     const newContent = item.content.replace(params.old_str, params.new_str);
+
+    const contentBytes = new TextEncoder().encode(newContent).length;
+    if(contentBytes > 350_000) {
+        throw new ContentTooLargeError(params.path, contentBytes);
+    }
 
     await backend.update(memoryPath, { content: newContent });
 

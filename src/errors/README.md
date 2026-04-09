@@ -27,11 +27,8 @@ classDiagram
 
     ReconciliationError <|-- ReconciliationThrottledError
 
-    DiscordError <|-- InvalidTokenError
-    DiscordError <|-- PermissionError
     DiscordError <|-- ChannelNotFoundByIdError
     DiscordError <|-- ChannelNotAccessibleError
-    DiscordError <|-- RateLimitError
     DiscordError <|-- MessageFetchError
     DiscordError <|-- InvalidSnowflakeError
     DiscordError <|-- ChannelRegistryError
@@ -265,7 +262,7 @@ try {
 
 ### Retry on Specific Errors
 ```typescript
-if (error instanceof DynamoTimeoutError || error instanceof RateLimitError) {
+if (error instanceof DynamoTimeoutError) {
     // Retry with backoff
     await retryWithBackoff(operation);
 } else {
@@ -304,7 +301,7 @@ Three patterns coexist in the codebase. Choose based on the decision tree below.
 
 **Why:** These errors indicate the system cannot safely continue. Letting execution proceed would corrupt state or produce incorrect results.
 
-**Examples:** `TransitionError` in `BotStateManagerImpl`, `ZodError` in config parsing, `InvalidTokenError` on startup.
+**Examples:** `TransitionError` in `BotStateManagerImpl`, `ZodError` in config parsing.
 
 ### Pattern 2: Log and Degrade Gracefully
 

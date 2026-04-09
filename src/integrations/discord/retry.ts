@@ -11,9 +11,9 @@
  * - Rate limit errors are permanent (Discord.js auto-retries with proper retry-after)
  * - All other Discord errors are permanent (invalid input, permissions, etc.)
  */
-import { retryAsync, type ErrorClassification, type ErrorClassifier, type RetryPolicy, type RetryDeps  } from '@/utils';
+import { retryAsync, classifyNetworkError, type ErrorClassification, type ErrorClassifier, type RetryPolicy, type RetryDeps  } from '@/utils';
 
-export interface DiscordRetryOptions {
+interface DiscordRetryOptions {
     policy?: Partial<RetryPolicy>
     deps?:   Partial<RetryDeps>
 }
@@ -23,7 +23,7 @@ export interface DiscordRetryOptions {
  *
  * - AbortError -> transient (Discord.js REST timeout after exhausting internal retries)
  * - Network errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED) -> transient (retry)
- * - Rate limit errors (RateLimitError) -> permanent (Discord.js handles internally)
+ * - Rate limit errors (429) -> permanent (Discord.js handles internally)
  * - All other errors -> permanent (don't retry)
  *
  * @param error The error to classify
@@ -48,14 +48,13 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
     }
 
     // Check for network errors (transient)
-    if(typeof error === 'object' && error !== null && 'code' in error) {
-        const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
-        if(typeof error.code === 'string' && networkErrorCodes.has(error.code)) {
-            return {
-                category: 'transient',
-                message,
-            };
-        }
+    const networkResult = classifyNetworkError(error);
+    if(networkResult) {
+        // Use the Discord-extracted message (from Error instance or string) for consistency
+        return {
+            category: 'transient',
+            message,
+        };
     }
 
     // All other errors are permanent (invalid input, permissions, rate limits, etc.)

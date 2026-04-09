@@ -22,7 +22,7 @@ import type { BotState, BotStateManager, CatchingUpModeContext } from './types';
  * - active_dynamic: Generate contextual status via LLM (based on activity phase)
  * - active_static: Use static fallback (no activity phase available)
  */
-export type StatusGenerationStrategy = 'idle_llm' | 'active_dynamic' | 'active_static';
+type StatusGenerationStrategy = 'idle_llm' | 'active_dynamic' | 'active_static';
 
 /**
  * Context for status generation.
@@ -32,7 +32,7 @@ export type StatusGenerationStrategy = 'idle_llm' | 'active_dynamic' | 'active_s
  * - Generation strategy
  * - Prompt context for LLM-based generation
  */
-export interface StatusContext {
+interface StatusContext {
     /** Emoji prefix for Discord status (💤, 📥, 📥💬, 💬, 🪶, 🪶💬) */
     emojiPrefix:    string
     /** How to generate the status text */
@@ -47,7 +47,7 @@ export interface StatusContext {
  * Contains all relevant information about the current activity phase,
  * user interaction, and catch-up state.
  */
-export interface StatusPromptContext {
+interface StatusPromptContext {
     /** Current activity phase type */
     phase:            'thinking' | 'using_tool' | 'responding'
     /** User message being processed (for thinking phase) */
@@ -67,7 +67,7 @@ export interface StatusPromptContext {
  *
  * Provides information about unread messages and catch-up progress.
  */
-export interface CatchUpPromptContext {
+interface CatchUpPromptContext {
     /** Total unread messages when catch-up started */
     unreadCount:         number
     /** Names of channels with unread messages */
@@ -83,7 +83,7 @@ export interface CatchUpPromptContext {
 /**
  * Dependencies for StatusContextBuilder.
  */
-export interface StatusContextBuilderDeps {
+interface StatusContextBuilderDeps {
     stateManager: BotStateManager
 }
 
@@ -92,7 +92,7 @@ export interface StatusContextBuilderDeps {
  *
  * Reads BotState and produces StatusContext for status generation.
  */
-export interface StatusContextBuilder {
+interface StatusContextBuilder {
     /**
      * Build status context from current bot state.
      * Uses state from stateManager.getState().

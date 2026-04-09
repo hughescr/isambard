@@ -12,7 +12,7 @@ import { type ClaudeAgent, type ContextBuilder, type PerchConfig, type PerchSche
 /**
  * Parameters for setting up perch scheduler and runner.
  */
-export interface SetupPerchParams {
+interface SetupPerchParams {
     agent:                    ClaudeAgent
     perchConfig:              PerchConfig
     botStateManager:          BotStateManager

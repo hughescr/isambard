@@ -11,8 +11,7 @@ export {
     isNativeImageType,
     isConvertibleImageType,
     isSupportedImageType,
-    FailedMediaSchema as FailedAttachmentSchema,
-    type FailedMedia as FailedAttachment
+    FailedMediaSchema as FailedAttachmentSchema
 } from '@/utils';
 
 // Schema for Discord attachment metadata

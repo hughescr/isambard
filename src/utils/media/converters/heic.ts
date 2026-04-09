@@ -1,7 +1,7 @@
 import heicConvert from 'heic-convert';
 import { isConvertibleImageType } from '../types';
 
-export interface ConversionResult {
+interface ConversionResult {
     buffer:    Buffer
     mediaType: 'image/png'
 }

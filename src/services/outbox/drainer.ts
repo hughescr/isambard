@@ -18,7 +18,7 @@ export interface OutboxDrainerDeps {
     drainIntervalMs?: number
 }
 
-export interface DrainResult {
+interface DrainResult {
     delivered: number
     failed:    number
     skipped:   number

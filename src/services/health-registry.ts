@@ -21,7 +21,7 @@ export interface ServiceHealthRegistryLogger {
     debug: (obj: object, msg: string) => void
 }
 
-export interface ServiceHealthRegistryDeps {
+interface ServiceHealthRegistryDeps {
     logger: ServiceHealthRegistryLogger
 }
 

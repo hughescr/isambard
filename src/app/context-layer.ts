@@ -6,7 +6,7 @@ import type { MemoryToolBackend } from '@/storage';
 /**
  * Context layer components for memory-aware agent operation.
  */
-export interface ContextLayer {
+interface ContextLayer {
     contextBuilder:    ContextBuilder
     eventDeltaTracker: EventDeltaTracker
 }

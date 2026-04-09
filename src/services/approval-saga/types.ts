@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Stryker disable all: Schema values are static definitions
 
-export const approvalSagaStateSchema = z.enum([
+const approvalSagaStateSchema = z.enum([
     'pending_approval',
     'approved',
     'rejected',
@@ -11,7 +11,7 @@ export const approvalSagaStateSchema = z.enum([
 ]);
 export type ApprovalSagaState = z.infer<typeof approvalSagaStateSchema>;
 
-export const approvalSagaTypeSchema = z.enum([
+const approvalSagaTypeSchema = z.enum([
     'bsky_reply',
     'bsky_dm',
     'email_send',
@@ -20,6 +20,28 @@ export const approvalSagaTypeSchema = z.enum([
 export type ApprovalSagaType = z.infer<typeof approvalSagaTypeSchema>;
 
 // Stryker restore all
+
+/**
+ * Minimal interface for creating approval sagas.
+ * Satisfies ApprovalSagaBackend without crossing the services boundary into discord/email/bsky.
+ * Used by outbound approval handlers to avoid importing the full ApprovalSagaBackend class.
+ */
+export interface SagaWriter {
+    create(saga: {
+        id:                 string
+        state:              string
+        type:               string
+        params:             Record<string, unknown>
+        approvalChannelId?: string
+        approvalMessageId?: string
+        adminUserId?:       string
+        rejectionReason?:   string
+        lastError?:         string
+        createdAt:          string
+        updatedAt:          string
+        ttl?:               number
+    }): Promise<void>
+}
 
 export const approvalSagaSchema = z.object({
     id:                z.uuid(),

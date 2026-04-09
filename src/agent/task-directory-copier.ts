@@ -17,7 +17,7 @@ import type { Logger } from '@hughescr/logger';
 import type { TaskCleanupProcessor } from './task-cleanup-processor';
 import type { SessionId } from '@/storage';
 
-export interface TaskDirectoryCopierOptions {
+interface TaskDirectoryCopierOptions {
     logger:            Logger
     cleanupProcessor?: TaskCleanupProcessor
 }

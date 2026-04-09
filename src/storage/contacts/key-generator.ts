@@ -3,7 +3,7 @@ import { createContactId, platformTypeSchema, type ContactId, type PlatformType 
 /**
  * DynamoDB key structure for Contact profile items.
  */
-export interface ContactProfileKeys {
+interface ContactProfileKeys {
     /** Primary Key: CONTACT#{personId} */
     PK: string
     /** Sort Key: PROFILE */
@@ -14,7 +14,7 @@ export interface ContactProfileKeys {
  * DynamoDB key structure for Contact lookup items.
  * Maps platform+value → personId for identifier-based resolution.
  */
-export interface ContactLookupKeys {
+interface ContactLookupKeys {
     /** Primary Key: CONTACT_LOOKUP#{platform}#{normalizedValue} */
     PK: string
     /** Sort Key: CONTACT#{personId} */

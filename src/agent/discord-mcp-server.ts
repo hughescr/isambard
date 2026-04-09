@@ -4,7 +4,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, TextChannel, Message, MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
-import { mcpErrorResult, checkServiceHealth } from './mcp-helpers';
+import { mcpErrorResult, withHealthGuard } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
 import { createChannelId, createUserId, type UserId, type ChannelId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
 import { PathSecurityError } from '@/errors';
@@ -15,7 +15,7 @@ import { validateFilePaths, formatLocalDateTime } from '@/utils';
  * Context for the current Discord conversation.
  * Used to provide conversation-specific information to MCP tools.
  */
-export interface DiscordMCPServerContext {
+interface DiscordMCPServerContext {
     /**
      * User ID of the user who initiated the current conversation.
      */
@@ -414,7 +414,7 @@ function formatQuestionResult(
 /**
  * Options for creating the Discord MCP server.
  */
-export interface DiscordMCPServerOptions {
+interface DiscordMCPServerOptions {
     /** Message search service for querying message history */
     searchService:     MCPMessageSearchService
     /** Discord.js client for sending messages and fetching channel data */
@@ -479,44 +479,37 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Maximum messages to return (default 10, max 100)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
-                        const result = await searchService.searchMessages({
-                            channelId,
-                            query:     args.query,
-                            startTime: args.startTime ? new Date(args.startTime) : undefined,
-                            endTime:   args.endTime ? new Date(args.endTime) : undefined,
-                            // Stryker disable next-line LogicalOperator: ?? operator provides default value
-                            limit:     args.limit ?? 10,
-                        });
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
+                            const result = await searchService.searchMessages({
+                                channelId,
+                                query:     args.query,
+                                startTime: args.startTime ? new Date(args.startTime) : undefined,
+                                endTime:   args.endTime ? new Date(args.endTime) : undefined,
+                                // Stryker disable next-line LogicalOperator: ?? operator provides default value
+                                limit:     args.limit ?? 10,
+                            });
 
-                        // Enrich messages with local timestamps if timezone is provided
-                        if(timezone) {
-                            for(const msg of result.messages) {
+                            // Enrich messages with local timestamps if timezone is provided
+                            if(timezone) {
+                                for(const msg of result.messages) {
                                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-                                msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
+                                    msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
+                                }
                             }
-                        }
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'searchMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
@@ -530,41 +523,34 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit:     z.number().int().positive().max(100).optional().describe('Number of messages to return (default 10, max 100)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
-                        const result = await searchService.getRecentMessages(
-                            channelId,
-                            // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
-                            args.limit ?? 10
-                        );
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
+                            const result = await searchService.getRecentMessages(
+                                channelId,
+                                // Stryker disable next-line LogicalOperator: ?? operator provides default value, tested via integration
+                                args.limit ?? 10
+                            );
 
-                        // Enrich messages with local timestamps if timezone is provided
-                        if(timezone) {
-                            for(const msg of result.messages) {
+                            // Enrich messages with local timestamps if timezone is provided
+                            if(timezone) {
+                                for(const msg of result.messages) {
                                 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-                                msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
+                                    msg.localTimestamp = formatLocalDateTime(msg.timestamp as string, timezone);
+                                }
                             }
-                        }
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'getRecentMessages', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -578,62 +564,55 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageId: z.union([z.string(), z.array(z.string())]).describe('Discord message ID or array of message IDs'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
-                        // Handle array input
-                        if(Array.isArray(args.messageId)) {
-                            const results = await searchService.getMessagesById(
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
+                            // Handle array input
+                            if(Array.isArray(args.messageId)) {
+                                const results = await searchService.getMessagesById(
+                                    channelId,
+                                    args.messageId
+                                );
+
+                                // Enrich messages with local timestamps if timezone is provided
+                                if(timezone) {
+                                    for(const msg of results) {
+                                        msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
+                                    }
+                                }
+
+                                return {
+                                    content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+                                };
+                            }
+
+                            // Handle single string input (existing logic)
+                            const result = await searchService.getMessageById(
                                 channelId,
                                 args.messageId
                             );
+                            if(!result) {
+                                return {
+                                    content: [{ type: 'text' as const, text: 'Message not found' }],
+                                };
+                            }
 
-                            // Enrich messages with local timestamps if timezone is provided
+                            // Enrich message with local timestamp if timezone is provided
                             if(timezone) {
-                                for(const msg of results) {
-                                    msg.localTimestamp = formatLocalDateTime(msg.timestamp, timezone);
-                                }
+                                result.localTimestamp = formatLocalDateTime(result.timestamp, timezone);
                             }
 
                             return {
-                                content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                             };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
                         }
-
-                        // Handle single string input (existing logic)
-                        const result = await searchService.getMessageById(
-                            channelId,
-                            args.messageId
-                        );
-                        if(!result) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'Message not found' }],
-                            };
-                        }
-
-                        // Enrich message with local timestamp if timezone is provided
-                        if(timezone) {
-                            result.localTimestamp = formatLocalDateTime(result.timestamp, timezone);
-                        }
-
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'getMessageById', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
@@ -664,115 +643,109 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     files:            z.union([z.string(), z.array(z.string())]).optional().describe('File path(s) to attach. Must be inside the working directory (no symlinks).'),
                 },
-                // eslint-disable-next-line sonarjs/cognitive-complexity -- MCP tool handler validates inputs, resolves channels, sends chunks, and creates threads; branching is inherent to the multi-step protocol
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        // Validate inputs
-                        const threadError = validateThreadCreation(args.createThread, args.threadName);
-                        if(threadError) {
-                            return threadError;
-                        }
 
-                        // Validate file paths if provided
-                        let validatedFiles: string[] | undefined;
-                        if(args.files) {
-                            try {
-                                validatedFiles = await validateFilePaths(args.files);
-                            } catch (error) {
-                                if(error instanceof PathSecurityError) {
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    // eslint-disable-next-line sonarjs/cognitive-complexity -- sendDiscordMessage has inherent complexity from thread/reply/file handling; not reducible without losing clarity
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                        // Validate inputs
+                            const threadError = validateThreadCreation(args.createThread, args.threadName);
+                            if(threadError) {
+                                return threadError;
+                            }
+
+                            // Validate file paths if provided
+                            let validatedFiles: string[] | undefined;
+                            if(args.files) {
+                                try {
+                                    validatedFiles = await validateFilePaths(args.files);
+                                } catch (error) {
+                                    if(error instanceof PathSecurityError) {
                                     // Stryker disable next-line all: Logging parameters don't affect behavior
-                                    logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.context.path }, 'Discord tool returned security error');
+                                        logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.context.path }, 'Discord tool returned security error');
+                                        return {
+                                            content: [{ type: 'text' as const, text: `Security Error: ${error.message}` }],
+                                            isError: true,
+                                        };
+                                    }
+                                    throw error;
+                                }
+                            }
+
+                            // Resolve channel identifier (handle #channel-name and @username)
+                            let resolvedChannelId: typeof args.channelId;
+
+                            // First, check for @username (DM resolution)
+                            if(args.channelId.startsWith('@')) {
+                                const username = args.channelId.slice(1); // Remove @
+                                const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
+                                if(!dmChannelId) {
                                     return {
-                                        content: [{ type: 'text' as const, text: `Security Error: ${error.message}` }],
+                                        content: [{ type: 'text' as const, text: `Error: Could not find user @${username} in any server` }],
                                         isError: true,
                                     };
                                 }
-                                throw error;
-                            }
-                        }
-
-                        // Resolve channel identifier (handle #channel-name and @username)
-                        let resolvedChannelId: typeof args.channelId;
-
-                        // First, check for @username (DM resolution)
-                        if(args.channelId.startsWith('@')) {
-                            const username = args.channelId.slice(1); // Remove @
-                            const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
-                            if(!dmChannelId) {
-                                return {
-                                    content: [{ type: 'text' as const, text: `Error: Could not find user @${username} in any server` }],
-                                    isError: true,
-                                };
-                            }
-                            resolvedChannelId = dmChannelId;
-                        } else {
+                                resolvedChannelId = dmChannelId;
+                            } else {
                             // If not @username, try to resolve as #channel-name or pass through numeric ID
-                            resolvedChannelId = channelRegistry.resolveChannelId(args.channelId);
-                        }
+                                resolvedChannelId = channelRegistry.resolveChannelId(args.channelId);
+                            }
 
-                        // Fetch and validate channel
-                        const channelResult = await fetchAndValidateChannel(client, resolvedChannelId, retryHelper);
-                        if(isErrorResult(channelResult)) {
-                            return channelResult.error;
-                        }
+                            // Fetch and validate channel
+                            const channelResult = await fetchAndValidateChannel(client, resolvedChannelId, retryHelper);
+                            if(isErrorResult(channelResult)) {
+                                return channelResult.error;
+                            }
 
-                        // Split message into chunks
-                        const chunks = messageSplitter.splitMessage(args.content);
-                        const sentMessages: Message[] = [];
+                            // Split message into chunks
+                            const chunks = messageSplitter.splitMessage(args.content);
+                            const sentMessages: Message[] = [];
 
-                        // Send first chunk (with reply and files if specified)
-                        const firstMessage = await sendMessage(
-                            channelResult.channel,
-                            chunks[0],
-                            retryHelper,
-                            args.replyToMessageId,
-                            validatedFiles
-                        );
-                        sentMessages.push(firstMessage);
+                            // Send first chunk (with reply and files if specified)
+                            const firstMessage = await sendMessage(
+                                channelResult.channel,
+                                chunks[0],
+                                retryHelper,
+                                args.replyToMessageId,
+                                validatedFiles
+                            );
+                            sentMessages.push(firstMessage);
 
-                        // Send remaining chunks (no reply reference, no files)
-                        // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
-                        for(let i = 1; i < chunks.length; i++) {
+                            // Send remaining chunks (no reply reference, no files)
+                            // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
+                            for(let i = 1; i < chunks.length; i++) {
                             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
-                            const msg = await sendMessage(channelResult.channel, chunks[i], retryHelper);
-                            sentMessages.push(msg);
+                                const msg = await sendMessage(channelResult.channel, chunks[i], retryHelper);
+                                sentMessages.push(msg);
+                            }
+
+                            // Create thread if requested (on first message only)
+                            const threadId = await createThreadIfRequested(
+                                channelResult.channel,
+                                firstMessage,
+                                retryHelper,
+                                args.createThread,
+                                args.threadName
+                            );
+
+                            const result = {
+                                success:     true,
+                                messageIds:  sentMessages.map(msg => msg.id),
+                                chunksCount: chunks.length,
+                                ...(threadId && { threadId }),
+                                ...(validatedFiles && { filesAttached: validatedFiles.length }),
+                            };
+
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
                         }
-
-                        // Create thread if requested (on first message only)
-                        const threadId = await createThreadIfRequested(
-                            channelResult.channel,
-                            firstMessage,
-                            retryHelper,
-                            args.createThread,
-                            args.threadName
-                        );
-
-                        const result = {
-                            success:     true,
-                            messageIds:  sentMessages.map(msg => msg.id),
-                            chunksCount: chunks.length,
-                            ...(threadId && { threadId }),
-                            ...(validatedFiles && { filesAttached: validatedFiles.length }),
-                        };
-
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'sendDiscordMessage', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -796,93 +769,86 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     targetUserId:   z.string().optional().describe('Optional user ID to @mention in the question. Advisory only - anyone can answer.'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
                         // 1. Validate options count
-                        const optionsError = validateQuestionOptions(args.options);
-                        if(optionsError) {
-                            return optionsError;
+                            const optionsError = validateQuestionOptions(args.options);
+                            if(optionsError) {
+                                return optionsError;
+                            }
+
+                            // 2. Resolve channel name to ID if needed
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
+
+                            // 3. Normalize channel ID (handles threads)
+                            const normalizeResult = await normalizeChannelId(client, channelId, retryHelper);
+                            if(isErrorResult(normalizeResult)) {
+                                return normalizeResult.error;
+                            }
+
+                            const { normalizedChannelId, existingThreadId, channel } = normalizeResult;
+
+                            // 4. Build message with optional buttons
+                            const questionId = randomUUID();
+                            const messageOptions = buildQuestionMessage(
+                                questionId,
+                                args.question,
+                                buttonBuilder,
+                                args.targetUserId,
+                                args.options
+                            );
+
+                            // 5. Prepare target channel (existing thread or create new)
+                            const { targetChannel, threadId } = await prepareQuestionChannel(
+                                existingThreadId ? await client.channels.fetch(existingThreadId) : channel,
+                                channel,
+                                retryHelper,
+                                existingThreadId,
+                                args.createThread,
+                                args.threadName
+                            );
+
+                            // 6. Send question
+                            const sentMessage = await retryHelper.withRetry(
+                                () => targetChannel.send(messageOptions)
+                            );
+
+                            // Stryker disable ObjectLiteral,StringLiteral,LogicalOperator: Logger info object - content not behavior-affecting
+                            logger.info({
+                                questionId,
+                                channelId:    args.channelId,
+                                threadId,
+                                targetUserId: args.targetUserId,
+                                hasOptions:   Boolean(args.options?.length),
+                                optionCount:  args.options?.length ?? 0,
+                                msg:          'Question asked via MCP tool',
+                            });
+                            // Stryker restore ObjectLiteral,StringLiteral,LogicalOperator
+
+                            // 7. Register question and wait for answer
+                            const result = await registerAndWaitForAnswer(questionRegistry, {
+                                questionId,
+                                normalizedChannelId,
+                                threadId,
+                                sentMessage,
+                                currentUserId:  conversationContext.currentUserId,
+                                clientUser:     client.user,
+                                question:       args.question,
+                                options:        args.options,
+                                targetUserId:   args.targetUserId,
+                                timeoutSeconds: args.timeoutSeconds,
+                            });
+
+                            // 8. Format and return result
+                            return formatQuestionResult(result, questionId, args.channelId, threadId);
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
                         }
-
-                        // 2. Resolve channel name to ID if needed
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
-
-                        // 3. Normalize channel ID (handles threads)
-                        const normalizeResult = await normalizeChannelId(client, channelId, retryHelper);
-                        if(isErrorResult(normalizeResult)) {
-                            return normalizeResult.error;
-                        }
-
-                        const { normalizedChannelId, existingThreadId, channel } = normalizeResult;
-
-                        // 4. Build message with optional buttons
-                        const questionId = randomUUID();
-                        const messageOptions = buildQuestionMessage(
-                            questionId,
-                            args.question,
-                            buttonBuilder,
-                            args.targetUserId,
-                            args.options
-                        );
-
-                        // 5. Prepare target channel (existing thread or create new)
-                        const { targetChannel, threadId } = await prepareQuestionChannel(
-                            existingThreadId ? await client.channels.fetch(existingThreadId) : channel,
-                            channel,
-                            retryHelper,
-                            existingThreadId,
-                            args.createThread,
-                            args.threadName
-                        );
-
-                        // 6. Send question
-                        const sentMessage = await retryHelper.withRetry(
-                            () => targetChannel.send(messageOptions)
-                        );
-
-                        // Stryker disable ObjectLiteral,StringLiteral,LogicalOperator: Logger info object - content not behavior-affecting
-                        logger.info({
-                            questionId,
-                            channelId:    args.channelId,
-                            threadId,
-                            targetUserId: args.targetUserId,
-                            hasOptions:   Boolean(args.options?.length),
-                            optionCount:  args.options?.length ?? 0,
-                            msg:          'Question asked via MCP tool',
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral,LogicalOperator
-
-                        // 7. Register question and wait for answer
-                        const result = await registerAndWaitForAnswer(questionRegistry, {
-                            questionId,
-                            normalizedChannelId,
-                            threadId,
-                            sentMessage,
-                            currentUserId:  conversationContext.currentUserId,
-                            clientUser:     client.user,
-                            question:       args.question,
-                            options:        args.options,
-                            targetUserId:   args.targetUserId,
-                            timeoutSeconds: args.timeoutSeconds,
-                        });
-
-                        // 8. Format and return result
-                        return formatQuestionResult(result, questionId, args.channelId, threadId);
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'askUserQuestion', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -898,88 +864,80 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     emoji:     z.union([z.string(), z.array(z.string())]).describe('Emoji or array of emojis to react with (e.g., "👍" or ["👍", "❤️"])'),
                 },
-                // eslint-disable-next-line sonarjs/cognitive-complexity -- health check guard adds 1 to a function already at the limit; net complexity is unchanged
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
                         // Resolve channel name to ID if needed
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
 
-                        // Fetch and validate channel
-                        const channelResult = await fetchAndValidateChannel(client, channelId, retryHelper);
-                        if(isErrorResult(channelResult)) {
-                            return channelResult.error;
-                        }
-
-                        // Fetch the message
-                        const message = await retryHelper.withRetry(
-                            () => channelResult.channel.messages.fetch(args.messageId)
-                        );
-
-                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Discord.js types fetch() as non-nullable but runtime may return falsy
-                        if(!message) {
-                            // Stryker disable next-line all: Logging for observability
-                            logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error: Message not found');
-                            return {
-                                content: [{ type: 'text' as const, text: 'Error: Message not found' }],
-                                isError: true,
-                            };
-                        }
-
-                        // Normalize emoji to array
-                        const emojis = Array.isArray(args.emoji) ? args.emoji : [args.emoji];
-
-                        // Add reactions sequentially
-                        const addedEmojis: string[] = [];
-                        const failedEmojis: { emoji: string, error: string }[] = [];
-
-                        for(const emoji of emojis) {
-                            try {
-                                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
-                                await retryHelper.withRetry(
-                                    () => message.react(emoji)
-                                );
-                                addedEmojis.push(emoji);
-                            } catch (error) {
-                                const errorMessage = error instanceof Error ? error.message : String(error);
-                                failedEmojis.push({ emoji, error: errorMessage });
+                            // Fetch and validate channel
+                            const channelResult = await fetchAndValidateChannel(client, channelId, retryHelper);
+                            if(isErrorResult(channelResult)) {
+                                return channelResult.error;
                             }
-                        }
 
-                        const result = {
-                            success:      failedEmojis.length === 0,
-                            addedEmojis,
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator: Check needed to conditionally include failedEmojis
-                            failedEmojis: failedEmojis.length > 0 ? failedEmojis : undefined,
-                            channelId:    args.channelId,
-                            messageId:    args.messageId,
-                        };
+                            // Fetch the message
+                            const message = await retryHelper.withRetry(
+                                () => channelResult.channel.messages.fetch(args.messageId)
+                            );
 
-                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Logging for observability
-                        if(failedEmojis.length > 0) {
+                            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Discord.js types fetch() as non-nullable but runtime may return falsy
+                            if(!message) {
+                            // Stryker disable next-line all: Logging for observability
+                                logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error: Message not found');
+                                return {
+                                    content: [{ type: 'text' as const, text: 'Error: Message not found' }],
+                                    isError: true,
+                                };
+                            }
+
+                            // Normalize emoji to array
+                            const emojis = Array.isArray(args.emoji) ? args.emoji : [args.emoji];
+
+                            // Add reactions sequentially
+                            const addedEmojis: string[] = [];
+                            const failedEmojis: { emoji: string, error: string }[] = [];
+
+                            for(const emoji of emojis) {
+                                try {
+                                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
+                                    await retryHelper.withRetry(
+                                        () => message.react(emoji)
+                                    );
+                                    addedEmojis.push(emoji);
+                                } catch (error) {
+                                    const errorMessage = error instanceof Error ? error.message : String(error);
+                                    failedEmojis.push({ emoji, error: errorMessage });
+                                }
+                            }
+
+                            const result = {
+                                success:      failedEmojis.length === 0,
+                                addedEmojis,
+                                // Stryker disable next-line ConditionalExpression,EqualityOperator: Check needed to conditionally include failedEmojis
+                                failedEmojis: failedEmojis.length > 0 ? failedEmojis : undefined,
+                                channelId:    args.channelId,
+                                messageId:    args.messageId,
+                            };
+
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: Logging for observability
+                            if(failedEmojis.length > 0) {
                             // Stryker disable next-line all: Logging parameters don't affect behavior
-                            logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId, failedEmojis }, 'Discord tool returned partial error: Some reactions failed');
-                        }
+                                logger.warn({ tool: 'addReaction', channelId: args.channelId, messageId: args.messageId, failedEmojis }, 'Discord tool returned partial error: Some reactions failed');
+                            }
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Conditional isError flag
-                            ...(failedEmojis.length > 0 && { isError: true }),
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+                                // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Conditional isError flag
+                                ...(failedEmojis.length > 0 && { isError: true }),
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'addReaction', error: message, channelId: args.channelId, messageId: args.messageId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
@@ -992,30 +950,23 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
+                            await channelRegistry.muteChannel(channelId);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'muteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
                         }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
-                        await channelRegistry.muteChannel(channelId);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.info({ tool: 'muteChannel', channelId, msg: 'Channel muted' });
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: true }) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'muteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
@@ -1028,30 +979,23 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or name with # prefix (e.g., #general)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = channelRegistry.resolveChannelId(args.channelId);
+                            await channelRegistry.unmuteChannel(channelId);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'unmuteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
                         }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = channelRegistry.resolveChannelId(args.channelId);
-                        await channelRegistry.unmuteChannel(channelId);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.info({ tool: 'unmuteChannel', channelId, msg: 'Channel unmuted' });
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ success: true, channelId, muted: false }) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'unmuteChannel', error: message, channelId: args.channelId }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),
@@ -1064,41 +1008,34 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     includesMuted: z.boolean().optional().describe('Include muted channels in the list (default: false)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
+                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
                         // Get channels based on includesMuted parameter (default false)
-                        const includesMuted = args.includesMuted === true;
-                        const channels = includesMuted
-                            ? channelRegistry.getAllChannels()
-                            : await channelRegistry.getUnmutedChannels();
+                            const includesMuted = args.includesMuted === true;
+                            const channels = includesMuted
+                                ? channelRegistry.getAllChannels()
+                                : await channelRegistry.getUnmutedChannels();
 
-                        // Format output
-                        const formatted = channels.map(ch => ({
-                            channelId:     ch.channelId,
-                            channelName:   ch.channelName,
-                            guildId:       ch.guildId,
-                            isMuted:       ch.isMuted,
-                            wellKnownType: ch.isWellKnown,
-                        }));
+                            // Format output
+                            const formatted = channels.map(ch => ({
+                                channelId:     ch.channelId,
+                                channelName:   ch.channelName,
+                                guildId:       ch.guildId,
+                                isMuted:       ch.isMuted,
+                                wellKnownType: ch.isWellKnown,
+                            }));
 
-                        return {
-                            content: [{ type: 'text' as const, text: JSON.stringify({ channels: formatted, count: formatted.length }) }],
-                        };
-                    } catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        // Stryker disable next-line all: Logging for observability
-                        logger.warn({ tool: 'listChannels', error: message }, 'Discord tool returned error');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            return {
+                                content: [{ type: 'text' as const, text: JSON.stringify({ channels: formatted, count: formatted.length }) }],
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            // Stryker disable next-line all: Logging for observability
+                            logger.warn({ tool: 'listChannels', error: message }, 'Discord tool returned error');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } }
             ),

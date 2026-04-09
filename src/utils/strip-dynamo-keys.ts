@@ -1,7 +1,7 @@
 /**
  * DynamoDB key field names that should be stripped from items.
  */
-export type DynamoDBKeyField = 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'GSI2PK' | 'GSI2SK';
+type DynamoDBKeyField = 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'GSI2PK' | 'GSI2SK';
 
 /**
  * Represents a DynamoDB item that may have key fields.

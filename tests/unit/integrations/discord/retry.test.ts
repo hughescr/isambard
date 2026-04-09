@@ -10,7 +10,6 @@
 
 import { describe, expect, test, mock } from 'bun:test';
 import { originalWithDiscordRetry as withDiscordRetry, originalClassifyDiscordError as classifyDiscordError } from '../../../setup';
-import { RateLimitError } from '@/errors/discord';
 import type { RetryDeps } from '@/utils/retry/types';
 
 describe('classifyDiscordError', () => {
@@ -45,8 +44,8 @@ describe('classifyDiscordError', () => {
         expect(result.message).toBe('Connection refused');
     });
 
-    test('classifies RateLimitError as permanent', () => {
-        const error = new RateLimitError(5000);
+    test('classifies rate limit error as permanent', () => {
+        const error = new Error('rate limit exceeded');
 
         const result = classifyDiscordError(error);
 
@@ -149,7 +148,7 @@ describe('withDiscordRetry', () => {
     });
 
     test('does NOT retry rate limit error (permanent)', async () => {
-        const rateLimitError = new RateLimitError(5000);
+        const rateLimitError = new Error('rate limit exceeded');
         const operation = mock().mockRejectedValue(rateLimitError);
 
         const mockLogger = {
@@ -162,7 +161,7 @@ describe('withDiscordRetry', () => {
             withDiscordRetry(operation, {
                 deps: { logger: mockLogger } as Partial<RetryDeps>,
             })
-        ).rejects.toThrow(RateLimitError);
+        ).rejects.toThrow('rate limit exceeded');
 
         expect(operation).toHaveBeenCalledTimes(1); // No retry
         expect(mockLogger.error).toHaveBeenCalledWith(

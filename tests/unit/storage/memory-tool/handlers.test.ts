@@ -6,7 +6,8 @@ import {
     InvalidPathError,
     TextNotFoundError,
     TextNotUniqueError,
-    InvalidLineNumberError
+    InvalidLineNumberError,
+    ContentTooLargeError
 } from '@/errors/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import {
@@ -153,6 +154,23 @@ describe('Memory Tool Handlers', () => {
                 file_text: 'content',
             })).rejects.toThrow(PathAlreadyExistsError);
         });
+
+        it('should not throw ContentTooLargeError for content at exactly 350,000 bytes', async () => {
+            const content = 'a'.repeat(350_000);
+            const result = await create(mockBackend, {
+                path:      '/test/file.md',
+                file_text: content,
+            });
+            expect(result).toContain('successfully created');
+        });
+
+        it('should throw ContentTooLargeError for content at 350,001 bytes', async () => {
+            const content = 'a'.repeat(350_001);
+            expect(create(mockBackend, {
+                path:      '/test/file.md',
+                file_text: content,
+            })).rejects.toThrow(ContentTooLargeError);
+        });
     });
 
     describe('insert', () => {
@@ -263,6 +281,45 @@ describe('Memory Tool Handlers', () => {
                 insert_text: 'Text',
             })).rejects.toThrow(InvalidPathError);
         });
+
+        it('should not throw ContentTooLargeError when inserted content is at exactly 350,000 bytes', async () => {
+            // existing content: 1 byte, insert_text: 349,998 bytes → joined with \n: 349,998 + 1 + 1 = 350,000
+            const existingContent = 'a';
+            const insertText = 'a'.repeat(349_998);
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     existingContent,
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            const result = await insert(mockBackend, {
+                path:        '/test/file.md',
+                insert_line: 0,
+                insert_text: insertText,
+            });
+            expect(result).toContain('inserted');
+        });
+
+        it('should throw ContentTooLargeError when inserted content exceeds 350,000 bytes', async () => {
+            // existing content: 1 byte, insert_text: 349,999 bytes → joined with \n: 349,999 + 1 + 1 = 350,001
+            const existingContent = 'a';
+            const insertText = 'a'.repeat(349_999);
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     existingContent,
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            expect(insert(mockBackend, {
+                path:        '/test/file.md',
+                insert_line: 0,
+                insert_text: insertText,
+            })).rejects.toThrow(ContentTooLargeError);
+        });
     });
 
     describe('strReplace', () => {
@@ -350,6 +407,44 @@ describe('Memory Tool Handlers', () => {
                 old_str: 'text',
                 new_str: 'replacement',
             })).rejects.toThrow(InvalidPathError);
+        });
+
+        it('should not throw ContentTooLargeError when replacement produces content at exactly 350,000 bytes', async () => {
+            // old content: 'REPLACE', new content after replacement: 350,000 'a' chars
+            const placeholder = 'REPLACE';
+            const newStr = 'a'.repeat(350_000);
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     placeholder,
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            const result = await strReplace(mockBackend, {
+                path:    '/test/file.md',
+                old_str: placeholder,
+                new_str: newStr,
+            });
+            expect(result).toContain('replaced');
+        });
+
+        it('should throw ContentTooLargeError when replacement produces content exceeding 350,000 bytes', async () => {
+            const placeholder = 'REPLACE';
+            const newStr = 'a'.repeat(350_001);
+            mockBackend.get = mock(async () => ({
+                path:        '/test/file.md' as MemoryPath,
+                content:     placeholder,
+                contentType: 'text/markdown' as ContentType,
+                metadata:    {},
+                createdAt:   '2025-01-01T00:00:00.000Z',
+                updatedAt:   '2025-01-01T00:00:00.000Z',
+            }));
+            expect(strReplace(mockBackend, {
+                path:    '/test/file.md',
+                old_str: placeholder,
+                new_str: newStr,
+            })).rejects.toThrow(ContentTooLargeError);
         });
     });
 

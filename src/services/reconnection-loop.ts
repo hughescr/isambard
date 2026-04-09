@@ -2,7 +2,7 @@ import type { ServiceHealthRegistry } from './health-registry';
 import type { ServiceName } from './types';
 import { setupRetryContext, calculateDelay, type RetryDeps, type RetryPolicy } from '@/utils';
 
-export interface ReconnectionLoopOptions {
+interface ReconnectionLoopOptions {
     service:   ServiceName
     registry:  ServiceHealthRegistry
     connectFn: () => Promise<void>

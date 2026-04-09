@@ -91,7 +91,7 @@ export function createErrorHandler(): (error: Error) => void {
 /**
  * Options for configuring the message handler.
  */
-export interface MessageHandlerOptions {
+interface MessageHandlerOptions {
     /**
      * The bot's user ID (used to detect @mentions and ignore own messages).
      */

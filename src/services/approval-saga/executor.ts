@@ -9,7 +9,7 @@ export interface SagaExecutorLogger {
     info:  (obj: object, msg: string) => void
 }
 
-export interface SagaExecutorDeps {
+interface SagaExecutorDeps {
     backend:         ApprovalSagaBackend
     registry:        ServiceHealthRegistry
     executors:       Record<ApprovalSagaType, (params: Record<string, unknown>) => Promise<void>>

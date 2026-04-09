@@ -1,11 +1,4 @@
-import {
-    type DynamoDBDocumentClient,
-    PutCommand,
-    GetCommand,
-    QueryCommand,
-    UpdateCommand,
-    DeleteCommand
-} from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createChannelId, type ChannelId, type GuildId } from '../types';
 import { ChannelRegistryKeyGenerator, type ChannelRegistryKeys } from './key-generator';
 import {
@@ -15,19 +8,21 @@ import {
     WELL_KNOWN_CHANNELS
 } from './types';
 import { ItemNotFoundError, ValidationError } from '@/errors';
-import { withDynamoTimeout } from '@/storage';
+import { BaseRepository } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
 /**
  * DynamoDB backend for Discord channel registry.
  * Provides CRUD operations for channel metadata with well-known channel support.
  */
-export class ChannelRegistryBackend {
+export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord> {
     constructor(
-        private readonly docClient: DynamoDBDocumentClient,
-        private readonly tableName: string,
-        private readonly timeoutMs = 10_000
-    ) {}
+        docClient: DynamoDBDocumentClient,
+        tableName: string,
+        timeoutMs = 10_000
+    ) {
+        super(docClient, tableName, timeoutMs);
+    }
 
     /**
      * Upserts a channel (create or update).
@@ -66,18 +61,7 @@ export class ChannelRegistryBackend {
             };
         }
 
-        const command = new PutCommand({
-            TableName: this.tableName,
-            Item:      item,
-        });
-
-        await withDynamoTimeout(
-            () => this.docClient.send(command),
-            {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.upsertChannel',
-            }
-        );
+        await this.putItem(item as unknown as Record<string, unknown>, 'ChannelRegistry.upsertChannel');
     }
 
     /**
@@ -89,29 +73,18 @@ export class ChannelRegistryBackend {
      * @returns Channel storage record or null if not found
      */
     async getChannel(channelId: ChannelId): Promise<ChannelStorageRecord | null> {
-        const keys = {
+        const key = {
             PK: `CHANNEL#${channelId}`,
             SK: 'METADATA',
         };
 
-        const command = new GetCommand({
-            TableName: this.tableName,
-            Key:       keys,
-        });
+        const result = await this.getItem<Record<string, unknown>>(key, 'ChannelRegistry.getChannel');
 
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
-            {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getChannel',
-            }
-        );
-
-        if(!result.Item) {
+        if(!result) {
             return null;
         }
 
-        return stripDynamoKeys(result.Item) as ChannelStorageRecord;
+        return stripDynamoKeys(result) as ChannelStorageRecord;
     }
 
     /**
@@ -123,25 +96,19 @@ export class ChannelRegistryBackend {
      * @returns Array of channel storage records
      */
     async getChannelsByGuild(guildId: GuildId): Promise<ChannelStorageRecord[]> {
-        const command = new QueryCommand({
-            TableName:                 this.tableName,
-            IndexName:                 'GSI1',
-            KeyConditionExpression:    'GSI1PK = :guildPk AND begins_with(GSI1SK, :channelPrefix)',
-            ExpressionAttributeValues: {
-                ':guildPk':       `GUILD#${guildId}`,
-                ':channelPrefix': 'CHANNEL#',
-            },
-        });
-
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
+        const items = await this.query<Record<string, unknown>>(
             {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getChannelsByGuild',
-            }
+                IndexName:                 'GSI1',
+                KeyConditionExpression:    'GSI1PK = :guildPk AND begins_with(GSI1SK, :channelPrefix)',
+                ExpressionAttributeValues: {
+                    ':guildPk':       `GUILD#${guildId}`,
+                    ':channelPrefix': 'CHANNEL#',
+                },
+            },
+            'ChannelRegistry.getChannelsByGuild'
         );
 
-        return (result.Items ?? []).map(item => stripDynamoKeys(item) as ChannelStorageRecord);
+        return items.map(item => stripDynamoKeys(item) as ChannelStorageRecord);
     }
 
     /**
@@ -154,31 +121,25 @@ export class ChannelRegistryBackend {
      */
     async getWellKnownChannel(type: WellKnownChannel): Promise<ChannelStorageRecord | null> {
         // Step 1: Query GSI2 to find the channel PK
-        const command = new QueryCommand({
-            TableName:                 this.tableName,
-            IndexName:                 'GSI2',
-            KeyConditionExpression:    'GSI2PK = :wellKnownPk AND GSI2SK = :channelSk',
-            ExpressionAttributeValues: {
-                ':wellKnownPk': `WELLKNOWN#${type}`,
-                ':channelSk':   'CHANNEL',
-            },
-            Limit: 1, // Should only be one well-known channel of each type
-        });
-
-        const result = await withDynamoTimeout(
-            () => this.docClient.send(command),
+        const items = await this.query<Record<string, unknown>>(
             {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.getWellKnownChannel.gsi2Query',
-            }
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :wellKnownPk AND GSI2SK = :channelSk',
+                ExpressionAttributeValues: {
+                    ':wellKnownPk': `WELLKNOWN#${type}`,
+                    ':channelSk':   'CHANNEL',
+                },
+                Limit: 1, // Should only be one well-known channel of each type
+            },
+            'ChannelRegistry.getWellKnownChannel.gsi2Query'
         );
 
-        if(!result.Items || result.Items.length === 0) {
+        if(items.length === 0) {
             return null;
         }
 
         // Step 2: Extract channelId from PK and fetch full record
-        const pk = result.Items[0].PK as string;
+        const pk = items[0].PK as string;
         const channelId = createChannelId(pk.replace('CHANNEL#', ''));
 
         return this.getChannel(channelId);
@@ -207,27 +168,21 @@ export class ChannelRegistryBackend {
     async muteChannel(channelId: ChannelId): Promise<void> {
         const now = new Date().toISOString();
 
-        const command = new UpdateCommand({
-            TableName: this.tableName,
-            Key:       {
-                PK: `CHANNEL#${channelId}`,
-                SK: 'METADATA',
-            },
-            UpdateExpression:          'SET isMuted = :muted, updatedAt = :now',
-            ExpressionAttributeValues: {
-                ':muted': true,
-                ':now':   now,
-            },
-            ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
-        });
-
         try {
-            await withDynamoTimeout(
-                () => this.docClient.send(command),
+            await this.updateItem(
                 {
-                    timeoutMs: this.timeoutMs,
-                    operation: 'ChannelRegistry.muteChannel',
-                }
+                    Key: {
+                        PK: `CHANNEL#${channelId}`,
+                        SK: 'METADATA',
+                    },
+                    UpdateExpression:          'SET isMuted = :muted, updatedAt = :now',
+                    ExpressionAttributeValues: {
+                        ':muted': true,
+                        ':now':   now,
+                    },
+                    ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
+                },
+                'ChannelRegistry.muteChannel'
             );
         } catch (error) {
             if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
@@ -246,27 +201,21 @@ export class ChannelRegistryBackend {
     async unmuteChannel(channelId: ChannelId): Promise<void> {
         const now = new Date().toISOString();
 
-        const command = new UpdateCommand({
-            TableName: this.tableName,
-            Key:       {
-                PK: `CHANNEL#${channelId}`,
-                SK: 'METADATA',
-            },
-            UpdateExpression:          'SET isMuted = :muted, updatedAt = :now',
-            ExpressionAttributeValues: {
-                ':muted': false,
-                ':now':   now,
-            },
-            ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
-        });
-
         try {
-            await withDynamoTimeout(
-                () => this.docClient.send(command),
+            await this.updateItem(
                 {
-                    timeoutMs: this.timeoutMs,
-                    operation: 'ChannelRegistry.unmuteChannel',
-                }
+                    Key: {
+                        PK: `CHANNEL#${channelId}`,
+                        SK: 'METADATA',
+                    },
+                    UpdateExpression:          'SET isMuted = :muted, updatedAt = :now',
+                    ExpressionAttributeValues: {
+                        ':muted': false,
+                        ':now':   now,
+                    },
+                    ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
+                },
+                'ChannelRegistry.unmuteChannel'
             );
         } catch (error) {
             if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
@@ -288,29 +237,23 @@ export class ChannelRegistryBackend {
         const now = new Date().toISOString();
         const wellKnownKeys = ChannelRegistryKeyGenerator.createWellKnownKeys(type);
 
-        const command = new UpdateCommand({
-            TableName: this.tableName,
-            Key:       {
-                PK: `CHANNEL#${channelId}`,
-                SK: 'METADATA',
-            },
-            UpdateExpression:          'SET isWellKnown = :type, GSI2PK = :gsi2pk, GSI2SK = :gsi2sk, updatedAt = :now',
-            ExpressionAttributeValues: {
-                ':type':   type,
-                ':gsi2pk': wellKnownKeys.GSI2PK,
-                ':gsi2sk': wellKnownKeys.GSI2SK,
-                ':now':    now,
-            },
-            ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
-        });
-
         try {
-            await withDynamoTimeout(
-                () => this.docClient.send(command),
+            await this.updateItem(
                 {
-                    timeoutMs: this.timeoutMs,
-                    operation: 'ChannelRegistry.markAsWellKnown',
-                }
+                    Key: {
+                        PK: `CHANNEL#${channelId}`,
+                        SK: 'METADATA',
+                    },
+                    UpdateExpression:          'SET isWellKnown = :type, GSI2PK = :gsi2pk, GSI2SK = :gsi2sk, updatedAt = :now',
+                    ExpressionAttributeValues: {
+                        ':type':   type,
+                        ':gsi2pk': wellKnownKeys.GSI2PK,
+                        ':gsi2sk': wellKnownKeys.GSI2SK,
+                        ':now':    now,
+                    },
+                    ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
+                },
+                'ChannelRegistry.markAsWellKnown'
             );
         } catch (error) {
             if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
@@ -330,26 +273,20 @@ export class ChannelRegistryBackend {
     async unmarkAsWellKnown(channelId: ChannelId): Promise<void> {
         const now = new Date().toISOString();
 
-        const command = new UpdateCommand({
-            TableName: this.tableName,
-            Key:       {
-                PK: `CHANNEL#${channelId}`,
-                SK: 'METADATA',
-            },
-            UpdateExpression:          'REMOVE isWellKnown, GSI2PK, GSI2SK SET updatedAt = :now',
-            ExpressionAttributeValues: {
-                ':now': now,
-            },
-            ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
-        });
-
         try {
-            await withDynamoTimeout(
-                () => this.docClient.send(command),
+            await this.updateItem(
                 {
-                    timeoutMs: this.timeoutMs,
-                    operation: 'ChannelRegistry.unmarkAsWellKnown',
-                }
+                    Key: {
+                        PK: `CHANNEL#${channelId}`,
+                        SK: 'METADATA',
+                    },
+                    UpdateExpression:          'REMOVE isWellKnown, GSI2PK, GSI2SK SET updatedAt = :now',
+                    ExpressionAttributeValues: {
+                        ':now': now,
+                    },
+                    ConditionExpression: 'attribute_exists(PK)', // Ensure channel exists
+                },
+                'ChannelRegistry.unmarkAsWellKnown'
             );
         } catch (error) {
             if(typeof error === 'object' && error !== null && 'name' in error && error.name === 'ConditionalCheckFailedException') {
@@ -365,20 +302,12 @@ export class ChannelRegistryBackend {
      * @param channelId - Discord channel ID
      */
     async deleteChannel(channelId: ChannelId): Promise<void> {
-        const command = new DeleteCommand({
-            TableName: this.tableName,
-            Key:       {
+        await this.deleteItem(
+            {
                 PK: `CHANNEL#${channelId}`,
                 SK: 'METADATA',
             },
-        });
-
-        await withDynamoTimeout(
-            () => this.docClient.send(command),
-            {
-                timeoutMs: this.timeoutMs,
-                operation: 'ChannelRegistry.deleteChannel',
-            }
+            'ChannelRegistry.deleteChannel'
         );
     }
 }

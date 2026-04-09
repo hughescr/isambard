@@ -112,7 +112,7 @@ export async function initializeChannelRegistry(
 /**
  * Parameters for setting up message processing.
  */
-export interface SetupMessageProcessingParams {
+interface SetupMessageProcessingParams {
     client:               Client
     readyClient:          Client
     channelRegistry:      ChannelRegistryManager

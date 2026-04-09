@@ -8,6 +8,7 @@ const REJECTION_PK        = 'BSKY#REJECTED';
 const REJECTION_SK_PREFIX = 'REJECTION#';
 // Stryker restore StringLiteral
 
+const TTL_DAYS = 30;
 const MAX_RETRIES = 3;
 const BATCH_SIZE = 25;
 
@@ -54,14 +55,12 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
      * Store a rejected Bluesky post or DM.
      */
     async recordRejection(item: BskyRejectionItem): Promise<void> {
-        const TTL_DAYS = 30;
         await this.putItem({
             // Stryker disable next-line StringLiteral: PK is a configuration constant
             PK:  REJECTION_PK,
             SK:  rejectionSK(item.uuid),
             ...item,
-            // Stryker disable next-line ArithmeticOperator: TTL arithmetic — multiplication order does not affect the result
-            TTL: Math.floor(Date.now() / 1000) + (TTL_DAYS * 24 * 60 * 60),
+            TTL: BskyRejectionBackend.ttlFromDays(TTL_DAYS),
         });
     }
 

@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import type { QuestionOption } from '@/agent';
 
-export interface ButtonBuilderConfig {
+interface ButtonBuilderConfig {
     questionId: string
     options:    QuestionOption[]
 }

@@ -11,7 +11,7 @@ import type { VideoProcessingResult, SpawnRunner, BinarySpawnRunner } from './ty
 // Stryker disable next-line StringLiteral: output filename is configuration
 const METADATA_FILENAME = 'video-metadata.md';
 
-export interface ProcessVideoOptions {
+interface ProcessVideoOptions {
     run?:       SpawnRunner
     binaryRun?: BinarySpawnRunner
     alt?:       string

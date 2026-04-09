@@ -1,32 +1,25 @@
 export type {
     ServiceName,
-    HealthState,
     ServiceErrorCategory,
-    ServiceHealthEntry,
-    ServiceHealthChange,
-    HealthChangeListener
+    ServiceHealthEntry
 } from './types';
-
-export { serviceNameSchema, healthStateSchema, serviceErrorCategorySchema } from './types';
-
-export { serviceLifecycleMachine, createServiceActor } from './lifecycle-orchestrator';
 
 export type { ServiceHealthRegistry } from './health-registry';
 export { ServiceHealthRegistryImpl } from './health-registry';
 
-export type { ReconnectionLoop, ReconnectionLoopOptions } from './reconnection-loop';
+export type { ReconnectionLoop } from './reconnection-loop';
 export { createReconnectionLoop } from './reconnection-loop';
 
 // Outbox
 export type { OutboxItem, OutboxItemType, OutboxPriority } from './outbox';
 export { OutboxBackend } from './outbox';
-export type { OutboxDrainer, DrainResult } from './outbox';
+export type { OutboxDrainer } from './outbox';
 export { createOutboxDrainer } from './outbox';
 
 // Approval saga
-export type { ApprovalSaga, ApprovalSagaState, ApprovalSagaType, SagaExecutor } from './approval-saga';
+export type { ApprovalSagaType, SagaExecutor, SagaWriter } from './approval-saga';
 export { ApprovalSagaBackend, createSagaExecutor } from './approval-saga';
 
 // Allowlist saga
-export type { AllowlistSaga, AllowlistSagaState, AllowlistSagaPlatform, SagaStepResult, AllowlistSagaExecutorDeps, AllowlistSagaStarter } from './allowlist-saga';
+export type { SagaStepResult, AllowlistSagaStarter } from './allowlist-saga';
 export { AllowlistSagaBackend, AllowlistSagaExecutor } from './allowlist-saga';

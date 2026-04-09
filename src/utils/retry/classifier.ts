@@ -34,27 +34,43 @@ function getHttpErrorMessage(error: unknown, status: number): string {
 }
 
 /**
- * Extract retry after value from HTTP error
+ * Extract retry after value from HTTP error.
+ * Checks response body first (already in ms), then headers (in seconds, converts to ms).
  */
 // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number | undefined
 function getRetryAfter(error: unknown): number | undefined {
-    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for retryAfter field, return undefined on missing property
-    if(!(typeof error === 'object' && error !== null && 'retryAfter' in error)) {
+    if(!(typeof error === 'object' && error !== null)) {
         return undefined;
     }
 
-    const retryAfter = typeof error.retryAfter === 'string'
-        ? Number.parseInt(error.retryAfter, 10)
-        : (error.retryAfter as number);
+    // Check response body first (already in ms)
+    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for retryAfter field, return undefined on missing property
+    if('retryAfter' in error) {
+        const retryAfter = typeof error.retryAfter === 'string'
+            ? Number.parseInt(error.retryAfter, 10)
+            : (error.retryAfter as number);
 
-    return retryAfter >= 0 ? retryAfter : undefined;
+        return retryAfter >= 0 ? retryAfter : undefined;
+    }
+
+    // Check headers (in seconds, needs conversion to ms)
+    // Stryker disable next-line ConditionalExpression: type-narrowing guards — typeof/null checks are defensive; headers is always an object when 'headers' in error passes
+    if('headers' in error && typeof error.headers === 'object' && error.headers !== null) {
+        const headers = error.headers as Record<string, unknown>;
+        if('retry-after' in headers && typeof headers['retry-after'] === 'string') {
+            const retryAfterSeconds = Number.parseInt(headers['retry-after'], 10);
+            return retryAfterSeconds >= 0 ? retryAfterSeconds * 1000 : undefined;
+        }
+    }
+
+    return undefined;
 }
 
 /**
  * Classify HTTP status error
  */
 // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
-function classifyHttpStatus(
+export function classifyHttpStatus(
     error: unknown,
     permanentStatuses: number[]
 ): ErrorClassification | undefined {
@@ -101,7 +117,7 @@ function classifyHttpStatus(
  * Classify network error
  */
 // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
-function classifyNetworkError(error: unknown): ErrorClassification | undefined {
+export function classifyNetworkError(error: unknown, fallbackMessage = 'Unknown error'): ErrorClassification | undefined {
     // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for code field
     if(!(typeof error === 'object' && error !== null && 'code' in error)) {
         return undefined;
@@ -114,7 +130,7 @@ function classifyNetworkError(error: unknown): ErrorClassification | undefined {
         const errorRecord = error as Record<string, unknown>;
         const message = typeof errorRecord.message === 'string' && errorRecord.message
             ? errorRecord.message
-            : 'Unknown error';
+            : fallbackMessage;
 
         return { category: 'transient', message };
     }

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -29,6 +29,9 @@ class TestRepository extends BaseRepository<{ id: string, name: string }> {
             ExpressionAttributeValues: { ':pk': pk },
         });
     }
+
+    static testTtlFromDays(days: number): number { return TestRepository.ttlFromDays(days); }
+    static testTtlFromHours(hours: number): number { return TestRepository.ttlFromHours(hours); }
 }
 
 describe('BaseRepository', () => {
@@ -152,6 +155,60 @@ describe('BaseRepository', () => {
             const result = await repository.testQuery('test');
 
             expect(result).toEqual([]);
+        });
+    });
+
+    describe('ttlFromDays', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('should return epoch seconds plus days * 86400', () => {
+            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+            const expected = 1_704_067_200 + 30 * 86_400;
+            expect(TestRepository.testTtlFromDays(30)).toBe(expected);
+        });
+
+        test('should work with 1 day', () => {
+            jest.setSystemTime(new Date('2024-06-15T12:00:00.000Z'));
+            const expectedBase = Math.floor(new Date('2024-06-15T12:00:00.000Z').getTime() / 1000);
+            expect(TestRepository.testTtlFromDays(1)).toBe(expectedBase + 86_400);
+        });
+
+        test('should work with 0 days', () => {
+            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+            expect(TestRepository.testTtlFromDays(0)).toBe(1_704_067_200);
+        });
+    });
+
+    describe('ttlFromHours', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('should return epoch seconds plus hours * 3600', () => {
+            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+            const expected = 1_704_067_200 + 24 * 3600;
+            expect(TestRepository.testTtlFromHours(24)).toBe(expected);
+        });
+
+        test('should work with 1 hour', () => {
+            jest.setSystemTime(new Date('2024-06-15T12:00:00.000Z'));
+            const expectedBase = Math.floor(new Date('2024-06-15T12:00:00.000Z').getTime() / 1000);
+            expect(TestRepository.testTtlFromHours(1)).toBe(expectedBase + 3600);
+        });
+
+        test('should work with 0 hours', () => {
+            jest.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+            expect(TestRepository.testTtlFromHours(0)).toBe(1_704_067_200);
         });
     });
 });

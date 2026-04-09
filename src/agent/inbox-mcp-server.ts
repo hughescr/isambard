@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
-import { mcpErrorResult, mcpJsonResult, checkServiceHealth } from './mcp-helpers';
+import { mcpErrorResult, mcpJsonResult, withHealthGuard } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
 import { createChannelId, type MCPInboxManager, type MCPInboxStateManager, type MCPChannelRegistry, type MCPChannelSummaryResponse, type MCPMessageMetadata } from './types';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
@@ -57,31 +57,24 @@ export function createInboxMCPServer(
                 'getUnreadOverview',
                 'Get a high-level overview of unread messages across all channels. Returns counts only, no message content.',
                 {},
-                async (): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(healthRegistry) {
-                        const healthCheck = checkServiceHealth(healthRegistry, 'discord', reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
+                withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
+                    async (): Promise<CallToolResult> => {
+                        try {
+                            const overview = inboxManager.getUnreadOverview();
+
+                            // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
+                            logger.info({
+                                totalUnread:  overview.totalUnread,
+                                channelCount: overview.channels.length,
+                                msg:          'Unread overview retrieved',
+                            });
+                            // Stryker restore ObjectLiteral,StringLiteral
+
+                            return mcpJsonResult(overview);
+                        } catch (error) {
+                            return mcpErrorResult(error);
                         }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const overview = inboxManager.getUnreadOverview();
-
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
-                        logger.info({
-                            totalUnread:  overview.totalUnread,
-                            channelCount: overview.channels.length,
-                            msg:          'Unread overview retrieved',
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral
-
-                        return mcpJsonResult(overview);
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                }
+                    })
             ),
 
             tool(
@@ -91,92 +84,85 @@ export function createInboxMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(healthRegistry) {
-                        const healthCheck = checkServiceHealth(healthRegistry, 'discord', reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
-                        const messages = inboxManager.getChannelMessages(channelId);
+                withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
+                            const messages = inboxManager.getChannelMessages(channelId);
 
-                        // Track that this channel was viewed during catch-up
-                        if(stateManager) {
-                            stateManager.markChannelViewed(channelId);
-                        }
+                            // Track that this channel was viewed during catch-up
+                            if(stateManager) {
+                                stateManager.markChannelViewed(channelId);
+                            }
 
-                        if(messages.length === 0) {
-                            return mcpJsonResult({
-                                channelId:    args.channelId,
-                                channelName:  args.channelId,
-                                messageCount: 0,
-                                summary:      'No unread messages in this channel.',
-                                authors:      [],
-                                timeRange:    { start: '', end: '' },
-                                messages:     [],
+                            if(messages.length === 0) {
+                                return mcpJsonResult({
+                                    channelId:    args.channelId,
+                                    channelName:  args.channelId,
+                                    messageCount: 0,
+                                    summary:      'No unread messages in this channel.',
+                                    authors:      [],
+                                    timeRange:    { start: '', end: '' },
+                                    messages:     [],
+                                });
+                            }
+
+                            // Build message content for summarization
+                            // Stryker disable StringLiteral,ArrowFunction: Format strings and arrow fn for LLM prompt are not behavior-tested (generateTextWithSystemPrompt is mocked)
+                            const messagesText = messages.map(m =>
+                                `[${m.author} at ${m.timestamp}]: ${m.content}`).join('\n');
+
+                            // Generate AI summary
+                            const summary = await generateTextWithSystemPrompt(
+                                SUMMARY_SYSTEM_PROMPT,
+                                `Summarize these ${messages.length} messages:\n\n${messagesText}`
+                            );
+                            // Stryker restore StringLiteral,ArrowFunction
+
+                            // Build metadata for each message
+                            const metadata: MCPMessageMetadata[] = messages.map(m => ({
+                                id:        m.id,
+                                author:    m.author,
+                                timestamp: m.timestamp,
+                                sizeChars: m.content.length,
+                            }));
+
+                            // Get unique authors
+                            const authors = chain(messages).map('author').uniq().value();
+
+                            // Get time range
+                            const timestamps = chain(messages).map('timestamp').sortBy().value();
+                            // Stryker disable next-line ArrayDeclaration,ArithmeticOperator: Array access with [0] and [length-1] for first/last elements
+                            const timeRange = {
+                                start: timestamps[0],
+                                end:   timestamps[timestamps.length - 1],
+                            };
+
+                            const response: MCPChannelSummaryResponse = {
+                                channelId,
+                                channelName:  messages[0].channelName,
+                                messageCount: messages.length,
+                                summary:      summary || 'Unable to generate summary.',
+                                authors,
+                                timeRange,
+                                messages:     metadata,
+                            };
+
+                            // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
+                            logger.info({
+                                channelId,
+                                channelName:  messages[0].channelName,
+                                messageCount: messages.length,
+                                authorCount:  authors.length,
+                                msg:          'Channel summary generated',
                             });
+                            // Stryker restore ObjectLiteral,StringLiteral
+
+                            return mcpJsonResult(response);
+                        } catch (error) {
+                            return mcpErrorResult(error);
                         }
-
-                        // Build message content for summarization
-                        // Stryker disable StringLiteral,ArrowFunction: Format strings and arrow fn for LLM prompt are not behavior-tested (generateTextWithSystemPrompt is mocked)
-                        const messagesText = messages.map(m =>
-                            `[${m.author} at ${m.timestamp}]: ${m.content}`).join('\n');
-
-                        // Generate AI summary
-                        const summary = await generateTextWithSystemPrompt(
-                            SUMMARY_SYSTEM_PROMPT,
-                            `Summarize these ${messages.length} messages:\n\n${messagesText}`
-                        );
-                        // Stryker restore StringLiteral,ArrowFunction
-
-                        // Build metadata for each message
-                        const metadata: MCPMessageMetadata[] = messages.map(m => ({
-                            id:        m.id,
-                            author:    m.author,
-                            timestamp: m.timestamp,
-                            sizeChars: m.content.length,
-                        }));
-
-                        // Get unique authors
-                        const authors = chain(messages).map('author').uniq().value();
-
-                        // Get time range
-                        const timestamps = chain(messages).map('timestamp').sortBy().value();
-                        // Stryker disable next-line ArrayDeclaration,ArithmeticOperator: Array access with [0] and [length-1] for first/last elements
-                        const timeRange = {
-                            start: timestamps[0],
-                            end:   timestamps[timestamps.length - 1],
-                        };
-
-                        const response: MCPChannelSummaryResponse = {
-                            channelId,
-                            channelName:  messages[0].channelName,
-                            messageCount: messages.length,
-                            summary:      summary || 'Unable to generate summary.',
-                            authors,
-                            timeRange,
-                            messages:     metadata,
-                        };
-
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
-                        logger.info({
-                            channelId,
-                            channelName:  messages[0].channelName,
-                            messageCount: messages.length,
-                            authorCount:  authors.length,
-                            msg:          'Channel summary generated',
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral
-
-                        return mcpJsonResult(response);
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                }
+                    })
             ),
 
             tool(
@@ -188,51 +174,44 @@ export function createInboxMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageIds: z.array(z.string()).describe('Array of message IDs to fetch'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(healthRegistry) {
-                        const healthCheck = checkServiceHealth(healthRegistry, 'discord', reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
+                withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
 
-                        // Track that this channel was viewed during catch-up
-                        if(stateManager) {
-                            stateManager.markChannelViewed(channelId);
-                        }
-
-                        const fetchedMessages = [];
-
-                        for(const messageId of args.messageIds) {
-                            const msg = inboxManager.getMessage(channelId, messageId);
-                            if(msg) {
-                                fetchedMessages.push({
-                                    id:        msg.id,
-                                    author:    msg.author,
-                                    timestamp: msg.timestamp,
-                                    content:   msg.content,
-                                });
+                            // Track that this channel was viewed during catch-up
+                            if(stateManager) {
+                                stateManager.markChannelViewed(channelId);
                             }
+
+                            const fetchedMessages = [];
+
+                            for(const messageId of args.messageIds) {
+                                const msg = inboxManager.getMessage(channelId, messageId);
+                                if(msg) {
+                                    fetchedMessages.push({
+                                        id:        msg.id,
+                                        author:    msg.author,
+                                        timestamp: msg.timestamp,
+                                        content:   msg.content,
+                                    });
+                                }
+                            }
+
+                            // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
+                            logger.info({
+                                channelId,
+                                requestedCount: args.messageIds.length,
+                                fetchedCount:   fetchedMessages.length,
+                                msg:            'Messages fetched',
+                            });
+                            // Stryker restore ObjectLiteral,StringLiteral
+
+                            return mcpJsonResult({ messages: fetchedMessages });
+                        } catch (error) {
+                            return mcpErrorResult(error);
                         }
-
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
-                        logger.info({
-                            channelId,
-                            requestedCount: args.messageIds.length,
-                            fetchedCount:   fetchedMessages.length,
-                            msg:            'Messages fetched',
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral
-
-                        return mcpJsonResult({ messages: fetchedMessages });
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                }
+                    })
             ),
 
             tool(
@@ -244,32 +223,25 @@ export function createInboxMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     messageIds: z.array(z.string()).describe('Array of message IDs to mark as read'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(healthRegistry) {
-                        const healthCheck = checkServiceHealth(healthRegistry, 'discord', reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
+                withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
+                            await inboxManager.markAsRead(channelId, args.messageIds);
+
+                            // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
+                            logger.info({
+                                channelId,
+                                markedCount: args.messageIds.length,
+                                msg:         'Messages marked as read',
+                            });
+                            // Stryker restore ObjectLiteral,StringLiteral
+
+                            return mcpJsonResult({ success: true, markedCount: args.messageIds.length });
+                        } catch (error) {
+                            return mcpErrorResult(error);
                         }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
-                        await inboxManager.markAsRead(channelId, args.messageIds);
-
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
-                        logger.info({
-                            channelId,
-                            markedCount: args.messageIds.length,
-                            msg:         'Messages marked as read',
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral
-
-                        return mcpJsonResult({ success: true, markedCount: args.messageIds.length });
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                }
+                    })
             ),
 
             tool(
@@ -279,31 +251,24 @@ export function createInboxMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(healthRegistry) {
-                        const healthCheck = checkServiceHealth(healthRegistry, 'discord', reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
+                withHealthGuard(healthRegistry, 'discord', reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
+                            await inboxManager.markChannelRead(channelId);
+
+                            // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
+                            logger.info({
+                                channelId,
+                                msg: 'Channel marked as read',
+                            });
+                            // Stryker restore ObjectLiteral,StringLiteral
+
+                            return mcpJsonResult({ success: true });
+                        } catch (error) {
+                            return mcpErrorResult(error);
                         }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
-                        await inboxManager.markChannelRead(channelId);
-
-                        // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
-                        logger.info({
-                            channelId,
-                            msg: 'Channel marked as read',
-                        });
-                        // Stryker restore ObjectLiteral,StringLiteral
-
-                        return mcpJsonResult({ success: true });
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
-                }
+                    })
             ),
         ],
     });

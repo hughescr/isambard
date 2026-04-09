@@ -1,1 +1,1 @@
-export { needsConversion, convert, type ConversionResult } from '@/utils';
+export { needsConversion, convert } from '@/utils';

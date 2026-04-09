@@ -18,15 +18,16 @@ export {
     PathAlreadyExistsError,
     InvalidPathError,
     TextNotFoundError,
+    ContentTooLargeError,
     TextNotUniqueError,
     InvalidLineNumberError,
-    ContactError,
     ContactNotFoundError,
     ContactLastIdentifierError
 } from './storage';
 
 export {
     ChannelNotAccessibleError,
+    ChannelNotFoundByNameError,
     MessageFetchError,
     InvalidSnowflakeError,
     WellKnownChannelNotFoundError,

@@ -12,7 +12,7 @@ import { getTaskDirectoryPath } from './task-directory-copier';
 /**
  * Interface for reading and summarizing task lists.
  */
-export interface TaskListReader {
+interface TaskListReader {
     /**
      * Build a compact summary of the current task list.
      * Returns undefined if no session, no tasks, or error.
@@ -37,7 +37,7 @@ interface Task {
 /**
  * Options for creating a task list reader.
  */
-export interface TaskListReaderOptions {
+interface TaskListReaderOptions {
     /** Callback to get the current session ID */
     getCurrentSessionId: () => string | undefined
     /** Logger for debug messages */

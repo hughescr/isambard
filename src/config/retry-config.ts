@@ -30,7 +30,7 @@ export const retryConfigSchema = z.object({
     dynamodb: dynamodbConfigSchema.default(dynamodbDefaults),
 });
 
-export type RetryConfig = z.infer<typeof retryConfigSchema>;
+type RetryConfig = z.infer<typeof retryConfigSchema>;
 
 // Load retry config with env var overrides
 export function loadRetryConfig(): RetryConfig {

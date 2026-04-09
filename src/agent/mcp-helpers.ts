@@ -153,3 +153,59 @@ export function checkWriteServiceHealth(
 
     return undefined;
 }
+
+/**
+ * Wraps a tool handler with a read-only health check guard.
+ * Returns early with a health error if the service is unhealthy.
+ *
+ * @param healthRegistry   - Optional service health registry; if undefined, guard is skipped
+ * @param serviceName      - The service name to check (e.g. 'discord', 'email')
+ * @param reconnectionLoop - Optional reconnection loop to trigger if offline
+ * @param handler          - The tool handler to wrap
+ * @returns A new handler that performs the health check before calling the original
+ */
+export function withHealthGuard<T>(
+    healthRegistry: ServiceHealthRegistry | undefined,
+    serviceName: ServiceName,
+    reconnectionLoop: ReconnectionLoop | undefined,
+    handler: (args: T) => Promise<CallToolResult>
+): (args: T) => Promise<CallToolResult> {
+    return async (args: T) => {
+        if(healthRegistry) {
+            const check = checkServiceHealth(healthRegistry, serviceName, reconnectionLoop);
+            if(check) {
+                return check;
+            }
+        }
+        return handler(args);
+    };
+}
+
+/**
+ * Wraps a tool handler with a write health check guard.
+ * Returns early with a health error if the primary service or approval service is unhealthy.
+ *
+ * @param healthRegistry   - Optional service health registry; if undefined, guard is skipped
+ * @param primaryService   - The service performing the write (e.g. 'bluesky', 'email')
+ * @param approvalService  - The service needed for admin approval (e.g. 'discord')
+ * @param reconnectionLoop - Optional reconnection loop to trigger if primary is offline
+ * @param handler          - The tool handler to wrap
+ * @returns A new handler that performs the health check before calling the original
+ */
+export function withWriteHealthGuard<T>(
+    healthRegistry: ServiceHealthRegistry | undefined,
+    primaryService: ServiceName,
+    approvalService: ServiceName,
+    reconnectionLoop: ReconnectionLoop | undefined,
+    handler: (args: T) => Promise<CallToolResult>
+): (args: T) => Promise<CallToolResult> {
+    return async (args: T) => {
+        if(healthRegistry) {
+            const check = checkWriteServiceHealth(healthRegistry, primaryService, approvalService, reconnectionLoop);
+            if(check) {
+                return check;
+            }
+        }
+        return handler(args);
+    };
+}

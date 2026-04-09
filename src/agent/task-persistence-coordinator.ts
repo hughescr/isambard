@@ -16,7 +16,7 @@ import type { Logger } from '@hughescr/logger';
 import type { TaskDirectoryCopier } from './task-directory-copier';
 import { type TaskSessionBackend, createSessionId  } from '@/storage';
 
-export interface TaskPersistenceCoordinatorOptions {
+interface TaskPersistenceCoordinatorOptions {
     backend: TaskSessionBackend
     copier:  TaskDirectoryCopier
     logger:  Logger

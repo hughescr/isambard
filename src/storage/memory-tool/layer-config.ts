@@ -9,7 +9,7 @@ export const layerConfigSchema = z.object({
     autoLoad: z.union([z.boolean(), z.literal('conditional')]).default(false),
 });
 
-export type LayerConfig = z.infer<typeof layerConfigSchema>;
+type LayerConfig = z.infer<typeof layerConfigSchema>;
 
 /**
  * Layer-specific configurations for the memory tool.

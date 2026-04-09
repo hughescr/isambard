@@ -9,7 +9,7 @@ import type { PlatformImage } from './types';
 /**
  * Anthropic text content block.
  */
-export interface TextContentBlock {
+interface TextContentBlock {
     type: 'text'
     text: string
 }
@@ -17,7 +17,7 @@ export interface TextContentBlock {
 /**
  * Anthropic image content block with base64-encoded image data.
  */
-export interface ImageContentBlock {
+interface ImageContentBlock {
     type:   'image'
     source: {
         type:       'base64'
@@ -29,7 +29,7 @@ export interface ImageContentBlock {
 /**
  * Union type for all content block types.
  */
-export type ContentBlock = TextContentBlock | ImageContentBlock;
+type ContentBlock = TextContentBlock | ImageContentBlock;
 
 /**
  * Build multimodal content blocks for Anthropic API.

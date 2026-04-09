@@ -112,10 +112,7 @@ describe.concurrent('ErrorCode', () => {
 
     test('should have discord error codes', () => {
         expect(ErrorCode.DISCORD_ERROR as string).toBe('DISCORD_ERROR');
-        expect(ErrorCode.INVALID_TOKEN as string).toBe('INVALID_TOKEN');
-        expect(ErrorCode.PERMISSION_DENIED as string).toBe('PERMISSION_DENIED');
         expect(ErrorCode.CHANNEL_NOT_FOUND_BY_ID as string).toBe('CHANNEL_NOT_FOUND_BY_ID');
-        expect(ErrorCode.RATE_LIMIT_EXCEEDED as string).toBe('RATE_LIMIT_EXCEEDED');
     });
 
     test('should have utility error codes', () => {

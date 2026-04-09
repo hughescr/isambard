@@ -3,11 +3,8 @@ import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import {
     DiscordError,
-    InvalidTokenError,
-    PermissionError,
     ChannelNotFoundByIdError,
     ChannelNotAccessibleError,
-    RateLimitError,
     MessageFetchError,
     InvalidSnowflakeError,
     ChannelRegistryError,
@@ -40,34 +37,6 @@ describe.concurrent('DiscordError', () => {
     });
 });
 
-describe.concurrent('InvalidTokenError', () => {
-    test('should have correct properties', () => {
-        const error = new InvalidTokenError();
-        expect(error).toBeInstanceOf(InvalidTokenError);
-        expect(error).toBeInstanceOf(DiscordError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error.message).toBe('Discord bot token is invalid or expired');
-        expect(error.code).toBe(ErrorCode.INVALID_TOKEN);
-        expect(error.name).toBe('InvalidTokenError');
-    });
-});
-
-describe.concurrent('PermissionError', () => {
-    test.each([
-        'send messages',
-        'read message history',
-        'manage roles',
-    ])('should have correct properties for action: %s', (action) => {
-        const error = new PermissionError(action);
-        expect(error).toBeInstanceOf(PermissionError);
-        expect(error).toBeInstanceOf(DiscordError);
-        expect(error.message).toBe(`Bot lacks permission to ${action}`);
-        expect(error.code).toBe(ErrorCode.PERMISSION_DENIED);
-        expect(error.context.action).toBe(action);
-        expect(error.name).toBe('PermissionError');
-    });
-});
-
 describe.concurrent('ChannelNotFoundByIdError', () => {
     test.each([
         '987654321098765432',
@@ -92,18 +61,6 @@ describe.concurrent('ChannelNotAccessibleError', () => {
         expect(error.code).toBe(ErrorCode.CHANNEL_NOT_ACCESSIBLE);
         expect(error.context.channelId).toBe('123456789');
         expect(error.name).toBe('ChannelNotAccessibleError');
-    });
-});
-
-describe.concurrent('RateLimitError', () => {
-    test.each([0, 1000, 5000, 3_600_000])('should have correct properties for retryAfter: %d', (retryAfter) => {
-        const error = new RateLimitError(retryAfter);
-        expect(error).toBeInstanceOf(RateLimitError);
-        expect(error).toBeInstanceOf(DiscordError);
-        expect(error.message).toBe(`Discord rate limit exceeded. Retry after ${retryAfter}ms`);
-        expect(error.code).toBe(ErrorCode.RATE_LIMIT_EXCEEDED);
-        expect(error.context.retryAfter).toBe(retryAfter);
-        expect(error.name).toBe('RateLimitError');
     });
 });
 
@@ -279,8 +236,8 @@ describe.concurrent('Error instanceof cross-checks', () => {
 describe.concurrent('Error.captureStackTrace handling', () => {
     test('should call captureStackTrace for subclass', () => {
         const spy = spyOn(Error, 'captureStackTrace');
-        const error = new InvalidTokenError();
-        expect(spy).toHaveBeenCalledWith(error, InvalidTokenError);
+        const error = new ChannelNotFoundByIdError('123456789012345678');
+        expect(spy).toHaveBeenCalledWith(error, ChannelNotFoundByIdError);
         spy.mockRestore();
     });
 

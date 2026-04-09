@@ -81,8 +81,7 @@ export {
     ContactCommandHandler,
     ContactApprovalHandler,
     buildContactApprovalEmbed,
-    buildContactCommand,
-    type ContactApprovalRequest
+    buildContactCommand
 } from './contact-commands';
 
 // Allowlist commands
@@ -93,8 +92,7 @@ export {
 
 // Allowlist interaction handler (saga-based flow)
 export {
-    AllowlistInteractionHandler,
-    type AllowlistInteractionHandlerDeps
+    AllowlistInteractionHandler
 } from './allowlist-interaction-handler';
 
 // Consolidated slash command registration
@@ -106,5 +104,4 @@ export {
 export { DiscordHistoryProvider } from './history-provider';
 
 // Discord capability facade
-export type { DiscordCapability, SendResult, SendOptions, ChannelContent, DiscordCapabilityDeps, DiscordCapabilityLogger } from './capability';
 export { DiscordCapabilityImpl } from './capability';

@@ -16,7 +16,7 @@ export interface BskyApprovalEmbedParams {
     convoId?:          string             // conversation ID for sending on approval
 }
 
-export interface BskyApprovalEmbedResult {
+interface BskyApprovalEmbedResult {
     embed:     EmbedBuilder
     actionRow: ActionRowBuilder<ButtonBuilder>
 }

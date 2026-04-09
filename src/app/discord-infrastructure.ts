@@ -40,7 +40,7 @@ import type { MemoryToolBackend } from '@/storage';
 /**
  * Options for creating Discord infrastructure.
  */
-export interface DiscordInfrastructureOptions {
+interface DiscordInfrastructureOptions {
     /** Discord configuration (bot token, home guild, etc.) */
     discordConfig: DiscordConfig
     /** DynamoDB document client for channel registry backend */
@@ -54,7 +54,7 @@ export interface DiscordInfrastructureOptions {
 /**
  * Discord infrastructure components.
  */
-export interface DiscordInfrastructure {
+interface DiscordInfrastructure {
     /** Discord.js client (not logged in yet) */
     discordClient:        Client
     /** Channel registry manager for tracking Discord channels */

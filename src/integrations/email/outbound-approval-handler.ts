@@ -5,32 +5,11 @@ import { chain } from 'lodash-es';
 import type { ActivityLogger } from '@/agent';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
-import type { AllowlistSagaStarter } from '@/services';
+import type { AllowlistSagaStarter, SagaWriter } from '@/services';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 const AMBER = 0xFF_AA_00;
-
-/**
- * Minimal interface for creating approval sagas.
- * Satisfies ApprovalSagaBackend without crossing the services boundary.
- */
-export interface SagaWriter {
-    create(saga: {
-        id:                 string
-        state:              string
-        type:               string
-        params:             Record<string, unknown>
-        approvalChannelId?: string
-        approvalMessageId?: string
-        adminUserId?:       string
-        rejectionReason?:   string
-        lastError?:         string
-        createdAt:          string
-        updatedAt:          string
-        ttl?:               number
-    }): Promise<void>
-}
 
 export interface OutboundApprovalHandlerDeps {
     wildDuckClient:              WildDuckClient

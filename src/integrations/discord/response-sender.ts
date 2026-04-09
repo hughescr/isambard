@@ -21,7 +21,7 @@ function hasSkipResult(routeResult: unknown): routeResult is { skipResult: SendR
 /**
  * Configuration for sending a response.
  */
-export interface SendResponseConfig {
+interface SendResponseConfig {
     /** Response router for routing decisions */
     responseRouter:     ResponseRouter
     /** Bot state manager to determine session type */
@@ -47,7 +47,7 @@ export interface SendResponseConfig {
 /**
  * Result of sending a response.
  */
-export interface SendResponseResult {
+interface SendResponseResult {
     /** Whether the response was sent */
     sent:        boolean
     /** Whether the response was queued to the outbox (Discord offline) */
@@ -63,7 +63,7 @@ export interface SendResponseResult {
 /**
  * Configuration for sending a response to a well-known channel.
  */
-export interface SendToWellKnownConfig {
+interface SendToWellKnownConfig {
     /** Response router for routing decisions */
     responseRouter:     ResponseRouter
     /** The response text to send */

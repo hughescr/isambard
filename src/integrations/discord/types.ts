@@ -17,7 +17,7 @@ export const messageIdSchema = z
     // Stryker disable next-line StringLiteral: brand name is not behavior-affecting
     .brand<'MessageId'>();
 
-export type MessageId = z.infer<typeof messageIdSchema>;
+type MessageId = z.infer<typeof messageIdSchema>;
 
 /**
  * Discord message context schema with Zod validation.

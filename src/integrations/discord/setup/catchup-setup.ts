@@ -62,7 +62,7 @@ async function buildCatchUpContext(
 /**
  * Parameters for setting up catch-up session runner.
  */
-export interface SetupCatchUpRunnerParams {
+interface SetupCatchUpRunnerParams {
     inboxManager:  InboxManager
     agent:         ClaudeAgent
     memoryBackend:              {
@@ -188,7 +188,7 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
 /**
  * Parameters for setting up inbox and catch-up functionality.
  */
-export interface SetupInboxParams {
+interface SetupInboxParams {
     inboxManager:         InboxManager
     readyClient:          Client
     botStateManager:      BotStateManager

@@ -47,7 +47,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 /**
  * Options for text generation functions.
  */
-export interface TextGeneratorOptions {
+interface TextGeneratorOptions {
     /**
      * If true, strips markdown formatting from the result.
      * Useful for Discord status text that shouldn't contain markdown.

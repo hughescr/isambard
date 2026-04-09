@@ -1,5 +1,6 @@
 import { createChannelId, type ChannelId } from '../types';
 import type { ChannelRegistryManager } from './manager';
+import { ChannelNotFoundByNameError } from '@/errors';
 
 /**
  * Resolves a channel identifier to a numeric channel ID.
@@ -14,7 +15,7 @@ import type { ChannelRegistryManager } from './manager';
  * @param input - Channel identifier (numeric ID or #channel-name)
  * @param channelRegistry - Channel registry manager for name lookups
  * @returns Resolved channel ID
- * @throws {Error} If channel name cannot be resolved
+ * @throws {ChannelNotFoundByNameError} If channel name cannot be resolved
  *
  * @example
  * ```typescript
@@ -40,7 +41,7 @@ export function resolveChannelId(input: string, channelRegistry: ChannelRegistry
     const matchingChannel = allChannels.find(ch => ch.channelName === channelName);
 
     if(!matchingChannel) {
-        throw new Error(`Channel not found: ${channelName}`);
+        throw new ChannelNotFoundByNameError(channelName);
     }
 
     return matchingChannel.channelId;

@@ -19,7 +19,7 @@ export interface ContactChangeRequest {
 /**
  * Options for creating the Contacts MCP server.
  */
-export interface ContactsMCPServerOptions {
+interface ContactsMCPServerOptions {
     backend:                     ContactBackend
     sendContactApprovalRequest?: (action: 'create' | 'update', details: ContactChangeRequest) => Promise<void>
 }

@@ -1,11 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { type AttachmentMetadata, type StoredAttachment } from './types';
-import { sanitizeFilename, MediaFetchTimeoutMs, type MediaFetchImageResult, type MediaFetchImagesResult } from '@/utils';
-
-// Re-export generic types under Discord-familiar names for backward compatibility
-export type FetchImageResult = MediaFetchImageResult;
-export type FetchImagesResult = MediaFetchImagesResult;
+import { sanitizeFilename, MediaFetchTimeoutMs } from '@/utils';
 
 // Delegate to generic media fetcher — AttachmentMetadata is structurally compatible with MediaFetchMetadata
 export { fetchMediaImage as fetchImage, fetchMediaImages as fetchImages } from '@/utils';

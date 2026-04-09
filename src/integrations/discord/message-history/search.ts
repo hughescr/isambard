@@ -47,7 +47,7 @@ interface SearchOptions {
 /**
  * Options for creating a message search service.
  */
-export interface MessageSearchServiceOptions {
+interface MessageSearchServiceOptions {
     /** Message fetcher for Discord API calls */
     fetcher:               MessageFetcher
     /** Message summarizer for overflow handling */

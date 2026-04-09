@@ -3,7 +3,7 @@ import { type BotStateManager, type CatchingUpModeContext } from './types';
 /**
  * MCP server configuration
  */
-export interface McpServerConfig {
+interface McpServerConfig {
     name:    'memory' | 'discord' | 'inbox'
     enabled: boolean
 }
@@ -11,7 +11,7 @@ export interface McpServerConfig {
 /**
  * Catch-up specific context injection
  */
-export interface CatchUpContextInjection {
+interface CatchUpContextInjection {
     timeSinceLastActive: string | null
     inboxSummary:        string
     workflowGuidance:    string
@@ -20,7 +20,7 @@ export interface CatchUpContextInjection {
 /**
  * Context to inject into the agent
  */
-export interface ContextInjection {
+interface ContextInjection {
     /** Full context injection (memories, user info, events) */
     includeFullContext: boolean
     /** Catch-up specific context */
@@ -30,7 +30,7 @@ export interface ContextInjection {
 /**
  * Agent configuration for the Claude Agent SDK
  */
-export interface AgentConfig {
+interface AgentConfig {
     /** MCP servers to include for this mode */
     mcpServers:            McpServerConfig[]
     /** Additional tools allowed in this mode */
@@ -44,14 +44,14 @@ export interface AgentConfig {
 /**
  * Dependencies for AgentContextBuilder
  */
-export interface AgentContextBuilderDeps {
+interface AgentContextBuilderDeps {
     stateManager: BotStateManager
 }
 
 /**
  * Builder that produces mode-dependent agent configuration
  */
-export interface AgentContextBuilder {
+interface AgentContextBuilder {
     /** Build agent config from current bot state */
     buildConfig(): AgentConfig
 }

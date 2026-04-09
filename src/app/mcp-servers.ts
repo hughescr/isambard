@@ -152,7 +152,7 @@ export interface MCPServersOptions {
 /**
  * MCP server configurations.
  */
-export interface MCPServers {
+interface MCPServers {
     /**
      * Memory MCP server for deep memory access.
      */

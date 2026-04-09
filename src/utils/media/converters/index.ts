@@ -1,1 +1,1 @@
-export { needsConversion, convert, type ConversionResult } from './heic';
+export { needsConversion, convert } from './heic';

@@ -3,6 +3,7 @@ import type { ChannelRegistryManager } from '../../../../../src/integrations/dis
 import { resolveChannelId } from '../../../../../src/integrations/discord/channel-registry/resolve';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
+import { ChannelNotFoundByNameError } from '@/errors';
 
 describe('resolveChannelId', () => {
     let mockRegistry: ChannelRegistryManager;
@@ -51,13 +52,19 @@ describe('resolveChannelId', () => {
             expect(result).toBe(testChannelId2);
         });
 
-        test('should throw error for non-existent channel name', () => {
+        test('should throw ChannelNotFoundByNameError for non-existent channel name', () => {
+            expect(() => {
+                resolveChannelId('#nonexistent', mockRegistry);
+            }).toThrow(ChannelNotFoundByNameError);
             expect(() => {
                 resolveChannelId('#nonexistent', mockRegistry);
             }).toThrow('Channel not found: nonexistent');
         });
 
-        test('should throw error for empty channel name after #', () => {
+        test('should throw ChannelNotFoundByNameError for empty channel name after #', () => {
+            expect(() => {
+                resolveChannelId('#', mockRegistry);
+            }).toThrow(ChannelNotFoundByNameError);
             expect(() => {
                 resolveChannelId('#', mockRegistry);
             }).toThrow('Channel not found: ');
@@ -99,10 +106,16 @@ describe('resolveChannelId', () => {
         test('should not match partial channel name', () => {
             expect(() => {
                 resolveChannelId('#gen', mockRegistry);
+            }).toThrow(ChannelNotFoundByNameError);
+            expect(() => {
+                resolveChannelId('#gen', mockRegistry);
             }).toThrow('Channel not found: gen');
         });
 
         test('should be case-sensitive for channel names', () => {
+            expect(() => {
+                resolveChannelId('#General', mockRegistry);
+            }).toThrow(ChannelNotFoundByNameError);
             expect(() => {
                 resolveChannelId('#General', mockRegistry);
             }).toThrow('Channel not found: General');
@@ -113,6 +126,9 @@ describe('resolveChannelId', () => {
                 getAllChannels: () => [],
             } as unknown as ChannelRegistryManager;
 
+            expect(() => {
+                resolveChannelId('#general', emptyRegistry);
+            }).toThrow(ChannelNotFoundByNameError);
             expect(() => {
                 resolveChannelId('#general', emptyRegistry);
             }).toThrow('Channel not found: general');

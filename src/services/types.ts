@@ -4,18 +4,11 @@ import { z } from 'zod';
 
 export const serviceNameSchema = z.enum(['discord', 'email', 'bluesky', 'caldav']);
 export type ServiceName = z.infer<typeof serviceNameSchema>;
-
-export const healthStateSchema = z.enum(['disabled', 'starting', 'recovering', 'online', 'degraded', 'offline']);
-export type HealthState = z.infer<typeof healthStateSchema>;
-
-export const serviceErrorCategorySchema = z.enum([
-    'offline_retryable_later',
-    'degraded_read_only',
-    'permanent_not_configured',
-]);
-export type ServiceErrorCategory = z.infer<typeof serviceErrorCategorySchema>;
-
 // Stryker restore all
+
+export type HealthState = 'disabled' | 'starting' | 'recovering' | 'online' | 'degraded' | 'offline';
+
+export type ServiceErrorCategory = 'offline_retryable_later' | 'degraded_read_only' | 'permanent_not_configured';
 
 export interface ServiceHealthEntry {
     state:          HealthState

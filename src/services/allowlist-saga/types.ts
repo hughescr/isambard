@@ -2,13 +2,12 @@ import { z } from 'zod';
 
 // Stryker disable all: Schema values are static definitions
 
-export const allowlistSagaStateSchema = z.enum([
+const allowlistSagaStateSchema = z.enum([
     'pending_name',      // waiting for admin to provide a display name
     'pending_review',    // showing a fuzzy match, waiting for admin decision
     'completed',         // person added to allowlist (terminal)
     'cancelled',         // flow abandoned (terminal)
 ]);
-export type AllowlistSagaState = z.infer<typeof allowlistSagaStateSchema>;
 
 export const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
 export type AllowlistSagaPlatform = z.infer<typeof allowlistSagaPlatformSchema>;

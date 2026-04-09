@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { mcpErrorResult, mcpJsonResult, checkServiceHealth } from './mcp-helpers';
+import { mcpErrorResult, mcpJsonResult, withHealthGuard } from './mcp-helpers';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 
@@ -15,7 +15,7 @@ export type UserResolveResult
       | { status: 'ambiguous', matches: Omit<{ userId: string, username: string, displayName: string, nickname: string | null }, 'userId'>[] }
       | { status: 'not_found' };
 
-export interface CaldavMCPServerOptions {
+interface CaldavMCPServerOptions {
     client:            CalDAVClient
     registry:          CalendarRegistryBackend
     resolveUser?:      (name: string) => Promise<UserResolveResult>
@@ -87,40 +87,33 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     endDate:   z.string().describe('End date in ISO 8601 format (e.g., 2026-03-25)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'caldav', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const resolved = await resolveUserId(args.user);
-                        if(typeof resolved !== 'string') {
-                            return resolved; // MCP result (ambiguous or not_found)
-                        }
-                        const servers = await registry.getAllCalendars(resolved);
-                        if(servers.length === 0) {
-                            return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
-                        }
+                withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const resolved = await resolveUserId(args.user);
+                            if(typeof resolved !== 'string') {
+                                return resolved; // MCP result (ambiguous or not_found)
+                            }
+                            const servers = await registry.getAllCalendars(resolved);
+                            if(servers.length === 0) {
+                                return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
+                            }
 
-                        const events = await client.getEvents(servers, new Date(args.startDate), new Date(args.endDate));
-                        return mcpJsonResult({
-                            events: events.map(e => ({
-                                ...e,
-                                start: e.start.toISOString(),
-                                end:   e.end.toISOString(),
-                            })),
-                            count: events.length,
-                        });
-                    } catch (error) {
+                            const events = await client.getEvents(servers, new Date(args.startDate), new Date(args.endDate));
+                            return mcpJsonResult({
+                                events: events.map(e => ({
+                                    ...e,
+                                    start: e.start.toISOString(),
+                                    end:   e.end.toISOString(),
+                                })),
+                                count: events.length,
+                            });
+                        } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: log context is informational only
-                        logger.error({ error, user: args.user }, 'Failed to get calendar events');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            logger.error({ error, user: args.user }, 'Failed to get calendar events');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Calendar Events', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -134,45 +127,38 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     days: z.number().int().positive().optional().default(7).describe('Number of days to look ahead (default: 7)'),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'caldav', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const resolved = await resolveUserId(args.user);
-                        if(typeof resolved !== 'string') {
-                            return resolved; // MCP result (ambiguous or not_found)
-                        }
-                        const servers = await registry.getAllCalendars(resolved);
-                        if(servers.length === 0) {
-                            return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
-                        }
+                withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const resolved = await resolveUserId(args.user);
+                            if(typeof resolved !== 'string') {
+                                return resolved; // MCP result (ambiguous or not_found)
+                            }
+                            const servers = await registry.getAllCalendars(resolved);
+                            if(servers.length === 0) {
+                                return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
+                            }
 
-                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Zod .default(7) makes type non-optional, but handler is called directly in tests without schema processing
-                        const days   = args.days ?? 7;
-                        const now    = new Date();
-                        const end    = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-                        const events = await client.getEvents(servers, now, end);
-                        return mcpJsonResult({
-                            events: events.map(e => ({
-                                ...e,
-                                start: e.start.toISOString(),
-                                end:   e.end.toISOString(),
-                            })),
-                            count:     events.length,
-                            daysAhead: days,
-                        });
-                    } catch (error) {
+                            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Zod .default(7) makes type non-optional, but handler is called directly in tests without schema processing
+                            const days   = args.days ?? 7;
+                            const now    = new Date();
+                            const end    = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+                            const events = await client.getEvents(servers, now, end);
+                            return mcpJsonResult({
+                                events: events.map(e => ({
+                                    ...e,
+                                    start: e.start.toISOString(),
+                                    end:   e.end.toISOString(),
+                                })),
+                                count:     events.length,
+                                daysAhead: days,
+                            });
+                        } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: log context is informational only
-                        logger.error({ error, user: args.user }, 'Failed to get upcoming events');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            logger.error({ error, user: args.user }, 'Failed to get upcoming events');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Upcoming Events', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -184,40 +170,33 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                     // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only
                     user: z.string().min(1).describe("Person's name to list calendars for (e.g., 'Craig')"),
                 },
-                async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: health guard delegates to tested checkServiceHealth
-                    if(options.healthRegistry) {
-                        const healthCheck = checkServiceHealth(options.healthRegistry, 'caldav', options.reconnectionLoop);
-                        if(healthCheck) {
-                            return healthCheck;
-                        }
-                    }
-                    // Stryker restore BlockStatement
-                    try {
-                        const resolved = await resolveUserId(args.user);
-                        if(typeof resolved !== 'string') {
-                            return resolved; // MCP result (ambiguous or not_found)
-                        }
-                        const servers = await registry.getAllCalendars(resolved);
-                        if(servers.length === 0) {
-                            return mcpJsonResult({ calendars: [], message: 'No calendars configured for this user' });
-                        }
+                withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
+                    async (args): Promise<CallToolResult> => {
+                        try {
+                            const resolved = await resolveUserId(args.user);
+                            if(typeof resolved !== 'string') {
+                                return resolved; // MCP result (ambiguous or not_found)
+                            }
+                            const servers = await registry.getAllCalendars(resolved);
+                            if(servers.length === 0) {
+                                return mcpJsonResult({ calendars: [], message: 'No calendars configured for this user' });
+                            }
 
-                        // Strip credentials — only expose labels
-                        const calendars = servers.map(s => ({
-                            serverDescription: s.description,
-                            calendars:         s.calendars.map(c => ({
-                                label: c.label,
-                                path:  c.calendarPath,
-                            })),
-                        }));
-                        return mcpJsonResult({ calendars });
-                    } catch (error) {
+                            // Strip credentials — only expose labels
+                            const calendars = servers.map(s => ({
+                                serverDescription: s.description,
+                                calendars:         s.calendars.map(c => ({
+                                    label: c.label,
+                                    path:  c.calendarPath,
+                                })),
+                            }));
+                            return mcpJsonResult({ calendars });
+                        } catch (error) {
                         // Stryker disable next-line ObjectLiteral,StringLiteral: log context is informational only
-                        logger.error({ error, user: args.user }, 'Failed to list user calendars');
-                        return mcpErrorResult(error);
-                    }
-                },
+                            logger.error({ error, user: args.user }, 'Failed to list user calendars');
+                            return mcpErrorResult(error);
+                        }
+                    }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'List User Calendars', readOnlyHint: true, idempotentHint: true } }
             ),

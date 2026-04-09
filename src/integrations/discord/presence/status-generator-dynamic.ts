@@ -37,7 +37,7 @@ export interface DynamicStatusGenerator {
 /**
  * Dependencies for creating a dynamic status generator.
  */
-export interface DynamicStatusGeneratorDeps {
+interface DynamicStatusGeneratorDeps {
     /** Context about the assistant's identity for personalized status */
     identityContext: string
 }

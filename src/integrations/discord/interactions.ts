@@ -3,11 +3,11 @@ import { MessageFlags, type ButtonInteraction } from 'discord.js';
 import { createUserId, createChannelId } from './types';
 import type { QuestionRegistry, QuestionAnswer } from '@/agent';
 
-export interface InteractionHandlerConfig {
+interface InteractionHandlerConfig {
     questionRegistry: QuestionRegistry
 }
 
-export interface InteractionHandler {
+interface InteractionHandler {
     /** Handle a button interaction */
     handleButtonInteraction(interaction: ButtonInteraction): Promise<void>
 }

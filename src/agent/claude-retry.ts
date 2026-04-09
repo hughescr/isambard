@@ -1,67 +1,13 @@
 import { type query, type Query } from '@anthropic-ai/claude-agent-sdk';
-import { retryAsyncGenerator, type ErrorClassification, type ErrorClassifier, type RetryDeps, type RetryPolicy  } from '@/utils';
+import { retryAsyncGenerator, classifyNetworkError, classifyHttpStatus, type ErrorClassification, type ErrorClassifier, type RetryDeps, type RetryPolicy  } from '@/utils';
 
-export interface ClaudeRetryOptions {
+interface ClaudeRetryOptions {
     policy?: Partial<RetryPolicy>
     deps?:   Partial<RetryDeps>
 }
 
 /**
- * Extract retryAfter value from HTTP error headers or response body.
- * Converts seconds to milliseconds if found in headers.
- */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number | undefined
-function extractRetryAfter(error: unknown): number | undefined {
-    if(!(typeof error === 'object' && error !== null)) {
-        return undefined;
-    }
-
-    // Check response body first (already in ms)
-    if('retryAfter' in error) {
-        const retryAfter = typeof error.retryAfter === 'string'
-            ? Number.parseInt(error.retryAfter, 10)
-            : (error.retryAfter as number);
-
-        return retryAfter >= 0 ? retryAfter : undefined;
-    }
-
-    // Check headers (in seconds, needs conversion to ms)
-    // Stryker disable next-line ConditionalExpression: type-narrowing guards — typeof/null checks are defensive; headers is always an object when 'headers' in error passes
-    if('headers' in error && typeof error.headers === 'object' && error.headers !== null) {
-        const headers = error.headers as Record<string, unknown>;
-        if('retry-after' in headers && typeof headers['retry-after'] === 'string') {
-            const retryAfterSeconds = Number.parseInt(headers['retry-after'], 10);
-            return retryAfterSeconds >= 0 ? retryAfterSeconds * 1000 : undefined;
-        }
-    }
-
-    return undefined;
-}
-
-/**
- * Check if error is a network error by code property
- */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
-function isNetworkErrorByCode(error: unknown): ErrorClassification | undefined {
-    if(!(typeof error === 'object' && error !== null && 'code' in error) || typeof error.code !== 'string') {
-        return undefined;
-    }
-
-    const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
-    if(!networkErrorCodes.has(error.code)) {
-        return undefined;
-    }
-
-    const errorRecord = error as Record<string, unknown>;
-    const message = typeof errorRecord.message === 'string' && errorRecord.message
-        ? errorRecord.message
-        : 'Network error';
-
-    return { category: 'transient', message };
-}
-
-/**
- * Check if error is a network error by message content
+ * Check if error is a network error by message content (Claude-specific)
  */
 // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
 function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefined {
@@ -78,48 +24,7 @@ function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefine
 }
 
 /**
- * Classify HTTP status error
- */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
-function classifyHttpStatusError(error: unknown): ErrorClassification | undefined {
-    if(!(typeof error === 'object' && error !== null && 'status' in error)) {
-        return undefined;
-    }
-
-    const status = typeof error.status === 'string'
-        ? Number.parseInt(error.status, 10)
-        : (error.status as number);
-
-    const errorRecord = error as Record<string, unknown>;
-    const message = typeof errorRecord.message === 'string' && errorRecord.message
-        ? errorRecord.message
-        : `HTTP ${status}`;
-
-    // Rate limited
-    if(status === 429) {
-        return {
-            category:     'rate_limited',
-            message,
-            retryAfterMs: extractRetryAfter(error),
-        };
-    }
-
-    // Server errors (5xx) - transient
-    if(status >= 500 && status < 600) {
-        return { category: 'transient', message };
-    }
-
-    // Client errors (4xx except 429) - permanent
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: HTTP 4xx boundary — returns permanent, same as default fallthrough for out-of-range status; boundary values not distinctly observable
-    if(status >= 400 && status < 500) {
-        return { category: 'permanent', message };
-    }
-
-    return undefined;
-}
-
-/**
- * Get error message from unknown error
+ * Extract error message from unknown value (handles strings, Error instances, and plain objects)
  */
 function getErrorMessage(error: unknown): string {
     if(typeof error === 'string' && error) {
@@ -137,7 +42,7 @@ function getErrorMessage(error: unknown): string {
  * Classifier for Claude SDK errors.
  * - Network errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED) -> transient
  * - HTTP 502, 503, 504 -> transient
- * - HTTP 429 -> rate_limited (extracts retryAfterMs if available)
+ * - HTTP 429 -> rate_limited (extracts retryAfterMs if available, including from headers)
  * - HTTP 4xx (except 429) -> permanent
  * - All other errors -> permanent
  */
@@ -147,20 +52,20 @@ export function classifyClaudeError(error: unknown): ErrorClassification {
         return { category: 'permanent', message: getErrorMessage(error) };
     }
 
-    // Check for network errors by code property
-    const networkByCode = isNetworkErrorByCode(error);
+    // Check for network errors by code property (uses 'Network error' as fallback for Claude)
+    const networkByCode = classifyNetworkError(error, 'Network error');
     if(networkByCode) {
         return networkByCode;
     }
 
-    // Check for network errors by message content
+    // Check for network errors by message content (Claude-specific)
     const networkByMessage = isNetworkErrorByMessage(error);
     if(networkByMessage) {
         return networkByMessage;
     }
 
-    // Check for HTTP status errors
-    const httpStatus = classifyHttpStatusError(error);
+    // Check for HTTP status errors (includes header-based retry-after)
+    const httpStatus = classifyHttpStatus(error, []);
     if(httpStatus) {
         return httpStatus;
     }

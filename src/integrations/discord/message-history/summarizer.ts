@@ -15,7 +15,7 @@ import { generateText } from '@/agent';
 /**
  * Options for creating a message summarizer.
  */
-export interface SummarizerOptions {
+interface SummarizerOptions {
     /** Maximum concurrent Haiku requests (default: 10) */
     maxConcurrent?: number
 }

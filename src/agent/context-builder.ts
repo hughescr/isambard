@@ -42,7 +42,7 @@ export interface RecentEventsResult {
     isFallback: boolean
 }
 
-export interface ContextBuilderOptions {
+interface ContextBuilderOptions {
     backend:                MemoryToolBackend
     maxIdentityTokens?:     number              // Default: 5000
     maxStateFullItems?:     number              // Default: 8

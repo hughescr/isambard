@@ -46,7 +46,7 @@ export interface StatusMiddlewareDeps {
 /**
  * Function that processes a message with presence updates.
  */
-export type StatusMiddleware = (
+type StatusMiddleware = (
     context: DiscordMessageContext,
     channel?: TypingChannel
 ) => Promise<string | null>;

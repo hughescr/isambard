@@ -315,7 +315,7 @@ You have access to channel management tools:
 /**
  * Options for building the system prompt.
  */
-export interface BuildSystemPromptOptions {
+interface BuildSystemPromptOptions {
     /** Context builder for loading identity */
     contextBuilder?: ContextBuilder
     /** List of available channel names (without # prefix) */

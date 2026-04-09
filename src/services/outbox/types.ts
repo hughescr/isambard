@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Stryker disable all: Schema values are static definitions
 
-export const outboxItemTypeSchema = z.enum([
+const outboxItemTypeSchema = z.enum([
     'agent_response',
     'perch_output',
     'email_notification',
@@ -13,24 +13,22 @@ export const outboxItemTypeSchema = z.enum([
 ]);
 export type OutboxItemType = z.infer<typeof outboxItemTypeSchema>;
 
-export const outboxPrioritySchema = z.enum(['high', 'medium', 'low']);
+const outboxPrioritySchema = z.enum(['high', 'medium', 'low']);
 export type OutboxPriority = z.infer<typeof outboxPrioritySchema>;
 
 // Stryker restore all
 
-export const outboxPayloadSchema = z.object({
+const outboxPayloadSchema = z.object({
     text:        z.string().optional(),
     embeds:      z.array(z.unknown()).optional(),
     components:  z.array(z.unknown()).optional(),
     attachments: z.array(z.unknown()).optional(),
 });
-export type OutboxPayload = z.infer<typeof outboxPayloadSchema>;
 
-export const outboxProgressSchema = z.object({
+const outboxProgressSchema = z.object({
     lastAttemptAt: z.iso.datetime().optional(),
     lastError:     z.string().optional(),
 });
-export type OutboxProgress = z.infer<typeof outboxProgressSchema>;
 
 export const outboxItemSchema = z.object({
     id:          z.uuid(),

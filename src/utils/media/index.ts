@@ -13,14 +13,12 @@ export {
     isSupportedImageType
 } from './types';
 
-export { needsConversion, convert, type ConversionResult } from './converters';
+export { needsConversion, convert } from './converters';
 
 export {
     FETCH_TIMEOUT_MS,
     fetchImage,
-    fetchImages,
-    type FetchImageResult,
-    type FetchImagesResult
+    fetchImages
 } from './fetcher';
 
 export {
@@ -34,6 +32,5 @@ export {
     extractFramesInRange,
     generateSpectrogram,
     processVideo,
-    processLocalVideo,
-    type ProcessVideoOptions
+    processLocalVideo
 } from './video';

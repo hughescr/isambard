@@ -38,28 +38,6 @@ export class DiscordError extends IsambardError {
 // ============================================================================
 
 /**
- * Error thrown when the Discord bot token is invalid or expired.
- */
-export class InvalidTokenError extends DiscordError {
-    constructor() {
-        super('Discord bot token is invalid or expired', ErrorCode.INVALID_TOKEN);
-        this.name = 'InvalidTokenError';
-    }
-}
-
-/**
- * Error thrown when the bot lacks required permissions for an action.
- */
-export class PermissionError extends DiscordError {
-    declare public readonly context: { action: string };
-
-    constructor(action: string) {
-        super(`Bot lacks permission to ${action}`, ErrorCode.PERMISSION_DENIED, { action });
-        this.name = 'PermissionError';
-    }
-}
-
-/**
  * Error thrown when a Discord channel cannot be found by ID.
  */
 export class ChannelNotFoundByIdError extends DiscordError {
@@ -81,22 +59,6 @@ export class ChannelNotAccessibleError extends DiscordError {
     constructor(channelId: string) {
         super(`Discord channel not accessible: ${channelId}`, ErrorCode.CHANNEL_NOT_ACCESSIBLE, { channelId });
         this.name = 'ChannelNotAccessibleError';
-    }
-}
-
-/**
- * Error thrown when Discord API rate limits are exceeded.
- */
-export class RateLimitError extends DiscordError {
-    declare public readonly context: { retryAfter: number };
-
-    constructor(retryAfter: number) {
-        super(
-            `Discord rate limit exceeded. Retry after ${retryAfter}ms`,
-            ErrorCode.RATE_LIMIT_EXCEEDED,
-            { retryAfter }
-        );
-        this.name = 'RateLimitError';
     }
 }
 

@@ -6,7 +6,7 @@ import { type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, 
 /**
  * Storage layer components
  */
-export interface StorageLayer {
+interface StorageLayer {
     docClient:                  ReturnType<typeof createDynamoDBClient>['docClient']
     tableName:                  string
     memoryBackend:              MemoryToolBackend

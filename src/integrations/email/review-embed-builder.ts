@@ -2,14 +2,14 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'disc
 import { truncate } from 'lodash-es';
 import type { EmailMetadata, ClassifierVerdict, EmailFolder } from '@/integrations/email/types';
 
-export interface OutboundApprovalEmbedParams {
+interface OutboundApprovalEmbedParams {
     to:       string
     subject:  string
     draftUid: number
     cc?:      string[]
 }
 
-export interface ReviewEmbedResult {
+interface ReviewEmbedResult {
     embed:     EmbedBuilder
     actionRow: ActionRowBuilder<ButtonBuilder>
 }

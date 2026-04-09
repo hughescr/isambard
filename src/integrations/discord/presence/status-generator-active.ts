@@ -36,7 +36,7 @@ export interface ActiveStatusGenerator {
 /**
  * Dependencies for creating an active status generator.
  */
-export interface ActiveStatusGeneratorDeps {
+interface ActiveStatusGeneratorDeps {
     /** Logger instance for structured logging */
     logger: {
         debug: (message: unknown, ...args: unknown[]) => void

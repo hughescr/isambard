@@ -17,7 +17,7 @@ const MONTHS_THRESHOLD = 12;   // < 12 months = show months
  * Time of day categories based on UTC hour.
  */
 export const timeOfDaySchema = z.enum(['morning', 'afternoon', 'evening', 'night']);
-export type TimeOfDay = z.infer<typeof timeOfDaySchema>;
+type TimeOfDay = z.infer<typeof timeOfDaySchema>;
 
 /**
  * Day of week names.
@@ -31,7 +31,7 @@ export const dayOfWeekSchema = z.enum([
     'Friday',
     'Saturday',
 ]);
-export type DayOfWeek = z.infer<typeof dayOfWeekSchema>;
+type DayOfWeek = z.infer<typeof dayOfWeekSchema>;
 
 /**
  * Complete time context for prompt injection.

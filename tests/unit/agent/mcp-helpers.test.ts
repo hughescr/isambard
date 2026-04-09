@@ -1,5 +1,5 @@
 import { describe, test, expect, mock } from 'bun:test';
-import { mcpServiceUnavailableResult, checkServiceHealth, checkWriteServiceHealth } from '../../../src/agent/mcp-helpers';
+import { mcpServiceUnavailableResult, checkServiceHealth, checkWriteServiceHealth, withHealthGuard, withWriteHealthGuard } from '../../../src/agent/mcp-helpers';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { ReconnectionLoop } from '../../../src/services/reconnection-loop';
 import type { ServiceHealthEntry } from '../../../src/services/types';
@@ -292,5 +292,140 @@ describe('checkWriteServiceHealth', () => {
         checkWriteServiceHealth(registry, 'bluesky', 'discord', loop);
         // Primary check passes (available), so loop is not triggered
         expect(loop.triggerNow).not.toHaveBeenCalled();
+    });
+});
+
+// ---- withHealthGuard ----
+
+describe('withHealthGuard', () => {
+    test('when healthRegistry is undefined → handler is called directly', async () => {
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withHealthGuard(undefined, 'discord', undefined, handler);
+        const result = await wrapped({ x: 1 });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith({ x: 1 });
+        expect((result.content[0] as { text: string }).text).toBe('ok');
+    });
+
+    test('when service is healthy → handler is called', async () => {
+        const registry = makeRegistry({ discord: true }, { discord: makeEntry({ state: 'online' }) });
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withHealthGuard(registry, 'discord', undefined, handler);
+        const result = await wrapped({ x: 2 });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith({ x: 2 });
+        expect((result.content[0] as { text: string }).text).toBe('ok');
+    });
+
+    test('when service is unhealthy → health error returned, handler not called', async () => {
+        const registry = makeRegistry({ discord: false }, { discord: makeEntry({ state: 'offline' }) });
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withHealthGuard(registry, 'discord', undefined, handler);
+        const result = await wrapped({ x: 3 });
+        expect(handler).not.toHaveBeenCalled();
+        expect(result.isError).toBe(true);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).toContain('discord');
+    });
+
+    test('when service is unhealthy with reconnectionLoop → loop is triggered', async () => {
+        const registry = makeRegistry({ discord: false }, { discord: makeEntry({ state: 'offline' }) });
+        const loop = makeLoop();
+        const handler = mock(async (_args: unknown) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withHealthGuard(registry, 'discord', loop, handler);
+        await wrapped({});
+        expect(loop.triggerNow).toHaveBeenCalledTimes(1);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('passes args through to handler unchanged', async () => {
+        const registry = makeRegistry({ email: true }, { email: makeEntry({ state: 'online' }) });
+        const handler = mock(async (args: { a: string, b: number }) => ({
+            content: [{ type: 'text' as const, text: `${args.a}-${args.b}` }],
+        }));
+        const wrapped = withHealthGuard(registry, 'email', undefined, handler);
+        const result = await wrapped({ a: 'hello', b: 42 });
+        expect((result.content[0] as { text: string }).text).toBe('hello-42');
+    });
+});
+
+// ---- withWriteHealthGuard ----
+
+describe('withWriteHealthGuard', () => {
+    test('when healthRegistry is undefined → handler is called directly', async () => {
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withWriteHealthGuard(undefined, 'bluesky', 'discord', undefined, handler);
+        const result = await wrapped({ x: 1 });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith({ x: 1 });
+        expect((result.content[0] as { text: string }).text).toBe('ok');
+    });
+
+    test('when both services healthy → handler is called', async () => {
+        const registry = makeRegistry(
+            { bluesky: true, discord: true },
+            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'online' }) }
+        );
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', undefined, handler);
+        const result = await wrapped({ x: 2 });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith({ x: 2 });
+        expect((result.content[0] as { text: string }).text).toBe('ok');
+    });
+
+    test('when primary service unhealthy → health error returned, handler not called', async () => {
+        const registry = makeRegistry(
+            { bluesky: false, discord: true },
+            { bluesky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
+        );
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', undefined, handler);
+        const result = await wrapped({ x: 3 });
+        expect(handler).not.toHaveBeenCalled();
+        expect(result.isError).toBe(true);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).toContain('bluesky');
+    });
+
+    test('when primary healthy but approval service unhealthy → error returned, handler not called', async () => {
+        const registry = makeRegistry(
+            { bluesky: true, discord: false },
+            { bluesky: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'offline' }) }
+        );
+        const handler = mock(async (_args: { x: number }) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', undefined, handler);
+        const result = await wrapped({ x: 4 });
+        expect(handler).not.toHaveBeenCalled();
+        expect(result.isError).toBe(true);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).toContain('discord');
+        expect(text).toContain('approval');
+    });
+
+    test('when primary unhealthy with reconnectionLoop → loop is triggered', async () => {
+        const registry = makeRegistry(
+            { bluesky: false, discord: true },
+            { bluesky: makeEntry({ state: 'offline' }), discord: makeEntry({ state: 'online' }) }
+        );
+        const loop = makeLoop();
+        const handler = mock(async (_args: unknown) => ({ content: [{ type: 'text' as const, text: 'ok' }] }));
+        const wrapped = withWriteHealthGuard(registry, 'bluesky', 'discord', loop, handler);
+        await wrapped({});
+        expect(loop.triggerNow).toHaveBeenCalledTimes(1);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('passes args through to handler unchanged', async () => {
+        const registry = makeRegistry(
+            { email: true, discord: true },
+            { email: makeEntry({ state: 'online' }), discord: makeEntry({ state: 'online' }) }
+        );
+        const handler = mock(async (args: { msg: string }) => ({
+            content: [{ type: 'text' as const, text: args.msg }],
+        }));
+        const wrapped = withWriteHealthGuard(registry, 'email', 'discord', undefined, handler);
+        const result = await wrapped({ msg: 'hello world' });
+        expect((result.content[0] as { text: string }).text).toBe('hello world');
     });
 });

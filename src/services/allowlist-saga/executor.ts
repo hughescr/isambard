@@ -8,7 +8,7 @@ import {
     type PersonAllowlist
 } from '@/storage';
 
-export interface AllowlistSagaExecutorDeps {
+interface AllowlistSagaExecutorDeps {
     contactBackend:       ContactBackend
     personAllowlist:      PersonAllowlist
     allowlistSagaBackend: AllowlistSagaBackend

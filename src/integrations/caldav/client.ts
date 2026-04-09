@@ -16,7 +16,7 @@ interface CachedEvents {
 
 type AttendeeItem = ical.Attendee;
 
-export interface CalDAVClientOptions {
+interface CalDAVClientOptions {
     cacheTtlMs?:     number
     timeoutMs?:      number
     healthRegistry?: ServiceHealthRegistry

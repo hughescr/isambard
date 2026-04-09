@@ -18,8 +18,7 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
      */
     async enqueue(item: OutboxItem): Promise<void> {
         const keys = OutboxKeyGenerator.createKeys(item);
-        // Stryker disable next-line ArithmeticOperator: TTL arithmetic — multiplication order does not affect result
-        const ttl = item.ttl ?? Math.floor(Date.now() / 1000) + (TTL_HOURS * 60 * 60);
+        const ttl = item.ttl ?? OutboxBackend.ttlFromHours(TTL_HOURS);
         await this.putItem({
             ...keys,
             ...item,
@@ -67,8 +66,7 @@ export class OutboxBackend extends BaseRepository<OutboxItem> {
             },
         };
         const keys = OutboxKeyGenerator.createKeys(updated);
-        // Stryker disable next-line ArithmeticOperator: TTL arithmetic — multiplication order does not affect result
-        const ttl = updated.ttl ?? Math.floor(Date.now() / 1000) + (TTL_HOURS * 60 * 60);
+        const ttl = updated.ttl ?? OutboxBackend.ttlFromHours(TTL_HOURS);
         await this.putItem({ ...keys, ...updated, TTL: ttl });
     }
 }
