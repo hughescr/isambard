@@ -65,23 +65,17 @@
 
 - Enable `noUncheckedIndexedAccess` in `tsconfig.json` to get compile-time safety for array/object index access. Will require fixing all sites where TypeScript infers `T | undefined` for array element access.
 
-## Upcoming: Person-Based Allowlists
-
-Currently email and Bluesky allowlists use raw identifiers (email addresses, Bluesky handles). With the contacts system in place, allowlists should reference person IDs instead: "craig-hughes is allowed to receive emails" rather than per-address entries.
-
-### Benefits
-- Adding a new email address to a contact automatically extends that person's allowlist coverage
-- Revoking a person revokes all their identifiers in one operation
-- Single source of truth — contact record is the authority on who a person is
-
-### Work Items
-- Migrate email allowlist storage from raw addresses to person IDs
-- Migrate Bluesky allowlist storage from raw handles to person IDs
-- Update allowlist check logic to resolve person ID → current identifiers at check time
-- Update Discord slash commands (`/allowlist add`, `/allowlist remove`) to accept person names/IDs
-- Maintain backwards-compatible read path during migration
+## Completed: Person-Based Allowlists
+- ✅ `PersonAllowlist` in `src/storage/person-allowlist.ts` with DynamoDB-backed person-ID-based allowlist storage
+- ✅ `AllowlistSaga` in `src/services/allowlist-saga/` for multi-step Discord interaction flow
+- ✅ Discord `/allowlist` slash commands (add/remove/list) accepting person IDs
+- ✅ `AllowlistInteractionHandler` for saga UI flow
+- ✅ Email and Bluesky integrations migrated to use `PersonAllowlist` (no more raw address/handle allowlists)
+- ✅ Backwards-compatible loading with orphaned person ID handling
 
 ## Upcoming: Memory Path Migration: `/users/{discordUserId}/` → `/users/{personId}/`
+
+This is the remaining work from the cross-platform awareness initiative (person-based allowlists are now complete).
 
 Currently per-user memories use Discord numeric user IDs as path keys (e.g. `/users/123456789/`). With the contacts system, migrate to person IDs for platform-agnostic user memory loading.
 

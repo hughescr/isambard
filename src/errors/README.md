@@ -52,6 +52,15 @@ classDiagram
     BskyError <|-- BskyRateLimitError
     BskyError <|-- BskyValidationError
 
+    IsambardError <|-- CaldavError
+    CaldavError <|-- CaldavAuthError
+    CaldavError <|-- CaldavFetchError
+    CaldavError <|-- CaldavTimeoutError
+    CaldavError <|-- AmbiguousCalendarMatchError
+
+    StorageError <|-- ContactNotFoundError
+    StorageError <|-- ContactLastIdentifierError
+
     class IsambardError {
         +code: ErrorCode
         +context?: Record~string, unknown~
@@ -101,7 +110,14 @@ classDiagram
         +code: ErrorCode
         +context?: Record~string, unknown~
     }
+
+    class CaldavError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
 ```
+
+> **Note:** Error classes are defined in their respective modules (e.g., email errors in `src/integrations/email/errors.ts`, Bluesky errors in `src/integrations/bsky/errors.ts`, CalDAV errors in `src/integrations/caldav/errors.ts`) while sharing the centralized `ErrorCode` enum and `IsambardError` base from `src/errors/`.
 
 ## When to Create vs Reuse Errors
 
@@ -124,7 +140,8 @@ classDiagram
    - Channel operations → extend `ChannelRegistryError`
    - Email operations → extend `EmailError`
    - Bluesky operations → extend `BskyError`
-2. **Use intermediate base classes** for logical groupings (e.g., `ReconciliationError` under `MemoryToolError`, `WildDuckError` under `EmailError`)
+   - CalDAV operations → extend `CaldavError`
+2. **Use intermediate base classes** for logical groupings (e.g., `ReconciliationError` under `MemoryToolError`, `WildDuckError` under `EmailError`, `CaldavError` under `IsambardError`)
 3. **Preserve the hierarchy** to enable broad catch blocks when appropriate
 
 ## Naming Conventions

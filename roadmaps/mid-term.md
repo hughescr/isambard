@@ -1,20 +1,25 @@
 # Mid-Term Roadmap (Weeks 3–8)
 
-## Self-Improvement Loop
+## Completed: Bluesky Write Capabilities
+- ✅ Bluesky posting and replying (AT Protocol — full read/write/DM integration complete)
+- ✅ Bluesky DM support (listConversations, getDirectMessages, sendDirectMessage with approval)
+
+## Completed: Calendar Access (Read-Only)
+- ✅ CalDAV read-only access with per-user registry via Discord `/calendar` slash commands
+
+## Upcoming: Calendar Write
+- Calendar event creation (CalDAV write)
+
+## Upcoming: Box Documents
+- Box Documents integration (box-node-sdk)
+
+## Upcoming: Self-Improvement Loop
 - PR generation workflow for self-proposed changes
 - Safety validation checks before PR submission
 - GitHub integration for creating and managing PRs
 - Learning from PR review feedback to improve future proposals
 
-## Write Capabilities
-After read-only integrations are stable:
-- ✅ Bluesky posting and replying (AT Protocol — full read/write/DM integration complete)
-- ✅ Bluesky DM support (listConversations, getDirectMessages, sendDirectMessage with approval)
-- ✅ Calendar read-only access (CalDAV with per-user registry); CalDAV write still upcoming
-- Calendar event creation (CalDAV write)
-- Box Documents (box-node-sdk)
-
-## Knowledge & Context
+## Upcoming: Knowledge & Context
 - Advanced context window management
 - Cross-conversation knowledge synthesis
 - Proactive context suggestions during conversations

@@ -92,6 +92,7 @@ The agent subsystem connects Discord to Claude with persistent memory:
   - `types.ts` - `ClassificationResult` Zod enum type (answer/interruption/unrelated) and `MessageToClassify` interface
   - `haiku-classifier.ts` - LLM-based message classification using Haiku with prompt building and response parsing
   - `classifier.ts` - `AnswerClassifier` class for LLM-based answer classification
+  - `index.ts` - Public exports
 - `src/agent/question-registry/` - Question lifecycle management
   - `registry.ts` - `QuestionRegistry` class for tracking pending questions with timeouts
   - `types.ts` - Question types (PendingQuestion, QuestionAnswer, QuestionOption, QuestionState)
@@ -147,6 +148,10 @@ The Discord integration provides bot functionality:
 - `src/integrations/discord/register-commands.ts` - Consolidated Discord slash command registration (single bulk PUT)
 - `src/integrations/discord/capability.ts` - Discord capability definitions
 - `src/integrations/discord/contact-commands.ts` - Contact management Discord slash commands (/contact add, /contact delete, /contact list)
+- `src/integrations/discord/allowlist-commands.ts` - Discord slash commands for person-based allowlist management (/allowlist add, /allowlist remove, /allowlist list)
+- `src/integrations/discord/allowlist-interaction-handler.ts` - Multi-step allowlist saga UI handler for add-to-allowlist Discord button/modal flow
+- `src/integrations/discord/history-provider.ts` - Discord history provider for cross-platform context injection
+- `src/integrations/discord/colors.ts` - Shared Discord embed color constants
 - `src/integrations/discord/setup/` - Bot initialization setup modules (extracted from bot.ts)
   - `presence-stream-handler.ts` - Shared utility for creating stream event handlers for presence updates
   - `presence-setup.ts` - Presence manager creation, status generators, and BotStateManager subscriptions
@@ -231,14 +236,13 @@ WildDuck HTTP API for inbox reading with SSE push notifications, outbound sendin
 - `src/integrations/email/wildduck-listener.ts` - WildDuck SSE listener with poll fallback and checkPendingNotifications loop
 - `src/integrations/email/email-processor.ts` - Email processing pipeline
 - `src/integrations/email/outbound-approval-handler.ts` - Admin approval workflow for outbound emails via Discord
-- `src/integrations/email/allowlist.ts` - Recipient allowlist management
-- `src/integrations/email/allowlist-commands.ts` - Discord slash commands for allowlist management
 - `src/integrations/email/auth-checker.ts` - Authorization checking for outbound email
 - `src/integrations/email/send-rate-limiter.ts` - Token bucket rate limiter for outbound sends (capacity=24, refill=1/hr)
 - `src/integrations/email/classifier.ts` - Email classification
 - `src/integrations/email/classifier-prompt.ts` - LLM prompt for email classification
 - `src/integrations/email/review-embed-builder.ts` - Discord embed builder for approval review
 - `src/integrations/email/review-handler.ts` - Handles admin approval/rejection responses
+- `src/integrations/email/history-provider.ts` - Email history provider for cross-platform context injection
 - `src/integrations/email/index.ts` - Public exports
 
 ### Bluesky Integration
@@ -246,7 +250,6 @@ AT Protocol client for feeds, posts, DMs, and social graph:
 - `src/integrations/bsky/types.ts` - Domain types (BskyAuthor, BskyPost, BskyFeedItem, BskyNotification, BskyConversation, BskyDirectMessage, BskyConversationMember)
 - `src/integrations/bsky/errors.ts` - Error hierarchy (BskyError, BskyAuthError, BskyRateLimitError)
 - `src/integrations/bsky/client.ts` - `BlueskyClient` class wrapping `AtpAgent` from `@atproto/api` (feeds, posts, DMs, follow/unfollow, validation)
-- `src/integrations/bsky/allowlist.ts` - Recipient allowlist management for outbound posts and DMs
 - `src/integrations/bsky/review-embed-builder.ts` - Discord embed builder for reply and DM approval requests with type discriminator
 - `src/integrations/bsky/outbound-approval-handler.ts` - Discord button/modal approval workflow for outbound Bluesky replies and DMs (bsky-send-* and bsky-dm-* prefixes). Persists rejection data to `BskyRejectionBackend` for agent feedback.
 - `src/integrations/bsky/rejection-backend.ts` - `BskyRejectionBackend` DynamoDB backend (PK=`BSKY#REJECTED`, SK=`REJECTION#{uuid}`) storing admin-rejected posts/DMs with all MCP tool retry parameters. 30-day TTL. Discriminated union: reply (text, targetHandle, parentUri, parentCid, rootUri, rootCid) vs DM (text, recipientHandles, convoId).
@@ -299,11 +302,8 @@ DynamoDB integration and data access layer:
 - `src/storage/client.ts` - DynamoDB client factory
 - `src/storage/dynamo-retry.ts` - Retry logic for DynamoDB operations
 - `src/storage/index.ts` - Public exports
-- `src/storage/models/` - Entity definitions
-  - `memory.ts` - Memory entity model
 - `src/storage/repositories/` - Data access repositories
   - `base.ts` - Base repository with common CRUD operations
-  - `memory.ts` - Memory repository
 - `src/storage/task-session/` - Claude Agent SDK session ID persistence
   - `types.ts` - `SessionId` branded type and `TaskSessionItem` DynamoDB record
   - `backend.ts` - `TaskSessionBackend` singleton pattern for storing/retrieving the current agent session ID
@@ -317,8 +317,10 @@ Cross-platform address book with identity resolution:
 - `src/storage/contacts/types.ts` - Contact types and Zod schemas (ContactRecord, ContactIdentifier, PlatformType)
 - `src/storage/contacts/key-generator.ts` - DynamoDB key construction for contacts (PK/SK, CONTACT_LOOKUP GSI)
 - `src/storage/contacts/backend.ts` - DynamoDB CRUD for contacts with cross-platform identifier lookup
+- `src/storage/contacts/utils.ts` - Contact utility functions
+- `src/storage/contacts/find-or-create.ts` - Find-or-create contact resolution logic
 - `src/storage/contacts/index.ts` - Public exports
-- `src/storage/allowlist-base.ts` - Base class for platform allowlist storage (shared by email and Bluesky)
+- `src/storage/person-allowlist.ts` - Person-ID-based allowlist with DynamoDB backend, reverse-map identifier resolution, and in-memory cache
 
 ### Application Composition Root
 Factory functions that wire together all subsystem components:
@@ -347,13 +349,19 @@ Service infrastructure for resilience and lifecycle management:
   - `backend.ts` - Saga persistence in DynamoDB
   - `executor.ts` - Saga executor for multi-step approval workflows
   - `index.ts` - Public exports
+- `src/services/allowlist-saga/` - Multi-step allowlist addition workflow
+  - `types.ts` - Allowlist saga state machine types and schemas
+  - `backend.ts` - DynamoDB persistence for saga state with TTL and optimistic concurrency
+  - `executor.ts` - Saga executor: start, submitName, confirmMatch, skipMatch, createNew, cancel
+  - `starter.ts` - `AllowlistSagaStarter` interface for dependency inversion
+  - `index.ts` - Public exports
 - `src/services/index.ts` - Public exports
 
 ### Error Hierarchy
 Centralized error classes for all Isambard operations:
 - `src/errors/base.ts` - `IsambardError` base class with `code: ErrorCode` and typed `context` bag
-- `src/errors/codes.ts` - `ErrorCode` enum with all error codes (storage, memory tool, reconciliation, Discord, channel registry, presence, state, utility, email, bsky)
-- `src/errors/storage.ts` - `StorageError` subtree (ItemNotFoundError, ValidationError, DynamoTimeoutError, MemoryToolError and subclasses, ReconciliationError)
+- `src/errors/codes.ts` - `ErrorCode` enum with all error codes (storage, memory tool, reconciliation, Discord, channel registry, presence, state, utility, email, bsky, caldav, contacts)
+- `src/errors/storage.ts` - `StorageError` subtree (ItemNotFoundError, ValidationError, DynamoTimeoutError, ContactNotFoundError, ContactLastIdentifierError, MemoryToolError and subclasses, ReconciliationError)
 - `src/errors/discord.ts` - `DiscordError` subtree (InvalidTokenError, PermissionError, ChannelNotFoundByIdError, RateLimitError, MessageFetchError, InvalidSnowflakeError, ChannelRegistryError subclasses, PresenceError, TransitionError)
 - `src/errors/utils.ts` - `PathSecurityError` for file path security validation failures
 - `src/errors/index.ts` - Public exports
@@ -372,6 +380,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - `src/utils/path-validator.ts` - `validateFilePath`/`validateFilePaths` security checks (CWD containment, no symlinks, file-only)
 - `src/utils/text.ts` - `truncateToWordBoundary` for status length limiting; `HARD_MAX_STATUS_LENGTH` constant
 - `src/utils/safe-async-handler.ts` - `safeAsyncHandler` wrapper converting async event handlers to void-returning functions with error logging
+- `src/utils/index.ts` - Public exports
 - `src/utils/strip-dynamo-keys.ts` - Strip DynamoDB internal keys from response items
 - `src/utils/retry/` - Retry utilities with exponential backoff
   - `types.ts` - Retry configuration types
@@ -379,6 +388,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
   - `delay.ts` - Exponential backoff delay calculation
   - `retry-async.ts` - Retry wrapper for async functions
   - `retry-async-generator.ts` - Retry wrapper for async generators
+  - `defaults.ts` - Default retry configuration values
   - `index.ts` - Public exports
 
 ### Media Processing
@@ -423,7 +433,8 @@ Video and audio analysis utilities:
 - **Type Guards and Factory Functions** for branded types — `createLayerName()`, `createContentType()`, `isLayerName()`, `isContentType()` replace unsafe `as` casts with runtime-validated factories
 - **Class-Based Components** — `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator`, `BotStateManagerImpl` use proper TypeScript classes with private fields instead of closure-based factories
 - **Background Task Auto-Resume** — `StreamTracker` counts background task launches vs `TaskOutput` collections; `handleInput` auto-resumes (max 1 attempt) when uncollected tasks detected, preserving initial response on failure
-- **Allowlist Base Class** — `AllowlistBase` in `src/storage/allowlist-base.ts` provides shared DynamoDB allowlist CRUD for email and Bluesky platforms
+- **Person-Based Allowlists** — `PersonAllowlist` in `src/storage/person-allowlist.ts` provides person-ID-based allowlist with reverse-map identifier resolution, replacing per-platform raw address/handle allowlists
+- **Allowlist Saga** — Multi-step Discord interaction flow in `src/services/allowlist-saga/` for adding contacts to allowlist from approval buttons
 - **Per-User Calendar Registry** — CalDAV credentials stored per-user in DynamoDB via Discord `/calendar` commands, not SST secrets
 - **Service Health Monitoring** — `HealthRegistry` tracks service status; `ReconnectionLoop` handles auto-reconnect with backoff
 - **Outbox Pattern** — Reliable message delivery via DynamoDB outbox with background drainer for eventual consistency

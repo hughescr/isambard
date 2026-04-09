@@ -26,7 +26,7 @@ Each session should produce at least one tangible artifact. Time-specific hints 
 |------|-------|------------------|---------|
 | **pre-dawn** | 5-7am | Strongly suggestive | Digest prep for Craig's wake-up |
 | **mid-morning** | 9-11am | Moderate | Follow up on tasks/threads |
-| **wikipedia** | 12-2pm | Open | Wikipedia exploration |
+| **wikipedia** | 12-2pm | Moderate | Wikipedia exploration |
 | **afternoon** | 2-4pm | Open | Exploration, research |
 | **evening** | 6-8pm | Light touch | Light exploration |
 | **late-night** | 11pm-1am | Moderate | Deep research, prep |
@@ -136,6 +136,7 @@ interface SuspendedState {
   slot: PerchSlot;           // Original time slot
   elapsedMs: number;         // How much perch time used so far
   suspendedAt: Date;         // When suspension happened
+  interruptingMessage: InterruptingMessage; // The message that caused suspension
 }
 ```
 
@@ -193,7 +194,7 @@ Perch sessions have a maximum duration (`maxSessionMinutes`, default 45) to prev
 The timeout prompt includes the agent's partial work for context:
 
 ```
---- PERCH TIME TIMEOUT ---
+--- PERCH SESSION TIMEOUT ---
 
 Your perch session has reached the maximum duration (45 minutes).
 
@@ -207,12 +208,12 @@ Your perch session has reached the maximum duration (45 minutes).
 
 ---
 
-Please wrap up your current line of thinking. You have a few minutes to:
-- Complete any critical in-progress tasks
-- Store important discoveries to memory
-- Leave clear notes in TaskList for next perch session
+Please wrap up:
+- Save any important thoughts or findings to memory
+- Complete any in-progress work if quick, otherwise note where you left off
+- Don't start new explorations
 
-This is a graceful timeout - finish your current thought, then the session will end.
+Please finalize and conclude this perch session.
 ```
 
 ### Clock Behavior
@@ -258,6 +259,16 @@ interface PerchConfig {
 
   /** Wrap-up timeout to prevent hangs during graceful shutdown */
   wrapUpTimeoutMinutes: number; // Default: 5
+
+  /** Optional test mode configuration */
+  testMode?: PerchTestModeConfig;
+}
+
+interface PerchTestModeConfig {
+  /** Trigger a perch session immediately on startup */
+  triggerOnStartup?: boolean;
+  /** Force a specific slot instead of using the current time */
+  forceSlot?: PerchSlot;
 }
 ```
 
@@ -318,22 +329,26 @@ sst secret set PerchEnabled true
   - `buildPerchPrompt(slot)`: Combines base + slot hint
   - `buildPerchResumedPrompt()`: Lightweight resume context after suspension
   - `buildPerchTimeoutPrompt()`: Timeout prompt with partialWork
+  - `buildTestPerchPrompt()`: Test mode prompt with forced slot
   - `getSuggestionLevelDescription()`: Human-readable levels
 
 - **`scheduler.ts`**: Cron-based scheduling
-  - `createPerchScheduler()`: Factory for scheduler (accepts optional `perchSessionRunner` for suspension guard)
+  - `createPerchScheduler()`: Factory for scheduler (accepts optional `perchSessionRunner` for suspension guard, optional `getCurrentLocalHour` for testing)
+  - `triggerNow()`: Immediately trigger a perch session
+  - `triggerTestPerch()`: Trigger a test perch session, cycling through `TEST_SLOTS` (all slots except `wikipedia`)
   - Uses `cron-parser` with `H * * * *` pattern
   - Handles deferral when bot busy
   - Suspension guard: checks `isSuspended()` before starting new perch
   - Subscribes to `BotStateManager` for idle transitions
 
 - **`session-runner.ts`**: Session lifecycle
-  - `createPerchSessionRunner()`: Factory for runner
+  - `createPerchSessionRunner()`: Factory for runner (deps include optional `contextBuilder` and `activityLogger`)
   - `startPerch(slot)`: Begins session with slot-specific prompt
   - `suspend(message)`: Saves state (`sessionId`, `slot`, `elapsedMs`, `suspendedAt`), aborts session, transitions to idle
   - `resumeAfterSuspension()`: Restores state, resumes with paused clock and lightweight prompt
   - `isSuspended()`: Checks if perch is currently suspended
   - `clearSuspension()`: Error recovery to clear suspended state
+  - `getAbortController()`: Returns the current session's AbortController (if active)
   - Timeout tracking: elapsed perch time (not wall-clock)
   - Error handling and state cleanup
 
@@ -414,6 +429,9 @@ runner.clearSuspension();
 ```typescript
 // Trigger immediately (for testing)
 scheduler.triggerNow();
+
+// Trigger test perch (cycles through TEST_SLOTS, excludes wikipedia)
+scheduler.triggerTestPerch();
 
 // Check scheduler state
 const state = scheduler.getState();
