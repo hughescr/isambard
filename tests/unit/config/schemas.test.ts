@@ -6,6 +6,7 @@ import {
     discordConfigSchema,
     boxConfigSchema,
     bskyConfigSchema,
+    browserConfigSchema,
     dynamoDBConfigSchema,
     configSchema,
     perchConfigSchema,
@@ -710,6 +711,172 @@ describe('reconciliationConfigSchema', () => {
             intervalMs: 0,
         });
         expect(result.success).toBe(false);
+    });
+});
+
+describe.concurrent('browserConfigSchema', () => {
+    test('should apply all defaults when given empty object', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.backend).toBe('auto');
+            expect(result.data.viewportWidth).toBe(1280);
+            expect(result.data.viewportHeight).toBe(800);
+            expect(result.data.navigationTimeoutMs).toBe(30_000);
+            expect(result.data.actionTimeoutMs).toBe(10_000);
+            expect(result.data.maxScreenshotBytes).toBe(2_000_000);
+            expect(result.data.maxTextBytes).toBe(100_000);
+            expect(result.data.dataStorePath).toBeUndefined();
+            expect(result.data.chromePath).toBeUndefined();
+            expect(result.data.allowlist).toBeUndefined();
+        }
+    });
+
+    test('should accept backend = webkit', () => {
+        const result = browserConfigSchema.safeParse({ backend: 'webkit' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.backend).toBe('webkit');
+            expect(result.data.backend).not.toBe('chrome');
+        }
+    });
+
+    test('should accept backend = chrome', () => {
+        const result = browserConfigSchema.safeParse({ backend: 'chrome' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.backend).toBe('chrome');
+            expect(result.data.backend).not.toBe('webkit');
+        }
+    });
+
+    test('should reject invalid backend value', () => {
+        const result = browserConfigSchema.safeParse({ backend: 'firefox' });
+        expect(result.success).toBe(false);
+    });
+
+    test('should accept custom viewport dimensions', () => {
+        const result = browserConfigSchema.safeParse({ viewportWidth: 1920, viewportHeight: 1080 });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.viewportWidth).toBe(1920);
+            expect(result.data.viewportHeight).toBe(1080);
+        }
+    });
+
+    test('should accept optional dataStorePath and chromePath', () => {
+        const result = browserConfigSchema.safeParse({
+            dataStorePath: '/tmp/browser-data',
+            chromePath:    '/usr/bin/google-chrome',
+        });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.dataStorePath).toBe('/tmp/browser-data');
+            expect(result.data.chromePath).toBe('/usr/bin/google-chrome');
+        }
+    });
+
+    test('should accept allowlist array', () => {
+        const result = browserConfigSchema.safeParse({ allowlist: ['example.com', '*.github.com'] });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.allowlist).toEqual(['example.com', '*.github.com']);
+        }
+    });
+
+    test('should ensure viewportWidth defaults to 1280 not 0', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.viewportWidth).toBe(1280);
+            expect(result.data.viewportWidth).toBeGreaterThan(0);
+        }
+    });
+
+    test('should ensure viewportHeight defaults to 800 not 0', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.viewportHeight).toBe(800);
+            expect(result.data.viewportHeight).toBeGreaterThan(0);
+        }
+    });
+
+    test('should ensure navigationTimeoutMs defaults to 30000 not 0', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.navigationTimeoutMs).toBe(30_000);
+            expect(result.data.navigationTimeoutMs).toBeGreaterThan(0);
+        }
+    });
+
+    test('should ensure actionTimeoutMs defaults to 10000 not 0', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.actionTimeoutMs).toBe(10_000);
+            expect(result.data.actionTimeoutMs).toBeGreaterThan(0);
+        }
+    });
+
+    test('should ensure maxScreenshotBytes defaults to 2000000 not 0', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.maxScreenshotBytes).toBe(2_000_000);
+            expect(result.data.maxScreenshotBytes).toBeGreaterThan(0);
+        }
+    });
+
+    test('should ensure maxTextBytes defaults to 100000 not 0', () => {
+        const result = browserConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.maxTextBytes).toBe(100_000);
+            expect(result.data.maxTextBytes).toBeGreaterThan(0);
+        }
+    });
+
+    // FIX 20: viewport dimensions have upper bound 4096
+    test('should reject viewportWidth below 320', () => {
+        const result = browserConfigSchema.safeParse({ viewportWidth: 100 });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject viewportWidth above 4096', () => {
+        const result = browserConfigSchema.safeParse({ viewportWidth: 99_999 });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject viewportHeight below 320', () => {
+        const result = browserConfigSchema.safeParse({ viewportHeight: 100 });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject viewportHeight above 4096', () => {
+        const result = browserConfigSchema.safeParse({ viewportHeight: 99_999 });
+        expect(result.success).toBe(false);
+    });
+
+    test('should accept viewportWidth at 320 (min boundary)', () => {
+        const result = browserConfigSchema.safeParse({ viewportWidth: 320 });
+        expect(result.success).toBe(true);
+    });
+
+    test('should accept viewportWidth at 4096 (max boundary)', () => {
+        const result = browserConfigSchema.safeParse({ viewportWidth: 4096 });
+        expect(result.success).toBe(true);
+    });
+
+    test('should accept viewportHeight at 320 (min boundary)', () => {
+        const result = browserConfigSchema.safeParse({ viewportHeight: 320 });
+        expect(result.success).toBe(true);
+    });
+
+    test('should accept viewportHeight at 4096 (max boundary)', () => {
+        const result = browserConfigSchema.safeParse({ viewportHeight: 4096 });
+        expect(result.success).toBe(true);
     });
 });
 

@@ -133,9 +133,9 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
 
             if(result.action === 'completed') {
                 // Contact already exists — add a note in a followUp
-                // Stryker disable next-line StringLiteral,TemplateLiteral: UI message is configuration
+                // Stryker disable next-line StringLiteral: UI message is configuration
                 await interaction.followUp({ content: `✓ **${result.displayName}** added to allowlist.`, ephemeral: true });
-                // Stryker disable next-line StringLiteral,TemplateLiteral: UI suffix text is configuration
+                // Stryker disable next-line StringLiteral: UI suffix text is configuration
                 return { allowlistSuffix: ` + ${result.displayName} allowlisted` };
             }
 
@@ -144,7 +144,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 const sagaId = result.sagaId;
                 const row    = new ActionRowBuilder<ButtonBuilder>().addComponents(
                     new ButtonBuilder()
-                        // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+                        // Stryker disable next-line StringLiteral: customId is configuration
                         .setCustomId(`allowlist-startmodal:${sagaId}`)
                         // Stryker disable next-line StringLiteral: Button label is UI configuration
                         .setLabel('Set up allowlist entry')
@@ -167,7 +167,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
      */
     private async handleStartModal(interaction: ButtonInteraction, sagaId: string): Promise<void> {
         const modal = new ModalBuilder()
-            // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+            // Stryker disable next-line StringLiteral: customId is configuration
             .setCustomId(`allowlist-name:${sagaId}`)
             // Stryker disable next-line StringLiteral: Modal title is UI configuration
             .setTitle('Add to Allowlist');
@@ -202,7 +202,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 const embed = new EmbedBuilder()
                     // Stryker disable next-line StringLiteral: UI label is configuration
                     .setTitle('Added to Allowlist \u2713')
-                    // Stryker disable next-line StringLiteral,TemplateLiteral: embed description is UI configuration
+                    // Stryker disable next-line StringLiteral: embed description is UI configuration
                     .setDescription(`**${result.displayName}** has been added to the allowlist.`)
                     .setColor(BRIGHT_GREEN);
                 await interaction.editReply({ embeds: [embed], components: [] });
@@ -254,7 +254,7 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 embed.addFields({ name: 'Notes', value: contact.notes, inline: false });
             }
         } else {
-            // Stryker disable next-line StringLiteral,TemplateLiteral: fallback description is UI configuration
+            // Stryker disable next-line StringLiteral: fallback description is UI configuration
             embed.setDescription(`Contact ${personId} not found`);
         }
 
@@ -264,19 +264,19 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
     private buildReviewButtons(sagaId: string): ActionRowBuilder<ButtonBuilder> {
         return new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-                // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+                // Stryker disable next-line StringLiteral: customId is configuration
                 .setCustomId(`allowlist-yes:${sagaId}`)
                 // Stryker disable next-line StringLiteral: Button label is UI configuration
                 .setLabel('Yes, this person')
                 .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
-                // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+                // Stryker disable next-line StringLiteral: customId is configuration
                 .setCustomId(`allowlist-next:${sagaId}`)
                 // Stryker disable next-line StringLiteral: Button label is UI configuration
                 .setLabel('No, show next')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
-                // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+                // Stryker disable next-line StringLiteral: customId is configuration
                 .setCustomId(`allowlist-create:${sagaId}`)
                 // Stryker disable next-line StringLiteral: Button label is UI configuration
                 .setLabel('Create new person')

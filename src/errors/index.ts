@@ -37,3 +37,5 @@ export {
 } from './discord';
 
 export { PathSecurityError } from './utils';
+
+export { BrowserNavigateTimeoutError } from './browser';

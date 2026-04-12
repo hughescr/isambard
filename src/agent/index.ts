@@ -60,6 +60,11 @@ export { createContactsMCPServer, type ContactChangeRequest } from './contacts-m
 // User Context MCP Server
 export { createUserContextMCPServer } from './user-context-mcp-server';
 
+// Browser MCP Server
+export { createBrowserMCPServer } from './browser-mcp-server';
+export type { BrowserAdapter, BrowserHostPolicy } from './browser';
+export { createWebViewAdapter } from './browser';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 

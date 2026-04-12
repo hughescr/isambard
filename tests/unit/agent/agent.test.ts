@@ -655,6 +655,16 @@ describe('createClaudeAgent', () => {
             expect(queryParams.options.mcpServers).toBeDefined();
             expect(queryParams.options.mcpServers['user-context']).toEqual(mockUserContextServer);
         });
+
+        test('should configure browser MCP server when provided', async () => {
+            const mockBrowserServer = { command: 'node', args: ['browser-server.js'] };
+            const agent = createClaudeAgent({ browserMcpServer: mockBrowserServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.mcpServers).toBeDefined();
+            expect(queryParams.options.mcpServers.browser).toEqual(mockBrowserServer);
+        });
     });
 
     describe('Allowed tools configuration', () => {
@@ -915,6 +925,17 @@ describe('createClaudeAgent', () => {
             const allowedTools = queryParams.options.allowedTools;
 
             expect(allowedTools).toContain('mcp__user-context__*');
+        });
+
+        test('should include browser tools when browser MCP server provided', async () => {
+            const mockBrowserServer = { command: 'node', args: ['browser-server.js'] };
+            const agent = createClaudeAgent({ browserMcpServer: mockBrowserServer });
+            await agent.handleInput([mockMessageContext]);
+
+            const queryParams = querySpy.mock.calls[0][0];
+            const allowedTools = queryParams.options.allowedTools;
+
+            expect(allowedTools).toContain('mcp__browser__*');
         });
     });
 

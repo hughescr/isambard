@@ -96,6 +96,10 @@ export function loadConfig(resources: ResourceProvider = Resource as ResourcePro
                 appPassword: resources.BskyAppPassword.value,
             }
             : undefined,
+        // Browser config: unconditionally provide an empty object so Zod fills in all defaults.
+        // Feature gating is done at runtime (process.platform === 'darwin') in src/index.ts.
+        // Stryker disable next-line ObjectLiteral: empty object so Zod applies schema defaults — no fields to mutate
+        browser: {},
         // Planned integrations (commented out until implemented):
         // caldav: {
         //     url:      resources.CaldavUrl.value,

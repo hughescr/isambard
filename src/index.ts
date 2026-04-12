@@ -6,7 +6,7 @@ import type { SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
+import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext, createCatchUpSignalAdapter } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
@@ -505,6 +505,28 @@ export async function createApp(): Promise<App> {
 
     // Stryker disable ObjectLiteral,OptionalChaining: Composition root — service wiring objects and optional deps are not unit-testable
     const contextLayer = createContextLayer(storage.memoryBackend, emailService, bskyDMService, calendarService, bskySetup?.rejectionBackend, healthRegistry);
+
+    // Construct browser adapter — macOS only (Bun.WebView requires darwin), and only when browser config is present
+    // Stryker disable all: Composition root — browser adapter wiring is not unit-testable
+    let browserAdapter: ReturnType<typeof createWebViewAdapter> | undefined;
+    let browserPolicy: BrowserHostPolicy | undefined;
+    if(process.platform === 'darwin' && config.browser) {
+        browserAdapter = createWebViewAdapter({
+            backend:             config.browser.backend,
+            viewportWidth:       config.browser.viewportWidth,
+            viewportHeight:      config.browser.viewportHeight,
+            navigationTimeoutMs: config.browser.navigationTimeoutMs,
+            actionTimeoutMs:     config.browser.actionTimeoutMs,
+            // maxScreenshotBytes and maxTextBytes are NOT adapter config — enforced at MCP layer
+            dataStorePath:       config.browser.dataStorePath,
+            chromePath:          config.browser.chromePath,
+        });
+        browserPolicy = { allowlist: config.browser.allowlist };
+    } else if(config.browser) {
+        logger.warn('Browser config present but Bun.WebView is only supported on macOS — browser tools will be unavailable');
+    }
+    // Stryker restore all
+
     const mcpServers = createMCPServers({
         memoryBackend:             storage.memoryBackend,
         messageSearchService:      discordInfra.messageSearchService,
@@ -530,6 +552,10 @@ export async function createApp(): Promise<App> {
         discordReconnectionLoop,
         bskyReconnectionLoop,
         emailReconnectionLoop,
+        browserAdapter,
+        browserPolicy,
+        browserMaxScreenshotBytes: config.browser?.maxScreenshotBytes,
+        browserMaxTextBytes:       config.browser?.maxTextBytes,
     });
     // Stryker restore ObjectLiteral,OptionalChaining
 
@@ -554,6 +580,7 @@ export async function createApp(): Promise<App> {
         mediaMcpServer:             mcpServers.mediaMcpServer,
         contactsMcpServer:          mcpServers.contactsMcpServer,
         userContextMcpServer:       mcpServers.userContextMcpServer,
+        browserMcpServer:           mcpServers.browserMcpServer,
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,
@@ -770,6 +797,7 @@ export async function createApp(): Promise<App> {
         // Stryker restore BlockStatement
 
         // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
+        // eslint-disable-next-line sonarjs/cognitive-complexity -- stop() is a composition-root shutdown handler; complexity is inherent from cleaning up multiple optional services
         stop: async () => {
             if(isStopping) {
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -812,6 +840,12 @@ export async function createApp(): Promise<App> {
                 storage.reconciliationScheduler.stop();
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler stopped');
+            }
+
+            // Close browser adapter if running
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(browserAdapter) {
+                browserAdapter.close();
             }
 
             // Stop email listener and WildDuck client before bot.stop()

@@ -99,6 +99,23 @@ export const boxConfigSchema = z.object({
     clientSecret: z.string().min(1),
 });
 
+// Browser config
+/* Stryker disable BooleanLiteral,StringLiteral,ArithmeticOperator: Default values are configuration */
+export const browserConfigSchema = z.object({
+    // Stryker disable next-line StringLiteral,ArrayDeclaration: Enum values are configuration
+    backend:             z.enum(['auto', 'webkit', 'chrome']).default('auto'),
+    viewportWidth:       z.number().int().min(320).max(4096).default(1280),
+    viewportHeight:      z.number().int().min(320).max(4096).default(800),
+    navigationTimeoutMs: z.number().int().positive().default(30_000),
+    actionTimeoutMs:     z.number().int().positive().default(10_000),
+    maxScreenshotBytes:  z.number().int().positive().default(2_000_000),
+    maxTextBytes:        z.number().int().positive().default(100_000),
+    dataStorePath:       z.string().optional(),
+    chromePath:          z.string().optional(),
+    allowlist:           z.array(z.string()).optional(),
+});
+/* Stryker restore BooleanLiteral,StringLiteral,ArithmeticOperator */
+
 // Bluesky config
 export const bskyConfigSchema = z.object({
     handle:      z.string().min(1),
@@ -200,6 +217,7 @@ export const configSchema = z.object({
     email:              emailConfigSchema.optional(),
     box:                boxConfigSchema.optional(),
     bsky:               bskyConfigSchema.optional(),
+    browser:            browserConfigSchema.optional(),
 });
 
 // Type exports

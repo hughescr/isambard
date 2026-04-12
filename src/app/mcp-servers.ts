@@ -1,6 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
@@ -147,6 +148,27 @@ export interface MCPServersOptions {
      */
     emailReconnectionLoop?: ReconnectionLoop
 
+    /**
+     * Optional browser adapter for the browser MCP server.
+     * When provided, the browser MCP server is included.
+     */
+    browserAdapter?: BrowserAdapter
+
+    /**
+     * Optional browser host policy (URL allowlist) for the browser MCP server.
+     */
+    browserPolicy?: BrowserHostPolicy
+
+    /**
+     * Maximum screenshot size in bytes for the browser MCP server.
+     */
+    browserMaxScreenshotBytes?: number
+
+    /**
+     * Maximum text size in bytes for the browser MCP server.
+     */
+    browserMaxTextBytes?: number
+
 }
 
 /**
@@ -197,6 +219,11 @@ interface MCPServers {
      * Media MCP server for video and audio processing tools.
      */
     mediaMcpServer: McpServerConfig
+
+    /**
+     * Browser MCP server for web browser automation.
+     */
+    browserMcpServer?: McpServerConfig
 }
 
 /**
@@ -213,6 +240,7 @@ interface MCPServers {
  * 8. User context MCP server - for cross-platform person history (optional)
  * 9. Media MCP server - for video and audio processing tools
  * 10. Email MCP server - created separately in email-setup.ts
+ * 11. Browser MCP server - for web browser automation (optional)
  *
  * @param options - Options containing all required dependencies
  * @returns Object containing all MCP server configurations
@@ -305,6 +333,27 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
 
     const mediaMcpServer = createMediaMCPServer();
 
+    let browserMcpServer: McpServerConfig | undefined;
+    if(options.browserAdapter) {
+        if(options.browserMaxScreenshotBytes === undefined || options.browserMaxTextBytes === undefined) {
+            // Stryker disable next-line StringLiteral: log message is informational only
+            logger.error('browserMaxScreenshotBytes and browserMaxTextBytes are required when browserAdapter is provided; skipping browser MCP server');
+            // browserMcpServer stays undefined — rest of startup continues without browser tools
+        } else {
+            if(options.browserPolicy === undefined) {
+                // Stryker disable next-line StringLiteral: log message is informational only
+                logger.warn('browserPolicy not provided; defaulting to permissive (no allowlist). Consider passing a browserPolicy explicitly.');
+            }
+            browserMcpServer = createBrowserMCPServer({
+                adapter:            options.browserAdapter,
+                // Stryker disable next-line ObjectLiteral: fallback policy object — callers always pass browserPolicy when they provide browserAdapter
+                policy:             options.browserPolicy ?? { allowlist: undefined },
+                maxScreenshotBytes: options.browserMaxScreenshotBytes,
+                maxTextBytes:       options.browserMaxTextBytes,
+            });
+        }
+    }
+
     return {
         memoryMcpServer,
         discordMcpServer,
@@ -315,5 +364,6 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         contactsMcpServer,
         userContextMcpServer,
         mediaMcpServer,
+        browserMcpServer,
     };
 }

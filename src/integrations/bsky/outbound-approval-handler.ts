@@ -394,7 +394,7 @@ export class BskyOutboundApprovalHandler {
     private async handleReject(interaction: ButtonInteraction, uuid: string, modalPrefix = 'bsky-send-reject-reason', modalTitle = 'Reject Bluesky Reply'): Promise<void> {
         // Show a modal asking for rejection reason
         const modal = new ModalBuilder()
-            // Stryker disable next-line StringLiteral,TemplateLiteral: customId is configuration
+            // Stryker disable next-line StringLiteral: customId is configuration
             .setCustomId(`${modalPrefix}:${uuid}`)
             // Stryker disable next-line StringLiteral: Modal title is UI configuration
             .setTitle(modalTitle);

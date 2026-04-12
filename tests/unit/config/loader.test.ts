@@ -79,6 +79,11 @@ describe.concurrent('loadConfig', () => {
             // Planned integrations should be undefined
             expect(config.email).toBeUndefined();
             expect(config.box).toBeUndefined();
+
+            // Browser config is always present (FIX 1: browser: {} added unconditionally)
+            expect(config.browser).toBeDefined();
+            expect(config.browser?.backend).toBe('auto');
+            expect(config.browser?.viewportWidth).toBe(1280);
         });
 
         test('should map SST Resource names to schema fields correctly', () => {

@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { Client } from 'discord.js';
 import { mockLogger } from '../../setup';
+import type { BrowserAdapter } from '@/agent/browser';
+import * as browserMcpModule from '@/agent/browser-mcp-server';
 import * as bskyMcpModule from '@/agent/bsky-mcp-server';
 import * as discordMcpModule from '@/agent/discord-mcp-server';
 import * as inboxMcpModule from '@/agent/inbox-mcp-server';
@@ -336,5 +338,127 @@ describe('createMCPServers', () => {
             allowlist:           mockPersonAllowlist,
             sendApprovalRequest: mockSendApproval,
         });
+    });
+
+    // -------------------------------------------------------------------------
+    // Browser MCP server (FIX 5 + FIX 7)
+    // -------------------------------------------------------------------------
+
+    test('should create browserMcpServer when browserAdapter and byte caps are provided', () => {
+        const mockBrowserMcpServer = { name: 'browser', version: '1.0.0' } as unknown as McpServerInstance;
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue(mockBrowserMcpServer);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createBrowserMcpServerSpy
+        );
+
+        const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
+        const fakeBrowserPolicy = { allowlist: ['example.com'] };
+        const result = mcpServersModule.createMCPServers({
+            ...mockOptions,
+            browserAdapter:            fakeBrowserAdapter,
+            browserPolicy:             fakeBrowserPolicy,
+            browserMaxScreenshotBytes: 2_000_000,
+            browserMaxTextBytes:       100_000,
+        });
+
+        expect(result.browserMcpServer).toBe(mockBrowserMcpServer);
+        expect(createBrowserMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(createBrowserMcpServerSpy).toHaveBeenCalledWith(expect.objectContaining({
+            adapter:            fakeBrowserAdapter,
+            policy:             fakeBrowserPolicy,
+            maxScreenshotBytes: 2_000_000,
+            maxTextBytes:       100_000,
+        }));
+    });
+
+    test('should skip browserMcpServer and log error when browserAdapter provided but byte caps missing', () => {
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createBrowserMcpServerSpy
+        );
+
+        const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
+        const result = mcpServersModule.createMCPServers({
+            ...mockOptions,
+            browserAdapter: fakeBrowserAdapter,
+            // browserMaxScreenshotBytes and browserMaxTextBytes intentionally omitted
+        });
+
+        expect(result.browserMcpServer).toBeUndefined();
+        expect(createBrowserMcpServerSpy).not.toHaveBeenCalled();
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('required when browserAdapter'));
+    });
+
+    test('should log warn when browserAdapter provided without browserPolicy', () => {
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createBrowserMcpServerSpy
+        );
+
+        const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
+        const result = mcpServersModule.createMCPServers({
+            ...mockOptions,
+            browserAdapter:            fakeBrowserAdapter,
+            browserMaxScreenshotBytes: 2_000_000,
+            browserMaxTextBytes:       100_000,
+            // browserPolicy intentionally omitted
+        });
+
+        expect(createBrowserMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('browserPolicy'));
+        expect(result.browserMcpServer).toBeDefined();
+    });
+
+    test('should not log warn when browserAdapter and browserPolicy are both provided', () => {
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createBrowserMcpServerSpy
+        );
+
+        const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
+        mcpServersModule.createMCPServers({
+            ...mockOptions,
+            browserAdapter:            fakeBrowserAdapter,
+            browserPolicy:             { allowlist: ['example.com'] },
+            browserMaxScreenshotBytes: 2_000_000,
+            browserMaxTextBytes:       100_000,
+        });
+
+        expect(createBrowserMcpServerSpy).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    test('should not create browserMcpServer when browserAdapter is absent', () => {
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createBrowserMcpServerSpy
+        );
+
+        // No browser-related options passed
+        const result = mcpServersModule.createMCPServers(mockOptions);
+
+        expect(result.browserMcpServer).toBeUndefined();
+        expect(createBrowserMcpServerSpy).not.toHaveBeenCalled();
+        expect(mockLogger.error).not.toHaveBeenCalledWith(expect.stringContaining('browser'));
     });
 });
