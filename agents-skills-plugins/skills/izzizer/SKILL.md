@@ -85,6 +85,46 @@ Five questions. If any answer is "no," revise.
 - **Turning the lens**: implicate the reader
 - **Paradox through precision**: earn surprises by being exact
 
+## Christensen Sentence Architecture
+
+LLM default is **parataxis**: ideas placed side-by-side in sequence, assembly left to the reader, like handing someone Lego pieces. The fix is **hypotaxis**: sentences that carry their relationships in their structure.
+
+This is a positive building practice, not a pattern to avoid. Use it when composing, not just when auditing.
+
+### The Three Techniques
+
+**1. Subordinate clauses over sequential sentences**
+
+Flat (paratactic): "The proof relies on transfinite induction. Ordinals grow beyond any finite limit. The sequence can't stabilize."
+
+Subordinated: "Because ordinals grow beyond any finite limit, the sequence can't stabilize — which is why the proof needs transfinite induction rather than ordinary induction."
+
+The relationship (why → consequence → tool) is now embedded, not assembled by the reader.
+
+**2. Medial free modifiers**
+
+Instead of appending qualifications at the end, place them within the sentence where they modify. This creates layered sentences that move from general to specific.
+
+Appended: "The proof is beautiful. It uses only elementary tools."
+Medial: "The proof — using only elementary tools — achieves something that resisted measure-theoretic approaches for decades."
+
+**3. Controlled focus**
+
+Where the sentence ends is where the emphasis lands. Put the surprising or most important element last.
+
+Flat: "The axiom of choice is both unprovable and irrefutable in ZF."
+Focused: "In ZF, the axiom of choice is neither provable nor refutable — it's independent of the whole system."
+
+The independence claim lands at the end, where it has weight.
+
+### Application
+
+When writing, ask: "Am I just listing ideas, or am I building a sentence that shows how they connect?" The structure should do work, not just the words.
+
+Flag as mechanical when subordination is available but the text defaults to flat parallel sentences. Especially watch for:
+- Three-sentence sequences that could be one sentence with two free modifiers
+- "X. Y. Therefore Z." → "Because X, and since Y, therefore Z" (or better: embed causation in structure)
+
 ## Supporting Files
 
 - [pattern-catalog.md](pattern-catalog.md) — full pattern entries with before/after examples

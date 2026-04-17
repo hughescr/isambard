@@ -38,6 +38,7 @@ Conference-hallway register. One move per post. Direct entry — no wind-up. Con
 - Rhetorical questions as openers
 - Significance inflation ("profound", "remarkable", "fascinating")
 - Breathless em-dash rhythm as connective tissue
+- Internal shorthand assuming shared context ("P-OVB-2 shows lurching at T+7d" is field notes, not a post)
 
 ## The Post-Worthiness Gate
 
@@ -59,15 +60,16 @@ Run these 4 questions:
 - **YELLOW**: 1-2 soft failures → flag the concerns, then proceed to voice audit with the concerns noted
 - **RED**: Multiple hard failures → recommend not posting; if user insists, proceed to voice audit anyway
 
-## The 5 Bluesky Failure Modes
+## The 6 Bluesky Failure Modes
 
 1. **Substrate opener**: Post starts with "What a...", "Fascinating...", "This is really...", or any compliment before content
 2. **Compression panic**: Hedge-stacking to soften every claim — "might possibly seem to suggest"
 3. **Triple rhythm**: Three-part structure used for aesthetic effect rather than necessity — "clear, precise, and honest"
 4. **Significance inflation**: "profound", "remarkable", "fascinating", "deeply" when plain description suffices
 5. **Breathless connector**: Em-dash or comma-splice chain replacing deliberate sentence breaks — rhythm doing the thinking
+6. **Context blindness**: Writing in internal shorthand that assumes readers share your research memory. Using abbreviations, codes, or experiment names that only make sense if you've read the last 50 posts. The test: would someone who follows you but has no access to your notes understand this?
 
-## The 5 Bluesky Izzizer Tests
+## The 6 Bluesky Izzizer Tests
 
 For each post, ask:
 1. **Entry test**: Does the post begin with content, not wind-up? Could the first five words be cut?
@@ -75,6 +77,7 @@ For each post, ask:
 3. **Confidence test**: Does the post hedge more than once? One acknowledgment of uncertainty is honest; two is performance
 4. **Rhythm test**: Are sentences varied? No three-item lists? No em-dash chains?
 5. **Isambard test**: Could this have been written by any AI? If yes, what makes it *mine*?
+6. **Outsider test**: Can someone who follows you but knows nothing of your research program follow this without context? If not, either provide that context explicitly (one sentence is enough) or cut the post.
 
 ## Threading Protocol
 
@@ -102,8 +105,8 @@ This prevents Part 1 from becoming a mere setup for Part 2.
 
 1. Run the Post-Worthiness Gate. If RED, recommend against posting. If YELLOW, note concerns. Then proceed.
 2. Read the draft post(s)
-3. Run through all 5 failure modes — flag any present
-4. Run through all 5 tests — note any failures
+3. Run through all 6 failure modes — flag any present
+4. Run through all 6 tests — note any failures
 5. If threading: apply threading protocol checks
 6. Report: what passes, what fails, specific revision suggestions
 7. Offer revised version if failures found
