@@ -32,10 +32,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.112",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.114",
     "@atproto/api": "^0.19.9",
-    "@aws-sdk/client-dynamodb": "^3.1031.0",
-    "@aws-sdk/lib-dynamodb": "^3.1031.0",
+    "@aws-sdk/client-dynamodb": "^3.1032.0",
+    "@aws-sdk/lib-dynamodb": "^3.1032.0",
     "@discordjs/builders": "^1.14.1",
     "@hughescr/logger": "^2.10.0",
     "@sapphire/snowflake": "^3.5.5",
@@ -52,7 +52,7 @@
     "p-limit": "^7.3.0",
     "remove-markdown": "^0.6.3",
     "semver": "^7.7.4",
-    "sst": "^4.7.5",
+    "sst": "^4.7.9",
     "tsdav": "^2.1.8",
     "xstate": "^5.30.0",
     "zod": "^4.3.6"
@@ -72,7 +72,7 @@
     "@types/remove-markdown": "^0.3.4",
     "@types/semver": "^7.7.1",
     "aws-sdk-client-mock": "^4.1.0",
-    "eslint": "^10.2.0",
+    "eslint": "^10.2.1",
     "eslint-formatter-overview": "^2.0.0",
     "eslint-formatter-unix": "^9.0.1",
     "eslint-import-resolver-typescript": "^4.4.4",
