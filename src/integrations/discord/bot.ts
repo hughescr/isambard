@@ -63,7 +63,7 @@ export interface DiscordBotOptions {
     identityContext?: string
 
     /**
-     * Claude agent instance for status middleware integration.
+     * Claude agent instance for message processing.
      */
     agent?: ClaudeAgent
 

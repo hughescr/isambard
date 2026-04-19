@@ -27,5 +27,4 @@ export { createActiveStatusGenerator } from './status-generator-active.js';
 export { createDynamicStatusGenerator, resetCooldownState } from './status-generator-dynamic.js';
 export { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from './status-generator-idle.js';
 export { PresenceManager, type PresenceManagerDeps } from './manager.js';
-export { createStatusMiddleware } from './middleware.js';
-export { createStreamEventHandler, type StreamEventHandler, type StreamEventHandlerDeps } from './stream-event-handler.js';
+export { buildThinkingSynopsis, createStreamEventHandler, type StreamEventHandler } from './stream-event-handler.js';

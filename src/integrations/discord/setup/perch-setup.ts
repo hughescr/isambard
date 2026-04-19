@@ -68,7 +68,7 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             let stopFired = false;
 
             // Create stream event handler for presence updates during perch
-            const streamEventHandler = createPresenceStreamHandler(
+            const streamEventHandler = await createPresenceStreamHandler(
                 presenceManager,
                 dynamicStatusGenerator,
                 `Perch time: ${runOptions.slot}`,

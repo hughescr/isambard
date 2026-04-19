@@ -21,10 +21,14 @@ import { createStreamEventHandler, type StreamEventHandlerDeps  } from '../../..
 import type { SynopsisContext } from '../../../../../src/integrations/discord/presence/types.js';
 import type { BotStateManager } from '../../../../../src/integrations/discord/state/index.js';
 
-// Helper to wait for async promises to settle
-const flushPromises = (): Promise<void> => new Promise((resolve) => {
-    queueMicrotask(resolve);
-});
+// Helper to wait for async promises to settle.
+// Three rounds drain the full async chain in updatePhaseWithSynopsis:
+// outer IIFE → await generateSynopsis continuation → await safeUpdatePhase continuation.
+const flushPromises = async (): Promise<void> => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+};
 
 // Typed mock shape for BotStateManager that exposes mock methods
 type MockFn = ReturnType<typeof mock>;
@@ -498,8 +502,6 @@ describe('StreamEventHandler', () => {
 
             // Second event to trigger thinking phase update with accumulated content
             onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            await flushPromises();
-            // Additional wait for the nested async in the catch block
             await flushPromises();
 
             // Verify fallback to thinkingSynopsis was used

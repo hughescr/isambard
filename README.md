@@ -293,7 +293,6 @@ src/
 │   │   ├── presence/                # Dynamic status updates reflecting agent activity
 │   │   │   ├── types.ts                    # PresencePhase types (idle, thinking, responding, tool-use)
 │   │   │   ├── manager.ts                  # PresenceManager: debouncing and rate limiting
-│   │   │   ├── middleware.ts               # Presence state transition middleware
 │   │   │   ├── stream-event-handler.ts     # Stream event handler for presence with synopsis generation
 │   │   │   ├── status-generator-active.ts  # Status text for active phases
 │   │   │   ├── status-generator-idle.ts    # LLM-powered idle status text

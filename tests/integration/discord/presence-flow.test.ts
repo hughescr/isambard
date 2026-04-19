@@ -5,23 +5,15 @@
  * using real components (not mocks) except for Discord client and Anthropic API.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { ActivityType, type Client, type TextChannel  } from 'discord.js';
+import { describe, it, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { ActivityType, type Client  } from 'discord.js';
 import { mockGenerateText, mockGenerateTextWithSystemPrompt, originalGenerateText, originalGenerateTextWithSystemPrompt } from '../../setup';
-import type { ClaudeAgent } from '@/agent/agent';
-import type { MessageContext, AgentStreamEvent } from '@/agent/types';
 import { PresenceManager } from '@/integrations/discord/presence/manager';
-import { createStatusMiddleware } from '@/integrations/discord/presence/middleware';
 import { createActiveStatusGenerator } from '@/integrations/discord/presence/status-generator-active';
 import { createIdleStatusGenerator } from '@/integrations/discord/presence/status-generator-idle';
-import type { BotStateManager } from '@/integrations/discord/state/types';
-import type { DiscordMessageContext, ChannelId, UserId, GuildId } from '@/integrations/discord/types';
-// Import shared mocks from setup.ts (already registered via mock.module in preload)
 
 describe('Discord Presence Flow (Integration)', () => {
     let mockDiscordClient: Client;
-    let mockAgent: ClaudeAgent;
-    let mockChannel: TextChannel;
 
     beforeEach(() => {
         jest.useFakeTimers();
@@ -36,15 +28,6 @@ describe('Discord Presence Flow (Integration)', () => {
                 setPresence: mock(async () => undefined),
             },
         } as unknown as Client;
-
-        // Mock channel with typing indicator
-        mockChannel = {
-            id:         'channel-id',
-            channelId:  'channel-id',
-            sendTyping: mock(async () => undefined),
-            isDMBased:  mock(() => false),
-            isThread:   mock(() => false),
-        } as unknown as TextChannel;
     });
 
     afterEach(() => {
@@ -54,89 +37,6 @@ describe('Discord Presence Flow (Integration)', () => {
         mockGenerateText.mockImplementation(originalGenerateText);
         mockGenerateTextWithSystemPrompt.mockReset();
         mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
-    });
-
-    it('should handle errors gracefully without crashing', async () => {
-        const logger = {
-            debug: mock(() => undefined),
-            info:  mock(() => undefined),
-            warn:  mock(() => undefined),
-            error: mock(() => undefined),
-        };
-
-        // Create status generators
-        const activeStatusGenerator = createActiveStatusGenerator({
-            activityType: ActivityType.Custom,
-            logger,
-        });
-
-        const idleStatusGenerator = createIdleStatusGenerator({
-            logger,
-            activityType:    ActivityType.Custom,
-            identityContext: () => Promise.resolve('Test Bot'),
-        });
-
-        // Create presence manager
-        const presenceManager = new PresenceManager({
-            discordClient: mockDiscordClient,
-            config:        {
-                updateThrottleMs:      100,
-                idleTimeoutMs:         1000,
-                idleRefreshIntervalMs: 5000,
-            },
-            activeStatusGenerator,
-            idleStatusGenerator,
-            logger,
-        });
-
-        presenceManager.start();
-
-        // Create agent that throws an error
-        mockAgent = {
-            handleInput: mock(async (_contexts: MessageContext[], _options?: { onStreamEvent?: (e: AgentStreamEvent) => void }) => {
-                throw new Error('Agent processing failed');
-            }),
-        } as ClaudeAgent;
-
-        // Create mock bot state manager
-        const mockBotStateManager = {
-            shouldUpdatePresence:   mock(() => true),
-            updateActivityPhase:    mock(() => undefined),
-            clearActivityPhase:     mock(() => undefined),
-            getMode:                mock(() => 'idle' as const),
-            goIdle:                 mock(() => undefined),
-            startProcessingMessage: mock(() => undefined),
-        } as unknown as BotStateManager;
-
-        // Create status middleware
-        const statusMiddleware = createStatusMiddleware({
-            presenceManager,
-            agent:           mockAgent,
-            logger,
-            botStateManager: mockBotStateManager,
-        });
-
-        // Process message - should not throw
-        const context: DiscordMessageContext = {
-            guildId:   'guild-id' as GuildId,
-            channelId: 'channel-id' as ChannelId,
-            userId:    'user-id' as UserId,
-            messageId: 'message-id',
-            content:   'Hello',
-            timestamp: new Date().toISOString(),
-            botUserId: 'bot-id' as UserId,
-        };
-
-        const result = await statusMiddleware(context, mockChannel);
-
-        // Should return null on error
-        expect(result).toBeNull();
-
-        // Should log error
-        expect(logger.error).toHaveBeenCalled();
-
-        // Clean up
-        presenceManager.stop();
     });
 
     it('should transition to idle after timeout', async () => {

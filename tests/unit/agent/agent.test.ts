@@ -562,6 +562,94 @@ describe('createClaudeAgent', () => {
         });
     });
 
+    describe('stderr handler', () => {
+        /**
+         * Helper: extract the `stderr` callback that buildQueryOptions registers
+         * on the SDK query options, then call it with the given data string.
+         * Returns the debug and error call counts AFTER stderr is invoked
+         * so assertions can focus on the stderr-specific calls only.
+         */
+        async function extractAndInvokeStderr(
+            data: string,
+            abortController?: AbortController
+        ): Promise<void> {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext], abortController ? { abortController } : undefined);
+            // Clear accumulated debug/error calls from handleInput itself
+            mockLogger.debug.mockClear();
+            mockLogger.error.mockClear();
+            const queryParams = querySpy.mock.calls[0][0];
+            const stderrFn = queryParams.options.stderr as ((data: string) => void) | undefined;
+            if(stderrFn) {
+                stderrFn(data);
+            }
+        }
+
+        test('logs at debug for hook-close-race stderr (both markers present)', async () => {
+            const hookCloseData = 'Error in hook callback hook_5: error: Stream closed\n    at sendRequest (/path/to/sdk.js:100)\n    at Object.stop';
+
+            await extractAndInvokeStderr(hookCloseData);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                expect.objectContaining({ stderr: hookCloseData }),
+                'Agent SDK stderr (hook-close race)'
+            );
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        test('logs at error for unrelated stderr', async () => {
+            const unrelated = 'SyntaxError: Unexpected token\n    at Parser.parse';
+
+            await extractAndInvokeStderr(unrelated);
+
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ stderr: unrelated }),
+                'Agent SDK stderr'
+            );
+            expect(mockLogger.debug).not.toHaveBeenCalled();
+        });
+
+        test('logs at error for "Stream closed" without "Error in hook callback"', async () => {
+            // Guard: "Stream closed" alone must NOT be silenced
+            const streamClosedOnly = 'Stream closed\n    at socket.on';
+
+            await extractAndInvokeStderr(streamClosedOnly);
+
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ stderr: streamClosedOnly }),
+                'Agent SDK stderr'
+            );
+            expect(mockLogger.debug).not.toHaveBeenCalled();
+        });
+
+        test('logs at debug for abort path (regression guard)', async () => {
+            const abortController = new AbortController();
+            abortController.abort();
+            const abortData = 'Operation aborted\n    at AbortError';
+
+            await extractAndInvokeStderr(abortData, abortController);
+
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                expect.objectContaining({ stderr: abortData }),
+                'Agent SDK stderr (abort)'
+            );
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        test('logs at error for "Error in hook callback" without "Stream closed"', async () => {
+            // Guard: the hook-close race silencing requires BOTH markers
+            const hookOnly = 'Error in hook callback hook_3: TypeError: undefined is not a function\n    at myHook';
+
+            await extractAndInvokeStderr(hookOnly);
+
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                expect.objectContaining({ stderr: hookOnly }),
+                'Agent SDK stderr'
+            );
+            expect(mockLogger.debug).not.toHaveBeenCalled();
+        });
+    });
+
     describe('MCP server configuration', () => {
         test('should pass undefined mcpServers when no MCP servers provided', async () => {
             const agent = createClaudeAgent({});

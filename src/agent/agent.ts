@@ -1025,6 +1025,10 @@ function buildQueryOptions(
             // SDK writes "Operation aborted" + stack trace to stderr during expected abort
             if(options?.abortController?.signal.aborted && data.includes('Operation aborted')) {
                 logger.debug({ stderr: data }, 'Agent SDK stderr (abort)');
+            } else if(data.includes('Error in hook callback') && data.includes('Stream closed')) {
+                // SDK tries to ack the hook over the control channel after the input pipe closes.
+                // The hook itself succeeded; this is a benign timing race on session stop.
+                logger.debug({ stderr: data }, 'Agent SDK stderr (hook-close race)');
             } else {
                 logger.error({ stderr: data }, 'Agent SDK stderr');
             }

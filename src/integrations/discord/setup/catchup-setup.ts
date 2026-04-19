@@ -131,7 +131,7 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
                 : 'Catching up on messages...';
 
             // Create stream event handler for presence updates during catch-up
-            const streamEventHandler = createPresenceStreamHandler(
+            const streamEventHandler = await createPresenceStreamHandler(
                 presenceManager,
                 dynamicStatusGenerator,
                 userMessage,

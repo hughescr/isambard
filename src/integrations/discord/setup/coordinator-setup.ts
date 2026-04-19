@@ -18,7 +18,7 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
 import type { DiscordMessageContext } from '../types';
-import { createPresenceStreamHandler } from './presence-stream-handler';
+import { createPresenceStreamHandler, type PresenceStreamHandler } from './presence-stream-handler';
 import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
 
 /**
@@ -306,7 +306,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
 
     // Helper to complete presence updates after message processing
     const completePresenceForMessage = (
-        streamEventHandler: ReturnType<typeof createPresenceStreamHandler> | undefined,
+        streamEventHandler: PresenceStreamHandler | undefined,
         wasInterrupted: boolean
     ): void => {
         // Don't transition to idle if session was interrupted for batching
@@ -353,7 +353,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
             const userMessage = contexts[0]?.content ?? '';
 
             // Create stream event handler for presence updates if presenceManager available
-            const streamEventHandler = createPresenceStreamHandler(
+            const streamEventHandler = await createPresenceStreamHandler(
                 presenceManager,
                 dynamicStatusGenerator,
                 userMessage,

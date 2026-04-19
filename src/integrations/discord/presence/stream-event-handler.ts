@@ -45,6 +45,45 @@ export function shouldGenerateSynopsis(
 }
 
 /**
+ * Pre-generates a thinking synopsis before message processing begins.
+ *
+ * This allows an immediate, personalized status display the moment the agent
+ * starts thinking — without waiting for the first stream event. The synopsis
+ * is generated from the user's raw message and cached as `thinkingSynopsis`
+ * for use when the handler first enters the thinking phase.
+ *
+ * Only generates if `shouldGenerateSynopsis` passes (generator available AND
+ * presence throttle allows it). Errors are silently swallowed; the stream
+ * event handler has its own fallback when `thinkingSynopsis` is undefined.
+ *
+ * @param dynamicStatusGenerator - Optional LLM-based status generator
+ * @param botStateManager - Bot state manager providing throttle logic
+ * @param userMessage - The user's raw message, used as synopsis context
+ * @returns Pre-generated synopsis string, or undefined if skipped / errored
+ */
+export async function buildThinkingSynopsis(
+    dynamicStatusGenerator: DynamicStatusGenerator | undefined,
+    botStateManager:        BotStateManager | undefined,
+    userMessage:            string
+): Promise<string | undefined> {
+    // Stryker disable next-line ConditionalExpression: Fallback to false when botStateManager unavailable
+    if(!shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
+        return undefined;
+    }
+    // Stryker disable BlockStatement: catch body returns undefined; empty catch also returns undefined — equivalent mutant
+    try {
+        return await dynamicStatusGenerator.generateSynopsis({
+            phase: 'thinking',
+            userMessage,
+        }) ?? undefined;
+    } catch{
+        // Fallback handled by active generator - empty catch is intentional
+        return undefined;
+    }
+    // Stryker restore BlockStatement
+}
+
+/**
  * Dependencies for creating a stream event handler.
  */
 export interface StreamEventHandlerDeps {
