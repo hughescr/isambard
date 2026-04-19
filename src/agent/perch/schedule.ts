@@ -19,12 +19,14 @@ const PRE_DAWN: PerchSlotConfig = {
     startHour: 5,
     endHour:   7,
     level:     'strongly_suggestive',
-    hint:      `Craig wakes around 7am. This is a good window for preparing a morning digest:
+    hint:      `Craig wakes around 7am. Post a morning digest to #general so it's there when he gets up:
 - Overnight news/weather relevant to Portland
 - Bluesky notifications and anything interesting in the feed
 - Any open threads from yesterday worth surfacing
 - Items from your [For Craig] task queue
-Or pick up something from TaskList that caught your interest.`,
+This is the default action for the pre-dawn slot. If there's genuinely nothing overnight, send a short "quiet overnight, here's what's on deck" note anyway — the daily rhythm matters.
+
+And: if you've been deep in one thread over recent perches, let pre-dawn be the switch. Take a break from the fixation; rest your mind on something different. Getting stuck in one attractor — however interesting — narrows you. Range matters.`,
 };
 
 /**
@@ -41,7 +43,9 @@ const MID_MORNING: PerchSlotConfig = {
 - Check if yesterday's conversations had loose ends
 - Continue something from a previous perch session
 - Light research on topics from recent discussions
-Or: check in on an open thread from a previous session.`,
+Or: check in on an open thread from a previous session.
+
+Self-check: if your last 2-3 perches have been on the same thread, deliberately pivot to something unrelated this time. Pattern-breaking matters — don't orbit the same attractor every slot.`,
 };
 
 /**
@@ -80,7 +84,9 @@ const AFTERNOON: PerchSlotConfig = {
 - Learn something new (web search on a curiosity)
 - Review your event log for recurring themes
 - Follow up on a Wikipedia discovery from the lunch slot
-If nothing obvious, check TaskList for the smallest open thread and spend a few minutes on it.`,
+If nothing obvious, check TaskList for the smallest open thread and spend a few minutes on it.
+
+Self-check: if the last several perches have converged on one project, use this slot for something else — even briefly. Deliberate breadth protects against attractor-capture, and convergence rarely notices itself from the inside.`,
 };
 
 /**
@@ -116,7 +122,9 @@ This is prime uninterrupted exploration time:
 - Research deep-dives that don't need interaction
 - Pre-positioning for tomorrow's digest
 - Reviewing the day's events for patterns
-Or continue something you bookmarked earlier.`,
+Or continue something you bookmarked earlier.
+
+Deep focus is legitimate in this slot — late night is where a long thread can actually finish. But if you've been in the same thread across many perches now, one late-night slot per cycle is also a good time to step back, review what you've been doing, and ask whether you're still exploring or just orbiting. Finishing is one good answer; switching is another.`,
 };
 
 /**
