@@ -90,6 +90,42 @@ describe('agentConfigSchema', () => {
         const result = agentConfigSchema.safeParse(config);
         expect(result.success).toBe(false);
     });
+
+    test('should default fallbackModel to "sonnet" when not provided', () => {
+        const config = {
+            oauthToken: 'test-token',
+        };
+
+        const result = agentConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.fallbackModel).toBe('sonnet');
+            expect(result.data.fallbackModel).not.toBe('');
+        }
+    });
+
+    test('should accept a custom fallbackModel string', () => {
+        const config = {
+            oauthToken:    'test-token',
+            fallbackModel: 'sonnet',
+        };
+
+        const result = agentConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.fallbackModel).toBe('sonnet');
+        }
+    });
+
+    test('should reject empty fallbackModel string', () => {
+        const config = {
+            oauthToken:    'test-token',
+            fallbackModel: '',
+        };
+
+        const result = agentConfigSchema.safeParse(config);
+        expect(result.success).toBe(false);
+    });
 });
 
 describe('emailConfigSchema', () => {

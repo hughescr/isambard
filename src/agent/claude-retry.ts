@@ -47,10 +47,14 @@ function getErrorMessage(error: unknown): string {
  * - All other errors -> permanent
  */
 export function classifyClaudeError(error: unknown): ErrorClassification {
-    // Handle non-object errors as permanent
+    // Handle non-object errors as permanent.
+    // All downstream classifiers (classifyNetworkError, classifyHttpStatus) also guard against
+    // non-objects, so removing this check produces the same 'permanent' result — equivalent mutants.
+    // Stryker disable ConditionalExpression,LogicalOperator,BlockStatement: Equivalent — downstream classifiers also guard non-objects; removing this guard produces identical results for all tested inputs
     if(!(typeof error === 'object' && error !== null)) {
         return { category: 'permanent', message: getErrorMessage(error) };
     }
+    // Stryker restore ConditionalExpression,LogicalOperator,BlockStatement
 
     // Check for network errors by code property (uses 'Network error' as fallback for Claude)
     const networkByCode = classifyNetworkError(error, 'Network error');

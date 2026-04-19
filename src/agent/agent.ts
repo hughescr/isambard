@@ -3,6 +3,10 @@ import { logger } from '@hughescr/logger';
 import { chain, isPlainObject, toPairs } from 'lodash-es';
 import { createRetryableQuery } from './claude-retry';
 import type { ContextBuilder } from './context-builder';
+import { createCompactionHooks, type CompactionStateManager } from './hooks/compaction';
+import { mergeHookMaps } from './hooks/index';
+import { createLifecycleHooks, type StopCallback, type StopFailureCallback } from './hooks/lifecycle';
+import { createTaskTrackingHooks } from './hooks/task-tracking';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
 import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
 import { type ResumeContext, buildResumePrompt  } from './resume-prompt-builder';
@@ -34,7 +38,9 @@ const EXPLICIT_TOOLS = [
     'WebSearch',
     // Execution
     'Bash',
-    // Agent spawning
+    // Agent spawning. Still required as agent-invokable tools post-Phase-1 hook cutover.
+    // Hooks tell us *about* Task lifecycle; the agent still needs permission to invoke
+    // TaskOutput/TaskStop to collect/halt background task results.
     'Task',
     'TaskOutput',
     'TaskStop',
@@ -265,6 +271,10 @@ export interface ClaudeAgentOptions {
     taskPersistenceCoordinator?: TaskPersistenceCoordinator
     /** Claude model to use (defaults to 'sonnet' if not provided; normally set from IsambardMainModel SST secret via config) */
     mainModel?:                  string
+    /** Fallback model to use when primary model is unavailable (rate limit, overload, 5xx) */
+    fallbackModel?:              string
+    /** Optional state manager for compaction phase tracking (PreCompact/PostCompact hooks) */
+    compactionStateManager?:     CompactionStateManager
 }
 
 /** Options for handleInput processing */
@@ -291,6 +301,16 @@ export interface HandleInputOptions {
     contextNote?:     string
     /** Optional cross-platform history for the person in the conversation, prepended before contextNote */
     personHistory?:   string
+    /**
+     * Optional callback invoked when the agent session stops normally (Stop hook fires).
+     * Callers can use this as the primary signal that the session completed cleanly,
+     * instead of relying on the return-value `wasInterrupted` flag.
+     */
+    onStop?:          StopCallback
+    /**
+     * Optional callback invoked when the agent session stops with a failure (StopFailure hook fires).
+     */
+    onStopFailure?:   StopFailureCallback
 }
 
 /** Result from handleInput processing */
@@ -396,6 +416,7 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
         'TaskList',
         'EnterPlanMode',
         'ExitPlanMode',
+        // Still required post-Phase-1 hook cutover — agent invokes these to collect/halt background tasks.
         'Task',
         'TaskOutput',
         'TaskStop',
@@ -947,10 +968,14 @@ function buildQueryOptions(
     userContextMcpServer: McpServerConfig | undefined,
     browserMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
-    options?: HandleInputOptions
+    tracker: StreamTracker,
+    options?: HandleInputOptions,
+    compactionStateManager?: CompactionStateManager,
+    fallbackModel?: string
 ) {
     return {
         model:          mainModel,
+        fallbackModel,
         systemPrompt,
         tools:          EXPLICIT_TOOLS,
         agents:         EXPLICIT_AGENTS,
@@ -981,9 +1006,16 @@ function buildQueryOptions(
         // Stryker disable next-line BooleanLiteral: Configuration flag
         agentProgressSummaries: true,
         abortController:        options?.abortController,
+        // Stryker disable ObjectLiteral,ArrayDeclaration: Hook map structure — merging factories, mutations don't change behavior
+        hooks:                  mergeHookMaps(
+            createTaskTrackingHooks(),
+            createLifecycleHooks(() => tracker.hasUncollectedBackgroundTasks(), options?.onStop, options?.onStopFailure),
+            ...(compactionStateManager ? [createCompactionHooks(compactionStateManager)] : [])
+        ),
+        // Stryker restore ObjectLiteral,ArrayDeclaration
         ...(options?.sessionId && { resume: options.sessionId }),
         // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
-        env:                    {
+        env: {
             ...process.env,
             CLAUDE_CODE_ENABLE_TASKS: 'true',
         },
@@ -1088,21 +1120,6 @@ function buildPromptForHandleInput(
     return hasImages(images)
         ? buildPromptForSdk(userMessageText, images)
         : userMessageText;
-}
-
-/**
- * Clean up session if processing completed without interruption.
- * Fire-and-forget cleanup operation.
- * @param wasInterrupted Whether processing was interrupted
- * @param capturedSessionId Session ID to clean up
- */
-function cleanupSessionIfComplete(
-    wasInterrupted: boolean,
-    capturedSessionId: string | undefined
-): void {
-    if(!wasInterrupted && capturedSessionId) {
-        void cleanupSession(capturedSessionId);
-    }
 }
 
 /**
@@ -1257,7 +1274,9 @@ async function collectBackgroundTasks(
     browserMcpServer: McpServerConfig | undefined,
     plugins: SdkPluginConfig[] | undefined,
     options: HandleInputOptions | undefined,
-    taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined
+    taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined,
+    compactionStateManager: CompactionStateManager | undefined,
+    fallbackModel: string | undefined
 ): Promise<{ lastAssistantText: string, capturedSessionId: string | undefined }> {
     if(wasInterrupted || !capturedSessionId) {
         return { lastAssistantText, capturedSessionId };
@@ -1267,10 +1286,11 @@ async function collectBackgroundTasks(
     let updatedSessionId: string | undefined = capturedSessionId;
     let autoResumeAttempts = 0;
 
+    // Stryker disable BlockStatement: empty while body causes infinite loop (autoResumeAttempts never increments past cap)
     while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, options);
+        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, tracker, options, compactionStateManager, fallbackModel);
         // eslint-disable-next-line no-await-in-loop -- sequential: each resume attempt depends on prior result
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
@@ -1283,12 +1303,25 @@ async function collectBackgroundTasks(
             break;
         }
     }
+    // Stryker restore BlockStatement
+
+    // M-R6: warn when we give up with tasks still outstanding
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Observability — warn log fires only when tasks still outstanding after attempts exhausted; behavior (cleanupSession) unchanged
+    if(tracker.hasUncollectedBackgroundTasks()) {
+        /* Stryker disable StringLiteral,ObjectLiteral: Observability — warning log for lost background task results */
+        logger.warn({
+            uncollectedTasks: tracker.getProgress().uncollectedBackgroundTasks,
+            autoResumeAttempts,
+            msg:              `Cleaning up session with ${tracker.getProgress().uncollectedBackgroundTasks.toString()} outstanding background tasks after ${autoResumeAttempts.toString()} auto-resume attempts — results lost`,
+        });
+        /* Stryker restore StringLiteral,ObjectLiteral */
+    }
 
     return { lastAssistantText: updatedText, capturedSessionId: updatedSessionId };
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, taskPersistenceCoordinator, mainModel } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, taskPersistenceCoordinator, mainModel, compactionStateManager, fallbackModel } = options;
     const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
@@ -1344,7 +1377,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, handleOptions),
+                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, tracker, handleOptions, compactionStateManager, fallbackModel),
                 });
 
                 // 7. Process stream events and track progress
@@ -1356,13 +1389,23 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, sessionRef.capturedSessionId, wasInterrupted,
-                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, handleOptions, taskPersistenceCoordinator
+                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, handleOptions, taskPersistenceCoordinator, compactionStateManager, fallbackModel
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 sessionRef.capturedSessionId = resumeCollected.capturedSessionId;
 
-                // 9. Clean up session only on completion (not on interrupt)
-                cleanupSessionIfComplete(wasInterrupted, sessionRef.capturedSessionId);
+                // 9. Deferred cleanup: SessionEnd hook skips cleanup when background tasks are
+                //    pending (to avoid racing the resume pass in collectBackgroundTasks).
+                //    After the resume pass finishes above, call cleanup unconditionally for the
+                //    non-interrupted path. Interrupted sessions are skipped — SessionEnd's hook
+                //    fires before handleInput returns, so interrupted sessions are cleaned up by
+                //    the hook itself (which won't defer, as tasks are only deferred when the
+                //    resume pass can reasonably run). The ENOENT case (already cleaned by hook)
+                //    is handled gracefully inside cleanupSession.
+                // Stryker disable next-line BlockStatement,ConditionalExpression,LogicalOperator: I/O side effect — cleanup outcome does not affect return value; guard prevents double-cleanup on interrupt
+                if(!wasInterrupted && sessionRef.capturedSessionId) {
+                    void cleanupSession(sessionRef.capturedSessionId);
+                }
 
                 // 10. Log completion
                 /* Stryker disable StringLiteral,ObjectLiteral: Logging for observability */

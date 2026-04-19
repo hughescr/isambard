@@ -4,13 +4,16 @@
  */
 
 import { describe, it, expect, beforeEach, jest } from 'bun:test';
-import { BotStateManagerImpl, type BotStateManager, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
+import { BotStateManagerImpl, type BotStateManagerDeps } from '@/integrations/discord/state/manager';
 import { TransitionError } from '@/integrations/discord/state/transitions';
 import { type StateChange, type CatchingUpModeContext } from '@/integrations/discord/state/types';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
 
 describe('BotStateManager', () => {
-    let manager: BotStateManager;
+    // Use BotStateManagerImpl (concrete class) directly in tests that exercise
+    // compaction methods (stashAndSetCompacting / restoreFromCompacting), which are
+    // intentionally not on the BotStateManager interface after M-R3 narrowing.
+    let manager: BotStateManagerImpl;
     let mockLogger: BotStateManagerDeps['logger'];
     const testChannelId: ChannelId = createChannelId('123456789');
 
@@ -254,6 +257,103 @@ describe('BotStateManager', () => {
                 manager.clearActivityPhase();
 
                 expect(manager.getState().activityPhase).toBeNull();
+            });
+        });
+
+        describe('stashAndSetCompacting / restoreFromCompacting', () => {
+            it('should set activity phase to compacting and restore to null when no prior phase', () => {
+                manager.stashAndSetCompacting('auto');
+                expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+                manager.restoreFromCompacting();
+                expect(manager.getState().activityPhase).toBeNull();
+            });
+
+            it('should restore prior activity phase after compaction', () => {
+                const priorPhase = { type: 'thinking' as const, startedAt: new Date(), generatedStatus: 'Thinking...' };
+                manager.updateActivityPhase(priorPhase);
+
+                manager.stashAndSetCompacting('manual');
+                expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+                manager.restoreFromCompacting();
+                expect(manager.getState().activityPhase?.type).toBe('thinking');
+            });
+
+            it('should pass trigger through to compacting phase', () => {
+                manager.stashAndSetCompacting('manual');
+                const phase = manager.getState().activityPhase;
+                expect(phase?.type).toBe('compacting');
+                if(phase?.type === 'compacting') {
+                    expect(phase.trigger).toBe('manual');
+                }
+            });
+
+            it('should clear stash after restoreFromCompacting so second compaction stashes restored state', () => {
+                // First compaction cycle with no prior phase
+                manager.stashAndSetCompacting('auto');
+                manager.restoreFromCompacting();
+                expect(manager.getState().activityPhase).toBeNull();
+
+                // Second compaction cycle — stash is null, so restore should clear
+                manager.updateActivityPhase({ type: 'thinking' as const, startedAt: new Date() });
+                manager.stashAndSetCompacting('auto');
+                manager.restoreFromCompacting();
+                // Thinking phase is restored (stash had thinking)
+                expect(manager.getState().activityPhase?.type).toBe('thinking');
+            });
+
+            it('nested compaction: single-slot stash is lossy by design', () => {
+                // Document the current single-slot behavior: a second stashAndSetCompacting()
+                // call before restoreFromCompacting() overwrites the first stash.
+                // The SDK does not nest compactions, so this is acceptable. If it ever does,
+                // this test will surface the data-loss and the implementation must be revised.
+                const firstPhase = { type: 'thinking' as const, startedAt: new Date(), generatedStatus: 'First thinking' };
+                manager.updateActivityPhase(firstPhase);
+
+                // First PreCompact fires — stashes 'thinking', enters 'compacting'
+                manager.stashAndSetCompacting('auto');
+                expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+                // Second PreCompact fires (nested — should not happen in practice)
+                // Overwrites the stash with the current 'compacting' phase
+                manager.stashAndSetCompacting('manual');
+                expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+                // First PostCompact fires — restores what was stashed by the second call,
+                // which is 'compacting' — so we remain compacting (first stash was overwritten)
+                manager.restoreFromCompacting();
+                // The restored phase is the one stashed by the second stashAndSetCompacting()
+                // At the time of the second call, currentState.activityPhase was 'compacting'
+                expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+                // Second PostCompact fires — restores null (stash was cleared by first restore)
+                manager.restoreFromCompacting();
+                expect(manager.getState().activityPhase).toBeNull();
+                // The original 'thinking' phase (from before the first PreCompact) is permanently lost.
+            });
+
+            it('should not leak stale stash across sessions when goIdle is called mid-compact', () => {
+                // Session 1: PreCompact fires and stashes 'thinking' phase, but session ends
+                // before PostCompact can restore it (e.g. abort mid-compact).
+                manager.startProcessingMessage(testChannelId, 'Hello');
+                manager.updateActivityPhase({ type: 'thinking' as const, startedAt: new Date(), generatedStatus: 'Session 1 thinking' });
+                manager.stashAndSetCompacting('auto');
+                // Session 1 ends without PostCompact
+                manager.goIdle();
+
+                // Session 2: fresh start
+                manager.startProcessingMessage(testChannelId, 'Hello again');
+                manager.updateActivityPhase({ type: 'responding' as const, startedAt: new Date() });
+
+                // PreCompact fires on session 2 — stashes 'responding'
+                manager.stashAndSetCompacting('auto');
+                expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+                // PostCompact fires — should restore 'responding' from session 2 stash,
+                // NOT the leaked 'thinking' stash from session 1.
+                manager.restoreFromCompacting();
+                expect(manager.getState().activityPhase?.type).toBe('responding');
             });
         });
 
@@ -522,6 +622,25 @@ describe('BotStateManager', () => {
             if(previousState?.modeContext && newState?.modeContext) {
                 expect(previousState.modeContext).not.toBe(newState.modeContext);
             }
+        });
+    });
+
+    describe('getCompactionStateManager', () => {
+        it('should return an object with stashAndSetCompacting and restoreFromCompacting methods', () => {
+            const csm = manager.getCompactionStateManager();
+            expect(typeof csm.stashAndSetCompacting).toBe('function');
+            expect(typeof csm.restoreFromCompacting).toBe('function');
+        });
+
+        it('should return a view that controls the same underlying state', () => {
+            const csm = manager.getCompactionStateManager();
+
+            manager.updateActivityPhase({ type: 'thinking', startedAt: new Date() });
+            csm.stashAndSetCompacting('auto');
+            expect(manager.getState().activityPhase?.type).toBe('compacting');
+
+            csm.restoreFromCompacting();
+            expect(manager.getState().activityPhase?.type).toBe('thinking');
         });
     });
 

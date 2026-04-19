@@ -49,7 +49,7 @@ interface StatusContext {
  */
 interface StatusPromptContext {
     /** Current activity phase type */
-    phase:            'thinking' | 'using_tool' | 'responding'
+    phase:            'thinking' | 'using_tool' | 'responding' | 'compacting'
     /** User message being processed (for thinking phase) */
     userMessage?:     string
     /** Tool name (for using_tool phase) */
@@ -224,9 +224,11 @@ function buildPromptContext(
     // Stryker restore StringLiteral
 
     // Base context from activity phase
+    // compacting phase has no generatedStatus field — use undefined for that case
+    const generatedStatus = activityPhase.type === 'compacting' ? undefined : activityPhase.generatedStatus;
     const context: StatusPromptContext = {
-        phase:           activityPhase.type,
-        generatedStatus: activityPhase.generatedStatus,
+        phase: activityPhase.type,
+        generatedStatus,
     };
 
     // Extract phase-specific fields
@@ -245,6 +247,11 @@ function buildPromptContext(
         case 'responding': {
             context.accumulatedText = activity.accumulatedText;
 
+            break;
+        }
+        // Stryker disable next-line BlockStatement: compacting phase has no extra fields; block body is intentionally empty
+        case 'compacting': {
+            // No extra fields for compacting phase — presence uses static text
             break;
         }
     // No default

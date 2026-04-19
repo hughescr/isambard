@@ -2,6 +2,7 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
+import * as loggerModule from '@hughescr/logger';
 import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs } from '../../../src/agent/agent';
 import { type PlatformImage } from '../../../src/agent/types';
 import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '../../../src/integrations/discord/types';
@@ -384,6 +385,25 @@ describe('createClaudeAgent', () => {
             expect(querySpy).toHaveBeenCalledTimes(1);
             const queryParams = querySpy.mock.calls[0][0];
             expect(queryParams.options.model).toBe('sonnet');
+        });
+
+        test('should include fallbackModel in query options when provided', async () => {
+            const agent = createClaudeAgent({ fallbackModel: 'haiku' });
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.fallbackModel).toBe('haiku');
+            expect(queryParams.options.fallbackModel).not.toBe('');
+        });
+
+        test('should pass undefined fallbackModel when not provided', async () => {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext]);
+
+            expect(querySpy).toHaveBeenCalledTimes(1);
+            const queryParams = querySpy.mock.calls[0][0];
+            expect(queryParams.options.fallbackModel).toBeUndefined();
         });
 
         test('should include all required tools in EXPLICIT_TOOLS', async () => {
@@ -1722,7 +1742,7 @@ describe('createClaudeAgent', () => {
             cleanupSpy.mockRestore();
         });
 
-        test('should cleanup session on completion', async () => {
+        test('should cleanup session on non-interrupted completion (direct call); SessionEnd hook handles interrupted path', async () => {
             querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
                 async function* mockGenerator() {
                     yield {
@@ -1740,18 +1760,17 @@ describe('createClaudeAgent', () => {
                 return mockGenerator() as unknown as Query;
             });
 
-            // Spy on cleanupSession (it's a fire-and-forget call)
+            // Spy on cleanupSession — it is called directly (fire-and-forget) for the non-interrupted path.
+            // Interrupted sessions are cleaned up by the SessionEnd hook in hooks/lifecycle.ts.
             const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
             const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
 
             const agent = createClaudeAgent({});
-            await agent.handleInput([mockMessageContext]);
+            const result = await agent.handleInput([mockMessageContext]);
 
-            // Session cleanup should be called on completion
-            // Use a small delay to allow fire-and-forget to trigger
-            await new Promise((resolve) => {
-                setTimeout(resolve, 10);
-            });
+            // Agent should return the assistant response correctly
+            expect(result.response).toBe('Done');
+            // cleanupSession is called directly (void, fire-and-forget) for the non-interrupted path
             expect(cleanupSpy).toHaveBeenCalledWith('test-session');
 
             cleanupSpy.mockRestore();
@@ -3017,13 +3036,33 @@ describe('createClaudeAgent', () => {
         });
 
         describe('Background task auto-resume', () => {
+            // Helpers to fire task lifecycle hooks from within mock generators.
+            // The hooks are provided by buildQueryOptions and passed to the query() call.
+            // Since we mock query() itself, we fire hooks manually so StreamTracker is updated.
+            const HOOK_BASE = { session_id: 'test', transcript_path: '/tmp/t', cwd: '/tmp' };
+            async function fireTaskCreated(params: Parameters<typeof agentSdk.query>[0], taskId: string): Promise<void> {
+                const matchers = params.options?.hooks?.TaskCreated;
+                const fn = matchers?.[0]?.hooks[0];
+                if(fn) {
+                    await fn({ ...HOOK_BASE, hook_event_name: 'TaskCreated', task_id: taskId, task_subject: taskId }, undefined, { signal: new AbortController().signal });
+                }
+            }
+            async function fireTaskCompleted(params: Parameters<typeof agentSdk.query>[0], taskId: string): Promise<void> {
+                const matchers = params.options?.hooks?.TaskCompleted;
+                const fn = matchers?.[0]?.hooks[0];
+                if(fn) {
+                    await fn({ ...HOOK_BASE, hook_event_name: 'TaskCompleted', task_id: taskId, task_subject: taskId }, undefined, { signal: new AbortController().signal });
+                }
+            }
+
             test('should auto-resume when background tasks are uncollected', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-bg' };
+                            await fireTaskCreated(params, 'bg-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3035,6 +3074,8 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'bg-task-1', tool_use_id: 'tool_bg1', description: 'test', session_id: 'test-session-bg' };
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3046,6 +3087,7 @@ describe('createClaudeAgent', () => {
                     }
                     // Second call (resume)
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'bg-task-1');
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3083,11 +3125,12 @@ describe('createClaudeAgent', () => {
 
             test('should use resumed text when available', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'test-session-resume-text' };
+                            await fireTaskCreated(params, 'task-rt-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3099,6 +3142,8 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'task-rt-1', tool_use_id: 'tool_bg2', description: 'test', session_id: 'test-session-resume-text' };
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3110,6 +3155,7 @@ describe('createClaudeAgent', () => {
                     }
                     // Second call (resume) with different text
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'task-rt-1');
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3218,11 +3264,12 @@ describe('createClaudeAgent', () => {
 
             test('should pass non-empty resume prompt containing TaskOutput instruction', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-prompt-test' };
+                            await fireTaskCreated(params, 'prompt-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3234,11 +3281,14 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'prompt-task-1', tool_use_id: 'bg1', description: 'test', session_id: 'session-prompt-test' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'prompt-task-1');
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3266,11 +3316,12 @@ describe('createClaudeAgent', () => {
 
             test('should preserve original text when resume returns no text', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-preserve-text' };
+                            await fireTaskCreated(params, 'preserve-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3282,12 +3333,15 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'preserve-task-1', tool_use_id: 'bg1', description: 'test', session_id: 'session-preserve-text' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Original response text' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
                     // Resume returns only tool_use, no text
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'preserve-task-1');
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3312,11 +3366,12 @@ describe('createClaudeAgent', () => {
 
             test('should update session ID when resume provides a new one', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'original-session' };
+                            await fireTaskCreated(params, 'sess-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3328,11 +3383,14 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'sess-task-1', tool_use_id: 'bg1', description: 'test', session_id: 'original-session' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'sess-task-1');
                         yield { type: 'system' as const, subtype: 'init' as const, session_id: 'resumed-session' };
                         yield {
                             type:    'assistant' as const,
@@ -3359,11 +3417,12 @@ describe('createClaudeAgent', () => {
 
             test('should preserve original session ID when resume provides none', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'original-session-keep' };
+                            await fireTaskCreated(params, 'keep-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3375,12 +3434,15 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'keep-task-1', tool_use_id: 'bg1', description: 'test', session_id: 'original-session-keep' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
                     // Resume returns no system init event (no session ID)
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'keep-task-1');
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3406,11 +3468,12 @@ describe('createClaudeAgent', () => {
 
             test('should use updated session ID for subsequent operations when resume provides new one', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'first-session' };
+                            await fireTaskCreated(params, 'second-sess-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3422,11 +3485,14 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'second-sess-task-1', tool_use_id: 'bg1', description: 'test', session_id: 'first-session' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, 'second-sess-task-1');
                         yield { type: 'system' as const, subtype: 'init' as const, session_id: 'second-session' };
                         yield {
                             type:    'assistant' as const,
@@ -3454,11 +3520,12 @@ describe('createClaudeAgent', () => {
             test('should handle abort during auto-resume gracefully', async () => {
                 const abortController = new AbortController();
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-abort-resume' };
+                            await fireTaskCreated(params, 'abort-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3470,6 +3537,8 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'abort-task-1', tool_use_id: 'tool_bg_abort', description: 'test', session_id: 'session-abort-resume' };
                             yield {
                                 type:    'assistant' as const,
                                 message: { content: [{ type: 'text' as const, text: 'Launched background task' }] },
@@ -3495,11 +3564,12 @@ describe('createClaudeAgent', () => {
 
             test('should preserve initial response when auto-resume throws error', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-resume-error' };
+                            await fireTaskCreated(params, 'err-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3511,6 +3581,8 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'err-task-1', tool_use_id: 'tool_bg_err', description: 'test', session_id: 'session-resume-error' };
                             yield {
                                 type:    'assistant' as const,
                                 message: { content: [{ type: 'text' as const, text: 'Initial response before resume' }] },
@@ -3533,12 +3605,14 @@ describe('createClaudeAgent', () => {
 
             test('should loop auto-resume when resumed session spawns new background task', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         // Initial call: launches 2 background tasks
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-loop-test' };
+                            await fireTaskCreated(params, 'loop-bg1');
+                            await fireTaskCreated(params, 'loop-bg2');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3558,13 +3632,18 @@ describe('createClaudeAgent', () => {
                                     ],
                                 },
                             };
+                            // SDKTaskStartedMessage for each Task: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'loop-bg1', tool_use_id: 'bg1', description: 'task 1', session_id: 'session-loop-test' };
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'loop-bg2', tool_use_id: 'bg2', description: 'task 2', session_id: 'session-loop-test' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 2 tasks' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
                     if(callCount === 2) {
-                        // First resume: collects bg1 (uncollected goes 2→1)
+                        // First resume: collects loop-bg1 (uncollected goes 2→1)
+                        // task_id in TaskOutput must match the ID registered via TaskCreated hook ('loop-bg1')
                         async function* resumeCall1() {
+                            await fireTaskCompleted(params, 'loop-bg1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3572,7 +3651,7 @@ describe('createClaudeAgent', () => {
                                         type:  'tool_use' as const,
                                         id:    'to1',
                                         name:  'TaskOutput',
-                                        input: { task_id: 'bg1', block: true, timeout: 30_000 },
+                                        input: { task_id: 'loop-bg1', block: true, timeout: 30_000 },
                                     }],
                                 },
                             };
@@ -3580,8 +3659,10 @@ describe('createClaudeAgent', () => {
                         }
                         return resumeCall1() as unknown as Query;
                     }
-                    // Second resume: collects bg2 (uncollected goes 1→0)
+                    // Second resume: collects loop-bg2 (uncollected goes 1→0)
+                    // task_id in TaskOutput must match the ID registered via TaskCreated hook ('loop-bg2')
                     async function* resumeCall2() {
+                        await fireTaskCompleted(params, 'loop-bg2');
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3589,7 +3670,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    'to2',
                                     name:  'TaskOutput',
-                                    input: { task_id: 'bg2', block: true, timeout: 30_000 },
+                                    input: { task_id: 'loop-bg2', block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3608,12 +3689,16 @@ describe('createClaudeAgent', () => {
 
             test('should cap auto-resume attempts at MAX_AUTO_RESUME_ATTEMPTS', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         // Initial call: launches 4 background tasks
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-cap-test' };
+                            await fireTaskCreated(params, 'cap-bg1');
+                            await fireTaskCreated(params, 'cap-bg2');
+                            await fireTaskCreated(params, 'cap-bg3');
+                            await fireTaskCreated(params, 'cap-bg4');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3645,12 +3730,19 @@ describe('createClaudeAgent', () => {
                                     ],
                                 },
                             };
+                            // SDKTaskStartedMessage for each Task: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'cap-bg1', tool_use_id: 'bg1', description: 'task 1', session_id: 'session-cap-test' };
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'cap-bg2', tool_use_id: 'bg2', description: 'task 2', session_id: 'session-cap-test' };
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'cap-bg3', tool_use_id: 'bg3', description: 'task 3', session_id: 'session-cap-test' };
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'cap-bg4', tool_use_id: 'bg4', description: 'task 4', session_id: 'session-cap-test' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 4 tasks' }] } };
                         }
                         return firstCall() as unknown as Query;
                     }
-                    // Each resume collects one task (making progress each time)
+                    // Each resume collects one task (making progress each time).
+                    // task_id in TaskOutput must match the ID registered via TaskCreated hook ('cap-bg*')
                     async function* resumeCall() {
+                        await fireTaskCompleted(params, `cap-bg${callCount - 1}`);
                         yield {
                             type:    'assistant' as const,
                             message: {
@@ -3658,7 +3750,7 @@ describe('createClaudeAgent', () => {
                                     type:  'tool_use' as const,
                                     id:    `to${callCount}`,
                                     name:  'TaskOutput',
-                                    input: { task_id: `bg${callCount - 1}`, block: true, timeout: 30_000 },
+                                    input: { task_id: `cap-bg${callCount - 1}`, block: true, timeout: 30_000 },
                                 }],
                             },
                         };
@@ -3678,11 +3770,12 @@ describe('createClaudeAgent', () => {
 
             test('should break auto-resume loop when no progress made (error case)', async () => {
                 let callCount = 0;
-                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                querySpy.mockImplementation((params: Parameters<typeof agentSdk.query>[0]): Query => {
                     callCount++;
                     if(callCount === 1) {
                         async function* firstCall() {
                             yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-no-progress' };
+                            await fireTaskCreated(params, 'noprog-task-1');
                             yield {
                                 type:    'assistant' as const,
                                 message: {
@@ -3694,6 +3787,8 @@ describe('createClaudeAgent', () => {
                                     }],
                                 },
                             };
+                            // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'noprog-task-1', tool_use_id: 'bg1', description: 'task 1', session_id: 'session-no-progress' };
                             yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched task' }] } };
                         }
                         return firstCall() as unknown as Query;
@@ -3709,6 +3804,114 @@ describe('createClaudeAgent', () => {
                 expect(querySpy).toHaveBeenCalledTimes(2);
                 // Initial response preserved
                 expect(result.response).toBe('Launched task');
+            });
+
+            // m-R11: stream-driven tracking — Task(run_in_background:true) + TaskOutput → no auto-resume
+            test('m-R11: should not auto-resume when stream contains Task(bg:true) followed by TaskOutput with matching task_id', async () => {
+                // The stream emits a background Task launch AND its TaskOutput collection in the same pass.
+                // This simulates a fast background task whose result was immediately available.
+                // outstandingTaskIds: add 'inline-bg-1' (Task), then remove 'inline-bg-1' (TaskOutput).
+                // After the stream: hasUncollectedBackgroundTasks() === false → no resume.
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                    async function* singlePassWithCollection() {
+                        yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-inline-collect' };
+                        // Background Task launched (adds to outstanding)
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'task-launch-1',
+                                    name:  'Task',
+                                    input: { description: 'inline', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                }],
+                            },
+                        };
+                        // SDKTaskStartedMessage: links tool_use.id → task_id (two-phase correlation)
+                        yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'inline-bg-1', tool_use_id: 'task-launch-1', description: 'inline', session_id: 'session-inline-collect' };
+                        // TaskOutput collected in the same pass (removes from outstanding)
+                        yield {
+                            type:    'assistant' as const,
+                            message: {
+                                content: [{
+                                    type:  'tool_use' as const,
+                                    id:    'task-output-1',
+                                    name:  'TaskOutput',
+                                    input: { task_id: 'inline-bg-1', block: true, timeout: 30_000 },
+                                }],
+                            },
+                        };
+                        yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Collected inline result' }] } };
+                    }
+                    return singlePassWithCollection() as unknown as Query;
+                });
+
+                const agent = createClaudeAgent({});
+                const result = await agent.handleInput([mockMessageContext]);
+
+                // querySpy called exactly once — no auto-resume needed since outstanding is empty
+                expect(querySpy).toHaveBeenCalledTimes(1);
+                expect(result.response).toBe('Collected inline result');
+            });
+
+            // M-R6: warn log when collectBackgroundTasks gives up with tasks still outstanding
+            test('M-R6: should warn when cleanup fires with outstanding background tasks after max attempts', async () => {
+                const warnSpy = spyOn(loggerModule.logger, 'warn');
+                warnSpy.mockClear(); // Clear accumulated calls from prior tests
+                let callCount = 0;
+
+                // The stream launches 2 tasks but each resume makes no progress (throws),
+                // so we burn all 3 MAX_AUTO_RESUME_ATTEMPTS and then give up with tasks still outstanding.
+                querySpy.mockImplementation((_params: Parameters<typeof agentSdk.query>[0]): Query => {
+                    callCount++;
+                    if(callCount === 1) {
+                        async function* firstCall() {
+                            yield { type: 'system' as const, subtype: 'init' as const, session_id: 'session-m-r6-warn' };
+                            yield {
+                                type:    'assistant' as const,
+                                message: {
+                                    content: [
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg-a',
+                                            name:  'Task',
+                                            input: { description: 'A', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                        {
+                                            type:  'tool_use' as const,
+                                            id:    'bg-b',
+                                            name:  'Task',
+                                            input: { description: 'B', prompt: 'work', subagent_type: 'general-purpose', run_in_background: true },
+                                        },
+                                    ],
+                                },
+                            };
+                            // SDKTaskStartedMessage for each Task: links tool_use.id → task_id (two-phase correlation)
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'warn-bg-1', tool_use_id: 'bg-a', description: 'A', session_id: 'session-m-r6-warn' };
+                            yield { type: 'system' as const, subtype: 'task_started' as const, task_id: 'warn-bg-2', tool_use_id: 'bg-b', description: 'B', session_id: 'session-m-r6-warn' };
+                            yield { type: 'assistant' as const, message: { content: [{ type: 'text' as const, text: 'Launched 2 tasks' }] } };
+                        }
+                        return firstCall() as unknown as Query;
+                    }
+                    // All resume attempts throw (no progress, loop breaks after first failed attempt)
+                    throw new Error('Network failure on resume');
+                });
+
+                const agent = createClaudeAgent({});
+                await agent.handleInput([mockMessageContext]);
+
+                // A warn log should have been emitted mentioning outstanding tasks
+                expect(warnSpy).toHaveBeenCalled();
+                const warnCall = warnSpy.mock.calls.find(
+                    (call: unknown[]) => {
+                        const payload = call[0] as Record<string, unknown>;
+                        return typeof payload.uncollectedTasks === 'number' && payload.uncollectedTasks > 0;
+                    }
+                );
+                expect(warnCall).toBeDefined();
+                const payload = warnCall?.[0] as Record<string, unknown>;
+                expect(payload.uncollectedTasks).toBe(2);
+                warnSpy.mockRestore();
             });
         });
 

@@ -29,18 +29,19 @@ function createMockStateManager(state: BotState): BotStateManager {
             }
             return 'processing_message';
         },
-        startCatchUp:           _,
-        startProcessingMessage: _,
-        startPerching:          _,
-        goIdle:                 _,
-        updateActivityPhase:    _,
-        clearActivityPhase:     _,
-        markChannelViewed:      _,
-        setSessionId:           _,
-        recordPresenceUpdate:   _,
-        subscribe:              () => _,
-        start:                  _,
-        stop:                   _,
+        startCatchUp:              _,
+        startProcessingMessage:    _,
+        startPerching:             _,
+        goIdle:                    _,
+        updateActivityPhase:       _,
+        clearActivityPhase:        _,
+        markChannelViewed:         _,
+        setSessionId:              _,
+        recordPresenceUpdate:      _,
+        getCompactionStateManager: () => ({ stashAndSetCompacting: _, restoreFromCompacting: _ }),
+        subscribe:                 () => _,
+        start:                     _,
+        stop:                      _,
     };
 }
 
@@ -260,6 +261,32 @@ describe('StatusContextBuilder', () => {
             expect(context.promptContext).toEqual({
                 phase:           'responding',
                 generatedStatus: 'Crafting my response...',
+            });
+        });
+
+        it('should extract compacting phase context (no extra fields)', () => {
+            const state: BotState = {
+                mode:          'processing_message',
+                activityPhase: {
+                    type:      'compacting',
+                    startedAt: new Date(),
+                    trigger:   'auto',
+                },
+                modeEnteredAt: new Date(),
+                modeContext:   {
+                    channelId:   createChannelId('123'),
+                    userMessage: 'Hello',
+                    sessionId:   null,
+                },
+            };
+            const manager = createMockStateManager(state);
+            const builder = createStatusContextBuilder({ stateManager: manager });
+
+            const context = builder.buildContext();
+
+            expect(context.promptContext).toEqual({
+                phase:           'compacting',
+                generatedStatus: undefined,
             });
         });
 

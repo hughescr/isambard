@@ -219,6 +219,26 @@ describe('generateText', () => {
                 })
             );
         });
+
+        test('should include fallbackModel in query options when provided', async () => {
+            await generateText('Test prompt', { fallbackModel: 'haiku' });
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ fallbackModel: 'haiku' }),
+                })
+            );
+        });
+
+        test('should omit fallbackModel from query options when not provided', async () => {
+            await generateText('Test prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.not.objectContaining({ fallbackModel: expect.anything() }),
+                })
+            );
+        });
     });
 
     describe('query options', () => {

@@ -57,8 +57,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -127,8 +128,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -260,7 +262,7 @@ describe('createApp', () => {
 
             const stateModule = await import('@/integrations/discord/state');
             // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
+            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
             spies.push(createBotStateManagerSpy);
 
             const taskSessionModule = await import('@/storage/task-session');
@@ -319,8 +321,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -456,7 +459,7 @@ describe('createApp', () => {
 
             const stateModule = await import('@/integrations/discord/state');
             // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
+            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
             spies.push(createBotStateManagerSpy);
 
             const taskSessionModule = await import('@/storage/task-session');
@@ -515,8 +518,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: '', // Empty string (falsy)
-                    mainModel:  'sonnet',
+                    oauthToken:    '', // Empty string (falsy)
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -673,8 +677,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123', // Truthy
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123', // Truthy
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -833,8 +838,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123', // Truthy
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123', // Truthy
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -997,8 +1003,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123', // Truthy
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123', // Truthy
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -1106,8 +1113,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123', // Truthy
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123', // Truthy
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -1178,8 +1186,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -1253,8 +1262,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -1323,8 +1333,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',
@@ -1460,7 +1471,7 @@ describe('createApp', () => {
 
             const stateModule = await import('@/integrations/discord/state');
             // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({} as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
+            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
             spies.push(createBotStateManagerSpy);
 
             const taskSessionModule = await import('@/storage/task-session');
@@ -1519,8 +1530,9 @@ describe('createApp', () => {
                     port:     3000,
                 },
                 agent: {
-                    oauthToken: 'test-oauth-token-123',
-                    mainModel:  'sonnet',
+                    oauthToken:    'test-oauth-token-123',
+                    mainModel:     'sonnet',
+                    fallbackModel: 'sonnet',
                 },
                 email: {
                     user:                           'user@example.com',

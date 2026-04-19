@@ -54,8 +54,9 @@ describe('Bot Lifecycle Integration', () => {
 
         // Mock Agent configuration
         mockAgentConfig = {
-            oauthToken: 'test-oauth-token-1234567890',
-            mainModel:  'sonnet',
+            oauthToken:    'test-oauth-token-1234567890',
+            mainModel:     'sonnet',
+            fallbackModel: 'sonnet',
         };
 
         // Mock DynamoDB configuration
@@ -290,9 +291,12 @@ describe('Bot Lifecycle Integration', () => {
                 mediaMcpServer:             expect.any(Object),
                 contactsMcpServer:          expect.any(Object),
                 userContextMcpServer:       expect.any(Object),
+                browserMcpServer:           undefined,
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
+                compactionStateManager:     expect.any(Object),
                 mainModel:                  'sonnet',
+                fallbackModel:              'sonnet',
             });
         }, { timeout: process.env.CI ? 1000 : 100 });
 

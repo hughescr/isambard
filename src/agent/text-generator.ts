@@ -61,6 +61,11 @@ interface TextGeneratorOptions {
     // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
     model?:           string
     /**
+     * Fallback model to use when primary model is unavailable (rate limit, overload, 5xx).
+     * When provided, the SDK automatically falls back to this model on errors.
+     */
+    fallbackModel?:   string
+    /**
      * AbortController for cancellation. When aborted, the query stops and returns empty string.
      */
     abortController?: AbortController
@@ -133,6 +138,7 @@ function buildAbortController(options?: TextGeneratorOptions): AbortController {
  * @param options - Optional configuration
  * @returns Generated text, trimmed of whitespace, or empty string on abort/error
  */
+// eslint-disable-next-line complexity -- fallbackModel passthrough adds one optional-chaining branch; the function handles multiple necessary abort/error/success paths that cannot be simplified further
 async function executePrompt(
     prompt: string,
     options?: TextGeneratorOptions
@@ -149,6 +155,7 @@ async function executePrompt(
             options: {
                 // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
                 model:           options?.model ?? 'haiku',
+                fallbackModel:   options?.fallbackModel,
                 // Stryker disable next-line StringLiteral: executable name is configuration
                 executable:      'bun',
                 cwd:             tmpDir,

@@ -121,6 +121,9 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
             const abortController = new AbortController();
             runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
 
+            // Track session completion via Stop/StopFailure hooks (primary signal)
+            let stopFired = false;
+
             // Build dynamic user message from status context
             const statusContext = runOptions.statusContext;
             const userMessage = statusContext
@@ -143,6 +146,9 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
                 sessionId:     runOptions.sessionId,
                 catchUpPrompt: runOptions.prompt,
                 onStreamEvent: streamEventHandler?.onStreamEvent,
+                onStop:        () => { stopFired = true; },
+                // stopFired means "SDK confirmed session ended (successfully or with failure)". Both paths count as ended.
+                onStopFailure: () => { stopFired = true; },
             });
 
             // Transition to idle after completion
@@ -177,7 +183,7 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
             }
 
             return {
-                completed: !result.wasInterrupted,
+                completed: stopFired,
                 sessionId: result.sessionId,
             };
         },

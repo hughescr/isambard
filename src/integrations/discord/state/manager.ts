@@ -21,6 +21,8 @@ import {
     type SessionType,
     createDefaultBotState
 } from './types';
+// eslint-disable-next-line boundaries/dependencies -- manager.ts imports CompactionStateManager for getCompactionStateManager(); direct import avoids circular dep through agent index
+import type { CompactionStateManager } from '@/agent/hooks/compaction';
 
 /** Type guard: check if a ModeContext is a CatchingUpModeContext (has unreadCount). */
 // Stryker disable ConditionalExpression,StringLiteral: Equivalent — markChannelViewed creates new Set via spread, never mutates in place
@@ -70,6 +72,15 @@ export class BotStateManagerImpl implements BotStateManager {
     private lastPresenceUpdateTime = 0;
     private isStopped = false;
     private readonly updateThrottleMs: number;
+    /**
+     * Phase stashed by stashAndSetCompacting(), restored by restoreFromCompacting().
+     *
+     * Single-slot stash: only one compaction can be in flight at a time.
+     * The SDK does not nest compactions, so a second PreCompact before the first
+     * PostCompact would overwrite the stash (lossy). If the SDK ever introduces
+     * nested compactions this assumption must be revisited.
+     */
+    private stashedActivityPhase:      ActivityPhase | null = null;
 
     constructor(private readonly deps: BotStateManagerDeps) {
         this.updateThrottleMs = deps.updateThrottleMs ?? DEFAULT_UPDATE_THROTTLE_MS;
@@ -283,6 +294,11 @@ export class BotStateManagerImpl implements BotStateManager {
 
         this.currentState = createDefaultBotState();
 
+        // Clear any stashed compaction phase so a mid-compact session abort does not
+        // leak stale phase into the next session's PostCompact restore.
+        // Stryker disable next-line BlockStatement: State reset side effect — stale stash clearing does not affect return value
+        this.stashedActivityPhase = null;
+
         // Stryker disable StringLiteral: Logging for observability
         this.deps.logger.info('Transitioned to idle mode');
         // Stryker restore StringLiteral
@@ -336,6 +352,38 @@ export class BotStateManagerImpl implements BotStateManager {
         this.deps.logger.debug('Activity phase cleared');
         // Stryker restore StringLiteral
         this.notifySubscribers(previousState, 'activity_phase');
+    }
+
+    stashAndSetCompacting(trigger?: 'manual' | 'auto'): void {
+        this.assertNotStopped();
+        // Save the current phase so PostCompact can restore it
+        this.stashedActivityPhase = this.currentState.activityPhase
+            ? { ...this.currentState.activityPhase }
+            : null;
+        this.updateActivityPhase({ type: 'compacting', startedAt: new Date(), trigger });
+    }
+
+    restoreFromCompacting(): void {
+        this.assertNotStopped();
+        const phaseToRestore = this.stashedActivityPhase;
+        this.stashedActivityPhase = null;
+        if(phaseToRestore) {
+            this.updateActivityPhase(phaseToRestore);
+        } else {
+            this.clearActivityPhase();
+        }
+    }
+
+    /**
+     * Return a narrow CompactionStateManager view of this instance.
+     *
+     * BotStateManagerImpl structurally satisfies CompactionStateManager (it has
+     * stashAndSetCompacting and restoreFromCompacting). Returning `this` as the
+     * typed interface avoids the `as unknown as CompactionStateManager` double-cast
+     * that would otherwise be required at the composition root.
+     */
+    getCompactionStateManager(): CompactionStateManager {
+        return this;
     }
 
     markChannelViewed(channelId: ChannelId): void {

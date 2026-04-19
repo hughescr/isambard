@@ -203,11 +203,17 @@ export interface UserEvent {
  * Event emitted by the system at various lifecycle points.
  * The 'init' subtype is emitted at query start and contains the session_id.
  * The 'compact_boundary' subtype is emitted when context compaction occurs.
+ * The 'task_started' subtype is emitted by the SDK when a background Task sub-agent launches,
+ * carrying both the task_id and the tool_use_id that links it to the originating Task tool_use block.
  */
 export interface SystemEvent {
     type:            'system'
-    subtype?:        'init' | 'status' | 'compact_boundary' | 'hook_response' | 'task_progress'
+    subtype?:        'init' | 'status' | 'compact_boundary' | 'hook_response' | 'task_progress' | 'task_started'
     session_id?:     string
+    /** Unique task ID — present on task_started and task_progress subtypes */
+    task_id?:        string
+    /** tool_use_id that links this task_started event back to the originating Task tool_use block */
+    tool_use_id?:    string
     /** AI-generated progress summary for subagent tasks (when agentProgressSummaries enabled) */
     summary?:        string
     /** Human-readable description of what the subagent is doing */

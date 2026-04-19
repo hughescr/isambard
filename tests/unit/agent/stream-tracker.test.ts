@@ -2,6 +2,70 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { StreamTracker } from '../../../src/agent/stream-tracker';
 import type { AgentStreamEvent, AssistantEvent, SystemEvent } from '../../../src/agent/types';
 
+/** Build an assistant event with a TaskOutput tool-use block. */
+function makeTaskOutputEvent(taskId: string): AssistantEvent {
+    return {
+        type:    'assistant',
+        message: {
+            content: [
+                {
+                    type:  'tool_use',
+                    id:    `tool-output-${taskId}`,
+                    name:  'TaskOutput',
+                    input: { task_id: taskId },
+                },
+            ],
+        },
+    };
+}
+
+/**
+ * Build an assistant event with a Task tool-use block (background or foreground).
+ * Matches the real SDK AgentInput shape — NO task_id in input (AgentInput has no such field).
+ * The block's own id (toolUseId) is used for Phase-1 correlation with SDKTaskStartedMessage.
+ */
+function makeTaskLaunchEvent(toolUseId: string, runInBackground: boolean | undefined): AssistantEvent {
+    const taskInput: Record<string, unknown> = {
+        description:   'test task',
+        prompt:        'do work',
+        subagent_type: 'general-purpose',
+    };
+    if(runInBackground !== undefined) {
+        taskInput.run_in_background = runInBackground;
+    }
+    // Real SDK Task tool_use input has NO task_id field (AgentInput in sdk-tools.d.ts).
+    // The block's own `id` field is used for Phase-1 correlation.
+    return {
+        type:    'assistant',
+        message: {
+            content: [
+                {
+                    type:  'tool_use',
+                    id:    toolUseId,
+                    name:  'Task',
+                    input: taskInput,
+                },
+            ],
+        },
+    };
+}
+
+/**
+ * Build a system event matching the real SDKTaskStartedMessage shape.
+ * Carries both task_id (SDK-assigned) and tool_use_id (links to the originating Task block).
+ * Per sdk.d.ts: type='system', subtype='task_started', task_id, tool_use_id? (optional), description, uuid, session_id.
+ */
+function makeTaskStartedSystemEvent(taskId: string, toolUseId?: string, sessionId = 'session-test'): SystemEvent {
+    return {
+        type:        'system',
+        subtype:     'task_started',
+        task_id:     taskId,
+        tool_use_id: toolUseId,
+        description: 'test task description',
+        session_id:  sessionId,
+    };
+}
+
 describe('StreamTracker', () => {
     let tracker: StreamTracker;
 
@@ -291,8 +355,8 @@ describe('StreamTracker', () => {
 
     describe('reset', () => {
         test('should clear all accumulated state', () => {
-            // First, set up some state
-            const assistantEvent: AssistantEvent = {
+            // Set up: assistant event with thinking + text + tool_use
+            const assistantWithThinking: AssistantEvent = {
                 type:    'assistant',
                 message: {
                     content: [
@@ -313,15 +377,24 @@ describe('StreamTracker', () => {
                 session_id: 'session_xyz',
             };
 
-            tracker.update(assistantEvent);
+            tracker.update(assistantWithThinking);
             tracker.update(systemEvent);
 
-            // Verify state was set
+            // Verify thinking/text/tool state (before adding background task)
             let progress = tracker.getProgress();
             expect(progress.thinking).toBe('Some thinking');
             expect(progress.text).toBe('Some text');
             expect(progress.pendingToolUse).not.toBeNull();
             expect(progress.sessionId).toBe('session_xyz');
+
+            // Add a background task via the two-phase flow:
+            // Phase 1: Task tool_use with run_in_background:true
+            // Phase 2: SDKTaskStartedMessage linking tool_use_id → task_id
+            // Note: the Task launch event has only a tool_use block (no thinking),
+            // so it will clear thinking per the "replace on new content" design.
+            tracker.update(makeTaskLaunchEvent('toolu-reset-1', true));
+            tracker.update(makeTaskStartedSystemEvent('task-abc', 'toolu-reset-1'));
+            expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
 
             // Now reset
             tracker.reset();
@@ -332,6 +405,7 @@ describe('StreamTracker', () => {
             expect(progress.text).toBe('');
             expect(progress.pendingToolUse).toBeNull();
             expect(progress.sessionId).toBeUndefined();
+            expect(progress.uncollectedBackgroundTasks).toBe(0);
         });
     });
 
@@ -664,7 +738,7 @@ describe('StreamTracker', () => {
         });
     });
 
-    describe('Background task tracking', () => {
+    describe('Background task tracking — two-phase stream-driven correlation', () => {
         describe('Initial state', () => {
             test('hasUncollectedBackgroundTasks() should return false initially', () => {
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
@@ -676,281 +750,218 @@ describe('StreamTracker', () => {
             });
         });
 
-        describe('Background task launch detection', () => {
-            test('should increment count when Task tool with run_in_background: true is used', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_123',
-                                name:  'Task',
-                                input: { description: 'test', prompt: 'do something', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
+        describe('Phase 1: Task tool_use observation (adds to pendingToolUseIds)', () => {
+            test('Task tool_use with run_in_background:true adds to pendingToolUseIds and returns true from hasUncollectedBackgroundTasks', () => {
+                // Phase 1 only: tool_use_id goes into pendingToolUseIds (not yet outstandingTaskIds).
+                // hasUncollectedBackgroundTasks() returns true for phase-1 pending entries too,
+                // so that auto-resume catches sessions aborted between task emission and task_started.
+                tracker.update(makeTaskLaunchEvent('toolu-abc', true));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
             });
 
-            test('should NOT increment for Task tool WITHOUT run_in_background', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_123',
-                                name:  'Task',
-                                input: { description: 'test', prompt: 'do something', subagent_type: 'general-purpose' },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
-            });
-
-            test('should NOT increment for Task tool with run_in_background: false', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_123',
-                                name:  'Task',
-                                input: { description: 'test', prompt: 'do something', subagent_type: 'general-purpose', run_in_background: false },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
-            });
-
-            test('should NOT increment for non-Task tool_use blocks', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_123',
-                                name:  'memory_view',
-                                input: { path: '/memories/test' },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
-            });
-
-            test('should not count non-Task tool_use as background task launch even with run_in_background flag', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_read1',
-                                name:  'Read',
-                                input: { file_path: '/some/file', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                tracker.update(event);
+            test('should NOT track task when Task tool_use has run_in_background:false', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-fg', false));
+                // Even sending a task_started event won't help since toolu-fg is not in pendingToolUseIds
+                tracker.update(makeTaskStartedSystemEvent('task-fg-1', 'toolu-fg'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
 
-            test('should not throw and not count when Task tool_use has null input', () => {
+            test('should NOT track task when Task tool_use has no run_in_background field', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-noflag', undefined));
+                tracker.update(makeTaskStartedSystemEvent('task-noflag-1', 'toolu-noflag'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should NOT add to pending when Task tool_use has empty string tool_use.id', () => {
+                // tool_use.id must be a non-empty string to be added to pendingToolUseIds
                 const event: AssistantEvent = {
                     type:    'assistant',
                     message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_task_null',
-                                name:  'Task',
-                                input: null,
-                            },
-                        ],
+                        content: [{
+                            type:  'tool_use',
+                            id:    '',
+                            name:  'Task',
+                            input: { run_in_background: true, description: 'task', prompt: 'work', subagent_type: 'general-purpose' },
+                        }],
+                    },
+                };
+                tracker.update(event);
+                // Even sending task_started with matching (empty) tool_use_id won't match
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should NOT add to pending when Task tool_use has malformed input (non-object)', () => {
+                const event: AssistantEvent = {
+                    type:    'assistant',
+                    message: {
+                        content: [{
+                            type:  'tool_use',
+                            id:    'tool-bad',
+                            name:  'Task',
+                            input: 'not-an-object',
+                        }],
                     },
                 };
                 expect(() => tracker.update(event)).not.toThrow();
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
+        });
 
-            test('should handle multiple background task launches in same event', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'Task',
-                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
+        describe('Phase 2: SDKTaskStartedMessage promotes pending → outstanding', () => {
+            test('Task tool_use + SDKTaskStartedMessage with matching tool_use_id → outstanding populated by task_id', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-bg-1', true));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true); // pending only (phase-1), still counts
 
-                tracker.update(event);
+                tracker.update(makeTaskStartedSystemEvent('task-id-1', 'toolu-bg-1'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
+            });
+
+            test('SDKTaskStartedMessage with non-matching tool_use_id leaves pending entry intact', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-pending', true));
+                // Sends a task_started with a different tool_use_id — no match; toolu-pending stays in pending
+                tracker.update(makeTaskStartedSystemEvent('task-nomatch', 'toolu-other'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+
+            test('SDKTaskStartedMessage without tool_use_id leaves pending entry intact (no way to correlate)', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-abc2', true));
+                // task_started with no tool_use_id cannot be correlated; toolu-abc2 stays in pending
+                tracker.update(makeTaskStartedSystemEvent('task-no-link', undefined));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+
+            test('SDKTaskStartedMessage with no matching pending entries is ignored (no orphan task_ids added)', () => {
+                // Rogue task_started with no preceding Task tool_use — should not create outstanding entry
+                tracker.update(makeTaskStartedSystemEvent('orphan-task', 'toolu-unknown'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should track multiple background tasks via individual two-phase flows', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-a', true));
+                tracker.update(makeTaskLaunchEvent('toolu-b', true));
+                tracker.update(makeTaskStartedSystemEvent('task-a', 'toolu-a'));
+                tracker.update(makeTaskStartedSystemEvent('task-b', 'toolu-b'));
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(2);
+            });
+
+            test('should be idempotent — same tool_use_id promoted twice counts once', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-idem', true));
+                tracker.update(makeTaskStartedSystemEvent('task-idem', 'toolu-idem'));
+                // Second task_started for the same tool_use_id — pending already removed, so ignored
+                tracker.update(makeTaskStartedSystemEvent('task-idem-2', 'toolu-idem'));
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
             });
         });
 
-        describe('TaskOutput detection', () => {
-            test('should increment count when TaskOutput tool is used', () => {
-                // First, launch a background task
-                const launchEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                tracker.update(launchEvent);
+        describe('TaskOutput stream parsing (authoritative collection signal)', () => {
+            test('should remove a task from outstanding when TaskOutput tool-use is observed', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
 
-                // Now collect it
-                const outputEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'TaskOutput',
-                                input: { task_id: 'task_1' },
-                            },
-                        ],
-                    },
-                };
-                tracker.update(outputEvent);
+                tracker.update(makeTaskOutputEvent('task-1'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
 
-            test('should NOT increment for non-TaskOutput tools', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_123',
-                                name:  'memory_view',
-                                input: { path: '/memories/test' },
-                            },
-                        ],
-                    },
-                };
+            test('should only remove the task whose task_id matches the TaskOutput input', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskLaunchEvent('toolu-2', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                tracker.update(makeTaskStartedSystemEvent('task-2', 'toolu-2'));
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(2);
 
-                tracker.update(event);
+                tracker.update(makeTaskOutputEvent('task-1'));
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
+
+            test('should be idempotent — double TaskOutput for the same task is safe', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                tracker.update(makeTaskOutputEvent('task-1'));
+                tracker.update(makeTaskOutputEvent('task-1'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should be safe when TaskOutput references an unknown task_id', () => {
+                expect(() => tracker.update(makeTaskOutputEvent('nonexistent-task'))).not.toThrow();
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('should handle multiple TaskOutput events clearing multiple tasks', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskLaunchEvent('toolu-2', true));
+                tracker.update(makeTaskLaunchEvent('toolu-3', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                tracker.update(makeTaskStartedSystemEvent('task-2', 'toolu-2'));
+                tracker.update(makeTaskStartedSystemEvent('task-3', 'toolu-3'));
+
+                tracker.update(makeTaskOutputEvent('task-1'));
+                tracker.update(makeTaskOutputEvent('task-3'));
+
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+
+                tracker.update(makeTaskOutputEvent('task-2'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+        });
+
+        describe('Full two-phase flow: launch → task_started → TaskOutput', () => {
+            test('complete happy path: Phase1 + Phase2 + collection → 0 outstanding', () => {
+                // Phase 1: observe Task tool_use (pending phase — counts as uncollected)
+                tracker.update(makeTaskLaunchEvent('toolu-full', true));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+
+                // Phase 2: SDKTaskStartedMessage promotes to outstanding
+                tracker.update(makeTaskStartedSystemEvent('task-full', 'toolu-full'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+
+                // Collection: TaskOutput removes from outstanding
+                tracker.update(makeTaskOutputEvent('task-full'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+            });
+
+            test('SDKTaskStartedMessage before Task tool_use (out-of-order) — not correlated but pending still detected', () => {
+                // If task_started arrives before the Task tool_use, no pending entry exists → ignored
+                tracker.update(makeTaskStartedSystemEvent('task-early', 'toolu-early'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
+
+                // Now the Task tool_use arrives — adds to pending but task_started already fired
+                tracker.update(makeTaskLaunchEvent('toolu-early', true));
+                // No second task_started arrives → stays in pending phase (phase-1), still detectable
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
             });
         });
 
         describe('hasUncollectedBackgroundTasks() logic', () => {
-            test('should return true when launches > outputs (1 launch, 0 outputs)', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
+            test('auto-resume detects phase-1 pending tasks without promoted task_ids', () => {
+                // Scenario: session aborts between Task tool_use emission and SDKTaskStartedMessage.
+                // Only phase-1 pendingToolUseIds is populated (no promotion to outstandingTaskIds).
+                // hasUncollectedBackgroundTasks() must return true so auto-resume is triggered.
+                tracker.update(makeTaskLaunchEvent('toolu-phase1-only', true));
+                // No SDKTaskStartedMessage arrives (session aborted in the narrow window)
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
             });
 
-            test('should return false when launches == outputs (1 launch, 1 output)', () => {
-                const launchEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                const outputEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'TaskOutput',
-                                input: { task_id: 'task_1' },
-                            },
-                        ],
-                    },
-                };
+            test('should return true when tasks exist in outstanding set', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+            });
 
-                tracker.update(launchEvent);
-                tracker.update(outputEvent);
+            test('should return false when all created tasks are collected via TaskOutput', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskLaunchEvent('toolu-2', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                tracker.update(makeTaskStartedSystemEvent('task-2', 'toolu-2'));
+                tracker.update(makeTaskOutputEvent('task-1'));
+                tracker.update(makeTaskOutputEvent('task-2'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
 
-            test('should return false when launches < outputs (edge case)', () => {
-                // This edge case can happen if we call TaskOutput more times than launches
-                // (e.g., after a reset, or if the stream is interrupted)
-                const outputEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'TaskOutput',
-                                input: { task_id: 'task_1' },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(outputEvent);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
-            });
-
-            test('should return false when both are 0', () => {
+            test('should return false when no tasks have been created', () => {
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
         });
@@ -961,263 +972,78 @@ describe('StreamTracker', () => {
                 expect(progress).toHaveProperty('uncollectedBackgroundTasks');
             });
 
-            test('should reflect correct state (1 when one task uncollected)', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
+            test('should reflect correct count (1 when one task outstanding after two-phase)', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
                 const progress = tracker.getProgress();
                 expect(progress.uncollectedBackgroundTasks).toBe(1);
             });
 
-            test('should reflect correct state (0 when tasks collected)', () => {
-                const launchEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                const outputEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'TaskOutput',
-                                input: { task_id: 'task_1' },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(launchEvent);
-                tracker.update(outputEvent);
+            test('should reflect correct count (0 when all tasks collected via TaskOutput)', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                tracker.update(makeTaskOutputEvent('task-1'));
                 const progress = tracker.getProgress();
                 expect(progress.uncollectedBackgroundTasks).toBe(0);
+            });
+
+            test('should count phase-1 pending entries in uncollectedBackgroundTasks (stall-detection fix)', () => {
+                // Regression test for bug where getProgress().uncollectedBackgroundTasks only counted
+                // outstandingTaskIds (phase-2) but NOT pendingToolUseIds (phase-1). This caused the
+                // collectBackgroundTasks stall-detection loop to break immediately after a phase-2
+                // promotion: uncollectedBefore=0 (only pending, not counted), then after resume
+                // the task_started arrives → outstanding becomes 1. The stall check "1 >= 0" fired
+                // and broke out, discarding the result. Fix: count both sets in getProgress().
+
+                // Step 1: emit Task tool_use with run_in_background:true (phase-1 pending)
+                tracker.update(makeTaskLaunchEvent('toolu-phase1-stall', true));
+
+                // Step 2: phase-1 pending must be visible in getProgress() — was returning 0 before fix
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
+
+                // Step 3: emit matching task_started (phase-2 promotion: pending → outstanding)
+                tracker.update(makeTaskStartedSystemEvent('task-phase1-stall', 'toolu-phase1-stall'));
+
+                // Step 4: count must remain 1 (moved from pending to outstanding, total unchanged)
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(1);
+
+                // Step 5: emit TaskOutput (collection)
+                tracker.update(makeTaskOutputEvent('task-phase1-stall'));
+
+                // Step 6: count drops to 0
+                expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
             });
         });
 
         describe('Reset behavior', () => {
-            test('should reset counters to 0', () => {
-                const launchEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(launchEvent);
+            test('should clear outstanding task set on reset', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
 
                 tracker.reset();
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
 
-            test('should return false for hasUncollectedBackgroundTasks() after reset', () => {
-                const launchEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(launchEvent);
+            test('should return 0 for uncollectedBackgroundTasks after reset', () => {
+                tracker.update(makeTaskLaunchEvent('toolu-1', true));
+                tracker.update(makeTaskLaunchEvent('toolu-2', true));
+                tracker.update(makeTaskStartedSystemEvent('task-1', 'toolu-1'));
+                tracker.update(makeTaskStartedSystemEvent('task-2', 'toolu-2'));
                 tracker.reset();
 
                 expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
                 expect(tracker.getProgress().uncollectedBackgroundTasks).toBe(0);
             });
-        });
 
-        describe('Accumulation across events', () => {
-            test('should accumulate multiple launches across separate events', () => {
-                const event1: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                const event2: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'Task',
-                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
+            test('should clear pending tool_use_ids on reset so no stale correlation occurs', () => {
+                // Add a task to pending (Phase 1 only, no task_started yet)
+                tracker.update(makeTaskLaunchEvent('toolu-stale', true));
+                tracker.reset();
 
-                tracker.update(event1);
-                tracker.update(event2);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
-            });
-
-            test('should accumulate multiple outputs across separate events', () => {
-                const launch1: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                const launch2: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'Task',
-                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-                const output1: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_3',
-                                name:  'TaskOutput',
-                                input: { task_id: 'task_1' },
-                            },
-                        ],
-                    },
-                };
-                const output2: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_4',
-                                name:  'TaskOutput',
-                                input: { task_id: 'task_2' },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(launch1);
-                tracker.update(launch2);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
-
-                tracker.update(output1);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true); // Still 1 uncollected
-
-                tracker.update(output2);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false); // All collected
-            });
-
-            test('should handle mixed Task/TaskOutput events correctly', () => {
-                const mixedEvent: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'task 1', prompt: 'do task 1', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'TaskOutput',
-                                input: { task_id: 'old_task' },
-                            },
-                            {
-                                type:  'tool_use',
-                                id:    'tool_3',
-                                name:  'Task',
-                                input: { description: 'task 2', prompt: 'do task 2', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                // Initially 0 launches, 0 outputs
-                // After this event: 2 launches, 1 output
-                tracker.update(mixedEvent);
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
-            });
-
-            test('should handle non-background Task tools mixed with background ones', () => {
-                const event: AssistantEvent = {
-                    type:    'assistant',
-                    message: {
-                        content: [
-                            {
-                                type:  'tool_use',
-                                id:    'tool_1',
-                                name:  'Task',
-                                input: { description: 'blocking task', prompt: 'do blocking task', subagent_type: 'general-purpose' },
-                            },
-                            {
-                                type:  'tool_use',
-                                id:    'tool_2',
-                                name:  'Task',
-                                input: { description: 'background task', prompt: 'do background task', subagent_type: 'general-purpose', run_in_background: true },
-                            },
-                        ],
-                    },
-                };
-
-                tracker.update(event);
-                // Should only count the background one
-                expect(tracker.hasUncollectedBackgroundTasks()).toBe(true);
+                // After reset, the pending entry is gone, so task_started won't promote it
+                tracker.update(makeTaskStartedSystemEvent('task-stale', 'toolu-stale'));
+                expect(tracker.hasUncollectedBackgroundTasks()).toBe(false);
             });
         });
     });

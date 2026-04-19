@@ -64,6 +64,9 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             const abortController = new AbortController();
             runOptions.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
 
+            // Track session completion via Stop/StopFailure hooks (primary signal)
+            let stopFired = false;
+
             // Create stream event handler for presence updates during perch
             const streamEventHandler = createPresenceStreamHandler(
                 presenceManager,
@@ -79,6 +82,9 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
                 abortController,
                 perchPrompt:   runOptions.prompt,
                 onStreamEvent: streamEventHandler?.onStreamEvent,
+                onStop:        () => { stopFired = true; },
+                // stopFired means "SDK confirmed session ended (successfully or with failure)". Both paths count as ended.
+                onStopFailure: () => { stopFired = true; },
             });
 
             // Complete presence updates
@@ -113,7 +119,7 @@ export function setupPerchSessionRunnerAndScheduler(params: SetupPerchParams): {
             }
 
             return {
-                completed:   !result.wasInterrupted,
+                completed:   stopFired,
                 sessionId:   result.sessionId,
                 partialWork: result.streamTracker.getProgress(),
             };

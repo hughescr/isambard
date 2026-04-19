@@ -14,9 +14,11 @@ export const appConfigSchema = z.object({
 
 // Agent config: OAuth token for Claude Agent SDK
 export const agentConfigSchema = z.object({
-    oauthToken: z.string().min(1),
+    oauthToken:    z.string().min(1),
     // Stryker disable next-line StringLiteral: Default model value is configuration
-    mainModel:  z.string().min(1).default('opus'),
+    mainModel:     z.string().min(1).default('opus'),
+    // Stryker disable next-line StringLiteral: Default fallback model value is configuration
+    fallbackModel: z.string().min(1).default('sonnet'),
 });
 
 // Email config

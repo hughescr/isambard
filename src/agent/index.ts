@@ -5,6 +5,7 @@
  */
 
 export { createClaudeAgent, type ClaudeAgent, extractToolUses, redactSensitiveArgs } from './agent';
+export type { CompactionStateManager } from './hooks/compaction';
 export { createContextBuilder, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from './context-builder';
 export { EventDeltaTracker } from './event-delta-tracker';
 export { summarizeEventBatches } from './event-summarizer';

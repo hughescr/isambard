@@ -13,6 +13,8 @@
 
 import { z } from 'zod';
 import { channelIdSchema, type ChannelId } from '../types';
+// eslint-disable-next-line boundaries/dependencies -- discord/state/types imports CompactionStateManager for getCompactionStateManager(); direct import avoids circular dep through agent index
+import type { CompactionStateManager } from '@/agent/hooks/compaction';
 // eslint-disable-next-line boundaries/dependencies -- discord/state/types re-exports agent OperationalMode; direct import avoids circular dep through agent index
 import type { OperationalMode } from '@/agent/types';
 
@@ -79,7 +81,8 @@ export const operationalModeSchema = z.enum(['idle', 'catching_up', 'processing_
 export type ActivityPhase
     = | { type: 'thinking', startedAt: Date, userMessage?: string, generatedStatus?: string }
       | { type: 'using_tool', toolName: string, startedAt: Date, generatedStatus?: string }
-      | { type: 'responding', startedAt: Date, generatedStatus?: string };
+      | { type: 'responding', startedAt: Date, generatedStatus?: string }
+      | { type: 'compacting', startedAt: Date, trigger?: 'manual' | 'auto' };
 
 /**
  * Zod schema for validating activity phases.
@@ -103,6 +106,12 @@ export const activityPhaseSchema = z.discriminatedUnion('type', [
         type:            z.literal('responding'),
         startedAt:       z.date(),
         generatedStatus: z.string().optional(),
+    }),
+    z.object({
+        type:      z.literal('compacting'),
+        startedAt: z.date(),
+        // Stryker disable next-line ArrayDeclaration: Zod enum values are validated at runtime; array mutation produces a Zod error, not a silent pass
+        trigger:   z.enum(['manual', 'auto']).optional(),
     }),
 // Stryker restore StringLiteral,ObjectLiteral
 ]);
@@ -520,6 +529,20 @@ export interface BotStateManager {
      * Stop the state manager and clean up resources.
      */
     stop(): void
+
+    // ========================================================================
+    // Narrow Interface Accessors
+    // ========================================================================
+
+    /**
+     * Return a narrow CompactionStateManager view of this manager.
+     *
+     * Used to pass a type-safe reference to createCompactionHooks() without requiring
+     * the caller to use `as unknown as CompactionStateManager` unsafe double-casts.
+     * The returned object is structurally identical to `this` — BotStateManagerImpl
+     * satisfies CompactionStateManager directly.
+     */
+    getCompactionStateManager(): CompactionStateManager
 }
 
 // ============================================================================

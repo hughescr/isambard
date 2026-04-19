@@ -158,7 +158,7 @@ export function createStreamEventHandler(
      */
     const updatePhaseWithSynopsis = (
         synopsisContext: Parameters<NonNullable<typeof dynamicStatusGenerator>['generateSynopsis']>[0],
-        basePhase: Exclude<PresencePhase, { type: 'idle' }>
+        basePhase: Exclude<PresencePhase, { type: 'idle' } | { type: 'compacting' }>
     ): void => {
         // Stryker disable next-line ConditionalExpression: Equivalent - try/catch swallows TypeError when undefined
         if(shouldGenerateSynopsis(dynamicStatusGenerator, botStateManager)) {
@@ -394,7 +394,9 @@ export function createStreamEventHandler(
                 break;
             }
             case 'system': {
-                // Handle task_progress events from subagents
+                // Handle task_progress events from subagents.
+                // Note: these are PROGRESS UPDATES from a running subagent (intermediate status
+                // summaries the subagent emits mid-task), NOT lifecycle signals.
                 // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator: Subtype guard for task_progress events
                 if(event.subtype === 'task_progress' && event.summary) {
                     latestSubagentSummary = event.summary;

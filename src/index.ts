@@ -584,6 +584,12 @@ export async function createApp(): Promise<App> {
         plugins,
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,
+        fallbackModel:              config.agent.fallbackModel,
+        // Stryker disable ObjectLiteral: Composition root — wiring BotStateManager to compaction hooks
+        // getCompactionStateManager() returns a properly-typed narrow view of BotStateManagerImpl
+        // (no unsafe cast needed — the method returns CompactionStateManager directly).
+        compactionStateManager:     discordInfra.botStateManager.getCompactionStateManager(),
+        // Stryker restore ObjectLiteral
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Claude agent created');
