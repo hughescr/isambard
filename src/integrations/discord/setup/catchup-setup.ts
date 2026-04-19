@@ -143,7 +143,6 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
             const result = await agent.handleInput([], {
                 specialMode:   'catchup',
                 abortController,
-                sessionId:     runOptions.sessionId,
                 catchUpPrompt: runOptions.prompt,
                 onStreamEvent: streamEventHandler?.onStreamEvent,
                 onStop:        () => { stopFired = true; },

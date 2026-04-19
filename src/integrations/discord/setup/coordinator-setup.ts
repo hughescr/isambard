@@ -328,7 +328,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
     };
 
     // Set the processor to call agent.handleInput
-    coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+    coordinator.setProcessor(async (contexts, resumeContext, abortSignal) => {
         // Update presence to show processing message if not in catch-up mode
         updatePresenceForMessageStart(contexts[0]);
 
@@ -431,7 +431,6 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
 
             // Call handleInput with presence updates, images, and channel context
             const result = await agent.handleInput(toMessageContexts(modifiedContexts), {
-                sessionId,
                 resumeContext: resumeContext ?? undefined,
                 abortController,
                 onStreamEvent: streamEventHandler?.onStreamEvent,

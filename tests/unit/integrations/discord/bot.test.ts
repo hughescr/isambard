@@ -2215,7 +2215,7 @@ describe('createDiscordBot', () => {
             // Processor will throw because agent.handleInput isn't properly set up,
             // but we only care about the startProcessingMessage call which happens first
             try {
-                await processorFn!([testContext], null, 'test-session', abortController.signal);
+                await processorFn!([testContext], null, abortController.signal);
             } catch{
                 // Expected to fail - we're only testing the updatePresenceForMessageStart part
             }
@@ -2319,7 +2319,7 @@ describe('createDiscordBot', () => {
             // Processor will throw because agent.handleInput isn't properly set up,
             // but we only care about the startProcessingMessage call which happens first
             try {
-                await processorFn!([testContext], null, 'test-session', abortController.signal);
+                await processorFn!([testContext], null, abortController.signal);
             } catch{
                 // Expected to fail - we're only testing the updatePresenceForMessageStart part
             }
@@ -2405,7 +2405,7 @@ describe('createDiscordBot', () => {
 
             // Call processor with empty contexts array - should not throw from updatePresenceForMessageStart
             try {
-                await processorFn!([], null, 'test-session', abortController.signal);
+                await processorFn!([], null, abortController.signal);
             } catch{
                 // Expected to fail in later processing, but not from updatePresenceForMessageStart
             }

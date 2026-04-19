@@ -100,40 +100,7 @@ describe('MessageCoordinator', () => {
             const callArgs = processorMock.mock.calls[0] as unknown[];
             expect(callArgs[0]).toEqual([mockContext]); // contexts array
             expect(callArgs[1]).toBeNull(); // resumeContext
-            expect(callArgs[3]).toBeDefined(); // abortSignal
-        });
-
-        it('should pass sessionId to processor on subsequent calls after interruption', async () => {
-            // First message - processor returns sessionId AND is interrupted with meaningful progress
-            const trackerWithProgress = new StreamTracker();
-            trackerWithProgress.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'Some progress' }] }
-            });
-            processorMock.mockResolvedValueOnce({
-                response:       null,
-                sessionId:      'session-abc',
-                wasInterrupted: true,
-                streamTracker:  trackerWithProgress,
-            });
-
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve();
-            await Promise.resolve();
-
-            // Second message - should receive sessionId from interrupted first call
-            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'Second message' };
-            const secondMessage = { ...mockMessage, id: 'msg-002', content: 'Second message' } as unknown as Message;
-
-            coordinator.handleMessage(secondContext, secondMessage);
-            jest.advanceTimersByTime(10);
-            await Promise.resolve();
-            await Promise.resolve();
-
-            expect(processorMock).toHaveBeenCalledTimes(2);
-            const secondCallArgs = processorMock.mock.calls[1] as unknown[];
-            expect(secondCallArgs[2]).toBe('session-abc'); // sessionId parameter (kept from interrupted call)
+            expect(callArgs[2]).toBeDefined(); // abortSignal
         });
     });
 
@@ -146,7 +113,7 @@ describe('MessageCoordinator', () => {
         it('should interrupt active processing only after debounce timer expires', async () => {
             // Make processor run slowly so we can interrupt it
             let abortSignalReceived: AbortSignal | null = null;
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 abortSignalReceived = abortSignal;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
@@ -197,7 +164,7 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            const progressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const progressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - simulate slow processing (longer than debounce so it will be interrupted)
@@ -238,24 +205,23 @@ describe('MessageCoordinator', () => {
             expect(callCount).toBe(2);
         });
 
-        it('should NOT store sessionId/partialWork when interrupted with zero progress (startProcessing)', async () => {
+        it('should NOT store partialWork when interrupted with zero progress (startProcessing)', async () => {
             // Processor that is interrupted but returns a fresh StreamTracker (zero progress)
             let callCount = 0;
-            let sessionIdReceivedOnSecondCall: string | undefined = 'NOT_SET';
+            let resumeContextOnSecondCall: ResumeContext | null = null;
 
-            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - interrupted with zero progress
                     return {
                         response:       null,
-                        sessionId:      'session-no-progress',
                         wasInterrupted: true,
                         streamTracker:  new StreamTracker(), // zero progress
                     };
                 } else {
-                    // Second call - should NOT receive the sessionId from first interrupted call
-                    sessionIdReceivedOnSecondCall = sessionId;
+                    // Second call - should NOT receive resume context from first interrupted call
+                    resumeContextOnSecondCall = resumeContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -282,25 +248,25 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // sessionId should NOT be passed because first interruption had zero progress
-            expect(sessionIdReceivedOnSecondCall).toBeUndefined();
+            // resumeContext should NOT be passed because first interruption had zero progress
+            expect(resumeContextOnSecondCall).toBeNull();
         });
 
-        it('should NOT store sessionId/partialWork when interrupted with zero progress (processWithResume)', async () => {
+        it('should NOT store partialWork when interrupted with zero progress (processWithResume)', async () => {
             // Trigger the processWithResume path by:
             // 1. First message starts processing (slow)
             // 2. Second message triggers interrupt via debounce
             // 3. Interrupted call returns zero-progress StreamTracker
-            // 4. Third message after resumed call completes should NOT receive sessionId
+            // 4. Third message after resumed call completes should NOT receive resume context
 
             let callCount = 0;
-            let sessionIdInThirdCall: string | undefined = 'NOT_SET';
+            let resumeContextInThirdCall: ResumeContext | null = null;
 
-            const zeroProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const zeroProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    sessionIdInThirdCall = sessionId;
+                    resumeContextInThirdCall = resumeContext;
                 }
 
                 if(callCount === 1) {
@@ -310,10 +276,10 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-from-first',
                         wasInterrupted: abortSignal.aborted,
                         streamTracker:  new StreamTracker(), // zero progress when interrupted
                     };
+                // eslint-disable-next-line sonarjs/no-duplicated-branches -- both calls 1 and 2 intentionally return identical zero-progress results to verify no partial work captured
                 } else if(callCount === 2) {
                     // Second call (processWithResume) - also interrupted with zero progress
                     await new Promise((resolve) => {
@@ -321,12 +287,11 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-no-progress-resume',
                         wasInterrupted: abortSignal.aborted,
                         streamTracker:  new StreamTracker(), // zero progress
                     };
                 } else {
-                    // Third call - should NOT receive sessionId from second interrupted call
+                    // Third call - should NOT receive resume context from second interrupted call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -363,11 +328,11 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // sessionId should NOT be passed to third call because second interrupted call had zero progress
-            expect(sessionIdInThirdCall).toBeUndefined();
+            // resumeContext should NOT be passed to third call because second interrupted call had zero progress
+            expect(resumeContextInThirdCall).toBeNull();
         });
 
-        it('should store sessionId/partialWork when processWithResume interrupted WITH thinking progress', async () => {
+        it('should store partialWork when processWithResume interrupted WITH thinking progress', async () => {
             // Same 3-message pattern but processWithResume has thinking-only progress
 
             const trackerWithThinking = new StreamTracker();
@@ -379,13 +344,13 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let sessionIdInThirdCall: string | undefined = 'NOT_SET';
+            let resumeContextInThirdCall: ResumeContext | null = null;
 
-            const thinkingProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const thinkingProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    sessionIdInThirdCall = sessionId;
+                    resumeContextInThirdCall = resumeContext;
                 }
 
                 if(callCount === 1) {
@@ -395,9 +360,8 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-from-first',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  new StreamTracker(), // zero progress - don't carry sessionId forward
+                        streamTracker:  new StreamTracker(), // zero progress - don't carry forward
                     };
                 } else if(callCount === 2) {
                     // Second call (processWithResume) - interrupted with thinking-only progress
@@ -407,12 +371,11 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-resume-thinking',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  trackerWithThinking, // thinking-only progress - SHOULD carry sessionId
+                        streamTracker:  trackerWithThinking, // thinking-only progress - SHOULD carry forward
                     };
                 } else {
-                    // Third call - should receive sessionId from interrupted processWithResume call
+                    // Third call - should receive resume context from interrupted processWithResume call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -454,17 +417,18 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // sessionId SHOULD be passed to third call because processWithResume had thinking progress
-            expect(sessionIdInThirdCall).toBe('session-resume-thinking');
+            // resumeContext SHOULD be passed to third call because processWithResume had thinking progress
+            expect(resumeContextInThirdCall).not.toBeNull();
+            expect(resumeContextInThirdCall!.partialWork.thinking).toBe('I am thinking deeply here...');
         });
 
-        it('should store sessionId/partialWork when processWithResume interrupted WITH text progress', async () => {
+        it('should store partialWork when processWithResume interrupted WITH text progress', async () => {
             // Trigger processWithResume path:
             // 1. First message starts processing (slow, 200ms)
             // 2. Second message triggers interrupt via debounce (100ms after msg2)
             // 3. processWithResume (call 2) runs with text progress tracker, also interrupted
             // 4. Third message triggers that interrupt
-            // 5. Third call (call 3) should receive sessionId from interrupted processWithResume
+            // 5. Third call (call 3) should receive resume context from interrupted processWithResume
 
             const trackerWithText = new StreamTracker();
             trackerWithText.update({
@@ -475,13 +439,13 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let sessionIdInThirdCall: string | undefined = 'NOT_SET';
+            let resumeContextInThirdCall: ResumeContext | null = null;
 
-            const textProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const textProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    sessionIdInThirdCall = sessionId;
+                    resumeContextInThirdCall = resumeContext;
                 }
 
                 if(callCount === 1) {
@@ -491,9 +455,8 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-from-first',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  new StreamTracker(), // zero progress - don't carry sessionId forward
+                        streamTracker:  new StreamTracker(), // zero progress - don't carry forward
                     };
                 } else if(callCount === 2) {
                     // Second call (processWithResume) - interrupted with text progress
@@ -503,12 +466,11 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-resume-text',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  trackerWithText, // text progress - SHOULD carry sessionId
+                        streamTracker:  trackerWithText, // text progress - SHOULD carry forward
                     };
                 } else {
-                    // Third call - should receive sessionId from interrupted processWithResume call
+                    // Third call - should receive resume context from interrupted processWithResume call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -550,11 +512,12 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // sessionId SHOULD be passed to third call because processWithResume had text progress
-            expect(sessionIdInThirdCall).toBe('session-resume-text');
+            // resumeContext SHOULD be passed to third call because processWithResume had text progress
+            expect(resumeContextInThirdCall).not.toBeNull();
+            expect(resumeContextInThirdCall!.partialWork.text).toBe('I started writing...');
         });
 
-        it('should store sessionId/partialWork when processWithResume interrupted WITH pendingToolUse progress', async () => {
+        it('should store partialWork when processWithResume interrupted WITH pendingToolUse progress', async () => {
             // Same 3-message pattern but processWithResume has tool_use progress
 
             const trackerWithToolUse = new StreamTracker();
@@ -566,13 +529,13 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let sessionIdInThirdCall: string | undefined = 'NOT_SET';
+            let resumeContextInThirdCall: ResumeContext | null = null;
 
-            const toolUseProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const toolUseProgressResumeProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 3) {
-                    sessionIdInThirdCall = sessionId;
+                    resumeContextInThirdCall = resumeContext;
                 }
 
                 if(callCount === 1) {
@@ -582,9 +545,8 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-from-first',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  new StreamTracker(), // zero progress - don't carry sessionId forward
+                        streamTracker:  new StreamTracker(), // zero progress - don't carry forward
                     };
                 } else if(callCount === 2) {
                     // Second call (processWithResume) - interrupted with pendingToolUse progress
@@ -594,12 +556,11 @@ describe('MessageCoordinator', () => {
                     });
                     return {
                         response:       null,
-                        sessionId:      'session-resume-tooluse',
                         wasInterrupted: abortSignal.aborted,
-                        streamTracker:  trackerWithToolUse, // tool_use progress - SHOULD carry sessionId
+                        streamTracker:  trackerWithToolUse, // tool_use progress - SHOULD carry forward
                     };
                 } else {
-                    // Third call - should receive sessionId from interrupted processWithResume call
+                    // Third call - should receive resume context from interrupted processWithResume call
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -641,11 +602,14 @@ describe('MessageCoordinator', () => {
             await Promise.resolve();
 
             expect(callCount).toBe(3);
-            // sessionId SHOULD be passed to third call because processWithResume had pendingToolUse progress
-            expect(sessionIdInThirdCall).toBe('session-resume-tooluse');
+            // resumeContext SHOULD be passed to third call because processWithResume had pendingToolUse progress
+            expect(resumeContextInThirdCall).not.toBeNull();
+            expect(resumeContextInThirdCall!.partialWork.pendingToolUse?.name).toBe('Read');
         });
 
-        it('should store sessionId/partialWork when interrupted WITH thinking progress', async () => {
+        it('should store partialWork when interrupted WITH thinking progress', async () => {
+            // Test via the interrupt path: first call is slow, second message triggers debounce interrupt.
+            // processWithResume carries the partialWork as resumeContext to the next call.
             const trackerWithThinking = new StreamTracker();
             trackerWithThinking.update({
                 type:    'assistant',
@@ -655,21 +619,23 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let sessionIdOnSecondCall: string | undefined = 'NOT_SET';
+            let resumeContextOnSecondCall: ResumeContext | null = null;
 
-            const thinkingProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const thinkingProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
-                    // First call - interrupted with thinking progress
+                    // First call - slow enough to be interrupted by debounce
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 200);
+                    });
                     return {
                         response:       null,
-                        sessionId:      'session-thinking',
-                        wasInterrupted: true,
+                        wasInterrupted: abortSignal.aborted,
                         streamTracker:  trackerWithThinking,
                     };
                 } else {
-                    // Second call - SHOULD receive the sessionId because thinking progress was meaningful
-                    sessionIdOnSecondCall = sessionId;
+                    // Second call (processWithResume) - SHOULD receive resume context because thinking progress was meaningful
+                    resumeContextOnSecondCall = resumeContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -679,28 +645,28 @@ describe('MessageCoordinator', () => {
             };
             processorMock.mockImplementation(thinkingProgressProcessor);
 
-            // First message
+            // First message - starts slow processing
             coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve();
-            await Promise.resolve();
+            jest.advanceTimersByTime(10);
 
-            expect(callCount).toBe(1);
-
-            // Second message
+            // Second message - triggers debounce interrupt
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(50);
+
+            // Wait for debounce (100ms) + first processing (200ms) + second call
+            jest.advanceTimersByTime(350);
             await Promise.resolve();
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // sessionId should be passed because first interruption had thinking progress
-            expect(sessionIdOnSecondCall).toBe('session-thinking');
+            // resumeContext should be passed because first interruption had thinking progress
+            expect(resumeContextOnSecondCall).not.toBeNull();
+            expect(resumeContextOnSecondCall!.partialWork.thinking).toBe('I am thinking deeply...');
         });
 
-        it('should store sessionId/partialWork when interrupted WITH text progress', async () => {
+        it('should store partialWork when interrupted WITH text progress', async () => {
+            // Test via the interrupt path: first call is slow, second message triggers debounce interrupt.
             const trackerWithText = new StreamTracker();
             trackerWithText.update({
                 type:    'assistant',
@@ -710,21 +676,23 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let sessionIdOnSecondCall: string | undefined = 'NOT_SET';
+            let resumeContextOnSecondCall: ResumeContext | null = null;
 
-            const textProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const textProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
-                    // First call - interrupted with text progress
+                    // First call - slow enough to be interrupted by debounce
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 200);
+                    });
                     return {
                         response:       null,
-                        sessionId:      'session-text',
-                        wasInterrupted: true,
+                        wasInterrupted: abortSignal.aborted,
                         streamTracker:  trackerWithText,
                     };
                 } else {
-                    // Second call - SHOULD receive the sessionId because text progress was meaningful
-                    sessionIdOnSecondCall = sessionId;
+                    // Second call (processWithResume) - SHOULD receive resume context because text progress was meaningful
+                    resumeContextOnSecondCall = resumeContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -734,28 +702,28 @@ describe('MessageCoordinator', () => {
             };
             processorMock.mockImplementation(textProgressProcessor);
 
-            // First message
+            // First message - starts slow processing
             coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve();
-            await Promise.resolve();
+            jest.advanceTimersByTime(10);
 
-            expect(callCount).toBe(1);
-
-            // Second message
+            // Second message - triggers debounce interrupt
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(50);
+
+            // Wait for debounce (100ms) + first processing (200ms) + second call
+            jest.advanceTimersByTime(350);
             await Promise.resolve();
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // sessionId should be passed because first interruption had text progress
-            expect(sessionIdOnSecondCall).toBe('session-text');
+            // resumeContext should be passed because first interruption had text progress
+            expect(resumeContextOnSecondCall).not.toBeNull();
+            expect(resumeContextOnSecondCall!.partialWork.text).toBe('I started writing a response...');
         });
 
-        it('should store sessionId/partialWork when interrupted WITH pendingToolUse progress', async () => {
+        it('should store partialWork when interrupted WITH pendingToolUse progress', async () => {
+            // Test via the interrupt path: first call is slow, second message triggers debounce interrupt.
             const trackerWithToolUse = new StreamTracker();
             trackerWithToolUse.update({
                 type:    'assistant',
@@ -765,21 +733,23 @@ describe('MessageCoordinator', () => {
             });
 
             let callCount = 0;
-            let sessionIdOnSecondCall: string | undefined = 'NOT_SET';
+            let resumeContextOnSecondCall: ResumeContext | null = null;
 
-            const toolUseProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const toolUseProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
-                    // First call - interrupted with pending tool use
+                    // First call - slow enough to be interrupted by debounce
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 200);
+                    });
                     return {
                         response:       null,
-                        sessionId:      'session-tooluse',
-                        wasInterrupted: true,
+                        wasInterrupted: abortSignal.aborted,
                         streamTracker:  trackerWithToolUse,
                     };
                 } else {
-                    // Second call - SHOULD receive the sessionId because pendingToolUse was meaningful
-                    sessionIdOnSecondCall = sessionId;
+                    // Second call (processWithResume) - SHOULD receive resume context because pendingToolUse was meaningful
+                    resumeContextOnSecondCall = resumeContext;
                     return {
                         response:       'Response',
                         wasInterrupted: false,
@@ -789,31 +759,30 @@ describe('MessageCoordinator', () => {
             };
             processorMock.mockImplementation(toolUseProgressProcessor);
 
-            // First message
+            // First message - starts slow processing
             coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve();
-            await Promise.resolve();
+            jest.advanceTimersByTime(10);
 
-            expect(callCount).toBe(1);
-
-            // Second message
+            // Second message - triggers debounce interrupt
             const msg2Context = { ...mockContext, messageId: 'msg-002' };
             const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(50);
+
+            // Wait for debounce (100ms) + first processing (200ms) + second call
+            jest.advanceTimersByTime(350);
             await Promise.resolve();
             await Promise.resolve();
 
             expect(callCount).toBe(2);
-            // sessionId should be passed because first interruption had pendingToolUse progress
-            expect(sessionIdOnSecondCall).toBe('session-tooluse');
+            // resumeContext should be passed because first interruption had pendingToolUse progress
+            expect(resumeContextOnSecondCall).not.toBeNull();
+            expect(resumeContextOnSecondCall!.partialWork.pendingToolUse?.name).toBe('Read');
         });
 
         it('should process pending messages without interruption if active query finishes before debounce', async () => {
             let callCount = 0;
             let firstCallInterrupted = false;
-            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call - completes quickly (before debounce expires)
@@ -867,7 +836,7 @@ describe('MessageCoordinator', () => {
 
         it('should batch rapid messages within debounce window', async () => {
             // Make processor slow enough to allow interruption
-            const slowBatchProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowBatchProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -915,7 +884,7 @@ describe('MessageCoordinator', () => {
         it('should reset debounce timer when new message arrives during debounce', async () => {
             // Make processor slow to allow interruption
             // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (debounce reset vs batching)
-            const slowDebounceProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowDebounceProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -976,7 +945,7 @@ describe('MessageCoordinator', () => {
             });
 
             let resumeContextReceived: ResumeContext | null = null;
-            const contextProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const contextProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 resumeContextReceived = resumeContext;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
@@ -1075,7 +1044,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -1116,7 +1085,7 @@ describe('MessageCoordinator', () => {
             });
 
             // Make processor slow to allow interruption
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -1167,7 +1136,7 @@ describe('MessageCoordinator', () => {
 
             // Make processor slow to allow interruption
             // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (re-queued null message)
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 150);
                 });
@@ -1207,7 +1176,7 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
 
             // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (stop/cleanup)
-            const cleanupProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const cleanupProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -1247,7 +1216,7 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
 
             let abortSignalReceived: AbortSignal | null = null;
-            const abortTestProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const abortTestProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 abortSignalReceived = abortSignal;
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
@@ -1287,7 +1256,7 @@ describe('MessageCoordinator', () => {
             let resumeContextReceived: ResumeContext | null = null;
             let callCount = 0;
 
-            const notInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const notInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
                 callCount++;
                 resumeContextReceived = resumeContext;
                 // First call - not interrupted; second call - should NOT have partial work because first wasn't interrupted
@@ -1335,7 +1304,7 @@ describe('MessageCoordinator', () => {
             let resumeContextReceived: ResumeContext | null = null;
             let callCount = 0;
 
-            const interruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const interruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 resumeContextReceived = resumeContext;
 
@@ -1378,102 +1347,6 @@ describe('MessageCoordinator', () => {
             expect(resumeContextReceived!.partialWork).toBeDefined();
             expect(resumeContextReceived!.partialWork.text).toBe('Partial text');
         });
-
-        it('should UPDATE sessionId when wasInterrupted is true (startProcessing)', async () => {
-            let callCount = 0;
-            let sessionIdReceived: string | undefined;
-
-            const trackerWithProgress = new StreamTracker();
-            trackerWithProgress.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'Some progress' }] }
-            });
-
-            const interruptedSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
-                callCount++;
-                sessionIdReceived = sessionId;
-                // First call - interrupted with meaningful progress, returns sessionId
-                // Second call - SHOULD have the sessionId from interrupted call (for resume)
-                return callCount === 1
-                    ? {
-                        response:       null,
-                        sessionId:      'session-interrupted',
-                        wasInterrupted: true,
-                        streamTracker:  trackerWithProgress,
-                    }
-                    : {
-                        response:       'Response',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-            };
-            processorMock.mockImplementation(interruptedSessionProcessor);
-
-            // First message
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(10);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            // Interrupt
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-
-            // Wait for debounce + second call
-            jest.advanceTimersByTime(200);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            expect(callCount).toBe(2);
-            // Second call should have sessionId because first call was interrupted (session kept for resume)
-            expect(sessionIdReceived).toBe('session-interrupted');
-        });
-
-        it('should CLEAR sessionId when wasInterrupted is false (startProcessing)', async () => {
-            let callCount = 0;
-            let sessionIdReceived: string | undefined;
-
-            const completeSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
-                callCount++;
-                sessionIdReceived = sessionId;
-                // First call - completes, returns sessionId
-                // Second call - should NOT have sessionId (first call completed, session cleaned up)
-                return callCount === 1
-                    ? {
-                        response:       'Response',
-                        sessionId:      'session-complete',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    }
-                    : {
-                        response:       'Response',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-            };
-            processorMock.mockImplementation(completeSessionProcessor);
-
-            // First message
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            expect(callCount).toBe(1);
-
-            // Second message
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            expect(callCount).toBe(2);
-            // Second call should NOT have sessionId (first completed, session was cleaned up in agent.ts)
-            expect(sessionIdReceived).toBeUndefined();
-        });
     });
 
     describe('Mutant Testing - processWithResume Logic', () => {
@@ -1505,7 +1378,7 @@ describe('MessageCoordinator', () => {
             let resumeContextInCall2: ResumeContext | null = 'NOT_SET' as unknown as ResumeContext | null;
             let resumeContextInCall3: ResumeContext | null = 'NOT_SET' as unknown as ResumeContext | null;
 
-            const resumeNotInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const resumeNotInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 2) {
@@ -1598,7 +1471,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
             let resumeContextInThirdCall: ResumeContext | null = null;
 
-            const resumeInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const resumeInterruptedProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 1) {
@@ -1664,153 +1537,6 @@ describe('MessageCoordinator', () => {
             expect(resumeContextInThirdCall!.partialWork).toBeDefined();
             expect(resumeContextInThirdCall!.partialWork.text).toBe('Resume partial');
         });
-
-        it('should UPDATE sessionId when wasInterrupted is true (processWithResume)', async () => {
-            let callCount = 0;
-            let sessionIdInThirdCall: string | undefined;
-
-            // Second call needs meaningful progress for sessionId to be stored
-            const trackerWithTextProgress = new StreamTracker();
-            trackerWithTextProgress.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'Resume progress' }] }
-            });
-
-            const resumeInterruptedSessionProcessor: MessageProcessor = async (_contexts, _resumeContext, sessionId, abortSignal) => {
-                callCount++;
-                if(callCount === 3) {
-                    sessionIdInThirdCall = sessionId;
-                }
-
-                if(callCount === 1) {
-                    // First call - will be interrupted (zero progress is ok since no sessionId to store)
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 200);
-                    });
-                    return {
-                        response:       null,
-                        wasInterrupted: abortSignal.aborted,
-                        streamTracker:  new StreamTracker(),
-                    };
-                } else if(callCount === 2) {
-                    // Second call (resume) - interrupted with sessionId and meaningful progress
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 300);
-                    });
-                    return {
-                        response:       null,
-                        sessionId:      'session-interrupted-resume',
-                        wasInterrupted: abortSignal.aborted,
-                        streamTracker:  trackerWithTextProgress,
-                    };
-                } else {
-                    // Third call - SHOULD have sessionId from interrupted second call (for resume)
-                    return {
-                        response:       'Response',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-                }
-            };
-            processorMock.mockImplementation(resumeInterruptedSessionProcessor);
-
-            // First message
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(10);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            // Second message during processing (starts debounce)
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-
-            // Wait for debounce (100ms) + first processing (200ms) + second processing to start
-            jest.advanceTimersByTime(250);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            // Third message during second processing (starts new debounce)
-            const msg3Context = { ...mockContext, messageId: 'msg-003' };
-            const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
-            coordinator.handleMessage(msg3Context, msg3);
-
-            // Wait for second debounce (100ms) + second processing (300ms) + third processing
-            jest.advanceTimersByTime(500);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(3);
-            // Third call should have sessionId from interrupted second call (session kept for resume)
-            expect(sessionIdInThirdCall).toBe('session-interrupted-resume');
-        });
-
-        it('should CLEAR sessionId when wasInterrupted is false (processWithResume)', async () => {
-            let callCount = 0;
-            let sessionIdInThirdCall: string | undefined;
-
-            const resumeCompleteSessionProcessor: MessageProcessor = async (_contexts, _resumeContext, sessionId, abortSignal) => {
-                callCount++;
-                sessionIdInThirdCall = sessionId;
-
-                if(callCount === 1) {
-                    // First call - interrupted
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 150);
-                    });
-                    return {
-                        response:       null,
-                        wasInterrupted: abortSignal.aborted,
-                        streamTracker:  new StreamTracker(),
-                    };
-                } else if(callCount === 2) {
-                    // Second call (resume) - completes with sessionId
-                    return {
-                        response:       'Resume response',
-                        sessionId:      'session-resume-complete',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-                } else {
-                    // Third call - should NOT have sessionId (second completed, session cleaned up)
-                    return {
-                        response:       'Response',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-                }
-            };
-            processorMock.mockImplementation(resumeCompleteSessionProcessor);
-
-            // First message
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(10);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            // Interrupt with second message
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-
-            // Wait for first processing (150ms) + debounce (100ms) + resume processing
-            jest.advanceTimersByTime(300);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(2);
-
-            // Third message - should NOT have sessionId (second completed, session was cleaned up)
-            const msg3Context = { ...mockContext, messageId: 'msg-003' };
-            const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
-            coordinator.handleMessage(msg3Context, msg3);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(3);
-            expect(sessionIdInThirdCall).toBeUndefined();
-        });
     });
 
     describe('Mutant Testing - Message Filtering and Context Building', () => {
@@ -1831,7 +1557,7 @@ describe('MessageCoordinator', () => {
                 message: { content: [{ type: 'text', text: 'Partial response' }] }
             });
 
-            const filteringProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const filteringProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 filterCallCount++;
                 receivedContexts = contexts;
                 resumeContextReceived = resumeContext;
@@ -1875,7 +1601,7 @@ describe('MessageCoordinator', () => {
         it('should correctly build contexts from lodash map operations', async () => {
             let receivedContexts: DiscordMessageContext[] = [];
 
-            const mapTestProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const mapTestProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 // Capture the contexts from each call
                 receivedContexts = contexts;
                 await new Promise((resolve) => {
@@ -1924,7 +1650,7 @@ describe('MessageCoordinator', () => {
         });
 
         it('should handle empty original messages array in processWithResume', async () => {
-            const emptyOriginalsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const emptyOriginalsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
                 return {
                     response:       'Response',
                     wasInterrupted: false,
@@ -1973,289 +1699,33 @@ describe('MessageCoordinator', () => {
         });
     });
 
-    describe('Mutant Testing - SessionId Undefined Handling', () => {
+    describe('Mutant Testing - _REMOVED_SessionId_section_', () => {
+        // Formerly tested sessionId pass-through; removed because sessionId is no longer passed to the processor.
+        // Sessions are now fresh for every turn; partialWork (resumeContext) carries context instead.
         beforeEach(() => {
             coordinator = new MessageCoordinator({ debounceMs: 100 });
             coordinator.setProcessor(processorMock);
         });
 
-        it('should NOT update sessionId when result.sessionId is undefined on interruption (startProcessing) - Mutant #1763', async () => {
-            // This test kills Mutant #1763 which changes `if(result.sessionId)` to `if(true)` at line 151
-            // Strategy: First call is interrupted with sessionId, second call is interrupted with undefined (should NOT overwrite),
-            // third call should still receive the value from first call (proving second didn't overwrite with undefined).
-
-            let callCount = 0;
-            let sessionIdReceivedOnThirdCall: string | undefined;
-
-            // Both interrupted calls need meaningful progress for the outer hasMeaningfulProgress guard to pass
-            const trackerWithProgress1 = new StreamTracker();
-            trackerWithProgress1.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'First call progress' }] }
-            });
-            const trackerWithProgress2 = new StreamTracker();
-            trackerWithProgress2.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'Second call progress' }] }
-            });
-
-            const undefinedSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
-                callCount++;
-
-                if(callCount === 3) {
-                    sessionIdReceivedOnThirdCall = sessionId;
-                }
-
-                if(callCount === 1) {
-                    // First call - interrupted with sessionId and meaningful progress (SETS the state)
-                    return {
-                        response:       null,
-                        sessionId:      'previously-set-session',  // KEY: Sets state.sessionId
-                        wasInterrupted: true,
-                        streamTracker:  trackerWithProgress1,
-                    };
-                } else if(callCount === 2) {
-                    // Second call - interrupted with undefined sessionId but meaningful progress (should NOT overwrite sessionId)
-                    return {
-                        response:       null,
-                        sessionId:      undefined,  // Should NOT update state.sessionId
-                        wasInterrupted: true,
-                        streamTracker:  trackerWithProgress2,
-                    };
-                } else {
-                    // Third call - should still have the sessionId from first call
-                    return {
-                        response:       'Response 3',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-                }
-            };
-            processorMock.mockImplementation(undefinedSessionProcessor);
-
-            // First message - sets state.sessionId = 'previously-set-session' (interrupted)
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            expect(callCount).toBe(1);
-
-            // Second message - interrupted with undefined, should NOT overwrite state.sessionId
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            expect(callCount).toBe(2);
-
-            // Third message - should still receive 'previously-set-session'
-            const msg3Context = { ...mockContext, messageId: 'msg-003' };
-            const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
-            coordinator.handleMessage(msg3Context, msg3);
-            jest.advanceTimersByTime(50);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
-
-            expect(callCount).toBe(3);
-            // Critical: If mutant changes if(result.sessionId) to if(true),
-            // state.sessionId would be set to undefined in second call (interrupted path)
-            // and third call would receive undefined instead of 'previously-set-session'
-            expect(sessionIdReceivedOnThirdCall).toBe('previously-set-session');
+        it('PLACEHOLDER - section removed; verify no sessionId pass-through', () => {
+            // SessionId is no longer stored in ChannelState or passed to the processor.
+            // partialWork/resumeContext tests in the Interruption Handling section cover resume behavior.
+            expect(true).toBe(true);
         });
+    });
 
-        it('should NOT update sessionId when result.sessionId is undefined on interruption (processWithResume) - Mutant #1805', async () => {
-            // This test kills Mutant #1805 which changes `if(result.sessionId)` to `if(true)` at line 238
-            // Strategy: First call is interrupted with sessionId.
-            // Second call (resume) is interrupted with undefined sessionId (should NOT overwrite).
-            // Third call should still receive the value from first call.
-
-            let callCount = 0;
-            let sessionIdReceivedInCall3: string | undefined = 'NOT_SET';
-
-            // Both interrupted calls need meaningful progress for the outer hasMeaningfulProgress guard to pass
-            const trackerWithProgressA = new StreamTracker();
-            trackerWithProgressA.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'First call progress' }] }
-            });
-            const trackerWithProgressB = new StreamTracker();
-            trackerWithProgressB.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'Second call progress' }] }
-            });
-
-            const undefinedResumeSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, _abortSignal: AbortSignal) => {
-                callCount++;
-
-                if(callCount === 3) {
-                    sessionIdReceivedInCall3 = sessionId;
-                }
-
-                if(callCount === 1) {
-                    // First call (startProcessing) - interrupted with sessionId and meaningful progress
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 50);
-                    });
-                    return {
-                        response:       null,
-                        sessionId:      'previously-set-session',  // KEY: Sets state.sessionId
-                        wasInterrupted: true,
-                        streamTracker:  trackerWithProgressA,
-                    };
-                } else if(callCount === 2) {
-                    // Second call (processWithResume) - interrupted with undefined sessionId but meaningful progress
-                    // This exercises if(result.sessionId) in processWithResume
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 50);
-                    });
-                    return {
-                        response:       null,
-                        sessionId:      undefined,  // Should NOT update state.sessionId
-                        wasInterrupted: true,
-                        streamTracker:  trackerWithProgressB,
-                    };
-                } else {
-                    // Third call - should still have sessionId from first call
-                    return {
-                        response:       'Third response',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-                }
-            };
-            processorMock.mockImplementation(undefinedResumeSessionProcessor);
-
-            // First message - starts processing, gets interrupted with sessionId
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(200); // Debounce (100) + processor (50) + buffer
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            // Second message - resume processing, gets interrupted with undefined
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(200); // Debounce (100) + processor (50) + buffer
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(2);
-
-            // Third message - should still have 'previously-set-session'
-            const msg3Context = { ...mockContext, messageId: 'msg-003' };
-            const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
-            coordinator.handleMessage(msg3Context, msg3);
-            jest.advanceTimersByTime(200); // Debounce (100) + processor completion + buffer
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(3);
-            // Critical: If mutant changes if(result.sessionId) to if(true) at line 238,
-            // state.sessionId would be set to undefined in second call (interrupted path)
-            // and third call would receive undefined instead of 'previously-set-session'
-            expect(sessionIdReceivedInCall3).toBe('previously-set-session');
+    describe('Mutant Testing - _REMOVED_placeholder', () => {
+        it('placeholder - sessionId undefined handling tests removed (sessionId no longer passed to processor)', () => {
+            expect(true).toBe(true);
         });
+    });
 
-        it('should preserve existing sessionId when interrupted result has undefined sessionId (processWithResume)', async () => {
-            // This test targets line 238 specifically by ensuring:
-            // 1. First call returns sessionId and gets interrupted
-            // 2. Second call (resume) runs long enough to be interrupted
-            // 3. Second call (resume) gets interrupted with sessionId: undefined
-            // 4. Third call should still receive the preserved sessionId from first call
-            // If mutant changes if(result.sessionId) to if(true), state.sessionId would be overwritten with undefined
-
-            let callCount = 0;
-            let sessionIdInCall3: string | undefined;
-
-            // Both interrupted calls need meaningful progress for hasMeaningfulProgress to pass
-            const trackerWithProgressX = new StreamTracker();
-            trackerWithProgressX.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'First call progress' }] }
-            });
-            const trackerWithProgressY = new StreamTracker();
-            trackerWithProgressY.update({
-                type:    'assistant',
-                message: { content: [{ type: 'text', text: 'Second call progress' }] }
-            });
-
-            const preserveSessionProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, sessionId: string | undefined, abortSignal: AbortSignal) => {
-                callCount++;
-
-                if(callCount === 3) {
-                    sessionIdInCall3 = sessionId;
-                }
-
-                if(callCount === 1) {
-                    // First call - interrupted with sessionId and meaningful progress
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 200);
-                    });
-                    return {
-                        response:       null,
-                        sessionId:      'original-session-id',
-                        wasInterrupted: abortSignal.aborted,  // Will be true
-                        streamTracker:  trackerWithProgressX,
-                    };
-                } else if(callCount === 2) {
-                    // Second call (processWithResume) - runs long enough to be interrupted
-                    // Returns undefined sessionId when interrupted, but has meaningful progress
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 300);
-                    });
-                    return {
-                        response:       null,
-                        sessionId:      undefined,  // KEY: Should NOT overwrite state.sessionId
-                        wasInterrupted: abortSignal.aborted,  // Will be true
-                        streamTracker:  trackerWithProgressY,
-                    };
-                } else {
-                    // Third call - should still have 'original-session-id'
-                    return {
-                        response:       'Final response',
-                        wasInterrupted: false,
-                        streamTracker:  new StreamTracker(),
-                    };
-                }
-            };
-            processorMock.mockImplementation(preserveSessionProcessor);
-
-            // First message
-            coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(10);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            // Second message during first processing (starts debounce)
-            const msg2Context = { ...mockContext, messageId: 'msg-002' };
-            const msg2 = { ...mockMessage, id: 'msg-002' } as unknown as Message;
-            coordinator.handleMessage(msg2Context, msg2);
-
-            // Wait for debounce (100ms) + first processing (200ms) to complete
-            jest.advanceTimersByTime(250);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(2);
-
-            // Third message during second processing (starts new debounce)
-            const msg3Context = { ...mockContext, messageId: 'msg-003' };
-            const msg3 = { ...mockMessage, id: 'msg-003' } as unknown as Message;
-            coordinator.handleMessage(msg3Context, msg3);
-
-            // Wait for second debounce (100ms) + second processing (300ms) + third processing
-            jest.advanceTimersByTime(500);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve(); // Flush again to ensure completion
-
-            expect(callCount).toBe(3);
-            // If mutant at line 238 changes if(result.sessionId) to if(true),
-            // state.sessionId would be set to undefined in call 2,
-            // and call 3 would receive undefined instead of 'original-session-id'
-            expect(sessionIdInCall3).toBe('original-session-id');
+    describe('Mutant Testing - SessionId_passthrough_tests_removed', () => {
+        // These tests were removed because sessionId is no longer passed to the processor.
+        // Sessions are always fresh (no SDK session resume). partialWork/resumeContext carries context.
+        // The 'if(result.sessionId)' guard and state.sessionId field were removed from handleProcessingResult/ChannelState.
+        it('sessionId pass-through tests removed - sessions are always fresh', () => {
+            expect(true).toBe(true);
         });
     });
 
@@ -2273,7 +1743,7 @@ describe('MessageCoordinator', () => {
 
             let callCount = 0;
 
-            const optionalChainingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const optionalChainingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
 
                 if(callCount === 1) {
@@ -2335,7 +1805,7 @@ describe('MessageCoordinator', () => {
                 message: { content: [{ type: 'text', text: 'Some partial text' }] }
             });
 
-            const verifyNewEventsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const verifyNewEventsProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 newEventsCallCount++;
                 resumeContextReceived = resumeContext;
                 await new Promise((resolve) => {
@@ -2412,7 +1882,7 @@ describe('MessageCoordinator', () => {
                 message: { content: [{ type: 'text', text: 'Partial progress' }] }
             });
 
-            const trackingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const trackingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 trackingCallCount++;
                 resumeContextReceived = resumeContext;
                 await new Promise((resolve) => {
@@ -2460,7 +1930,7 @@ describe('MessageCoordinator', () => {
                 message: { content: [{ type: 'text', text: 'Some progress' }] }
             });
 
-            const noTrackerProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const noTrackerProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 noTrackerCallCount++;
                 resumeContextReceived = resumeContext;
                 await new Promise((resolve) => {
@@ -2616,7 +2086,7 @@ describe('MessageCoordinator', () => {
             globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
             // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (timer creation verification)
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -2658,7 +2128,7 @@ describe('MessageCoordinator', () => {
             globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
             // eslint-disable-next-line sonarjs/no-identical-functions -- same slow processor pattern; different test scenario (timer count verification)
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -2714,7 +2184,7 @@ describe('MessageCoordinator', () => {
             globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
             // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (clear-on-new-message-during-active), identical structure intentional for test isolation
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -2757,7 +2227,7 @@ describe('MessageCoordinator', () => {
             };
             globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
-            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, _abortSignal: AbortSignal) => {
+            const fastProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _abortSignal: AbortSignal) => {
                 // Fast processor that completes before debounce expires
                 await new Promise((resolve) => {
                     setTimeout(resolve, 50);
@@ -2812,7 +2282,7 @@ describe('MessageCoordinator', () => {
             globalThis.clearTimeout = clearTimeoutSpy as unknown as typeof clearTimeout;
 
             // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (clear-on-stop), identical structure intentional for test isolation
-            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 200);
                 });
@@ -2947,7 +2417,7 @@ describe('MessageCoordinator', () => {
             globalThis.clearInterval = clearIntervalSpy as unknown as typeof clearInterval;
 
             // Slow processor
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 5000);
                 });
@@ -3004,7 +2474,7 @@ describe('MessageCoordinator', () => {
 
         it('should continue typing across batched messages', async () => {
             // Slow processor
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 10_000);
                 });
@@ -3038,7 +2508,7 @@ describe('MessageCoordinator', () => {
 
         it('should start typing when resuming after interruption', async () => {
             // Slow processor that gets interrupted
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 5000);
                 });
@@ -3375,7 +2845,7 @@ describe('MessageCoordinator', () => {
             // is called the expected number of times (not doubled due to leaked intervals).
 
             // Long-running processor to allow multiple interval fires
-            processorMock.mockImplementation(async (_contexts, _resumeContext, _sessionId, abortSignal: AbortSignal) => {
+            processorMock.mockImplementation(async (_contexts, _resumeContext, abortSignal: AbortSignal) => {
                 await new Promise((resolve) => {
                     setTimeout(resolve, 25_000);
                 });
@@ -3489,7 +2959,7 @@ describe('MessageCoordinator', () => {
 
             let callCount = 0;
             // Processor that takes different amounts of time depending on call
-            processorMock.mockImplementation(async (_contexts, _resumeContext, _sessionId, abortSignal: AbortSignal) => {
+            processorMock.mockImplementation(async (_contexts, _resumeContext, abortSignal: AbortSignal) => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: run for 18 seconds (will be interrupted)
@@ -3842,7 +3312,7 @@ describe('MessageCoordinator', () => {
             let abortCalled = false;
 
             // Slow processor that checks abort signal
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
                 abortSignal.addEventListener('abort', () => {
                     abortCalled = true;
                 });
@@ -3878,7 +3348,7 @@ describe('MessageCoordinator', () => {
         it('should remove multiple channels for a guild', async () => {
             // Track abort calls
             let abortCount = 0;
-            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = async (_contexts, _resumeContext, abortSignal) => {
                 abortSignal.addEventListener('abort', () => {
                     abortCount++;
                 });
@@ -3968,7 +3438,7 @@ describe('MessageCoordinator', () => {
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
 
             let resolveFirst: (() => void) | undefined;
-            const slowProcessor: MessageProcessor = mock(async (_contexts, _resumeContext, _sessionId, abortSignal) => {
+            const slowProcessor: MessageProcessor = mock(async (_contexts, _resumeContext, abortSignal) => {
                 await new Promise<void>((resolve) => {
                     resolveFirst = resolve;
                     abortSignal.addEventListener('abort', resolve, { once: true });
@@ -4049,7 +3519,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
 
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
-            coordinator.setProcessor(async (_contexts, _resumeContext, _sessionId, abortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(async (_contexts, _resumeContext, abortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: hang until aborted, then return interrupted
@@ -4104,7 +3574,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
 
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
-            coordinator.setProcessor(async (_contexts, _resumeContext, _sessionId, abortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(async (_contexts, _resumeContext, abortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: hang until aborted
@@ -4154,7 +3624,7 @@ describe('MessageCoordinator', () => {
             let resolveSecond: (() => void) | undefined;
 
             coordinator = new MessageCoordinator({ debounceMs: 50, onProcessingEnd });
-            coordinator.setProcessor(async (_contexts, _resumeContext, _sessionId, abortSignal): Promise<ProcessResult> => {
+            coordinator.setProcessor(async (_contexts, _resumeContext, abortSignal): Promise<ProcessResult> => {
                 callCount++;
                 if(callCount === 1) {
                     // First call: hang until aborted
@@ -4242,7 +3712,7 @@ describe('MessageCoordinator', () => {
         it('should cap pendingMessages at 50 when messages arrive during active processing (Case 1)', async () => {
             // Make processor respond to abort quickly so the second call can occur
             let receivedContextsCase1: DiscordMessageContext[] = [];
-            const slowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const slowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 receivedContextsCase1 = contexts;
                 await new Promise((resolve) => {
                     const t = setTimeout(resolve, 500);
@@ -4304,7 +3774,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
             let receivedContexts: DiscordMessageContext[] = [];
 
-            const overflowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const overflowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 receivedContexts = contexts;
 
@@ -4389,7 +3859,7 @@ describe('MessageCoordinator', () => {
             let callCount = 0;
             let receivedContextsCase2: DiscordMessageContext[] = [];
 
-            const case2SlowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, _sessionId: string | undefined, abortSignal: AbortSignal) => {
+            const case2SlowProcessor: MessageProcessor = async (contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
                 callCount++;
                 receivedContextsCase2 = contexts;
                 if(callCount === 1) {

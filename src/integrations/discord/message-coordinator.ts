@@ -38,7 +38,6 @@ export interface ProcessResult {
 export type MessageProcessor = (
     contexts: DiscordMessageContext[],
     resumeContext: ResumeContext | null,
-    sessionId: string | undefined,
     abortSignal: AbortSignal
 ) => Promise<ProcessResult>;
 
@@ -77,8 +76,6 @@ interface ChannelState {
     pendingMessages:          QueuedMessage[]
     // Debounce timer after interrupt
     debounceTimer?:           ReturnType<typeof setTimeout>
-    // Session tracking for resume
-    sessionId?:               string
     // Partial work from interrupted query
     partialWork?:             StreamProgress
     // First Discord message from interrupted query (for onResponse callback)
@@ -95,7 +92,7 @@ interface ChannelState {
  * ```typescript
  * const coordinator = new MessageCoordinator({ debounceMs: 500 });
  *
- * coordinator.setProcessor(async (contexts, resumeContext, sessionId, abortSignal) => {
+ * coordinator.setProcessor(async (contexts, resumeContext, abortSignal) => {
  *   // Process messages
  *   return {
  *     response: 'Response text',
@@ -194,19 +191,15 @@ export class MessageCoordinator {
         state: ChannelState,
         firstDiscordMessage: Message | null
     ): Promise<void> | void {
-        // If interrupted, capture partial work AND sessionId for resume
+        // If interrupted, capture partial work for resume context (human-readable summary only)
         if(result.wasInterrupted) {
             if(result.streamTracker.hasMeaningfulProgress()) {
                 state.partialWork = result.streamTracker.getProgress();
-                if(result.sessionId) {
-                    state.sessionId = result.sessionId;
-                }
             }
             // No meaningful progress → next batch starts fresh; return void (no extra tick)
             return;
         }
-        // Completed - clear sessionId (session was cleaned up), invoke callback
-        state.sessionId = undefined;
+        // Completed - invoke callback
         // Return the onResponse Promise directly so callers can await it without an extra tick,
         // or void if there is no callback (no extra tick needed)
         return this.onResponse?.(result, firstDiscordMessage);
@@ -246,7 +239,6 @@ export class MessageCoordinator {
                 const result = await this.processor!(
                     contexts,
                     null, // no resume context for initial processing
-                    state.sessionId,
                     abortController.signal
                 );
                 wasInterrupted = result.wasInterrupted;
@@ -349,7 +341,6 @@ export class MessageCoordinator {
                 const result = await this.processor!(
                     allContexts,
                     resumeContext,
-                    state.sessionId,
                     abortController.signal
                 );
                 wasInterrupted = result.wasInterrupted;
