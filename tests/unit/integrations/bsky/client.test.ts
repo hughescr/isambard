@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { mockLogger } from '../../../setup';
-import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
+import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------

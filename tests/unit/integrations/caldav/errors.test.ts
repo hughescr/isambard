@@ -1,13 +1,13 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import { IsambardError } from '@/errors/base';
-import { ErrorCode } from '@/errors/codes';
 import {
     AmbiguousCalendarMatchError,
     CaldavError,
     CaldavAuthError,
     CaldavFetchError,
     CaldavTimeoutError
-} from '@/integrations/caldav/errors';
+} from '@/errors';
+import { IsambardError } from '@/errors/base';
+import { ErrorCode } from '@/errors/codes';
 
 describe.concurrent('CaldavError', () => {
     test('should have correct inheritance chain', () => {

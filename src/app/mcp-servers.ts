@@ -5,8 +5,7 @@ import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, cr
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
-import type { SendRateLimiter } from '@/integrations/email';
-import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { MemoryToolBackend, MemoryPath, ContactBackend, PersonAllowlist } from '@/storage';
 
 /**
@@ -74,7 +73,7 @@ export interface MCPServersOptions {
     /**
      * Optional rate limiter for Bluesky outbound posts.
      */
-    bskyRateLimiter?: SendRateLimiter
+    bskyRateLimiter?: TokenBucketRateLimiter
 
     /**
      * Optional callback to request admin approval for an outbound Bluesky reply.

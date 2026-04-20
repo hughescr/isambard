@@ -14,8 +14,8 @@ import type { CalendarRegistryBackend } from './calendar-registry/backend';
 import { resolveCalendar, resolveServer } from './calendar-registry/resolve';
 import { createCalendarServerId } from './calendar-registry/types';
 import type { CalDAVClient } from './client';
-import { AmbiguousCalendarMatchError } from './errors';
 import type { CalendarInfo } from './types';
+import { AmbiguousCalendarMatchError } from '@/errors';
 
 /**
  * Build the /calendar slash command with subcommands and the 'shared' subcommand group.

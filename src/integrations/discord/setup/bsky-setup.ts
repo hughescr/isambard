@@ -10,8 +10,7 @@ import {
 } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
-import { SendRateLimiter } from '@/integrations/email';
-import type { ApprovalSagaBackend } from '@/services';
+import { TokenBucketRateLimiter, type ApprovalSagaBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
@@ -52,7 +51,7 @@ export interface BskySetupOptions {
 
 export interface BskySetupResult {
     allowlist:               PersonAllowlist
-    rateLimiter:             SendRateLimiter
+    rateLimiter:             TokenBucketRateLimiter
     rejectionBackend:        BskyRejectionBackend
     outboundApprovalHandler: BskyOutboundApprovalHandler
     /** sendApprovalRequest callback for MCP server integration */
@@ -81,7 +80,7 @@ export interface BskySetupResult {
  *
  * Creates:
  * - PersonAllowlist (loaded from DynamoDB, passed in via options)
- * - SendRateLimiter (capacity=24, refill=1/hr)
+ * - TokenBucketRateLimiter (capacity=24, refill=1/hr)
  * - sendApprovalRequest callback (posts approval embed to admin channel, retries 3x)
  * - sendDMApprovalRequest callback (posts DM approval embed to admin channel, retries 3x)
  * - BskyOutboundApprovalHandler for Discord button interactions
@@ -101,8 +100,8 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     const rejectionBackend = new BskyRejectionBackend(docClient, tableName);
 
     // Create rate limiter for outbound Bluesky posts
-    // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
-    const rateLimiter = new SendRateLimiter({ capacity: 24, refillRatePerHour: 1 });
+    // Stryker disable next-line ObjectLiteral: TokenBucketRateLimiter config object is integration wiring
+    const rateLimiter = new TokenBucketRateLimiter({ capacity: 24, refillRatePerHour: 1 });
 
     // Build sendApprovalRequest callback (posts approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.

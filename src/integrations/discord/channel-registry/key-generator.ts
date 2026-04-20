@@ -1,3 +1,5 @@
+import { createPrefixedKey, parsePrefixedKey } from '@/storage';
+
 /**
  * DynamoDB key structure for Channel Registry items
  */
@@ -15,6 +17,14 @@ export interface ChannelRegistryKeys {
     /** GSI2 Sort Key: CHANNEL (optional, only for well-known channels) */
     GSI2SK?: string
 }
+
+// Stryker disable StringLiteral: PK/SK key constants are configuration values
+const PREFIX_CHANNEL   = 'CHANNEL';
+const PREFIX_GUILD     = 'GUILD';
+const PREFIX_WELLKNOWN = 'WELLKNOWN';
+const SK_METADATA      = 'METADATA';
+const GSI2SK_CHANNEL   = 'CHANNEL';
+// Stryker restore StringLiteral
 
 /**
  * Generates DynamoDB keys for Channel Registry items
@@ -40,10 +50,14 @@ export const ChannelRegistryKeyGenerator = {
      */
     createKeys(channelId: string, guildId: string): ChannelRegistryKeys {
         return {
-            PK:     `CHANNEL#${channelId}`,
-            SK:     'METADATA',
-            GSI1PK: `GUILD#${guildId}`,
-            GSI1SK: `CHANNEL#${channelId}`,
+            // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
+            PK:     createPrefixedKey(PREFIX_CHANNEL, channelId),
+            // Stryker disable next-line StringLiteral: SK key constant is a configuration value
+            SK:     SK_METADATA,
+            // Stryker disable next-line StringLiteral: GSI1PK key constant is a configuration value
+            GSI1PK: createPrefixedKey(PREFIX_GUILD, guildId),
+            // Stryker disable next-line StringLiteral: GSI1SK key constant is a configuration value
+            GSI1SK: createPrefixedKey(PREFIX_CHANNEL, channelId),
         };
     },
 
@@ -64,8 +78,10 @@ export const ChannelRegistryKeyGenerator = {
      */
     createWellKnownKeys(type: string): Pick<ChannelRegistryKeys, 'GSI2PK' | 'GSI2SK'> {
         return {
-            GSI2PK: `WELLKNOWN#${type}`,
-            GSI2SK: 'CHANNEL',
+            // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
+            GSI2PK: createPrefixedKey(PREFIX_WELLKNOWN, type),
+            // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
+            GSI2SK: GSI2SK_CHANNEL,
         };
     },
 
@@ -86,8 +102,7 @@ export const ChannelRegistryKeyGenerator = {
         if(!pk.startsWith('CHANNEL#')) {
             throw new Error(`Invalid PK format: expected CHANNEL#..., got ${pk}`);
         }
-
-        return pk.slice(8); // Remove 'CHANNEL#' prefix
+        return parsePrefixedKey(PREFIX_CHANNEL, pk);
     },
 
     /**
@@ -116,8 +131,8 @@ export const ChannelRegistryKeyGenerator = {
         }
 
         return {
-            guildId:   gsi1pk.slice(6),  // Remove 'GUILD#' prefix
-            channelId: gsi1sk.slice(8),  // Remove 'CHANNEL#' prefix
+            guildId:   parsePrefixedKey(PREFIX_GUILD, gsi1pk),
+            channelId: parsePrefixedKey(PREFIX_CHANNEL, gsi1sk),
         };
     },
 };

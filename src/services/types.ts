@@ -29,3 +29,13 @@ export interface ServiceHealthChange {
 }
 
 export type HealthChangeListener = (change: ServiceHealthChange) => void;
+
+/**
+ * Minimal logger interface used by polling executors and drainers in the services layer.
+ * Matches the shape of the project-wide logger so real loggers satisfy it automatically.
+ */
+export interface ServiceLogger {
+    warn:  (obj: object, msg: string) => void
+    error: (obj: object, msg: string) => void
+    info:  (obj: object, msg: string) => void
+}

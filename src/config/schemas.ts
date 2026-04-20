@@ -95,12 +95,6 @@ export const discordConfigSchema = z.object({
     inbox:         inboxConfigSchema.optional(),
 });
 
-// Box config
-export const boxConfigSchema = z.object({
-    clientId:     z.string().min(1),
-    clientSecret: z.string().min(1),
-});
-
 // Browser config
 /* Stryker disable BooleanLiteral,StringLiteral,ArithmeticOperator: Default values are configuration */
 export const browserConfigSchema = z.object({
@@ -217,7 +211,6 @@ export const configSchema = z.object({
     adminDiscordUserId: z.string().min(1),
     // Planned integrations (optional until implemented):
     email:              emailConfigSchema.optional(),
-    box:                boxConfigSchema.optional(),
     bsky:               bskyConfigSchema.optional(),
     browser:            browserConfigSchema.optional(),
 });

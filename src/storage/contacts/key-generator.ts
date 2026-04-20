@@ -1,3 +1,4 @@
+import { createPrefixedKey, parsePrefixedKey } from '../utils/key-builder.js';
 import { createContactId, platformTypeSchema, type ContactId, type PlatformType } from './types';
 
 /**
@@ -21,6 +22,13 @@ interface ContactLookupKeys {
     SK: string
 }
 
+// Stryker disable StringLiteral: PK/SK key constants are configuration values
+const PREFIX_CONTACT        = 'CONTACT';
+const PREFIX_CONTACT_LOOKUP = 'CONTACT_LOOKUP';
+const SK_PROFILE            = 'PROFILE';
+const GSI2PK_CONTACTS       = 'CONTACTS';
+// Stryker restore StringLiteral
+
 /**
  * Generates DynamoDB keys for Contact items
  */
@@ -40,9 +48,9 @@ export const ContactKeyGenerator = {
     createProfileKeys(personId: ContactId): ContactProfileKeys {
         return {
             // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
-            PK: `CONTACT#${personId}`,
+            PK: createPrefixedKey(PREFIX_CONTACT, personId),
             // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
-            SK: 'PROFILE',
+            SK: SK_PROFILE,
         };
     },
 
@@ -65,9 +73,9 @@ export const ContactKeyGenerator = {
         const normalizedValue = value.toLowerCase().trim();
         return {
             // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
-            PK: `CONTACT_LOOKUP#${platform}#${normalizedValue}`,
+            PK: createPrefixedKey(PREFIX_CONTACT_LOOKUP, platform, normalizedValue),
             // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
-            SK: `CONTACT#${personId}`,
+            SK: createPrefixedKey(PREFIX_CONTACT, personId),
         };
     },
 
@@ -87,9 +95,9 @@ export const ContactKeyGenerator = {
     createCollectionKeys(personId: ContactId): { GSI2PK: string, GSI2SK: string } {
         return {
             // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
-            GSI2PK: 'CONTACTS',
+            GSI2PK: GSI2PK_CONTACTS,
             // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
-            GSI2SK: `CONTACT#${personId}`,
+            GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId),
         };
     },
 
@@ -110,8 +118,7 @@ export const ContactKeyGenerator = {
         if(!pk.startsWith('CONTACT#')) {
             throw new Error(`Invalid PK format: expected CONTACT#..., got ${pk}`);
         }
-        // Remove 'CONTACT#' prefix (8 chars)
-        return createContactId(pk.slice(8));
+        return createContactId(parsePrefixedKey(PREFIX_CONTACT, pk));
     },
 
     /**
@@ -160,7 +167,6 @@ export const ContactKeyGenerator = {
         if(!sk.startsWith('CONTACT#')) {
             throw new Error(`Invalid lookup SK format: expected CONTACT#..., got ${sk}`);
         }
-        // Remove 'CONTACT#' prefix (8 chars)
-        return createContactId(sk.slice(8));
+        return createContactId(parsePrefixedKey(PREFIX_CONTACT, sk));
     },
 };

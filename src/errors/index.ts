@@ -39,3 +39,26 @@ export {
 export { PathSecurityError } from './utils';
 
 export { BrowserNavigateTimeoutError } from './browser';
+
+export {
+    EmailError,
+    ClassifierError,
+    EmailProcessingError,
+    WildDuckError,
+    WildDuckAuthError
+} from './email';
+
+export {
+    BskyError,
+    BskyAuthError,
+    BskyRateLimitError,
+    BskyValidationError
+} from './bsky';
+
+export {
+    CaldavError,
+    CaldavAuthError,
+    CaldavFetchError,
+    CaldavTimeoutError,
+    AmbiguousCalendarMatchError
+} from './caldav';

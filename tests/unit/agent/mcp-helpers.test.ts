@@ -1,8 +1,9 @@
-import { describe, test, expect, mock } from 'bun:test';
-import { mcpServiceUnavailableResult, checkServiceHealth, checkWriteServiceHealth, withHealthGuard, withWriteHealthGuard } from '../../../src/agent/mcp-helpers';
+import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { mcpServiceUnavailableResult, checkServiceHealth, checkWriteServiceHealth, withHealthGuard, withWriteHealthGuard, withToolErrorHandling } from '../../../src/agent/mcp-helpers';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { ReconnectionLoop } from '../../../src/services/reconnection-loop';
 import type { ServiceHealthEntry } from '../../../src/services/types';
+import { mockLogger } from '../../setup';
 
 // ---- helpers ----
 
@@ -427,5 +428,102 @@ describe('withWriteHealthGuard', () => {
         const wrapped = withWriteHealthGuard(registry, 'email', 'discord', undefined, handler);
         const result = await wrapped({ msg: 'hello world' });
         expect((result.content[0] as { text: string }).text).toBe('hello world');
+    });
+});
+
+// ---- withToolErrorHandling ----
+
+describe('withToolErrorHandling', () => {
+    beforeEach(() => {
+        mockLogger.warn.mockClear();
+    });
+
+    afterEach(() => {
+        mockLogger.warn.mockClear();
+    });
+
+    test('success: passes through handler result', async () => {
+        const handler = mock(async (_args: { x: number }) => ({
+            content: [{ type: 'text' as const, text: 'ok' }],
+        }));
+        const wrapped = withToolErrorHandling('myTool', handler);
+        const result = await wrapped({ x: 1 });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith({ x: 1 });
+        expect((result.content[0] as { text: string }).text).toBe('ok');
+        expect(result.isError).toBeFalsy();
+    });
+
+    test('success: does not call logger.warn on success', async () => {
+        const handler = mock(async (_args: unknown) => ({
+            content: [{ type: 'text' as const, text: 'all good' }],
+        }));
+        const wrapped = withToolErrorHandling('myTool', handler);
+        await wrapped({});
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+    });
+
+    test('Error thrown: returns isError: true with "Error: <message>"', async () => {
+        const handler = mock(async (_args: unknown): Promise<never> => {
+            throw new Error('something went wrong');
+        });
+        const wrapped = withToolErrorHandling('myTool', handler);
+        const result = await wrapped({});
+        expect(result.isError).toBe(true);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).toBe('Error: something went wrong');
+    });
+
+    test('Error thrown: logs tool name and error message via logger.warn', async () => {
+        const handler = mock(async (_args: unknown): Promise<never> => {
+            throw new Error('oops');
+        });
+        const wrapped = withToolErrorHandling('myTool', handler);
+        await wrapped({});
+        expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        const [logObj] = mockLogger.warn.mock.calls[0] as [{ tool: string, error: string }, string];
+        expect(logObj.tool).toBe('myTool');
+        expect(logObj.error).toBe('oops');
+    });
+
+    test('non-Error thrown: returns isError: true with string conversion', async () => {
+        const handler = mock(async (_args: unknown): Promise<never> => {
+            throw 'raw string error';
+        });
+        const wrapped = withToolErrorHandling('myTool', handler);
+        const result = await wrapped({});
+        expect(result.isError).toBe(true);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).toBe('Error: raw string error');
+    });
+
+    test('non-Error thrown: logs string representation', async () => {
+        const handler = mock(async (_args: unknown): Promise<never> => {
+            throw 42;
+        });
+        const wrapped = withToolErrorHandling('myTool', handler);
+        await wrapped({});
+        expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        const [logObj] = mockLogger.warn.mock.calls[0] as [{ tool: string, error: string }, string];
+        expect(logObj.error).toBe('42');
+    });
+
+    test('passes args through to handler', async () => {
+        const handler = mock(async (args: { a: string, b: number }) => ({
+            content: [{ type: 'text' as const, text: `${args.a}-${args.b}` }],
+        }));
+        const wrapped = withToolErrorHandling('myTool', handler);
+        const result = await wrapped({ a: 'hello', b: 42 });
+        expect((result.content[0] as { text: string }).text).toBe('hello-42');
+    });
+
+    test('log message format: second argument to logger.warn is "MCP tool error"', async () => {
+        const handler = mock(async (_args: unknown): Promise<never> => {
+            throw new Error('fail');
+        });
+        const wrapped = withToolErrorHandling('myTool', handler);
+        await wrapped({});
+        const [, logMsg] = mockLogger.warn.mock.calls[0] as [unknown, string];
+        expect(logMsg).toBe('MCP tool error');
     });
 });

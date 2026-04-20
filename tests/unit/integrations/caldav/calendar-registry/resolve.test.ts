@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
+import { AmbiguousCalendarMatchError } from '@/errors';
 import { resolveServer, resolveCalendar } from '@/integrations/caldav/calendar-registry/resolve';
 import { createCalendarServerId, type CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
-import { AmbiguousCalendarMatchError } from '@/integrations/caldav/errors';
 
 // Stryker disable next-line StringLiteral: Test UUID constants are test configuration
 const SERVER_UUID_1 = createCalendarServerId('550e8400-e29b-41d4-a716-446655440001');

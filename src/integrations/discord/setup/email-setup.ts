@@ -18,10 +18,9 @@ import {
     buildRestrictedAccessEmbed,
     EmailFolder,
     WildDuckClient,
-    SendRateLimiter,
     OutboundApprovalHandler
 } from '@/integrations/email';
-import type { ApprovalSagaBackend, ReconnectionLoop, ServiceHealthRegistry } from '@/services';
+import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
@@ -192,8 +191,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     const reviewHandler = new ReviewHandler({ wildDuckClient, adminDiscordUserId, allowlistInteractionHandler: options.allowlistInteractionHandler });
 
     // Create rate limiter for outbound email
-    // Stryker disable next-line ObjectLiteral: SendRateLimiter config object is integration wiring
-    const rateLimiter = new SendRateLimiter({ capacity: emailConfig.sendReservoirCapacity, refillRatePerHour: emailConfig.sendReservoirRefillRatePerHour });
+    // Stryker disable next-line ObjectLiteral: TokenBucketRateLimiter config object is integration wiring
+    const rateLimiter = new TokenBucketRateLimiter({ capacity: emailConfig.sendReservoirCapacity, refillRatePerHour: emailConfig.sendReservoirRefillRatePerHour });
 
     // Build sendApprovalRequest callback (posts approval embed to #admin channel)
     // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.

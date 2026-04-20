@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
-import { SendRateLimiter } from '../../../../src/integrations/email/send-rate-limiter';
+import { TokenBucketRateLimiter } from '../../../../src/services/rate-limiters/token-bucket';
 
-describe('SendRateLimiter', () => {
+describe('TokenBucketRateLimiter', () => {
     // Use fake timers to control Date.now()
     beforeEach(() => {
         jest.useFakeTimers();
@@ -14,41 +14,41 @@ describe('SendRateLimiter', () => {
 
     describe('constructor', () => {
         test('should use default capacity of 24', () => {
-            const limiter = new SendRateLimiter();
+            const limiter = new TokenBucketRateLimiter();
             expect(limiter.tokensRemaining()).toBe(24);
         });
 
         test('should accept custom capacity', () => {
-            const limiter = new SendRateLimiter({ capacity: 10 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 10 });
             expect(limiter.tokensRemaining()).toBe(10);
         });
 
         test('should accept custom refillRatePerHour', () => {
-            const limiter = new SendRateLimiter({ capacity: 6, refillRatePerHour: 2 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 6, refillRatePerHour: 2 });
             expect(limiter.tokensRemaining()).toBe(6);
         });
 
         test('should start not at limit when capacity > 0', () => {
-            const limiter = new SendRateLimiter({ capacity: 5 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 5 });
             expect(limiter.isAtLimit()).toBe(false);
         });
     });
 
     describe('isAtLimit()', () => {
         test('should return false when tokens remain', () => {
-            const limiter = new SendRateLimiter({ capacity: 5 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 5 });
             expect(limiter.isAtLimit()).toBe(false);
         });
 
         test('should return true when tokens are 0', () => {
-            const limiter = new SendRateLimiter({ capacity: 2 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 2 });
             limiter.increment();
             limiter.increment();
             expect(limiter.isAtLimit()).toBe(true);
         });
 
         test('should return false after refill restores a token', () => {
-            const limiter = new SendRateLimiter({ capacity: 1, refillRatePerHour: 1 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 1, refillRatePerHour: 1 });
             limiter.increment();
             expect(limiter.isAtLimit()).toBe(true);
 
@@ -60,25 +60,25 @@ describe('SendRateLimiter', () => {
 
     describe('tokensRemaining()', () => {
         test('should return full capacity initially', () => {
-            const limiter = new SendRateLimiter({ capacity: 8 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 8 });
             expect(limiter.tokensRemaining()).toBe(8);
         });
 
         test('should decrease by 1 after increment', () => {
-            const limiter = new SendRateLimiter({ capacity: 8 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 8 });
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(7);
         });
 
         test('should return 0 when exhausted', () => {
-            const limiter = new SendRateLimiter({ capacity: 2 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 2 });
             limiter.increment();
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(0);
         });
 
         test('should never go below 0', () => {
-            const limiter = new SendRateLimiter({ capacity: 1 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 1 });
             limiter.increment();
             limiter.increment(); // extra increment on empty bucket
             expect(limiter.tokensRemaining()).toBe(0);
@@ -87,13 +87,13 @@ describe('SendRateLimiter', () => {
 
     describe('increment()', () => {
         test('should consume 1 token', () => {
-            const limiter = new SendRateLimiter({ capacity: 10 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 10 });
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(9);
         });
 
         test('should consume multiple tokens', () => {
-            const limiter = new SendRateLimiter({ capacity: 10 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 10 });
             limiter.increment();
             limiter.increment();
             limiter.increment();
@@ -101,7 +101,7 @@ describe('SendRateLimiter', () => {
         });
 
         test('should not go below 0 when bucket is empty', () => {
-            const limiter = new SendRateLimiter({ capacity: 1 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 1 });
             limiter.increment();
             limiter.increment(); // second call on empty bucket
             expect(limiter.tokensRemaining()).toBe(0);
@@ -109,7 +109,7 @@ describe('SendRateLimiter', () => {
 
         test('should apply elapsed-time refill before decrement', () => {
             // Start with capacity 4, use 3 tokens
-            const limiter = new SendRateLimiter({ capacity: 4, refillRatePerHour: 2 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 4, refillRatePerHour: 2 });
             limiter.increment();
             limiter.increment();
             limiter.increment();
@@ -122,7 +122,7 @@ describe('SendRateLimiter', () => {
         });
 
         test('should cap refill at reservoir capacity', () => {
-            const limiter = new SendRateLimiter({ capacity: 4, refillRatePerHour: 2 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 4, refillRatePerHour: 2 });
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(3);
 
@@ -135,7 +135,7 @@ describe('SendRateLimiter', () => {
 
     describe('token refill', () => {
         test('should refill 1 token per hour with default rate', () => {
-            const limiter = new SendRateLimiter({ capacity: 24, refillRatePerHour: 1 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 24, refillRatePerHour: 1 });
             // Drain it
             for(let i = 0; i < 24; i++) {
                 limiter.increment();
@@ -148,7 +148,7 @@ describe('SendRateLimiter', () => {
         });
 
         test('should not refill partial hours (floor semantics)', () => {
-            const limiter = new SendRateLimiter({ capacity: 10, refillRatePerHour: 1 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 10, refillRatePerHour: 1 });
             limiter.increment();
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(8);
@@ -159,7 +159,7 @@ describe('SendRateLimiter', () => {
         });
 
         test('should refill based on elapsed hours (floor)', () => {
-            const limiter = new SendRateLimiter({ capacity: 10, refillRatePerHour: 2 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 10, refillRatePerHour: 2 });
             limiter.increment();
             limiter.increment();
             limiter.increment();
@@ -171,7 +171,7 @@ describe('SendRateLimiter', () => {
         });
 
         test('should not exceed capacity on refill', () => {
-            const limiter = new SendRateLimiter({ capacity: 5, refillRatePerHour: 10 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 5, refillRatePerHour: 10 });
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(4);
 
@@ -182,7 +182,7 @@ describe('SendRateLimiter', () => {
 
         test('should use injected clock source for testability', () => {
             let fakeNow = 1_000_000;
-            const limiter = new SendRateLimiter({ capacity: 4, refillRatePerHour: 1, now: () => fakeNow });
+            const limiter = new TokenBucketRateLimiter({ capacity: 4, refillRatePerHour: 1, now: () => fakeNow });
 
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(3);
@@ -196,7 +196,7 @@ describe('SendRateLimiter', () => {
     describe('injected clock', () => {
         test('should use Date.now() by default', () => {
             // Fake timers are active, so Date.now() is controlled
-            const limiter = new SendRateLimiter({ capacity: 6, refillRatePerHour: 1 });
+            const limiter = new TokenBucketRateLimiter({ capacity: 6, refillRatePerHour: 1 });
             limiter.increment();
             limiter.increment();
             expect(limiter.tokensRemaining()).toBe(4);

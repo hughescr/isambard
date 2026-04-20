@@ -117,7 +117,7 @@ classDiagram
     }
 ```
 
-> **Note:** Error classes are defined in their respective modules (e.g., email errors in `src/integrations/email/errors.ts`, Bluesky errors in `src/integrations/bsky/errors.ts`, CalDAV errors in `src/integrations/caldav/errors.ts`) while sharing the centralized `ErrorCode` enum and `IsambardError` base from `src/errors/`.
+> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`) re-export them for convenience.
 
 ## When to Create vs Reuse Errors
 

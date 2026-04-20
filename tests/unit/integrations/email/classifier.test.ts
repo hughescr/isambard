@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mockLogger, mockGenerateTextWithSystemPrompt, originalGenerateTextWithSystemPrompt } from '../../../setup';
+import { ClassifierError } from '@/errors';
 import { EmailClassifier } from '@/integrations/email/classifier';
-import { ClassifierError } from '@/integrations/email/errors';
 import type { EmailMetadata } from '@/integrations/email/types';
 
 // ---------------------------------------------------------------------------

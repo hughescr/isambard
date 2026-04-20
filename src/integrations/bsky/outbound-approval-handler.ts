@@ -1,20 +1,18 @@
-import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
-import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
-import type { ActivityLogger } from '@/agent';
+import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder } from 'discord.js';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
-import type { AllowlistSagaStarter, SagaWriter } from '@/services';
+import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
 
-const GREEN = 0x00_AA_00;
-const RED   = 0xFF_00_00;
+// Stryker disable all: Color constants are UI configuration
 const AMBER = 0xFF_AA_00;
+// Stryker restore all
 
 export interface BskyOutboundApprovalHandlerDeps {
     client:                      BlueskyClient
     rejectionBackend:            BskyRejectionBackend
     sagaBackend:                 SagaWriter
-    activityLogger?:             ActivityLogger
+    activityLogger?:             ApprovalActivityLogger
     allowlistInteractionHandler: AllowlistSagaStarter
 }
 
@@ -37,20 +35,162 @@ export interface BskyOutboundApprovalHandlerDeps {
  * No in-code user ID check is needed because only admins have access to that channel.
  * Discord channel-level ACL is the enforcement boundary.
  */
-export class BskyOutboundApprovalHandler {
-    private readonly client:                      BlueskyClient;
-    private readonly rejectionBackend:            BskyRejectionBackend;
-    private readonly sagaBackend:                 SagaWriter;
-    private readonly activityLogger?:             ActivityLogger;
-    private readonly allowlistInteractionHandler: AllowlistSagaStarter;
+export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<string> {
+    private readonly client:           BlueskyClient;
+    private readonly rejectionBackend: BskyRejectionBackend;
+
+    private static readonly KNOWN_BUTTON_PREFIXES = new Set([
+        'bsky-send-approve', 'bsky-send-approveallowlist', 'bsky-send-reject',
+        'bsky-dm-approve',   'bsky-dm-approveallowlist',   'bsky-dm-reject',
+    ]);
 
     constructor(deps: BskyOutboundApprovalHandlerDeps) {
-        this.client                      = deps.client;
-        this.rejectionBackend            = deps.rejectionBackend;
-        this.sagaBackend                 = deps.sagaBackend;
-        this.activityLogger              = deps.activityLogger;
-        this.allowlistInteractionHandler = deps.allowlistInteractionHandler;
+        super({
+            sagaBackend:                 deps.sagaBackend,
+            activityLogger:              deps.activityLogger,
+            allowlistInteractionHandler: deps.allowlistInteractionHandler,
+        });
+        this.client           = deps.client;
+        this.rejectionBackend = deps.rejectionBackend;
     }
+
+    // ---------------------------------------------------------------------------
+    // BaseOutboundApprovalHandler implementation
+    // ---------------------------------------------------------------------------
+
+    protected isKnownButtonPrefix(prefix: string): boolean {
+        // Stryker disable next-line StringLiteral: '' fallback is L-class — any non-Set string causes the same early return
+        return BskyOutboundApprovalHandler.KNOWN_BUTTON_PREFIXES.has(prefix);
+    }
+
+    protected isRejectButtonPrefix(prefix: string): boolean {
+        // Stryker disable next-line StringLiteral,ConditionalExpression: reject prefix check is configuration
+        return prefix === 'bsky-send-reject' || prefix === 'bsky-dm-reject';
+    }
+
+    protected isKnownModalPrefix(prefix: string): boolean {
+        // Stryker disable next-line StringLiteral,ConditionalExpression: customId prefix check is configuration
+        return prefix === 'bsky-send-reject-reason' || prefix === 'bsky-dm-reject-reason';
+    }
+
+    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | null (null signals empty/invalid UUID)
+    protected parseId(raw: string): string | null {
+        // Stryker disable next-line ConditionalExpression: falsy guard — empty string uuid causes early return
+        return raw || null;
+    }
+
+    protected rejectModalCustomId(buttonPrefix: string, rawId: string): string {
+        // Stryker disable next-line StringLiteral,ConditionalExpression: customId is configuration; prefix determines modal prefix
+        const modalPrefix = buttonPrefix === 'bsky-dm-reject' ? 'bsky-dm-reject-reason' : 'bsky-send-reject-reason';
+        return `${modalPrefix}:${rawId}`;
+    }
+
+    protected rejectModalTitle(buttonPrefix: string): string {
+        // Stryker disable next-line StringLiteral,ConditionalExpression: Modal title is UI configuration; prefix determines title
+        return buttonPrefix === 'bsky-dm-reject' ? 'Reject Bluesky DM' : 'Reject Bluesky Reply';
+    }
+
+    protected async dispatchApprovedButton(prefix: string, interaction: ButtonInteraction, _uuid: string): Promise<void> {
+        // Stryker disable ConditionalExpression: switch-case label mutations are equivalent — each case is only covered by tests for that specific prefix, making cross-case label mutations untestable without restructuring
+        switch(prefix) {
+            case 'bsky-send-approve': {
+                await this.handleApprove(interaction);
+                break;
+            }
+            case 'bsky-send-approveallowlist': {
+                await this.handleApproveAllowlist(interaction);
+                break;
+            }
+            case 'bsky-dm-approve': {
+                await this.handleDMApprove(interaction);
+                break;
+            }
+            case 'bsky-dm-approveallowlist': {
+                await this.handleDMApproveAllowlist(interaction);
+                break;
+            }
+            // No default needed — isKnownButtonPrefix + isRejectButtonPrefix guard ensures only known non-reject prefixes reach this switch
+        }
+        // Stryker restore ConditionalExpression
+    }
+
+    protected buildRejectionFailedLog(err: unknown, uuid: string): Record<string, unknown> {
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+        return { err, uuid, msg: 'Failed to persist Bluesky rejection to DynamoDB — Discord message left active for retry' };
+    }
+
+    protected async performRejection(
+        prefix:      string,
+        embed:       { description?: string | null, fields?: { name: string, value: string }[] } | undefined,
+        reason:      string,
+        interaction: ModalSubmitInteraction,
+        uuid:        string
+    ): Promise<void> {
+        // Gate: embed must be present — without it we cannot extract rejection data
+        if(!embed) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ uuid, msg: 'Missing embed on Bluesky rejection modal — cannot extract rejection data' });
+            // Stryker disable BlockStatement: try-catch wraps best-effort error reply to Discord
+            try {
+                const errorEmbed = new EmbedBuilder()
+                    // Stryker disable next-line StringLiteral: UI label is configuration
+                    .setTitle('Rejection failed — please retry')
+                    // Stryker disable next-line StringLiteral: UI message is configuration
+                    .setDescription('Could not read approval embed data.')
+                    .setColor(AMBER);
+                await interaction.editReply({
+                    embeds:     [errorEmbed],
+                    components: [],
+                });
+            } catch (replyError) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                logger.error({ err: replyError, uuid, msg: 'Failed to send error editReply for missing embed' });
+            }
+            // Stryker restore BlockStatement
+            return;
+        }
+
+        const rejectionItem = this.extractRejectionItem(prefix, embed, reason, uuid);
+
+        // Gate: persist to DynamoDB — must succeed before updating Discord to "Rejected"
+        await this.rejectionBackend.recordRejection(rejectionItem);
+
+        // Stryker disable next-line StringLiteral,EqualityOperator,ConditionalExpression: activity log type selection and summary text are informational only
+        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+        void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch(() => undefined);
+
+        // Persist succeeded — update Discord to show rejection
+        const updatedEmbed = this.buildRejectedEmbed(reason);
+
+        let discordUpdated = false;
+        // Stryker disable BlockStatement: try-catch wraps best-effort Discord UI update
+        try {
+            await interaction.editReply({
+                embeds:     [updatedEmbed],
+                components: [],
+            });
+            discordUpdated = true;
+        } catch (editError) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err: editError, uuid, msg: 'Failed to update Discord embed after Bluesky rejection' });
+        }
+        // Stryker restore BlockStatement
+
+        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+        logger.info({
+            type:   rejectionItem.type,
+            reason,
+            target: rejectionItem.type === 'dm' ? rejectionItem.recipientHandles.join(', ') : rejectionItem.targetHandle,
+            // Stryker disable next-line MethodExpression: log truncation is cosmetic, not behavioral
+            text:   rejectionItem.text.slice(0, 100),
+            discordUpdated,
+            msg:    'Discord admin rejected Bluesky post request',
+        });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Private helpers
+    // ---------------------------------------------------------------------------
 
     private parseRecipientHandles(fields: { name: string, value: string }[]): string[] {
         // Stryker disable next-line ConditionalExpression: Equivalent mutant — find() returns the unique matching field regardless of position
@@ -108,228 +248,6 @@ export class BskyOutboundApprovalHandler {
         };
     }
 
-    async handleButton(interaction: ButtonInteraction): Promise<void> {
-        const parts  = interaction.customId.split(':');
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — customId may lack colon separator; BlockStatement equivalent — downstream !uuid guard produces same result for undefined uuid
-        if(parts.length < 2) {
-            return;
-        }
-        const prefix = parts[0];
-        const uuid   = parts[1];
-
-        const knownPrefixes = new Set([
-            'bsky-send-approve', 'bsky-send-approveallowlist', 'bsky-send-reject',
-            'bsky-dm-approve',   'bsky-dm-approveallowlist',   'bsky-dm-reject',
-        ]);
-        // Stryker disable next-line StringLiteral: '' fallback is L-class — any non-Set string (incl. "Stryker was here!") causes the same early return
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- prefix from split()[0] is typed as string|undefined by tsconfig noUncheckedIndexedAccess
-        if(!knownPrefixes.has(prefix ?? '')) {
-            return;
-        }
-
-        if(!uuid) {
-            return;
-        }
-
-        // Acknowledge the interaction immediately to avoid Discord's 3-second timeout.
-        // Reject shows a modal instead — no defer before showModal.
-        // Stryker disable next-line ConditionalExpression: reject paths use showModal, not deferUpdate
-        const wasDeferred = prefix !== 'bsky-send-reject' && prefix !== 'bsky-dm-reject';
-        if(wasDeferred) {
-            await interaction.deferUpdate();
-        }
-
-        // Stryker disable BlockStatement: try-catch wraps button handler - error handling
-        try {
-            await this.dispatchButton(prefix, interaction, uuid);
-        } catch (err) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({ err, uuid, prefix, msg: 'Bsky approval button handler failed' });
-            // Only call editReply if the interaction was deferred (approve paths).
-            // Reject path uses showModal — editReply would throw if called without prior deferUpdate.
-            // Stryker disable next-line ConditionalExpression,BlockStatement: wasDeferred guards editReply from throwing on reject path
-            if(wasDeferred) {
-                // Stryker disable BlockStatement: try-catch wraps editReply - best-effort error reply
-                try {
-                    await interaction.editReply({
-                        // Stryker disable next-line StringLiteral: Error message is UI configuration
-                        content:    'An error occurred processing your request. Please try again.',
-                        embeds:     [],
-                        components: [],
-                    });
-                } catch (error) {
-                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                    logger.error({ err: error, msg: 'Failed to send error editReply' });
-                }
-                // Stryker restore BlockStatement
-            }
-        }
-        // Stryker restore BlockStatement
-    }
-
-    private async dispatchButton(prefix: string, interaction: ButtonInteraction, uuid: string): Promise<void> {
-        // Stryker disable ConditionalExpression: switch-case label mutations are equivalent — each case is only covered by tests for that specific prefix, making cross-case label mutations untestable without restructuring
-        switch(prefix) {
-            case 'bsky-send-approve': {
-                await this.handleApprove(interaction);
-                break;
-            }
-            case 'bsky-send-approveallowlist': {
-                await this.handleApproveAllowlist(interaction);
-                break;
-            }
-            case 'bsky-send-reject': {
-                await this.handleReject(interaction, uuid);
-                break;
-            }
-            case 'bsky-dm-approve': {
-                await this.handleDMApprove(interaction);
-                break;
-            }
-            case 'bsky-dm-approveallowlist': {
-                await this.handleDMApproveAllowlist(interaction);
-                break;
-            }
-            case 'bsky-dm-reject': {
-                await this.handleReject(interaction, uuid, 'bsky-dm-reject-reason', 'Reject Bluesky DM');
-                break;
-            }
-            // No default needed — knownPrefixes guard ensures only known prefixes reach this switch
-        }
-        // Stryker restore ConditionalExpression
-    }
-
-    async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-        const parts  = interaction.customId.split(':');
-        // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — split always returns ≥1 element; < 2 and <= 1 are equivalent; BlockStatement equivalent — downstream !uuid guard produces same result for undefined uuid
-        if(parts.length < 2) {
-            return;
-        }
-        // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement
-        const prefix = parts[0];
-        const uuid   = parts[1];
-
-        // Stryker disable next-line StringLiteral,ConditionalExpression: customId prefix check is configuration
-        if(prefix !== 'bsky-send-reject-reason' && prefix !== 'bsky-dm-reject-reason') {
-            return;
-        }
-
-        if(!uuid) {
-            return;
-        }
-
-        await interaction.deferUpdate();
-
-        // Stryker disable BlockStatement: try-catch wraps modal handler - error handling
-        try {
-            // Stryker disable next-line StringLiteral: field customId is configuration
-            // Use || so an empty reason field stores 'No reason given' instead of empty string
-            const reason = interaction.fields.getTextInputValue('reject-reason') || 'No reason given';
-
-            // Gate: embed must be present — without it we cannot extract rejection data
-            const embed = interaction.message?.embeds[0];
-            if(!embed) {
-                await this.handleMissingEmbed(interaction, uuid);
-                return;
-            }
-
-            await this.processRejection(prefix, embed, reason, interaction, uuid);
-        } catch (err) {
-            // DynamoDB persist failed (or unexpected error) — show error embed but keep original buttons for retry
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({ err, uuid, msg: 'Failed to persist Bluesky rejection to DynamoDB — Discord message left active for retry' });
-            // Stryker disable BlockStatement: try-catch wraps best-effort error reply to Discord
-            try {
-                const errorEmbed = new EmbedBuilder()
-                    // Stryker disable next-line StringLiteral: UI label is configuration
-                    .setTitle('Rejection failed — please retry')
-                    // Stryker disable next-line StringLiteral: UI message is configuration
-                    .setDescription('Could not save rejection to database.')
-                    .setColor(AMBER);
-                const firstEmbed = interaction.message?.embeds[0];
-                await interaction.editReply({
-                    embeds: [
-                        // Stryker disable next-line ArrayDeclaration,ConditionalExpression: preserve first original embed only — caps total at 2 embeds, prevents stacking on repeated failures
-                        ...(firstEmbed ? [EmbedBuilder.from(firstEmbed)] : []),
-                        errorEmbed,
-                    ],
-                    components: interaction.message?.components ?? [],
-                });
-            } catch (replyError) {
-                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                logger.error({ err: replyError, uuid, msg: 'Failed to send error editReply for Bluesky rejection' });
-            }
-            // Stryker restore BlockStatement
-        }
-        // Stryker restore BlockStatement
-    }
-
-    private async processRejection(prefix: string, embed: { description?: string | null, fields?: { name: string, value: string }[] }, reason: string, interaction: ModalSubmitInteraction, uuid: string): Promise<void> {
-        const rejectionItem = this.extractRejectionItem(prefix, embed, reason, uuid);
-
-        // Gate: persist to DynamoDB — must succeed before updating Discord to "Rejected"
-        await this.rejectionBackend.recordRejection(rejectionItem);
-
-        // Stryker disable next-line StringLiteral,EqualityOperator,ConditionalExpression: activity log type selection and summary text are informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
-        void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch(() => undefined);
-
-        // Persist succeeded — update Discord to show rejection
-        const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
-            .setTitle('Rejected')
-            .setDescription(reason)
-            .setColor(RED);
-
-        let discordUpdated = false;
-        // Stryker disable BlockStatement: try-catch wraps best-effort Discord UI update
-        try {
-            await interaction.editReply({
-                embeds:     [updatedEmbed],
-                components: [],
-            });
-            discordUpdated = true;
-        } catch (editError) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.warn({ err: editError, uuid, msg: 'Failed to update Discord embed after Bluesky rejection' });
-        }
-        // Stryker restore BlockStatement
-
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.info({
-            type:   rejectionItem.type,
-            reason,
-            target: rejectionItem.type === 'dm' ? rejectionItem.recipientHandles.join(', ') : rejectionItem.targetHandle,
-            // Stryker disable next-line MethodExpression: log truncation is cosmetic, not behavioral
-            text:   rejectionItem.text.slice(0, 100),
-            discordUpdated,
-            msg:    'Discord admin rejected Bluesky post request',
-        });
-    }
-
-    private async handleMissingEmbed(interaction: ModalSubmitInteraction, uuid: string): Promise<void> {
-        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-        logger.error({ uuid, msg: 'Missing embed on Bluesky rejection modal — cannot extract rejection data' });
-        // Show simple error embed; no original embeds/buttons to preserve
-        // Stryker disable BlockStatement: try-catch wraps best-effort error reply to Discord
-        try {
-            const errorEmbed = new EmbedBuilder()
-                // Stryker disable next-line StringLiteral: UI label is configuration
-                .setTitle('Rejection failed — please retry')
-                // Stryker disable next-line StringLiteral: UI message is configuration
-                .setDescription('Could not read approval embed data.')
-                .setColor(AMBER);
-            await interaction.editReply({
-                embeds:     [errorEmbed],
-                components: [],
-            });
-        } catch (replyError) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.error({ err: replyError, uuid, msg: 'Failed to send error editReply for missing embed' });
-        }
-        // Stryker restore BlockStatement
-    }
-
     private async handleApprove(interaction: ButtonInteraction): Promise<void> {
         // Extract post data from the embed fields
         const embed  = interaction.message.embeds[0];
@@ -363,10 +281,7 @@ export class BskyOutboundApprovalHandler {
         // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
         void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch(() => undefined);
 
-        const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
-            .setTitle('Approved \u2713 \u2014 posting shortly')
-            .setColor(GREEN);
+        const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 posting shortly');
 
         await interaction.editReply({
             embeds:     [updatedEmbed],
@@ -389,30 +304,6 @@ export class BskyOutboundApprovalHandler {
         if(targetHandle) {
             await this.allowlistInteractionHandler.startFromApproval(interaction, 'bsky', targetHandle);
         }
-    }
-
-    private async handleReject(interaction: ButtonInteraction, uuid: string, modalPrefix = 'bsky-send-reject-reason', modalTitle = 'Reject Bluesky Reply'): Promise<void> {
-        // Show a modal asking for rejection reason
-        const modal = new ModalBuilder()
-            // Stryker disable next-line StringLiteral: customId is configuration
-            .setCustomId(`${modalPrefix}:${uuid}`)
-            // Stryker disable next-line StringLiteral: Modal title is UI configuration
-            .setTitle(modalTitle);
-
-        const reasonInput = new TextInputBuilder()
-            // Stryker disable next-line StringLiteral: field customId is configuration
-            .setCustomId('reject-reason')
-            .setStyle(TextInputStyle.Short)
-            // Stryker disable next-line BooleanLiteral: optional rejection reason field — required=false is UI configuration
-            .setRequired(false);
-
-        const reasonLabel = new LabelBuilder()
-            // Stryker disable next-line StringLiteral: label is UI configuration
-            .setLabel('Reason for rejection')
-            .setTextInputComponent(reasonInput);
-        modal.addLabelComponents(reasonLabel);
-
-        await interaction.showModal(modal);
     }
 
     private async handleDMApprove(interaction: ButtonInteraction): Promise<void> {
@@ -443,10 +334,7 @@ export class BskyOutboundApprovalHandler {
         // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
         void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch(() => undefined);
 
-        const updatedEmbed = new EmbedBuilder()
-            // Stryker disable next-line StringLiteral: UI label is configuration
-            .setTitle('DM Approved \u2713 \u2014 sending shortly')
-            .setColor(GREEN);
+        const updatedEmbed = this.buildApprovedEmbed('DM Approved \u2713 \u2014 sending shortly');
 
         await interaction.editReply({
             embeds:     [updatedEmbed],

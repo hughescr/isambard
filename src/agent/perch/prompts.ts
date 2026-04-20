@@ -11,6 +11,7 @@
 
 import { getSlotConfig } from './schedule';
 import { type PerchSlot } from './types';
+import { PROMPT_SECTION_SEPARATOR, formatBanner, formatOptionalSection } from '@/agent/prompts/helpers';
 import type { StreamProgress } from '@/agent/stream-tracker';
 import { formatTimeHeader } from '@/utils';
 
@@ -82,7 +83,7 @@ export function buildPerchPrompt(slot: PerchSlot, perchContext?: string): string
 
     // Build the base prompt with optional context
     const baseWithContext = perchContext
-        ? `${perchContext}---\n\n${BASE_PROMPT}`
+        ? `${perchContext}${PROMPT_SECTION_SEPARATOR}${BASE_PROMPT}`
         : BASE_PROMPT;
 
     if(!config) {
@@ -219,7 +220,7 @@ export interface PerchResumedOptions {
  */
 export function buildPerchResumedPrompt(options: PerchResumedOptions): string {
     // Stryker disable next-line ArrayDeclaration,StringLiteral: Array initialization and empty string separators are not behavior-affecting
-    const sections: string[] = [formatTimeHeader(), '', '--- PERCH TIME RESUMED ---', ''];
+    const sections: string[] = [formatTimeHeader(), '', formatBanner('PERCH TIME RESUMED'), ''];
 
     // Format duration
     // Stryker disable next-line ArithmeticOperator: Duration calculation for display only
@@ -261,16 +262,18 @@ export interface PerchTimeoutOptions {
  */
 export function buildPerchTimeoutPrompt(options: PerchTimeoutOptions): string {
     // Stryker disable next-line StringLiteral: Prompt template strings and empty spacing separators are product design, not behavior
-    const sections: string[] = [formatTimeHeader(), '', '--- PERCH SESSION TIMEOUT ---', '', `Your perch time session has been running for ${options.sessionDuration} minutes (max: ${options.maxSessionMinutes} minutes).`, '', 'This perch slot is ending soon. Please wrap up what you\'re doing:', '- Save any important thoughts or findings to memory', '- Complete any in-progress work if quick, otherwise note where you left off', '- Don\'t start new explorations', ''];
+    const sections: string[] = [formatTimeHeader(), '', formatBanner('PERCH SESSION TIMEOUT'), '', `Your perch time session has been running for ${options.sessionDuration} minutes (max: ${options.maxSessionMinutes} minutes).`, '', 'This perch slot is ending soon. Please wrap up what you\'re doing:', '- Save any important thoughts or findings to memory', '- Complete any in-progress work if quick, otherwise note where you left off', '- Don\'t start new explorations', ''];
 
-    if(options.partialWork.thinking) {
+    const thinkingSection = formatOptionalSection('[Your thinking at timeout:]', options.partialWork.thinking);
+    if(thinkingSection !== null) {
         // Stryker disable next-line StringLiteral: Trailing empty string is a formatting separator, not behavior
-        sections.push('[Your thinking at timeout:]', options.partialWork.thinking, '');
+        sections.push(thinkingSection, '');
     }
 
-    if(options.partialWork.text) {
+    const textSection = formatOptionalSection('[You were composing:]', options.partialWork.text);
+    if(textSection !== null) {
         // Stryker disable next-line StringLiteral: Trailing empty string is a formatting separator, not behavior
-        sections.push('[You were composing:]', options.partialWork.text, '');
+        sections.push(textSection, '');
     }
 
     if(options.partialWork.pendingToolUse) {

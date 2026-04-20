@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
+import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 import type { CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
-import { CaldavAuthError, CaldavTimeoutError } from '@/integrations/caldav/errors';
 import type { CalendarEvent } from '@/integrations/caldav/types';
 import type { ServiceHealthRegistry } from '@/services';
 

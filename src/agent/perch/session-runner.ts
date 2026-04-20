@@ -12,10 +12,10 @@
 import type { Logger } from '@hughescr/logger';
 import { buildPerchPrompt, buildTestPerchPrompt, buildPerchResumedPrompt, buildPerchTimeoutPrompt, getSuggestionLevelDescription } from './prompts';
 import { type PerchSlot, type PerchConfig } from './types';
-import type { ActivityLogger } from '@/agent/activity-logger';
 import type { ContextBuilder } from '@/agent/context-builder';
 import type { StreamProgress } from '@/agent/stream-tracker';
 import type { AgentStateManager, InterruptingMessageDetails } from '@/agent/types';
+import type { ActivityLogger } from '@/storage';
 
 /**
  * Options for running an agent session.

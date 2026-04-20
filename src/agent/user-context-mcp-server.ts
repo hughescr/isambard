@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { PersonHistoryCoordinator } from './history-providers';
-import { mcpErrorResult, mcpJsonResult, mcpTextResult } from './mcp-helpers';
+import { mcpJsonResult, mcpTextResult, withToolErrorHandling } from './mcp-helpers';
 
 /**
  * Options for creating the User Context MCP server.
@@ -40,32 +40,28 @@ export function createUserContextMCPServer(options: UserContextMCPServerOptions)
                         // Stryker restore StringLiteral
                     }).optional(),
                 },
-                async (args): Promise<CallToolResult> => {
-                    try {
-                        // Default: 7 days = 7 * 24 * 60 minutes
-                        const sevenDaysInMinutes = 7 * 24 * 60;
+                withToolErrorHandling('getPersonContext', async (args): Promise<CallToolResult> => {
+                    // Default: 7 days = 7 * 24 * 60 minutes
+                    const sevenDaysInMinutes = 7 * 24 * 60;
 
-                        const endTime   = args.timeRange?.endTime   ? new Date(args.timeRange.endTime)   : undefined;
-                        const startTime = args.timeRange?.startTime ? new Date(args.timeRange.startTime) : undefined;
+                    const endTime   = args.timeRange?.endTime   ? new Date(args.timeRange.endTime)   : undefined;
+                    const startTime = args.timeRange?.startTime ? new Date(args.timeRange.startTime) : undefined;
 
-                        const result = await coordinator.getPersonHistory(args.identifier, {
-                            maxMessagesPerPlatform: 20,
-                            maxTotalEntries:        50,
-                            timeWindowMinutes:      sevenDaysInMinutes,
-                            startTime,
-                            endTime,
-                        });
+                    const result = await coordinator.getPersonHistory(args.identifier, {
+                        maxMessagesPerPlatform: 20,
+                        maxTotalEntries:        50,
+                        timeWindowMinutes:      sevenDaysInMinutes,
+                        startTime,
+                        endTime,
+                    });
 
-                        if(!result.person) {
-                            // Stryker disable next-line StringLiteral: result message is informational only
-                            return mcpTextResult(`No contact found matching '${args.identifier}'.`);
-                        }
-
-                        return mcpJsonResult({ person: result.person, history: result.history ?? null });
-                    } catch (error) {
-                        return mcpErrorResult(error);
+                    if(!result.person) {
+                        // Stryker disable next-line StringLiteral: result message is informational only
+                        return mcpTextResult(`No contact found matching '${args.identifier}'.`);
                     }
-                },
+
+                    return mcpJsonResult({ person: result.person, history: result.history ?? null });
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Person Context', readOnlyHint: true, idempotentHint: true } }
             ),

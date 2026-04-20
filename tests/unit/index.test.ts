@@ -83,10 +83,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -154,10 +150,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -347,10 +339,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -544,10 +532,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -703,10 +687,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -864,10 +844,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -1029,10 +1005,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -1139,10 +1111,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -1212,10 +1180,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -1288,10 +1252,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -1359,10 +1319,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 
@@ -1556,10 +1512,6 @@ describe('createApp', () => {
                     },
                 },
                 adminDiscordUserId: '423276934781468692',
-                box:                {
-                    clientId:     'box-client-id',
-                    clientSecret: 'box-secret',
-                },
             });
             spies.push(loadConfigSpy);
 

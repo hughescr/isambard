@@ -3,8 +3,8 @@ import * as ical from 'node-ical';
 import { expandRecurringEvent } from 'node-ical';
 import { createDAVClient, type DAVCalendar, type DAVCalendarObject } from 'tsdav';
 import type { CalendarServerEntry } from './calendar-registry/types';
-import { CaldavAuthError, CaldavTimeoutError } from './errors';
 import type { CalendarInfo, CalendarEvent } from './types';
+import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
 
 const CONSECUTIVE_FAILURE_THRESHOLD = 3;

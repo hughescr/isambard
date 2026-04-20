@@ -1,5 +1,5 @@
-import { AmbiguousCalendarMatchError } from '../errors';
 import { isCalendarServerId, type CalendarServerEntry } from './types';
+import { AmbiguousCalendarMatchError } from '@/errors';
 
 /**
  * Resolves a server identifier (UUID or description name) to a CalendarServerEntry.

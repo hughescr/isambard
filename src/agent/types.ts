@@ -77,6 +77,7 @@ export type OperationalMode = 'idle' | 'catching_up' | 'processing_message' | 'p
 /**
  * Minimal state change notification for agent-level consumers.
  * Discord's StateChange extends this with richer state data.
+ * @internal Only consumed by src/agent/perch/scheduler.ts.
  */
 export interface AgentStateChange {
     /** Type of change that occurred */
@@ -90,6 +91,7 @@ export interface AgentStateChange {
 /**
  * Minimal state manager interface for agent-level consumers.
  * Discord's BotStateManager extends this with richer capabilities.
+ * @internal Only consumed by src/agent/perch/ session-runner and scheduler.
  */
 export interface AgentStateManager {
     /** Get the current operational mode */
@@ -136,6 +138,7 @@ export type AgentStreamEvent
  * - text: Text response content
  * - thinking: Extended thinking content (when enabled)
  * - tool_use: Tool invocation request
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface ContentBlock {
     type:   string
@@ -148,6 +151,7 @@ export interface ContentBlock {
 /**
  * Event emitted when the agent generates assistant content.
  * This can include thinking (no delta) or actual response text (with delta).
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface AssistantEvent {
     type:   'assistant'
@@ -162,6 +166,7 @@ export interface AssistantEvent {
 /**
  * Event emitted when the agent starts or continues using a tool.
  * Includes the tool name and ID for tracking long-running operations.
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface ToolProgressEvent {
     type:                  'tool_progress'
@@ -173,6 +178,7 @@ export interface ToolProgressEvent {
 /**
  * Event emitted when a tool execution completes.
  * Includes the tool name and result.
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface ToolResultEvent {
     type:         'tool_result'
@@ -183,6 +189,7 @@ export interface ToolResultEvent {
 /**
  * Event emitted when the agent stream completes.
  * Includes usage statistics and final status.
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface ResultEvent {
     type:            'result'
@@ -193,6 +200,7 @@ export interface ResultEvent {
 
 /**
  * Event emitted for user messages (echoed back).
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface UserEvent {
     type:     'user'
@@ -205,6 +213,7 @@ export interface UserEvent {
  * The 'compact_boundary' subtype is emitted when context compaction occurs.
  * The 'task_started' subtype is emitted by the SDK when a background Task sub-agent launches,
  * carrying both the task_id and the tool_use_id that links it to the originating Task tool_use block.
+ * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface SystemEvent {
     type:            'system'
@@ -226,6 +235,7 @@ export interface SystemEvent {
  * Attachment metadata for platform-agnostic message handling.
  * Renamed from AttachmentMetadata to disambiguate from Discord's AttachmentMetadata.
  * Structurally equivalent but decouples the agent module from platform-specific types.
+ * @internal Used only within MessageContext; no external file imports this by name.
  */
 export interface PlatformAttachmentMetadata {
     url:         string
@@ -313,6 +323,7 @@ export interface MCPDMTracker {
 /**
  * Platform-agnostic message splitter for the Discord MCP server.
  * Splits long messages into chunks that fit platform limits.
+ * @internal Only consumed by src/agent/discord-mcp-server.ts.
  */
 export interface MCPMessageSplitter {
     /** Split a message string into chunks */
@@ -322,6 +333,7 @@ export interface MCPMessageSplitter {
 /**
  * Platform-agnostic question button builder for the Discord MCP server.
  * Returns platform-specific button components for attaching to messages.
+ * @internal Only consumed by src/agent/discord-mcp-server.ts.
  */
 export interface MCPQuestionButtonBuilder {
     /** Build button components for a question with options */
@@ -332,6 +344,7 @@ export interface MCPQuestionButtonBuilder {
 /**
  * Platform-agnostic retry helper for MCP servers.
  * Wraps Discord API calls with retry logic.
+ * @internal Only consumed by src/agent/discord-mcp-server.ts.
  */
 export interface MCPRetryHelper {
     /** Execute a function with retry on transient failures */
@@ -355,6 +368,7 @@ export interface MCPMessageSearchService {
 /**
  * Platform-agnostic unread message shape for inbox MCP server.
  * Mirrors Discord UnreadMessage without importing from integrations.
+ * @internal Only consumed within src/agent/ (MCPInboxManager interface).
  */
 export interface MCPUnreadMessage {
     id:          string
@@ -369,6 +383,7 @@ export interface MCPUnreadMessage {
 
 /**
  * Platform-agnostic message metadata shape for inbox MCP server.
+ * @internal Only consumed by src/agent/inbox-mcp-server.ts.
  */
 export interface MCPMessageMetadata {
     id:        string
@@ -379,6 +394,7 @@ export interface MCPMessageMetadata {
 
 /**
  * Platform-agnostic unread overview shape for inbox MCP server.
+ * @internal Only consumed within src/agent/ (MCPInboxManager interface).
  */
 export interface MCPUnreadOverview {
     totalUnread: number
@@ -387,6 +403,7 @@ export interface MCPUnreadOverview {
 
 /**
  * Platform-agnostic channel summary response shape for inbox MCP server.
+ * @internal Only consumed by src/agent/inbox-mcp-server.ts.
  */
 export interface MCPChannelSummaryResponse {
     channelId:    ChannelId
@@ -401,6 +418,7 @@ export interface MCPChannelSummaryResponse {
 /**
  * Platform-agnostic inbox manager interface for the inbox MCP server.
  * Abstracts InboxManager.
+ * @internal Only consumed by src/agent/inbox-mcp-server.ts.
  */
 export interface MCPInboxManager {
     /** Get a high-level overview of unread messages across all channels */
@@ -418,6 +436,7 @@ export interface MCPInboxManager {
 /**
  * Platform-agnostic state manager interface for the inbox MCP server.
  * Extends AgentStateManager with channel viewed tracking.
+ * @internal Only consumed by src/agent/inbox-mcp-server.ts.
  */
 export interface MCPInboxStateManager {
     /** Mark a channel as viewed during catch-up */

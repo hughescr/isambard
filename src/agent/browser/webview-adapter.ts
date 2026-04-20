@@ -96,8 +96,13 @@ export function createWebViewAdapter(
     webViewFactory?: WebViewFactory,
     delayFn?: (ms: number) => Promise<void>
 ): BrowserAdapter {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- Bun.WebView is not in the TS stdlib types
-    const bunWebView = (opts: WebViewOptions): RawWebView => new (Bun as any).WebView(opts) as RawWebView;
+    // @types/bun (via bun-types) types Bun.WebView; no `any` cast needed.
+    // Cast opts to ConstructorOptions: local WebViewOptions.backend is string|{type,path}
+    // (wider than Bun.WebView.Backend), but only valid Backend values are ever passed.
+    // Cast result to unknown first: Bun.WebView extends EventTarget which RawWebView does not,
+    // so TS cannot verify the structural overlap via a direct single cast.
+    const bunWebView = (opts: WebViewOptions): RawWebView =>
+        new Bun.WebView(opts as Bun.WebView.ConstructorOptions) as unknown as RawWebView;
     const factory: WebViewFactory = webViewFactory ?? bunWebView;
     // Stryker disable next-line ArrowFunction,BlockStatement: production delay uses real setTimeout; ArrowFunction mutation replaces with () => Promise.resolve() which makes timeouts fire immediately — caught by timeout recovery tests; BlockStatement removes the setTimeout call making the promise never resolve — only reachable in production (tests always inject delayFn), so NoCoverage
     const delay: (ms: number) => Promise<void> = delayFn ?? (ms => new Promise<void>((resolve) => {

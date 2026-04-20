@@ -2,10 +2,9 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { mcpErrorResult, mcpJsonResult, mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-helpers';
+import { mcpErrorResult, mcpJsonResult, mcpTextResult, withHealthGuard, withWriteHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import type { BskyCheckpointManager, BlueskyClient, BskyConversation, BskyFeedItem, BskyRejectionBackend, BskyDirectMessage } from '@/integrations/bsky';
-import type { SendRateLimiter } from '@/integrations/email';
-import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 /** Shared pagination schema fields for feed tools that support checkpointing. */
 const FEED_PAGINATION_SCHEMA = {
@@ -57,7 +56,7 @@ function buildCheckpointedResponse(newItems: BskyFeedItem[], cursor: string | un
 export interface BskyMCPServerOptions {
     client:               BlueskyClient
     checkpointManager?:   BskyCheckpointManager
-    rateLimiter?:         SendRateLimiter
+    rateLimiter?:         TokenBucketRateLimiter
     allowlist?:           PersonAllowlist
     rejectionBackend?:    BskyRejectionBackend
     sendApprovalRequest?: (text: string, targetHandle: string, parentUri: string, parentCid: string,
@@ -142,22 +141,19 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     ...FEED_PAGINATION_SCHEMA,
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const feedName = args.feedName ?? 'for-you';
-                            const result   = await client.getFeed(feedName, args.limit, args.cursor);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('getFeed', async (args): Promise<CallToolResult> => {
+                        const feedName = args.feedName ?? 'for-you';
+                        const result   = await client.getFeed(feedName, args.limit, args.cursor);
 
-                            if(!checkpointManager || args.includeProcessed) {
-                                return mcpJsonResult(result);
-                            }
-
-                            const { newItems, totalFetched } = await checkpointManager.processFeedItems(feedName, result.items);
-
-                            return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                        if(!checkpointManager || args.includeProcessed) {
+                            return mcpJsonResult(result);
                         }
-                    }),
+
+                        const { newItems, totalFetched } = await checkpointManager.processFeedItems(feedName, result.items);
+
+                        return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Feed', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -174,38 +170,35 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     includeProcessed: z.boolean().optional().default(false).describe('Include already-processed notifications (default: false)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.getNotifications(args.limit, args.cursor);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('getNotifications', async (args): Promise<CallToolResult> => {
+                        const result = await client.getNotifications(args.limit, args.cursor);
 
-                            if(!checkpointManager || args.includeProcessed) {
-                                return mcpJsonResult(result);
-                            }
-
-                            const { newNotifications, totalFetched, lastSeenAt, hadExistingCheckpoint } = await checkpointManager.processNotifications(result.notifications);
-
-                            // Mark as seen when there are new notifications OR this is the first poll (no prior checkpoint).
-                            // On first poll, we always want to mark the current position as seen so subsequent polls
-                            // only surface truly new activity.
-                            // Stryker disable next-line ConditionalExpression: compound guard — mutations collapse to a single branch that causes either spurious or missed updateNotificationsSeen calls
-                            if(newNotifications.length > 0 || !hadExistingCheckpoint) {
-                            // Use max of lastSeenAt (if defined) and current time to guard against clock drift.
-                            // When lastSeenAt is undefined (empty first poll), fall back to current time directly.
-                                const latestMs = lastSeenAt === undefined ? 0 : new Date(lastSeenAt).getTime();
-                                const seenAt   = new Date(Math.max(latestMs, Date.now())).toISOString();
-                                await client.updateNotificationsSeen(seenAt);
-                            }
-
-                            return mcpJsonResult({
-                                notifications: newNotifications,
-                                cursor:        result.cursor,
-                                newCount:      newNotifications.length,
-                                totalFetched,
-                            });
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                        if(!checkpointManager || args.includeProcessed) {
+                            return mcpJsonResult(result);
                         }
-                    }),
+
+                        const { newNotifications, totalFetched, lastSeenAt, hadExistingCheckpoint } = await checkpointManager.processNotifications(result.notifications);
+
+                        // Mark as seen when there are new notifications OR this is the first poll (no prior checkpoint).
+                        // On first poll, we always want to mark the current position as seen so subsequent polls
+                        // only surface truly new activity.
+                        // Stryker disable next-line ConditionalExpression: compound guard — mutations collapse to a single branch that causes either spurious or missed updateNotificationsSeen calls
+                        if(newNotifications.length > 0 || !hadExistingCheckpoint) {
+                        // Use max of lastSeenAt (if defined) and current time to guard against clock drift.
+                        // When lastSeenAt is undefined (empty first poll), fall back to current time directly.
+                            const latestMs = lastSeenAt === undefined ? 0 : new Date(lastSeenAt).getTime();
+                            const seenAt   = new Date(Math.max(latestMs, Date.now())).toISOString();
+                            await client.updateNotificationsSeen(seenAt);
+                        }
+
+                        return mcpJsonResult({
+                            notifications: newNotifications,
+                            cursor:        result.cursor,
+                            newCount:      newNotifications.length,
+                            totalFetched,
+                        });
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Notifications', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -222,14 +215,11 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     cursor: z.string().optional().describe('Pagination cursor from previous response'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.searchPosts(args.query, args.limit, args.cursor);
-                            return mcpJsonResult(result);
-                        } catch (error) {
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('searchPosts', async (args): Promise<CallToolResult> => {
+                        const result = await client.searchPosts(args.query, args.limit, args.cursor);
+                        return mcpJsonResult(result);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Search Posts', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -242,14 +232,11 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     uri: z.string().describe('AT URI of the post (e.g., at://did:plc:abc123/app.bsky.feed.post/xyz)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.getPost(args.uri);
-                            return mcpJsonResult(result);
-                        } catch (error) {
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('getPost', async (args): Promise<CallToolResult> => {
+                        const result = await client.getPost(args.uri);
+                        return mcpJsonResult(result);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Post', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -262,14 +249,11 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.getProfile(args.actor);
-                            return mcpJsonResult(result);
-                        } catch (error) {
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('getProfile', async (args): Promise<CallToolResult> => {
+                        const result = await client.getProfile(args.actor);
+                        return mcpJsonResult(result);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Profile', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -283,25 +267,22 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     ...FEED_PAGINATION_SCHEMA,
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.getAuthorFeed(args.actor, args.limit, args.cursor);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('getAuthorFeed', async (args): Promise<CallToolResult> => {
+                        const result = await client.getAuthorFeed(args.actor, args.limit, args.cursor);
 
-                            if(!checkpointManager || args.includeProcessed) {
-                                return mcpJsonResult(result);
-                            }
-
-                            // Resolve actor to canonical DID for consistent checkpoint keying
-                            const profile  = await client.getProfile(args.actor);
-                            const actorDid = profile.did;
-
-                            const { newItems, totalFetched } = await checkpointManager.processFeedItems(actorDid, result.items);
-
-                            return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                        if(!checkpointManager || args.includeProcessed) {
+                            return mcpJsonResult(result);
                         }
-                    }),
+
+                        // Resolve actor to canonical DID for consistent checkpoint keying
+                        const profile  = await client.getProfile(args.actor);
+                        const actorDid = profile.did;
+
+                        const { newItems, totalFetched } = await checkpointManager.processFeedItems(actorDid, result.items);
+
+                        return mcpJsonResult(buildCheckpointedResponse(newItems, result.cursor, totalFetched));
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Author Feed', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -316,18 +297,15 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     cid: z.string().describe('CID of the post to like'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const post = await client.getPost(args.uri);
-                            if(post.viewer?.like) {
-                                return mcpTextResult('Post already liked');
-                            }
-                            await client.likePost(args.uri, args.cid);
-                            return mcpTextResult('Post liked successfully');
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('likePost', async (args): Promise<CallToolResult> => {
+                        const post = await client.getPost(args.uri);
+                        if(post.viewer?.like) {
+                            return mcpTextResult('Post already liked');
                         }
-                    }),
+                        await client.likePost(args.uri, args.cid);
+                        return mcpTextResult('Post liked successfully');
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Like Post', readOnlyHint: false, destructiveHint: false, idempotentHint: true } }
             ),
@@ -340,19 +318,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.follow(args.actor);
-                            if(result.alreadyFollowing) {
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                                return mcpTextResult(`Already following ${args.actor}`);
-                            }
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                            return mcpTextResult(`Followed ${args.actor} successfully`);
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('follow', async (args): Promise<CallToolResult> => {
+                        const result = await client.follow(args.actor);
+                        if(result.alreadyFollowing) {
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`Already following ${args.actor}`);
                         }
-                    }),
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                        return mcpTextResult(`Followed ${args.actor} successfully`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Follow', readOnlyHint: false, destructiveHint: false, idempotentHint: true } }
             ),
@@ -365,19 +340,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     actor: z.string().describe("Handle (e.g., 'alice.bsky.social') or DID"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result = await client.unfollow(args.actor);
-                            if(!result.wasFollowing) {
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                                return mcpTextResult(`Not following ${args.actor}`);
-                            }
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                            return mcpTextResult(`Unfollowed ${args.actor} successfully`);
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('unfollow', async (args): Promise<CallToolResult> => {
+                        const result = await client.unfollow(args.actor);
+                        if(!result.wasFollowing) {
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`Not following ${args.actor}`);
                         }
-                    }),
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                        return mcpTextResult(`Unfollowed ${args.actor} successfully`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Unfollow', readOnlyHint: false, destructiveHint: true, idempotentHint: true } }
             ),
@@ -390,17 +362,14 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     text: z.string().describe('The text content of the post'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result           = await client.sendPost(args.text);
-                            const rateLimitWarning = buildRateLimitWarning();
-                            rateLimiter?.increment();
-                            // Stryker disable next-line StringLiteral: success message is informational only
-                            return mcpTextResult(`Post sent successfully: ${result.uri}${rateLimitWarning}`);
-                        } catch (error) {
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('sendPost', async (args): Promise<CallToolResult> => {
+                        const result           = await client.sendPost(args.text);
+                        const rateLimitWarning = buildRateLimitWarning();
+                        rateLimiter?.increment();
+                        // Stryker disable next-line StringLiteral: success message is informational only
+                        return mcpTextResult(`Post sent successfully: ${result.uri}${rateLimitWarning}`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Send Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
@@ -421,57 +390,54 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     rootCid:   z.string().optional().describe('CID of the thread root post (auto-resolved from parent for nested replies; only needed to override)'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('replyToPost', async (args): Promise<CallToolResult> => {
                         // Fetch parent post to determine the target author and resolve thread root
-                            const parentPost   = await client.getPost(args.parentUri);
-                            const targetHandle = parentPost.author.handle;
+                        const parentPost   = await client.getPost(args.parentUri);
+                        const targetHandle = parentPost.author.handle;
 
-                            // Auto-resolve root: both explicit args must be present to override auto-resolved root.
-                            // Treating them as an atomic pair prevents mixing a URI from args with a CID from replyRef.
-                            const hasExplicitRoot  = args.rootUri !== undefined && args.rootCid !== undefined;
-                            const resolvedRootUri  = hasExplicitRoot ? args.rootUri : parentPost.replyRef?.root.uri;
-                            const resolvedRootCid  = hasExplicitRoot ? args.rootCid : parentPost.replyRef?.root.cid;
+                        // Auto-resolve root: both explicit args must be present to override auto-resolved root.
+                        // Treating them as an atomic pair prevents mixing a URI from args with a CID from replyRef.
+                        const hasExplicitRoot  = args.rootUri !== undefined && args.rootCid !== undefined;
+                        const resolvedRootUri  = hasExplicitRoot ? args.rootUri : parentPost.replyRef?.root.uri;
+                        const resolvedRootCid  = hasExplicitRoot ? args.rootCid : parentPost.replyRef?.root.cid;
 
-                            // Check if replying to own post (always allowed — threading own posts)
-                            const isSelfReply = targetHandle === client.ownHandle;
+                        // Check if replying to own post (always allowed — threading own posts)
+                        const isSelfReply = targetHandle === client.ownHandle;
 
-                            // Check if target is allowlisted (by handle or DID).
-                            // Self-replies and missing allowlist are always allowed.
-                            // Stryker disable next-line ConditionalExpression: allowlist guard — self-reply, no-allowlist, and handle check all needed
-                            const isAllowed = isSelfReply || !allowlist || allowlist.isAllowed('bsky', targetHandle);
+                        // Check if target is allowlisted (by handle or DID).
+                        // Self-replies and missing allowlist are always allowed.
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-reply, no-allowlist, and handle check all needed
+                        const isAllowed = isSelfReply || !allowlist || allowlist.isAllowed('bsky', targetHandle);
 
-                            if(isAllowed) {
-                            // Allowlisted — send immediately
-                                const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
-                                const rateLimitWarning = buildRateLimitWarning();
-                                rateLimiter?.increment();
-                                // Stryker disable next-line StringLiteral: success message is informational only
-                                return mcpTextResult(`Reply sent successfully: ${result.uri}${rateLimitWarning}`);
-                            }
-
-                            // Not allowlisted — request admin approval
-                            await client.validatePostText(args.text);
-                            if(sendApprovalRequest) {
-                                try {
-                                    await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
-                                    // Stryker disable next-line StringLiteral: success message is informational only
-                                    return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
-                                } catch (error) {
-                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                    logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky approval request' });
-                                    // Stryker disable next-line StringLiteral: error message is informational only
-                                    return mcpErrorResult(new Error(`Reply to ${targetHandle} requires approval but failed to send approval request to admin. Please try again later.`));
-                                }
-                            }
-
-                            // No approval callback — just inform
-                            // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
-                            return mcpTextResult(`Reply to ${targetHandle} requires approval but no approval handler is configured.`);
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                        if(isAllowed) {
+                        // Allowlisted — send immediately
+                            const result           = await client.replyToPost(args.text, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
+                            const rateLimitWarning = buildRateLimitWarning();
+                            rateLimiter?.increment();
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`Reply sent successfully: ${result.uri}${rateLimitWarning}`);
                         }
-                    }),
+
+                        // Not allowlisted — request admin approval
+                        await client.validatePostText(args.text);
+                        if(sendApprovalRequest) {
+                            try {
+                                await sendApprovalRequest(args.text, targetHandle, args.parentUri, args.parentCid, resolvedRootUri, resolvedRootCid);
+                                // Stryker disable next-line StringLiteral: success message is informational only
+                                return mcpTextResult(`Reply to ${targetHandle} requires approval. Approval request sent to admin.`);
+                            } catch (error) {
+                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                                logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky approval request' });
+                                // Stryker disable next-line StringLiteral: error message is informational only
+                                return mcpErrorResult(new Error(`Reply to ${targetHandle} requires approval but failed to send approval request to admin. Please try again later.`));
+                            }
+                        }
+
+                        // No approval callback — just inform
+                        // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
+                        return mcpTextResult(`Reply to ${targetHandle} requires approval but no approval handler is configured.`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Reply To Post', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
@@ -490,15 +456,12 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     status:    z.string().optional().describe("Filter by status: 'request' or 'accepted'"),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
-                            const result          = await client.listConversations(args.limit, args.cursor, args.readState, args.status);
-                            const conversations   = result.conversations.map(convo => transformConversation(convo));
-                            return mcpJsonResult({ conversations, cursor: result.cursor });
-                        } catch (error) {
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('listConversations', async (args): Promise<CallToolResult> => {
+                        const result          = await client.listConversations(args.limit, args.cursor, args.readState, args.status);
+                        const conversations   = result.conversations.map(convo => transformConversation(convo));
+                        return mcpJsonResult({ conversations, cursor: result.cursor });
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'List Conversations', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -515,53 +478,50 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     cursor:     z.string().optional().describe('Pagination cursor from previous response'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('getDirectMessages', async (args): Promise<CallToolResult> => {
                         // Resolve each handle → DID
-                            const resolvedRecipients = await Promise.all(
-                                args.recipients.map(async (handle: string) => {
-                                    const profile = await client.getProfile(handle);
-                                    return { did: profile.did, handle: profile.handle };
-                                })
-                            );
-                            const dids  = resolvedRecipients.map(r => r.did);
-                            const convo = await client.getConversationForMembers(dids);
+                        const resolvedRecipients = await Promise.all(
+                            args.recipients.map(async (handle: string) => {
+                                const profile = await client.getProfile(handle);
+                                return { did: profile.did, handle: profile.handle };
+                            })
+                        );
+                        const dids  = resolvedRecipients.map(r => r.did);
+                        const convo = await client.getConversationForMembers(dids);
 
-                            const result = await client.getMessages(convo.id, args.limit, args.cursor);
+                        const result = await client.getMessages(convo.id, args.limit, args.cursor);
 
-                            // Auto-mark conversation as read (best-effort — don't fail the fetch on mark-read error)
-                            // Stryker disable BlockStatement: try-catch guards mark-read from breaking message fetch
-                            try {
-                                await client.markConversationRead(convo.id);
-                            } catch (markError) {
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                logger.warn({ error: markError instanceof Error ? markError.message : String(markError), msg: 'Failed to mark conversation as read' });
-                            }
-                            // Stryker restore BlockStatement
-
-                            // Build DID→handle map from conversation members
-                            const didToHandle = new Map(convo.members.map(m => [m.did, m.handle]));
-
-                            // Transform messages: replace senderDid with senderHandle
-                            const messages = result.messages.map((msg) => {
-                                const { senderDid, ...rest } = msg;
-                                return { ...rest, senderHandle: didToHandle.get(senderDid) ?? senderDid };
-                            });
-
-                            const baseResult = mcpJsonResult({ messages, cursor: result.cursor });
-
-                            // Collect video embed playlists from all messages and append hint
-                            const playlists = result.messages.flatMap(msg => collectVideoPlaylistsFromDM(msg));
-                            const hint      = buildVideoEmbedHint(playlists);
-                            if(hint) {
-                                return { ...baseResult, content: [...baseResult.content, { type: 'text' as const, text: hint }] };
-                            }
-
-                            return baseResult;
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                        // Auto-mark conversation as read (best-effort — don't fail the fetch on mark-read error)
+                        // Stryker disable BlockStatement: try-catch guards mark-read from breaking message fetch
+                        try {
+                            await client.markConversationRead(convo.id);
+                        } catch (markError) {
+                        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                            logger.warn({ error: markError instanceof Error ? markError.message : String(markError), msg: 'Failed to mark conversation as read' });
                         }
-                    }),
+                        // Stryker restore BlockStatement
+
+                        // Build DID→handle map from conversation members
+                        const didToHandle = new Map(convo.members.map(m => [m.did, m.handle]));
+
+                        // Transform messages: replace senderDid with senderHandle
+                        const messages = result.messages.map((msg) => {
+                            const { senderDid, ...rest } = msg;
+                            return { ...rest, senderHandle: didToHandle.get(senderDid) ?? senderDid };
+                        });
+
+                        const baseResult = mcpJsonResult({ messages, cursor: result.cursor });
+
+                        // Collect video embed playlists from all messages and append hint
+                        const playlists = result.messages.flatMap(msg => collectVideoPlaylistsFromDM(msg));
+                        const hint      = buildVideoEmbedHint(playlists);
+                        if(hint) {
+                            return { ...baseResult, content: [...baseResult.content, { type: 'text' as const, text: hint }] };
+                        }
+
+                        return baseResult;
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Direct Messages', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -576,61 +536,58 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     text:       z.string().describe('The text content of the message'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'bluesky', 'discord', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('sendDirectMessage', async (args): Promise<CallToolResult> => {
                         // Resolve each handle → profile
-                            const resolvedRecipients = await Promise.all(
-                                args.recipients.map(async (handle: string) => {
-                                    const profile = await client.getProfile(handle);
-                                    return { did: profile.did, handle: profile.handle };
-                                })
-                            );
+                        const resolvedRecipients = await Promise.all(
+                            args.recipients.map(async (handle: string) => {
+                                const profile = await client.getProfile(handle);
+                                return { did: profile.did, handle: profile.handle };
+                            })
+                        );
 
-                            // Check if this is a self-DM (single recipient = own handle)
-                            // Stryker disable next-line OptionalChaining: defensive chaining — array guaranteed non-empty by .min(1) schema validation
-                            const isSelfDM = resolvedRecipients.length === 1 && resolvedRecipients[0]?.handle === client.ownHandle;
+                        // Check if this is a self-DM (single recipient = own handle)
+                        // Stryker disable next-line OptionalChaining: defensive chaining — array guaranteed non-empty by .min(1) schema validation
+                        const isSelfDM = resolvedRecipients.length === 1 && resolvedRecipients[0]?.handle === client.ownHandle;
 
-                            // Check if all recipients are allowlisted (by handle or DID)
-                            // Stryker disable next-line ConditionalExpression: allowlist guard — self-DM, no-allowlist, and handle check all needed
-                            const allAllowed = isSelfDM || !allowlist || resolvedRecipients.every(
-                                r => allowlist.isAllowed('bsky', r.handle)
-                            );
+                        // Check if all recipients are allowlisted (by handle or DID)
+                        // Stryker disable next-line ConditionalExpression: allowlist guard — self-DM, no-allowlist, and handle check all needed
+                        const allAllowed = isSelfDM || !allowlist || resolvedRecipients.every(
+                            r => allowlist.isAllowed('bsky', r.handle)
+                        );
 
-                            const dids  = resolvedRecipients.map(r => r.did);
-                            const convo = await client.getConversationForMembers(dids);
+                        const dids  = resolvedRecipients.map(r => r.did);
+                        const convo = await client.getConversationForMembers(dids);
 
-                            if(allAllowed) {
-                            // Allowlisted — send immediately
-                                await client.sendDirectMessage(convo.id, args.text);
-                                const rateLimitWarning = buildRateLimitWarning();
-                                rateLimiter?.increment();
-                                // Stryker disable next-line StringLiteral: success message is informational only
-                                return mcpTextResult(`DM sent successfully${rateLimitWarning}`);
-                            }
-
-                            // Not allowlisted — request admin approval
-                            await client.validateDMText(args.text);
-                            if(sendDMApprovalRequest) {
-                                try {
-                                    const allHandles = resolvedRecipients.map(r => r.handle);
-                                    await sendDMApprovalRequest(args.text, allHandles, convo.id);
-                                    // Stryker disable next-line StringLiteral: success message is informational only
-                                    return mcpTextResult('DM requires approval. Approval request sent to admin.');
-                                } catch (error) {
-                                // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                                    logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky DM approval request' });
-                                    // Stryker disable next-line StringLiteral: error message is informational only
-                                    return mcpErrorResult(new Error('DM requires approval but failed to send approval request to admin. Please try again later.'));
-                                }
-                            }
-
-                            // No approval callback — just inform
-                            // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
-                            return mcpTextResult('DM requires approval but no approval handler is configured.');
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                        if(allAllowed) {
+                        // Allowlisted — send immediately
+                            await client.sendDirectMessage(convo.id, args.text);
+                            const rateLimitWarning = buildRateLimitWarning();
+                            rateLimiter?.increment();
+                            // Stryker disable next-line StringLiteral: success message is informational only
+                            return mcpTextResult(`DM sent successfully${rateLimitWarning}`);
                         }
-                    }),
+
+                        // Not allowlisted — request admin approval
+                        await client.validateDMText(args.text);
+                        if(sendDMApprovalRequest) {
+                            try {
+                                const allHandles = resolvedRecipients.map(r => r.handle);
+                                await sendDMApprovalRequest(args.text, allHandles, convo.id);
+                                // Stryker disable next-line StringLiteral: success message is informational only
+                                return mcpTextResult('DM requires approval. Approval request sent to admin.');
+                            } catch (error) {
+                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                                logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send bsky DM approval request' });
+                                // Stryker disable next-line StringLiteral: error message is informational only
+                                return mcpErrorResult(new Error('DM requires approval but failed to send approval request to admin. Please try again later.'));
+                            }
+                        }
+
+                        // No approval callback — just inform
+                        // Stryker disable next-line StringLiteral: informational message is not behavior-affecting
+                        return mcpTextResult('DM requires approval but no approval handler is configured.');
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Send Direct Message', readOnlyHint: false, destructiveHint: false, idempotentHint: false } }
             ),
@@ -641,22 +598,19 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'List Bluesky posts and DMs that were rejected by admin. Shows rejection reason and all parameters needed to retry with revised content.',
                 {},
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (): Promise<CallToolResult> => {
-                        try {
-                            if(!options.rejectionBackend) {
-                            // Stryker disable next-line StringLiteral: error message is informational only
-                                return mcpErrorResult('Rejection tracking is not configured');
-                            }
-                            const items = await options.rejectionBackend.listRejections();
-                            if(items.length === 0) {
-                            // Stryker disable next-line StringLiteral: result message is informational only
-                                return mcpTextResult('No rejected posts or DMs pending review.');
-                            }
-                            return mcpJsonResult(items);
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('listRejectedPosts', async (): Promise<CallToolResult> => {
+                        if(!options.rejectionBackend) {
+                        // Stryker disable next-line StringLiteral: error message is informational only
+                            return mcpErrorResult('Rejection tracking is not configured');
                         }
-                    }),
+                        const items = await options.rejectionBackend.listRejections();
+                        if(items.length === 0) {
+                        // Stryker disable next-line StringLiteral: result message is informational only
+                            return mcpTextResult('No rejected posts or DMs pending review.');
+                        }
+                        return mcpJsonResult(items);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'List Rejected Posts', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -670,19 +624,16 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                     uuid: z.uuid().describe('UUID of the rejection to clear (from listRejectedPosts)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (input): Promise<CallToolResult> => {
-                        try {
-                            if(!options.rejectionBackend) {
-                            // Stryker disable next-line StringLiteral: error message is informational only
-                                return mcpErrorResult('Rejection tracking is not configured');
-                            }
-                            await options.rejectionBackend.deleteRejection(input.uuid);
-                            // Stryker disable next-line StringLiteral: result message is informational only
-                            return mcpTextResult(`Cleared rejection ${input.uuid}`);
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('clearRejection', async (input): Promise<CallToolResult> => {
+                        if(!options.rejectionBackend) {
+                        // Stryker disable next-line StringLiteral: error message is informational only
+                            return mcpErrorResult('Rejection tracking is not configured');
                         }
-                    }),
+                        await options.rejectionBackend.deleteRejection(input.uuid);
+                        // Stryker disable next-line StringLiteral: result message is informational only
+                        return mcpTextResult(`Cleared rejection ${input.uuid}`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Clear Rejection', readOnlyHint: false, destructiveHint: true, idempotentHint: true } }
             ),
@@ -693,24 +644,21 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 'Clear all rejected posts/DMs after reviewing them.',
                 {},
                 withHealthGuard(options.healthRegistry, 'bluesky', options.reconnectionLoop,
-                    async (): Promise<CallToolResult> => {
-                        try {
-                            if(!options.rejectionBackend) {
-                            // Stryker disable next-line StringLiteral: error message is informational only
-                                return mcpErrorResult('Rejection tracking is not configured');
-                            }
-                            const count = await options.rejectionBackend.clearAll();
-                            // Stryker disable next-line ConditionalExpression: zero-count guard — informational message branch
-                            if(count === 0) {
-                            // Stryker disable next-line StringLiteral: result message is informational only
-                                return mcpTextResult('No rejections to clear.');
-                            }
-                            // Stryker disable next-line StringLiteral,ConditionalExpression: plural suffix and count guard are informational only
-                            return mcpTextResult(`Cleared ${count} rejection${count === 1 ? '' : 's'}.`);
-                        } catch (error) {
-                            return mcpErrorResult(error);
+                    // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                    withToolErrorHandling('clearAllRejections', async (): Promise<CallToolResult> => {
+                        if(!options.rejectionBackend) {
+                        // Stryker disable next-line StringLiteral: error message is informational only
+                            return mcpErrorResult('Rejection tracking is not configured');
                         }
-                    }),
+                        const count = await options.rejectionBackend.clearAll();
+                        // Stryker disable next-line ConditionalExpression: zero-count guard — informational message branch
+                        if(count === 0) {
+                        // Stryker disable next-line StringLiteral: result message is informational only
+                            return mcpTextResult('No rejections to clear.');
+                        }
+                        // Stryker disable next-line StringLiteral,ConditionalExpression: plural suffix and count guard are informational only
+                        return mcpTextResult(`Cleared ${count} rejection${count === 1 ? '' : 's'}.`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Clear All Rejections', readOnlyHint: false, destructiveHint: true, idempotentHint: false } }
             ),

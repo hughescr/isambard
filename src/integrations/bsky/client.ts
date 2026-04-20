@@ -1,7 +1,7 @@
 import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost, AppBskyEmbedRecord, AppBskyEmbedImages, AppBskyEmbedVideo, AppBskyEmbedExternal, AppBskyEmbedRecordWithMedia, type AppBskyRichtextFacet, ChatBskyConvoDefs, type ChatBskyActorDefs } from '@atproto/api';
 import { logger } from '@hughescr/logger';
+import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/errors';
 import { type BskyEmbeddedRecord, type BskyPostEmbed, type BskyFacet, type BskyFacetFeature } from '@/integrations/bsky/embeds';
-import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/integrations/bsky/errors';
 import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
 import type { ServiceHealthRegistry } from '@/services';
 

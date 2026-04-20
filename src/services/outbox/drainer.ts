@@ -1,19 +1,13 @@
 import type { ServiceHealthRegistry } from '../health-registry';
-import type { ServiceName } from '../types';
+import type { ServiceLogger, ServiceName } from '../types';
 import type { OutboxBackend } from './backend';
 import type { OutboxItem } from './types';
-
-export interface OutboxDrainerLogger {
-    warn:  (obj: object, msg: string) => void
-    error: (obj: object, msg: string) => void
-    info:  (obj: object, msg: string) => void
-}
 
 export interface OutboxDrainerDeps {
     outboxBackend:    OutboxBackend
     registry:         ServiceHealthRegistry
     deliverFn:        (item: OutboxItem) => Promise<void>
-    logger:           OutboxDrainerLogger
+    logger:           ServiceLogger
     batchSize?:       number
     drainIntervalMs?: number
 }

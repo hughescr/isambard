@@ -29,11 +29,27 @@ export type { OperationalMode } from '@/agent/types';
  * The bot's operational mode determines its primary behavior and context.
  * Re-exported from agent/types for backwards-compatibility.
  *
- * State transitions:
- * - idle: Normal operation, no active conversation
- * - catching_up: Processing backlog of unread messages
- * - processing_message: Actively responding to a user message
- * - perching: Observing without active engagement
+ * State transitions (idle-hub pattern — all modes must pass through idle):
+ * - idle: Normal operation, no active conversation. Entry: `goIdle()`. Allows
+ *   transition to any other mode.
+ * - catching_up: Processing backlog of unread messages. Entered via
+ *   `startCatchUp()`, exited to idle via `goIdle()`. Session can be suspended
+ *   to process an interrupting message and resumed afterwards.
+ * - processing_message: Actively responding to a single user message. Entered
+ *   via `startProcessingMessage()`, exited to idle via `goIdle()`.
+ * - perching: Autonomous scheduled activity (perch session). Entered via
+ *   `startPerching()` from `PerchSessionRunner.startPerch()` and
+ *   `resumeAfterSuspension()` in `src/agent/perch/session-runner.ts`. Exited
+ *   to idle via `goIdle()` on normal completion, timeout wrap-up, error, or
+ *   suspension. Downstream effects when mode is `'perching'`:
+ *   - `agent-context-builder.ts` injects `PERCHING_PREAMBLE` system prompt and
+ *     enables memory + discord MCP servers (inbox disabled).
+ *   - `agent.ts` passes `specialMode: 'perching'` to `handleInput`, which
+ *     selects the perch prompt instead of a normal user message.
+ *   - `response-sender.ts` / `response-router.ts` route agent output to the
+ *     `'perch-time'` well-known Discord channel.
+ *   - `handlers.ts` interrupts the perch session when a user message arrives.
+ *   - `presence/status-generator-active.ts` prefixes status with 🦉.
  *
  * @example
  * ```typescript
@@ -221,23 +237,32 @@ const processingMessageModeContextSchema = z.object({
 // Stryker restore ObjectLiteral
 
 /**
- * Context for perching mode.
- * Contains state for passive observation mode.
+ * Context for perching mode — the bot's autonomous scheduled activity state.
+ *
+ * Perching mode is entered by `PerchSessionRunner.startPerch()` and
+ * `resumeAfterSuspension()` (`src/agent/perch/session-runner.ts`) via
+ * `BotStateManager.startPerching(activityType)`.
+ *
+ * The `activityType` string is set to `"Perch time: <slot>"` (e.g.
+ * `"Perch time: morning"`) and is used by presence status generators.
+ * The `sessionId` is populated via `BotStateManager.setSessionId()` once
+ * the Claude agent session starts, and is used to resume a suspended perch
+ * in the same conversation thread.
  *
  * @internal Used by BotStateManager for mode context tracking.
  *
  * @example
  * ```typescript
  * const context: PerchingModeContext = {
- *   activityType: 'Observing',
+ *   activityType: 'Perch time: morning',
  *   sessionId: null
  * };
  * ```
  */
 export interface PerchingModeContext {
-    /** Type of perching activity (e.g., "Observing", "Listening") */
+    /** Type of perching activity, e.g. "Perch time: morning" */
     activityType: string
-    /** Claude agent session ID if applicable */
+    /** Claude agent session ID for resuming a suspended perch; null until session starts */
     sessionId:    string | null
 }
 

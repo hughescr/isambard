@@ -19,7 +19,7 @@ import type { ChannelRegistryManager } from '@/integrations/discord/channel-regi
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import type { BotStateManager } from '@/integrations/discord/state/types';
-import type { SendRateLimiter } from '@/integrations/email/send-rate-limiter';
+import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '@/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
@@ -319,7 +319,7 @@ describe('createMCPServers', () => {
 
         const mockBskyClient       = {} as unknown as BlueskyClient;
         const mockPersonAllowlist    = {} as unknown as PersonAllowlist;
-        const mockBskyRateLimiter  = {} as unknown as SendRateLimiter;
+        const mockBskyRateLimiter  = {} as unknown as TokenBucketRateLimiter;
         const mockSendApproval     = mock(async () => { /* no-op */ });
 
         mcpServersModule.createMCPServers({

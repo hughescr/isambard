@@ -1,17 +1,17 @@
 import { logger } from '@hughescr/logger';
 import { approvalSagaSchema, type ApprovalSaga, type ApprovalSagaState } from './types';
-import { BaseRepository } from '@/storage';
+import { BaseRepository, createPrefixedKey } from '@/storage';
 
 // Stryker disable StringLiteral: PK/SK key constants are configuration values
 const SAGA_PK        = 'APPROVAL#SAGA';
-const SAGA_SK_PREFIX = 'SAGA#';
+const SAGA_SK_PREFIX = 'SAGA';
 // Stryker restore StringLiteral
 
 const TTL_DAYS = 30;
 
 function sagaSK(id: string): string {
     // Stryker disable next-line StringLiteral: SK prefix is a configuration constant
-    return `${SAGA_SK_PREFIX}${id}`;
+    return createPrefixedKey(SAGA_SK_PREFIX, id);
 }
 
 /**

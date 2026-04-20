@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
+import { CaldavAuthError, CaldavTimeoutError } from '../../../src/errors';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarServerEntry } from '../../../src/integrations/caldav';
-import { CaldavAuthError, CaldavTimeoutError } from '../../../src/integrations/caldav/errors';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 import { mockLogger } from '../../setup';

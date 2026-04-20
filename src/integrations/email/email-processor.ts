@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
+import { EmailProcessingError } from '@/errors';
 import { checkVerificationResults } from '@/integrations/email/auth-checker';
 import type { EmailClassifier } from '@/integrations/email/classifier';
-import { EmailProcessingError } from '@/integrations/email/errors';
 import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { PersonAllowlist } from '@/storage';

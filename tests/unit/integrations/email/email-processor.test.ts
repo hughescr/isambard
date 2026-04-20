@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { mockLogger } from '../../../setup';
+import { EmailProcessingError } from '@/errors';
 import type { EmailClassifier } from '@/integrations/email/classifier';
 import { EmailProcessor } from '@/integrations/email/email-processor';
-import { EmailProcessingError } from '@/integrations/email/errors';
 import { EmailFolder, type EmailMetadata, type ClassifierVerdict  } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { PersonAllowlist } from '@/storage';

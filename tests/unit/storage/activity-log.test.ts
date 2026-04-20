@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { createActivityLogger, type ActivityLogEntry, type ActivityType } from '../../../src/agent/activity-logger';
+import { createActivityLogger, type ActivityLogEntry, type ActivityType } from '../../../src/storage/activity-log';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
 

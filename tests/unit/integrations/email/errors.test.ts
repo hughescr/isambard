@@ -1,11 +1,11 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import { IsambardError } from '@/errors/base';
-import { ErrorCode } from '@/errors/codes';
 import {
     EmailError,
     ClassifierError,
     EmailProcessingError
-} from '@/integrations/email/errors';
+} from '@/errors';
+import { IsambardError } from '@/errors/base';
+import { ErrorCode } from '@/errors/codes';
 
 describe.concurrent('EmailError', () => {
     test('should have correct inheritance chain', () => {

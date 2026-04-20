@@ -12,12 +12,23 @@ import { TransitionError } from '@/errors';
  *
  * ### Suspending a Mode
  *
- * To suspend one mode for another (e.g., suspend catch-up to process a message):
+ * To suspend one mode for another (e.g., suspend catch-up or perch to process
+ * a user message):
  * 1. Session runner's `suspend()` saves state and calls `goIdle()`
  * 2. New message is processed normally (idle → processing_message → idle)
  * 3. Session runner's `resumeAfterSuspension()` restores state and continues
  *
- * This pattern ensures clean state transitions and proper cleanup between operations.
+ * This pattern ensures clean state transitions and proper cleanup between
+ * operations. Both `CatchUpSessionRunner` (catchup/session-runner.ts) and
+ * `PerchSessionRunner` (agent/perch/session-runner.ts) implement this pattern.
+ *
+ * ### Perching mode
+ *
+ * `perching` is entered from `idle` by `PerchSessionRunner.startPerch()` and
+ * `resumeAfterSuspension()`. It exits only to `idle`. The perch scheduler
+ * (`PerchScheduler` in agent/perch/scheduler.ts) triggers perch sessions on
+ * a time-based cron schedule; it refuses to start a session unless the bot
+ * is currently in `idle` mode.
  *
  * @internal Maps each mode to the list of modes it can transition to.
  */

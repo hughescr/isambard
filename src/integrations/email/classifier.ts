@@ -1,8 +1,8 @@
 import { logger } from '@hughescr/logger';
 import { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
-import { ClassifierError } from './errors';
 import { classifierVerdictSchema, type EmailMetadata, type ClassifierVerdict  } from './types';
 import { generateTextWithSystemPrompt } from '@/agent';
+import { ClassifierError } from '@/errors';
 
 /**
  * Email safety classifier using Claude Sonnet via the Claude Agent SDK.

@@ -4,7 +4,6 @@ import {
     agentConfigSchema,
     emailConfigSchema,
     discordConfigSchema,
-    boxConfigSchema,
     bskyConfigSchema,
     browserConfigSchema,
     dynamoDBConfigSchema,
@@ -328,18 +327,6 @@ describe('discordConfigSchema', () => {
     });
 });
 
-describe('boxConfigSchema', () => {
-    test('should reject empty strings', () => {
-        const emptyStrings = {
-            clientId:     '',
-            clientSecret: '',
-        };
-
-        const result = boxConfigSchema.safeParse(emptyStrings);
-        expect(result.success).toBe(false);
-    });
-});
-
 describe('dynamoDBConfigSchema', () => {
     test('should accept valid tableName', () => {
         const validConfig = {
@@ -383,10 +370,6 @@ describe('configSchema', () => {
                 applicationId: '123456789012345678',
                 homeGuildId:   createGuildId('home-guild-123'),
             },
-            box: {
-                clientId:     'abc123xyz789',
-                clientSecret: 'super-secret-key-12345',
-            },
         };
 
         const result = configSchema.safeParse(validConfig);
@@ -419,10 +402,6 @@ describe('configSchema', () => {
                 botToken:      'token',
                 applicationId: '123',
                 homeGuildId:   createGuildId('home-guild-123'),
-            },
-            box: {
-                clientId:     'id',
-                clientSecret: 'secret',
             },
         };
 

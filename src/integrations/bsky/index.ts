@@ -1,6 +1,5 @@
 export * from './types';
 export * from './embeds';
-export * from './errors';
 export { BlueskyClient } from './client';
 export * from './checkpoint';
 export { buildBskyApprovalEmbed } from './review-embed-builder';

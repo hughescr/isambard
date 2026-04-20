@@ -1,19 +1,16 @@
 import type { ServiceHealthRegistry } from '../health-registry';
-import type { ServiceName } from '../types';
+import type { ServiceLogger, ServiceName } from '../types';
 import type { ApprovalSagaBackend } from './backend';
 import type { ApprovalSagaType } from './types';
 
-export interface SagaExecutorLogger {
-    warn:  (obj: object, msg: string) => void
-    error: (obj: object, msg: string) => void
-    info:  (obj: object, msg: string) => void
-}
+/** Logger interface for the saga executor. Alias for {@link ServiceLogger}. */
+export type SagaExecutorLogger = ServiceLogger;
 
 interface SagaExecutorDeps {
     backend:         ApprovalSagaBackend
     registry:        ServiceHealthRegistry
     executors:       Record<ApprovalSagaType, (params: Record<string, unknown>) => Promise<void>>
-    logger:          SagaExecutorLogger
+    logger:          ServiceLogger
     pollIntervalMs?: number
 }
 

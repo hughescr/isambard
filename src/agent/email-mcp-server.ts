@@ -6,9 +6,9 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
-import { mcpErrorResult, mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-helpers';
-import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type SendRateLimiter  } from '@/integrations/email';
-import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
+import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
+import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
 /**
@@ -66,7 +66,7 @@ interface EmailMCPServerOptions {
     /** WildDuck HTTP client for email search and sending */
     wildDuckClient:         WildDuckClient
     /** Optional rate limiter for outbound email sends */
-    rateLimiter?:           SendRateLimiter
+    rateLimiter?:           TokenBucketRateLimiter
     /** Optional email allowlist for outbound recipient gating */
     allowlist?:             PersonAllowlist
     /** Optional callback to send outbound approval request to admin */
@@ -377,36 +377,29 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 // Stryker disable next-line StringLiteral: Zod schema description is MCP parameter documentation
                 { showSeen: z.boolean().describe('When true, include read messages alongside unread. Defaults to false (unread only).').optional() },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    async ({ showSeen }): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
-                        try {
-                            const [countsData, messages] = await Promise.all([
-                                wildDuckClient.getMailboxCounts(EmailFolder.CleanInbox),
-                                // Stryker disable next-line StringLiteral,ObjectLiteral: EmailFolder.CleanInbox is configuration constant; unseen filter is configuration
-                                wildDuckClient.listMessages(EmailFolder.CleanInbox, { unseen: !showSeen }),
-                            ]);
-                            const result = {
-                                counters: { total: countsData.total, unread: countsData.unseen },
-                                messages: messages.map(m => ({
-                                // Stryker disable next-line StringLiteral: MailboxName is configuration constant
-                                    uid:         `${EmailFolder.CleanInbox}:${m.id}`,
-                                    from:        formatAddressForDisplay(m.from),
-                                    subject:     m.subject,
-                                    date:        m.date,
-                                    intro:       m.intro,
-                                    attachments: m.attachments,
-                                })),
-                            };
-                            return {
-                                content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-                            };
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, msg: 'Failed to check inbox' });
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('checkInbox', async ({ showSeen }): Promise<CallToolResult> => {
+                        const [countsData, messages] = await Promise.all([
+                            wildDuckClient.getMailboxCounts(EmailFolder.CleanInbox),
+                            // Stryker disable next-line StringLiteral,ObjectLiteral: EmailFolder.CleanInbox is configuration constant; unseen filter is configuration
+                            wildDuckClient.listMessages(EmailFolder.CleanInbox, { unseen: !showSeen }),
+                        ]);
+                        const result = {
+                            counters: { total: countsData.total, unread: countsData.unseen },
+                            messages: messages.map(m => ({
+                            // Stryker disable next-line StringLiteral: MailboxName is configuration constant
+                                uid:         `${EmailFolder.CleanInbox}:${m.id}`,
+                                from:        formatAddressForDisplay(m.from),
+                                subject:     m.subject,
+                                date:        m.date,
+                                intro:       m.intro,
+                                attachments: m.attachments,
+                            })),
+                        };
+                        return {
+                            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+                        };
+                    })),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
@@ -422,25 +415,25 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 },
 
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    // eslint-disable-next-line sonarjs/cognitive-complexity -- getEmailContent has inherent complexity from access control, notifications, and attachment handling
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('getEmailContent',
+
+                        async (args): Promise<CallToolResult> => {
                             const { mailboxName, uid } = parseMailboxUid(args.message);
 
                             // Access control: CleanInbox, Archive, Drafts, and Sent Mail are directly readable
                             if(!READABLE_MAILBOXES.has(mailboxName)) {
-                            // Send admin notification (fire-and-forget)
+                                // Send admin notification (fire-and-forget)
                                 if(sendAdminNotification) {
-                                // Stryker disable BlockStatement: try-catch guards notification failure from breaking access control response
+                                    // Stryker disable BlockStatement: try-catch guards notification failure from breaking access control response
                                     try {
-                                    // Stryker disable next-line ObjectLiteral: Notification params are configuration
+                                        // Stryker disable next-line ObjectLiteral: Notification params are configuration
                                         await sendAdminNotification({ mailboxName, uid, reference: args.message });
                                     } catch (error) {
-                                    // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+                                        // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                                         logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
                                     }
-                                // Stryker restore BlockStatement
+                                    // Stryker restore BlockStatement
                                 }
                                 // Stryker disable next-line StringLiteral: Error message is configuration
                                 return {
@@ -452,7 +445,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             const email = await wildDuckClient.getFullMessage(mailboxName, uid);
                             if(!email) {
                                 return {
-                                // Stryker disable next-line StringLiteral: Error message is configuration
+                                    // Stryker disable next-line StringLiteral: Error message is configuration
                                     content: [{ type: 'text' as const, text: `Email ${args.message} not found.` }],
                                     isError: true,
                                 };
@@ -482,13 +475,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             // Stryker disable MethodExpression: trim() is defensive — lines.join() produces clean text starting with 'From:' header
                             return mcpTextResult(text.trim());
                         // Stryker restore MethodExpression
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, message: args.message, msg: 'Failed to fetch email content' });
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                        })),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),
@@ -503,30 +490,23 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message: z.string().regex(MAILBOX_UID_REGEX, 'Must be in MailboxName:UID format (e.g., CleanInbox:42)').describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps WildDuck operations - error handling
-                        try {
-                            const { mailboxName, uid } = parseMailboxUid(args.message);
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('archiveEmail', async (args): Promise<CallToolResult> => {
+                        const { mailboxName, uid } = parseMailboxUid(args.message);
 
-                            // Access control: only CleanInbox and Archive are directly accessible
-                            if(!ACCESSIBLE_MAILBOXES.has(mailboxName)) {
-                                return {
-                                // Stryker disable next-line StringLiteral: Error message is configuration
-                                    content: [{ type: 'text' as const, text: `Access denied: cannot archive messages in ${mailboxName}. Restricted mailboxes require admin review.` }],
-                                    isError: true,
-                                };
-                            }
-
-                            // Stryker disable next-line StringLiteral: EmailFolder values are configuration constants
-                            await wildDuckClient.moveMessage(mailboxName, uid, EmailFolder.Archive);
-                            return mcpTextResult(`Email UID ${uid} archived successfully.`);
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, message: args.message, msg: 'Failed to archive email' });
-                            return mcpErrorResult(error);
+                        // Access control: only CleanInbox and Archive are directly accessible
+                        if(!ACCESSIBLE_MAILBOXES.has(mailboxName)) {
+                            return {
+                            // Stryker disable next-line StringLiteral: Error message is configuration
+                                content: [{ type: 'text' as const, text: `Access denied: cannot archive messages in ${mailboxName}. Restricted mailboxes require admin review.` }],
+                                isError: true,
+                            };
                         }
-                    }),
+
+                        // Stryker disable next-line StringLiteral: EmailFolder values are configuration constants
+                        await wildDuckClient.moveMessage(mailboxName, uid, EmailFolder.Archive);
+                        return mcpTextResult(`Email UID ${uid} archived successfully.`);
+                    })),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),
@@ -564,56 +544,49 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     // Stryker restore StringLiteral,ArrayDeclaration
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps WildDuck API operations - error handling
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('searchEmail', async (args): Promise<CallToolResult> => {
                         // Build search params based on mailbox selection
                         // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent conditions — all three cases produce undefined mailboxParam for the "search all/all-regular" paths
-                            const mailboxParam = (!args.mailbox || args.mailbox === 'all-regular' || args.mailbox === 'all')
-                                ? undefined
-                                : args.mailbox;
-                            const searchableParam = (!args.mailbox || args.mailbox === 'all-regular')
-                                ? true as const
-                                : undefined;
+                        const mailboxParam = (!args.mailbox || args.mailbox === 'all-regular' || args.mailbox === 'all')
+                            ? undefined
+                            : args.mailbox;
+                        const searchableParam = (!args.mailbox || args.mailbox === 'all-regular')
+                            ? true as const
+                            : undefined;
 
-                            const results = await wildDuckClient.search({
-                                query: {
-                                    correspondent: args.correspondent,
-                                    content:       args.content,
-                                    before:        args.before,
-                                    since:         args.since,
-                                    header:        args.header,
-                                },
-                                mailbox:    mailboxParam,
-                                searchable: searchableParam,
-                            });
+                        const results = await wildDuckClient.search({
+                            query: {
+                                correspondent: args.correspondent,
+                                content:       args.content,
+                                before:        args.before,
+                                since:         args.since,
+                                header:        args.header,
+                            },
+                            mailbox:    mailboxParam,
+                            searchable: searchableParam,
+                        });
 
-                            // Stryker disable next-line ConditionalExpression,StringLiteral: empty results vs found results
-                            if(results.length === 0) {
-                                return {
-                                // Stryker disable next-line StringLiteral: Result message is configuration
-                                    content: [{ type: 'text' as const, text: 'No emails found matching your search criteria.' }],
-                                };
-                            }
-
-                            const lines = [
-                            // Stryker disable next-line StringLiteral: Result format is configuration
-                                `Found ${results.length} email${results.length === 1 ? '' : 's'}:`,
-                                ...results.map((r) => {
-                                    const toStr = r.to.length > 0 ? r.to.join(', ') : '(none)';
-                                    // Stryker disable next-line StringLiteral: Result line format is configuration
-                                    return `- ${r.message} | From: ${r.from} | To: ${toStr} | Subject: ${r.subject} | Date: ${r.date}`;
-                                }),
-                            ];
-
-                            return mcpTextResult(lines.join('\n'));
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, msg: 'Failed to search emails' });
-                            return mcpErrorResult(error);
+                        // Stryker disable next-line ConditionalExpression,StringLiteral: empty results vs found results
+                        if(results.length === 0) {
+                            return {
+                            // Stryker disable next-line StringLiteral: Result message is configuration
+                                content: [{ type: 'text' as const, text: 'No emails found matching your search criteria.' }],
+                            };
                         }
-                    }),
+
+                        const lines = [
+                        // Stryker disable next-line StringLiteral: Result format is configuration
+                            `Found ${results.length} email${results.length === 1 ? '' : 's'}:`,
+                            ...results.map((r) => {
+                                const toStr = r.to.length > 0 ? r.to.join(', ') : '(none)';
+                                // Stryker disable next-line StringLiteral: Result line format is configuration
+                                return `- ${r.message} | From: ${r.from} | To: ${toStr} | Subject: ${r.subject} | Date: ${r.date}`;
+                            }),
+                        ];
+
+                        return mcpTextResult(lines.join('\n'));
+                    })),
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
@@ -639,55 +612,48 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     attachments: z.array(z.string()).optional().describe('File paths to attach'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps send operations - error handling
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('sendEmail', async (args): Promise<CallToolResult> => {
                         // Resolve from address based on identity (loads addresses lazily)
-                            const fromResult = await resolveFromAddress(args.identity);
-                            if(!fromResult.ok) {
-                                return fromResult.error;
-                            }
-                            const from = fromResult.from;
-
-                            // Normalize to to an array of address objects
-                            const toArr = Array.isArray(args.to) ? args.to : [args.to];
-                            const toAddresses = toArr.map((addr): { name?: string, address: string } => {
-                                if(typeof addr === 'string') {
-                                    return { address: addr };
-                                }
-                                return { name: addr.name, address: addr.email_address };
-                            });
-
-                            // Check rate limit — warn but don't block
-                            const rateLimitWarning = buildRateLimitWarning();
-
-                            // Build attachments from file paths (Stryker disabled — disk I/O)
-                            const attachments = await buildAttachments(args.attachments ?? []);
-
-                            // Upload to Drafts
-                            const uid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
-                                from,
-                                to:      toAddresses,
-                                subject: args.subject,
-                                text:    args.body,
-                                // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: attachments array inclusion guard
-                                ...(attachments.length > 0 ? { attachments } : {}),
-                                draft:   true,
-                            });
-
-                            // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
-                            // Stryker disable next-line BooleanLiteral: ?? false unreachable when allowlist always provided
-                            const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed('email', addr.address) ?? false);
-                            const toStr        = toAddresses.map(addr => addr.address).join(', ');
-                            const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
-                            return mcpTextResult(text);
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, to: args.to, msg: 'Failed to send email' });
-                            return mcpErrorResult(error);
+                        const fromResult = await resolveFromAddress(args.identity);
+                        if(!fromResult.ok) {
+                            return fromResult.error;
                         }
-                    }),
+                        const from = fromResult.from;
+
+                        // Normalize to to an array of address objects
+                        const toArr = Array.isArray(args.to) ? args.to : [args.to];
+                        const toAddresses = toArr.map((addr): { name?: string, address: string } => {
+                            if(typeof addr === 'string') {
+                                return { address: addr };
+                            }
+                            return { name: addr.name, address: addr.email_address };
+                        });
+
+                        // Check rate limit — warn but don't block
+                        const rateLimitWarning = buildRateLimitWarning();
+
+                        // Build attachments from file paths (Stryker disabled — disk I/O)
+                        const attachments = await buildAttachments(args.attachments ?? []);
+
+                        // Upload to Drafts
+                        const uid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
+                            from,
+                            to:      toAddresses,
+                            subject: args.subject,
+                            text:    args.body,
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator,ObjectLiteral: attachments array inclusion guard
+                            ...(attachments.length > 0 ? { attachments } : {}),
+                            draft:   true,
+                        });
+
+                        // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
+                        // Stryker disable next-line BooleanLiteral: ?? false unreachable when allowlist always provided
+                        const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed('email', addr.address) ?? false);
+                        const toStr        = toAddresses.map(addr => addr.address).join(', ');
+                        const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
+                        return mcpTextResult(text);
+                    })),
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -711,10 +677,10 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 },
 
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('replyToEmail',
                     // eslint-disable-next-line complexity -- replyToEmail has inherent complexity from threading, identity resolution, allowlist, attachment handling
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps reply operations - error handling
-                        try {
+                        async (args): Promise<CallToolResult> => {
                         // Resolve from address based on identity (loads addresses lazily)
                             const fromResult = await resolveFromAddress(args.identity);
                             if(!fromResult.ok) {
@@ -727,7 +693,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             // Access control: only CleanInbox and Archive are directly accessible
                             if(!ACCESSIBLE_MAILBOXES.has(mailboxName)) {
                                 return {
-                                // Stryker disable next-line StringLiteral: Error message is configuration
+                                    // Stryker disable next-line StringLiteral: Error message is configuration
                                     content: [{ type: 'text' as const, text: `Access denied: cannot reply to messages in ${mailboxName}. Restricted mailboxes require admin review.` }],
                                     isError: true,
                                 };
@@ -737,7 +703,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             const original = await wildDuckClient.getMessage(mailboxName, originalUid);
                             if(!original) {
                                 return {
-                                // Stryker disable next-line StringLiteral: Error message is configuration
+                                    // Stryker disable next-line StringLiteral: Error message is configuration
                                     content: [{ type: 'text' as const, text: `Cannot reply: message '${args.message}' not found.` }],
                                     isError: true,
                                 };
@@ -755,7 +721,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             const mailboxWildDuckId = wildDuckClient.getMailboxId(mailboxName);
                             if(!mailboxWildDuckId) {
                                 return {
-                                // Stryker disable next-line StringLiteral: error message is UI configuration
+                                    // Stryker disable next-line StringLiteral: error message is UI configuration
                                     content: [{ type: 'text' as const, text: `Cannot reply: mailbox '${mailboxName}' not found in WildDuck. Reconnect or try again.` }],
                                     isError: true,
                                 };
@@ -790,13 +756,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             // Stryker disable next-line StringLiteral,LogicalOperator: Result message is configuration; ?? '' is defensive fallback when subject absent
                             const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, ccAddresses, isAllowedOverride);
                             return mcpTextResult(text);
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, message: args.message, msg: 'Failed to reply to email' });
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                        })),
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -811,20 +771,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message: z.string().regex(DRAFTS_UID_REGEX, 'Must be in Drafts:UID format (e.g., Drafts:42)').describe('The draft to delete, in Drafts:UID format'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps delete operations - error handling
-                        try {
-                            const { uid } = parseMailboxUid(args.message);
-                            await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
-                            // Stryker disable next-line StringLiteral: Result message is configuration
-                            return mcpTextResult(`Draft ${args.message} deleted.`);
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, message: args.message, msg: 'Failed to delete draft' });
-                            return mcpErrorResult(error);
-                        }
-                    }),
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('deleteDraft', async (args): Promise<CallToolResult> => {
+                        const { uid } = parseMailboxUid(args.message);
+                        await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
+                        // Stryker disable next-line StringLiteral: Result message is configuration
+                        return mcpTextResult(`Draft ${args.message} deleted.`);
+                    })),
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
@@ -848,77 +801,70 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     identity: z.enum(['formal', 'informal']).optional().describe('Email identity to use (leave blank to keep original)'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
-                    async (args): Promise<CallToolResult> => {
-                    // Stryker disable BlockStatement: try-catch wraps amend operations - error handling
-                        try {
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('amendAndResubmitDraft', async (args): Promise<CallToolResult> => {
                         // Resolve from address based on identity (loads addresses lazily)
-                            const fromResult = await resolveFromAddress(args.identity ?? 'formal');
-                            if(!fromResult.ok) {
-                                return fromResult.error;
-                            }
-                            const from = fromResult.from;
-
-                            // Parse UID from 'Drafts:42'
-                            const { uid } = parseMailboxUid(args.message);
-
-                            // Fetch original draft
-                            const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
-                            if(!original) {
-                                return {
-                                // Stryker disable next-line StringLiteral: Error message is configuration
-                                    content: [{ type: 'text' as const, text: `Draft ${args.message} not found.` }],
-                                    isError: true,
-                                };
-                            }
-
-                            // Apply amendments
-                            const subject = args.subject ?? original.subject ?? '';
-                            const body    = args.body ?? original.text ?? '';
-
-                            // Normalize args.to: undefined → use original recipients; structured/plain string → array
-                            const argToArr = normalizeToAddresses(args.to);
-                            const argToAddresses = argToArr
-                                ? argToArr.map((addr): { name?: string, address: string } => {
-                                    if(typeof addr === 'string') {
-                                        return { address: addr };
-                                    }
-                                    return { name: addr.name, address: addr.email_address };
-                                })
-                                : undefined;
-                            const toAddresses    = argToAddresses ?? (original.to ?? []);
-
-                            // Re-upload with replacePrevious to atomically replace the old draft
-                            const newUid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
-                                from,
-                                to:              toAddresses,
-                                subject,
-                                text:            body,
-                                replacePrevious: { mailbox: EmailFolder.Drafts, id: uid },
-                                // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
-                                draft:           true,
-                            });
-
-                            // Always route through approval (isAllowedOverride=false) — amended drafts require human review.
-                            const amendResult = await submitOrRequestApproval(
-                                newUid,
-                                // Stryker disable next-line StringLiteral: join separator is cosmetic formatting — tested via multi-recipient amend test
-                                toAddresses.map(addr => addr.address).join(', '),
-                                subject,
-                                // Stryker disable next-line StringLiteral: empty string — no rate limit warning for amend (rate limiter not called on approval path)
-                                '',
-                                // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowedOverride=false always routes to approval
-                                '',
-                                undefined, // cc not available for amend-resubmit
-                                false      // isAllowedOverride=false → always approval path
-                            );
-                            return mcpTextResult(amendResult);
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
-                            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-                            logger.warn({ error: message, message: args.message, msg: 'Failed to amend and resubmit draft' });
-                            return mcpErrorResult(error);
+                        const fromResult = await resolveFromAddress(args.identity ?? 'formal');
+                        if(!fromResult.ok) {
+                            return fromResult.error;
                         }
-                    }),
+                        const from = fromResult.from;
+
+                        // Parse UID from 'Drafts:42'
+                        const { uid } = parseMailboxUid(args.message);
+
+                        // Fetch original draft
+                        const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+                        if(!original) {
+                            return {
+                            // Stryker disable next-line StringLiteral: Error message is configuration
+                                content: [{ type: 'text' as const, text: `Draft ${args.message} not found.` }],
+                                isError: true,
+                            };
+                        }
+
+                        // Apply amendments
+                        const subject = args.subject ?? original.subject ?? '';
+                        const body    = args.body ?? original.text ?? '';
+
+                        // Normalize args.to: undefined → use original recipients; structured/plain string → array
+                        const argToArr = normalizeToAddresses(args.to);
+                        const argToAddresses = argToArr
+                            ? argToArr.map((addr): { name?: string, address: string } => {
+                                if(typeof addr === 'string') {
+                                    return { address: addr };
+                                }
+                                return { name: addr.name, address: addr.email_address };
+                            })
+                            : undefined;
+                        const toAddresses    = argToAddresses ?? (original.to ?? []);
+
+                        // Re-upload with replacePrevious to atomically replace the old draft
+                        const newUid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
+                            from,
+                            to:              toAddresses,
+                            subject,
+                            text:            body,
+                            replacePrevious: { mailbox: EmailFolder.Drafts, id: uid },
+                            // Stryker disable next-line BooleanLiteral: draft flag is required for WildDuck draft upload
+                            draft:           true,
+                        });
+
+                        // Always route through approval (isAllowedOverride=false) — amended drafts require human review.
+                        const amendResult = await submitOrRequestApproval(
+                            newUid,
+                            // Stryker disable next-line StringLiteral: join separator is cosmetic formatting — tested via multi-recipient amend test
+                            toAddresses.map(addr => addr.address).join(', '),
+                            subject,
+                            // Stryker disable next-line StringLiteral: empty string — no rate limit warning for amend (rate limiter not called on approval path)
+                            '',
+                            // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowedOverride=false always routes to approval
+                            '',
+                            undefined, // cc not available for amend-resubmit
+                            false      // isAllowedOverride=false → always approval path
+                        );
+                        return mcpTextResult(amendResult);
+                    })),
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),

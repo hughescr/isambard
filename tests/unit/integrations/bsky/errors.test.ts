@@ -1,12 +1,12 @@
 import { describe, test, expect, spyOn } from 'bun:test';
-import { IsambardError } from '@/errors/base';
-import { ErrorCode } from '@/errors/codes';
 import {
     BskyError,
     BskyAuthError,
     BskyRateLimitError,
     BskyValidationError
-} from '@/integrations/bsky/errors';
+} from '@/errors';
+import { IsambardError } from '@/errors/base';
+import { ErrorCode } from '@/errors/codes';
 
 describe.concurrent('BskyError', () => {
     test('should have correct inheritance chain', () => {

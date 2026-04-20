@@ -998,6 +998,157 @@ describe('StreamEventHandler', () => {
         });
     });
 
+    describe('Initial state — lines 161, 163', () => {
+        it('should pass undefined accumulatedText in first tool phase when no text has been sent', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Test status';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Trigger a tool phase immediately without any prior text events
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Read' } as AgentStreamEvent);
+            await flushPromises();
+
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
+            // accumulatedText starts as '' → '' || undefined = undefined
+            // If mutated to 'Stryker was here!' → 'Stryker was here!' || undefined = 'Stryker was here!'
+            expect(toolContext?.accumulatedText).toBeUndefined();
+        });
+
+        it('should start with empty recentToolCalls so first tool synopsis has no prior tool history', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Test status';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Trigger the very first tool phase — recentToolCalls is captured BEFORE adding the current tool
+            onStreamEvent({ type: 'tool_progress', tool_name: 'FirstTool' } as AgentStreamEvent);
+            await flushPromises();
+
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
+            // recentToolCalls starts as [] → first tool captures [] as previous tool history
+            // If mutated to ['Stryker was here'] → first tool captures ['Stryker was here']
+            expect(toolContext?.recentToolCalls).toEqual([]);
+        });
+    });
+
+    describe('tool_progress with undefined tool_name — line 417', () => {
+        it('should use "unknown" as toolName fallback when tool_name is undefined', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Test status';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Fire a tool_progress event with no tool_name (undefined)
+            onStreamEvent({ type: 'tool_progress' } as AgentStreamEvent);
+            await flushPromises();
+
+            const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
+            // If mutant changes 'unknown' to '' the toolName will be '' not 'unknown'
+            expect(toolContext?.toolName).toBe('unknown');
+        });
+    });
+
+    describe('updatePhaseWithSynopsis fallback — lines 219, 227', () => {
+        it('should call safeUpdatePhase(basePhase) when synopsis throws and complete() has not been called', async () => {
+            // Configure generateSynopsis to throw
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => {
+                throw new Error('Synopsis generation failed');
+            });
+
+            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Trigger responding phase (uses updatePhaseWithSynopsis)
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // The catch block should have called safeUpdatePhase(basePhase) — basePhase has type: 'responding'
+            // If catch block is emptied (mutant), no updateActivityPhase call happens
+            const respondingCalls = (mockBotStateManager.updateActivityPhase.mock.calls as unknown[][]).filter(
+                call => (call[0] as { type?: string })?.type === 'responding'
+            );
+            expect(respondingCalls.length).toBeGreaterThan(0);
+        });
+
+        it('should call safeUpdatePhase(basePhase) in else branch when shouldGenerateSynopsis returns false', async () => {
+            // Configure shouldUpdatePresence to return false so shouldGenerateSynopsis → false
+            mockBotStateManager.shouldUpdatePresence = mock(() => false);
+
+            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Trigger responding phase (calls updatePhaseWithSynopsis, which takes the else branch)
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // The else branch should have called safeUpdatePhase(basePhase) with type: 'responding'
+            // If else body is emptied (mutant), no updateActivityPhase call happens
+            const respondingCalls = (mockBotStateManager.updateActivityPhase.mock.calls as unknown[][]).filter(
+                call => (call[0] as { type?: string })?.type === 'responding'
+            );
+            expect(respondingCalls.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('Phase deduplication — line 332', () => {
+        it('should NOT re-fire phase update when phase has not changed', async () => {
+            const { onStreamEvent } = createStreamEventHandler(baseDeps);
+
+            mockBotStateManager.updateActivityPhase.mockClear();
+
+            // Send two consecutive thinking events (no delta.text → both 'thinking')
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            await flushPromises();
+
+            const afterFirst = (mockBotStateManager.updateActivityPhase.mock.calls as unknown[][]).length;
+
+            // Second event: same phase ('thinking') — should NOT re-fire
+            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            await flushPromises();
+
+            const afterSecond = (mockBotStateManager.updateActivityPhase.mock.calls as unknown[][]).length;
+
+            // If mutant makes condition always true, afterSecond > afterFirst
+            // Without mutant, same-phase transition is a no-op
+            expect(afterSecond).toBe(afterFirst);
+        });
+    });
+
+    describe('accumulatedText in responding synopsis — line 401', () => {
+        it('should pass accumulatedText to responding synopsis context when text has been accumulated', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Test status';
+            });
+
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Send a text delta to accumulate text
+            onStreamEvent({ type: 'assistant', delta: { text: 'Some accumulated text' } } as AgentStreamEvent);
+            await flushPromises();
+
+            // The first responding event fires updatePhaseWithSynopsis with the accumulated text
+            const respondingContext = capturedContexts.find(ctx => ctx.phase === 'responding');
+            // accumulatedText = 'Some accumulated text' || undefined = 'Some accumulated text'
+            // If mutated (&&): 'Some accumulated text' && undefined = undefined
+            expect(respondingContext?.accumulatedText).toBeDefined();
+            expect(respondingContext?.accumulatedText).toBe('Some accumulated text');
+        });
+    });
+
     describe('onThinkingContentUpdate callback', () => {
         it('should fire callback when thinking content is accumulated', async () => {
             const capturedUpdates: string[] = [];

@@ -1,11 +1,11 @@
 import { BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { z } from 'zod';
-import { BaseRepository } from '@/storage';
+import { BaseRepository, createPrefixedKey } from '@/storage';
 
 // Stryker disable StringLiteral: PK/SK key constants are configuration values
 const REJECTION_PK        = 'BSKY#REJECTED';
-const REJECTION_SK_PREFIX = 'REJECTION#';
+const REJECTION_SK_PREFIX = 'REJECTION';
 // Stryker restore StringLiteral
 
 const TTL_DAYS = 30;
@@ -14,7 +14,7 @@ const BATCH_SIZE = 25;
 
 function rejectionSK(uuid: string): string {
     // Stryker disable next-line StringLiteral: SK prefix is a configuration constant
-    return `${REJECTION_SK_PREFIX}${uuid}`;
+    return createPrefixedKey(REJECTION_SK_PREFIX, uuid);
 }
 
 const BskyRejectedReplySchema = z.object({

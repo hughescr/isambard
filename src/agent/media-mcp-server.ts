@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { mcpErrorResult } from './mcp-helpers';
+import { mcpErrorResult, withToolErrorHandling } from './mcp-helpers';
 import { createBinarySpawnRunner, createSpawnRunner, extractFramesInRange, generateSpectrogram, processLocalVideo, processVideo, validateFilePath } from '@/utils';
 
 export function createMediaMCPServer() {
@@ -23,34 +23,31 @@ export function createMediaMCPServer() {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     alt:       z.string().optional().describe('Alt text for the video'),
                 },
-                async (args): Promise<CallToolResult> => {
+                // Stryker disable next-line StringLiteral: tool name is used for logging only
+                withToolErrorHandling('analyzeVideoFromUrl', async (args): Promise<CallToolResult> => {
                     const resolved = path.resolve(process.cwd(), args.outputDir);
                     const relative = path.relative(process.cwd(), resolved);
                     if(!relative || relative.startsWith('..')) {
                         return mcpErrorResult('Output directory must be within the working directory');
                     }
                     // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                    try {
-                        const result = await processVideo(args.url, args.outputDir, {
-                            run:       createSpawnRunner(),
-                            binaryRun: createBinarySpawnRunner(),
-                            alt:       args.alt,
-                        });
-                        return {
-                            content: [
-                                { type: 'text', text: result.metadataMarkdown },
-                                ...result.frames.map(f => ({
-                                    type:     'image' as const,
-                                    data:     f.base64Data,
-                                    mimeType: f.mediaType,
-                                })),
-                            ],
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
+                    const result = await processVideo(args.url, args.outputDir, {
+                        run:       createSpawnRunner(),
+                        binaryRun: createBinarySpawnRunner(),
+                        alt:       args.alt,
+                    });
+                    return {
+                        content: [
+                            { type: 'text', text: result.metadataMarkdown },
+                            ...result.frames.map(f => ({
+                                type:     'image' as const,
+                                data:     f.base64Data,
+                                mimeType: f.mediaType,
+                            })),
+                        ],
+                    };
                     // Stryker restore all
-                },
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Analyze Video From URL', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -68,7 +65,8 @@ export function createMediaMCPServer() {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     alt:       z.string().optional().describe('Alt text description of the video'),
                 },
-                async (args): Promise<CallToolResult> => {
+                // Stryker disable next-line StringLiteral: tool name is used for logging only
+                withToolErrorHandling('analyzeLocalVideo', async (args): Promise<CallToolResult> => {
                     const resolved = path.resolve(process.cwd(), args.outputDir);
                     const relative = path.relative(process.cwd(), resolved);
                     if(!relative || relative.startsWith('..')) {
@@ -81,27 +79,23 @@ export function createMediaMCPServer() {
                         return mcpErrorResult(error);
                     }
                     // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                    try {
-                        const result = await processLocalVideo(safeVideoPath, args.outputDir, {
-                            run:       createSpawnRunner(),
-                            binaryRun: createBinarySpawnRunner(),
-                            alt:       args.alt,
-                        });
-                        return {
-                            content: [
-                                { type: 'text', text: result.metadataMarkdown },
-                                ...result.frames.map(f => ({
-                                    type:     'image' as const,
-                                    data:     f.base64Data,
-                                    mimeType: f.mediaType,
-                                })),
-                            ],
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
+                    const result = await processLocalVideo(safeVideoPath, args.outputDir, {
+                        run:       createSpawnRunner(),
+                        binaryRun: createBinarySpawnRunner(),
+                        alt:       args.alt,
+                    });
+                    return {
+                        content: [
+                            { type: 'text', text: result.metadataMarkdown },
+                            ...result.frames.map(f => ({
+                                type:     'image' as const,
+                                data:     f.base64Data,
+                                mimeType: f.mediaType,
+                            })),
+                        ],
+                    };
                     // Stryker restore all
-                },
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Analyze Local Video', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -121,7 +115,8 @@ export function createMediaMCPServer() {
                     // Stryker disable next-line StringLiteral,MethodExpression: describe() is documentation only; .max(20) is Zod schema configuration
                     count:     z.number().int().positive().max(20).describe('Number of frames to extract (max 20)'),
                 },
-                async (args): Promise<CallToolResult> => {
+                // Stryker disable next-line StringLiteral: tool name is used for logging only
+                withToolErrorHandling('getVideoFrames', async (args): Promise<CallToolResult> => {
                     let safeVideoPath: string;
                     try {
                         safeVideoPath = await validateFilePath(args.videoPath);
@@ -132,29 +127,25 @@ export function createMediaMCPServer() {
                         return mcpErrorResult('endTime must be greater than startTime');
                     }
                     // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                    try {
-                        const frames = await extractFramesInRange(
-                            safeVideoPath,
-                            args.startTime,
-                            args.endTime,
-                            args.count,
-                            createBinarySpawnRunner()
-                        );
-                        if(frames.length === 0) {
-                            return mcpErrorResult('No frames could be extracted in the specified range');
-                        }
-                        return {
-                            content: frames.map(f => ({
-                                type:     'image' as const,
-                                data:     f.base64Data,
-                                mimeType: f.mediaType,
-                            })),
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
+                    const frames = await extractFramesInRange(
+                        safeVideoPath,
+                        args.startTime,
+                        args.endTime,
+                        args.count,
+                        createBinarySpawnRunner()
+                    );
+                    if(frames.length === 0) {
+                        return mcpErrorResult('No frames could be extracted in the specified range');
                     }
+                    return {
+                        content: frames.map(f => ({
+                            type:     'image' as const,
+                            data:     f.base64Data,
+                            mimeType: f.mediaType,
+                        })),
+                    };
                     // Stryker restore all
-                },
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Video Frames', readOnlyHint: true, idempotentHint: true } }
             ),
@@ -168,7 +159,8 @@ export function createMediaMCPServer() {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     filePath: z.string().describe('Path to the local video or audio file'),
                 },
-                async (args): Promise<CallToolResult> => {
+                // Stryker disable next-line StringLiteral: tool name is used for logging only
+                withToolErrorHandling('generateSpectrogramFromAudio', async (args): Promise<CallToolResult> => {
                     let safeFilePath: string;
                     try {
                         safeFilePath = await validateFilePath(args.filePath);
@@ -176,20 +168,16 @@ export function createMediaMCPServer() {
                         return mcpErrorResult(error);
                     }
                     // Stryker disable all: handler body uses real subprocess runners — not invoked in unit tests
-                    try {
-                        const image = await generateSpectrogram(safeFilePath, createBinarySpawnRunner());
-                        return {
-                            content: [{
-                                type:     'image' as const,
-                                data:     image.base64Data,
-                                mimeType: image.mediaType,
-                            }],
-                        };
-                    } catch (error) {
-                        return mcpErrorResult(error);
-                    }
+                    const image = await generateSpectrogram(safeFilePath, createBinarySpawnRunner());
+                    return {
+                        content: [{
+                            type:     'image' as const,
+                            data:     image.base64Data,
+                            mimeType: image.mediaType,
+                        }],
+                    };
                     // Stryker restore all
-                },
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Generate Spectrogram From Audio', readOnlyHint: true, idempotentHint: true } }
             ),

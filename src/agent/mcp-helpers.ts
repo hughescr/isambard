@@ -1,3 +1,4 @@
+import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { type ServiceHealthRegistry, type ServiceName, type ServiceHealthEntry, type ServiceErrorCategory, type ReconnectionLoop  } from '@/services';
 import { formatShortRelativeTime } from '@/utils';
@@ -207,5 +208,29 @@ export function withWriteHealthGuard<T>(
             }
         }
         return handler(args);
+    };
+}
+
+/**
+ * Wraps a tool handler with standard error handling: catches any thrown error,
+ * logs it with the tool name, and returns an error result via mcpErrorResult.
+ *
+ * @param toolName - The MCP tool name, included in the log entry for triage
+ * @param handler  - The tool handler to wrap
+ * @returns A new handler that catches errors, logs them, and returns an error result
+ */
+export function withToolErrorHandling<T>(
+    toolName: string,
+    handler: (args: T) => Promise<CallToolResult>
+): (args: T) => Promise<CallToolResult> {
+    return async (args: T) => {
+        try {
+            return await handler(args);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            // Stryker disable next-line all: Logging for observability
+            logger.warn({ tool: toolName, error: message }, 'MCP tool error');
+            return mcpErrorResult(error);
+        }
     };
 }

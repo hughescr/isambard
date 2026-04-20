@@ -11,3 +11,4 @@ export type {
     CatchUpInProgressSignal
 } from './session-runner';
 export { createCatchUpSessionRunner } from './session-runner';
+export { createCatchUpSignalAdapter } from './signal-adapter';

@@ -2985,6 +2985,20 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('Channel not found: nonexistent');
         });
+
+        test('should return error when muteChannel registry call throws', async () => {
+            mockChannelRegistry.muteChannel = mock(async () => {
+                throw new Error('DynamoDB unavailable');
+            });
+
+            const server = createServer();
+            const handler = getToolHandler(server, 'muteChannel');
+
+            const result = await handler({ channelId: '1451694737026449581' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');
+        });
     });
 
     describe('unmuteChannel tool', () => {
@@ -3027,6 +3041,46 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('Channel not found: nonexistent');
+        });
+
+        test('should return error when unmuteChannel registry call throws', async () => {
+            mockChannelRegistry.unmuteChannel = mock(async () => {
+                throw new Error('DynamoDB unavailable');
+            });
+
+            const server = createServer();
+            const handler = getToolHandler(server, 'unmuteChannel');
+
+            const result = await handler({ channelId: '1451694737026449581' });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: DynamoDB unavailable');
+        });
+    });
+
+    describe('listChannels getAllChannels error handling', () => {
+        test('should return error when getAllChannels throws (includesMuted: true)', async () => {
+            const mockThrowingRegistry = {
+                getAllChannels:     mock(() => { throw new Error('Registry unavailable'); }),
+                getUnmutedChannels: mock(() => Promise.resolve([])),
+            };
+
+            const server = createDiscordMCPServer({
+                searchService:    mockSearchService,
+                client:           mockClient as unknown as Client,
+                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
+                channelRegistry:  mockThrowingRegistry as unknown as MCPChannelRegistry,
+                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
+                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
+                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
+                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+            });
+            const handler = getToolHandler(server, 'listChannels');
+
+            const result = await handler({ includesMuted: true });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('Error: Registry unavailable');
         });
     });
 });

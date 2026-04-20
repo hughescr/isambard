@@ -1,4 +1,4 @@
-import { createMemoryPath, createContentType, type MemoryToolBackend } from '@/storage';
+import { createMemoryPath, createContentType, type MemoryToolBackend } from './memory-tool';
 
 /**
  * All activity types that can be logged automatically by the system.

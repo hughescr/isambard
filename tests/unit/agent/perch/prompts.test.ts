@@ -766,6 +766,14 @@ describe.concurrent('perch context injection', () => {
         expect(prompt).toContain('---');
     });
 
+    test('should separate perchContext from BASE_PROMPT with double-newline-surrounded horizontal rule', () => {
+        // Pins the exact separator so a missing leading newline is caught.
+        // Bug: was previously `${context}---\n\n${BASE_PROMPT}` (no newline before ---).
+        const context = 'CONTEXT_MARKER';
+        const prompt = buildPerchPrompt('unscheduled', context);
+        expect(prompt).toContain(`CONTEXT_MARKER\n\n---\n\n${BASE_PROMPT.slice(0, 20)}`);
+    });
+
     test('should work without perchContext (backward compatible)', () => {
         const prompt = buildPerchPrompt('unscheduled');
         expect(prompt).toBe(BASE_PROMPT);

@@ -1,10 +1,10 @@
 /**
- * Token bucket rate limiter for outbound email sends.
+ * Token bucket rate limiter.
  * Tokens refill over time at a configurable rate per hour.
  * Bucket starts full. On increment(): compute elapsed-time refill first,
  * then consume 1 token (floor at 0, never negative).
  */
-export class SendRateLimiter {
+export class TokenBucketRateLimiter {
     private readonly capacity:          number;
     private readonly refillRatePerHour: number;
     private readonly now:               () => number;

@@ -6,7 +6,7 @@ import type { BlueskyClient } from '../../../src/integrations/bsky/client';
 import type { BskyEmbeddedRecord } from '../../../src/integrations/bsky/embeds';
 import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integrations/bsky/rejection-backend';
 import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
-import type { SendRateLimiter } from '../../../src/integrations/email';
+import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '../../../src/storage';
 import { textContent } from '../../setup';
 
@@ -1062,7 +1062,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 increment:       mock(() => { /* intentionally empty */ }),
                 tokensRemaining: mock(() => 23),
             };
-            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter as unknown as TokenBucketRateLimiter });
             const handler = getToolHandler(server, 'sendPost');
 
             await handler({ text: 'Hello!' });
@@ -1076,7 +1076,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 increment:       mock(() => { /* intentionally empty */ }),
                 tokensRemaining: mock(() => 0),
             };
-            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter as unknown as TokenBucketRateLimiter });
             const handler = getToolHandler(server, 'sendPost');
 
             const result = await handler({ text: 'Hello!' });
@@ -1114,7 +1114,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('replyToPost tool', () => {
         test('should return error result when replyToPost throws BskyValidationError', async () => {
-            const { BskyValidationError } = await import('@/integrations/bsky/errors');
+            const { BskyValidationError } = await import('@/errors');
             (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
             });
@@ -1322,7 +1322,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 increment:       mock(() => { /* intentionally empty */ }),
                 tokensRemaining: mock(() => 22),
             };
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, rateLimiter: mockRateLimiter as unknown as TokenBucketRateLimiter });
             const handler = getToolHandler(server, 'replyToPost');
 
             await handler({
@@ -1341,7 +1341,7 @@ describe.concurrent('createBskyMCPServer', () => {
                 increment:       mock(() => { /* intentionally empty */ }),
                 tokensRemaining: mock(() => 0),
             };
-            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, rateLimiter: mockRateLimiter as unknown as SendRateLimiter });
+            const server  = createBskyMCPServer({ client: mockClient, allowlist: mockAllowlist as unknown as PersonAllowlist, rateLimiter: mockRateLimiter as unknown as TokenBucketRateLimiter });
             const handler = getToolHandler(server, 'replyToPost');
 
             const result = await handler({
@@ -1428,7 +1428,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should validate text before requesting approval when target is not allowlisted', async () => {
-            const { BskyValidationError } = await import('@/integrations/bsky/errors');
+            const { BskyValidationError } = await import('@/errors');
             (mockClient.validatePostText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
             });
@@ -2142,11 +2142,11 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should increment rateLimiter when DM is sent', async () => {
-            const mockRateLimiter: SendRateLimiter = {
+            const mockRateLimiter: TokenBucketRateLimiter = {
                 increment:       mock(() => { /* intentionally empty */ }),
                 isAtLimit:       mock(() => false),
                 tokensRemaining: mock(() => 20),
-            } as unknown as SendRateLimiter;
+            } as unknown as TokenBucketRateLimiter;
 
             const server  = createBskyMCPServer({ client: mockClient, rateLimiter: mockRateLimiter });
             const handler = getToolHandler(server, 'sendDirectMessage');
@@ -2255,7 +2255,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should validate text before requesting approval when recipients are not allowlisted', async () => {
-            const { BskyValidationError } = await import('@/integrations/bsky/errors');
+            const { BskyValidationError } = await import('@/errors');
             (mockClient.validateDMText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('DM text exceeds 1000 graphemes (1001)', { graphemeLength: 1001 });
             });

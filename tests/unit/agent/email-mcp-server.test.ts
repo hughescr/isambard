@@ -2,8 +2,8 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
-import type { SendRateLimiter } from '../../../src/integrations/email/send-rate-limiter';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
+import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '../../../src/storage';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 
@@ -1559,7 +1559,7 @@ describe('createEmailMCPServer', () => {
 
     describe('sendEmail tool', () => {
         let mockSendWildDuck:        WildDuckClient;
-        let mockRateLimiter:         SendRateLimiter;
+        let mockRateLimiter:         TokenBucketRateLimiter;
         let mockAllowlist:           PersonAllowlist;
         let mockSendApprovalRequest: ReturnType<typeof mock>;
         let mockUploadMessage:       ReturnType<typeof mock>;
@@ -1585,7 +1585,7 @@ describe('createEmailMCPServer', () => {
                 isAtLimit:       mock(() => false),
                 tokensRemaining: mock(() => 23),
                 increment:       mock(() => undefined),
-            } as unknown as SendRateLimiter;
+            } as unknown as TokenBucketRateLimiter;
             mockAllowlist = {
                 isAllowed: mock((_platform: string, _value: string) => false),
             } as unknown as PersonAllowlist;
@@ -1996,7 +1996,7 @@ describe('createEmailMCPServer', () => {
 
     describe('replyToEmail tool', () => {
         let mockReplyWildDuck:    WildDuckClient;
-        let mockRateLimiter:      SendRateLimiter;
+        let mockRateLimiter:      TokenBucketRateLimiter;
         let mockAllowlist:        PersonAllowlist;
         let mockUploadMessage:    ReturnType<typeof mock>;
         let mockSubmitMessage:    ReturnType<typeof mock>;
@@ -2033,7 +2033,7 @@ describe('createEmailMCPServer', () => {
                 isAtLimit:       mock(() => false),
                 tokensRemaining: mock(() => 24),
                 increment:       mock(() => undefined),
-            } as unknown as SendRateLimiter;
+            } as unknown as TokenBucketRateLimiter;
             mockAllowlist = {
                 isAllowed: mock((_platform: string, _value: string) => true),
             } as unknown as PersonAllowlist;

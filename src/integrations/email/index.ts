@@ -1,6 +1,5 @@
 export * from './types';
 export * from './auth-checker';
-export * from './errors';
 export * from './classifier-prompt';
 export * from './classifier';
 export * from './email-processor';
@@ -9,6 +8,5 @@ export * from './review-embed-builder';
 export * from './review-handler';
 export { WildDuckClient } from './wildduck-client';
 export type { WildDuckAttachment, WildDuckAttachmentMeta } from './wildduck-client';
-export * from './send-rate-limiter';
 export * from './outbound-approval-handler';
 export { EmailHistoryProvider } from './history-provider';

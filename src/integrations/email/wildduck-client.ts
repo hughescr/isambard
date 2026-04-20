@@ -1,9 +1,9 @@
 import { logger } from '@hughescr/logger';
 import { convert } from 'html-to-text';
-import { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
+import { WildDuckError, WildDuckAuthError } from '@/errors';
 import { type EmailMetadata, type EmailAddress, type EmailHeaders, type VerificationResults, EmailFolder  } from '@/integrations/email/types';
 
-export { WildDuckError, WildDuckAuthError } from '@/integrations/email/errors';
+export { WildDuckError, WildDuckAuthError } from '@/errors';
 
 /**
  * Maps IMAP/WildDuck specialUse flag to the logical EmailFolder value.

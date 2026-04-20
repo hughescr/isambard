@@ -1,3 +1,5 @@
+import { createPrefixedKey, parsePrefixedKey } from '@/storage';
+
 /**
  * DynamoDB key structure for Calendar Registry items
  */
@@ -7,6 +9,12 @@ export interface CalendarRegistryKeys {
     /** Sort Key: CALENDARS */
     SK: string
 }
+
+// Stryker disable StringLiteral: PK/SK key constants are configuration values
+const PREFIX_CALCAL   = 'CALCAL';
+const SK_CALENDARS    = 'CALENDARS';
+const SHARED_USER_ID  = 'SHARED';
+// Stryker restore StringLiteral
 
 /**
  * Generates DynamoDB keys for Calendar Registry items
@@ -20,8 +28,10 @@ export const CalendarRegistryKeyGenerator = {
      */
     createUserKeys(userId: string): CalendarRegistryKeys {
         return {
-            PK: `CALCAL#${userId}`,
-            SK: 'CALENDARS',
+            // Stryker disable next-line StringLiteral: PK key constant is a configuration value
+            PK: createPrefixedKey(PREFIX_CALCAL, userId),
+            // Stryker disable next-line StringLiteral: SK key constant is a configuration value
+            SK: SK_CALENDARS,
         };
     },
 
@@ -32,8 +42,10 @@ export const CalendarRegistryKeyGenerator = {
      */
     createSharedKeys(): CalendarRegistryKeys {
         return {
-            PK: 'CALCAL#SHARED',
-            SK: 'CALENDARS',
+            // Stryker disable next-line StringLiteral: PK key constant is a configuration value
+            PK: createPrefixedKey(PREFIX_CALCAL, SHARED_USER_ID),
+            // Stryker disable next-line StringLiteral: SK key constant is a configuration value
+            SK: SK_CALENDARS,
         };
     },
 
@@ -48,7 +60,7 @@ export const CalendarRegistryKeyGenerator = {
         if(!pk.startsWith('CALCAL#')) {
             throw new Error(`Invalid PK format: expected CALCAL#..., got ${pk}`);
         }
-        return pk.slice(7); // Remove 'CALCAL#' prefix
+        return parsePrefixedKey(PREFIX_CALCAL, pk);
     },
 
     /**
@@ -58,6 +70,6 @@ export const CalendarRegistryKeyGenerator = {
      * @returns true if pk is the shared key
      */
     isSharedKey(pk: string): boolean {
-        return pk === 'CALCAL#SHARED';
+        return pk === createPrefixedKey(PREFIX_CALCAL, SHARED_USER_ID);
     },
 };

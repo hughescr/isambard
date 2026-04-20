@@ -1,6 +1,6 @@
 import { logger } from '@hughescr/logger';
-import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord';
-import { type MemoryToolBackend, createMemoryPath  } from '@/storage';
+import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from './session-runner';
+import { createMemoryPath, type MemoryToolBackend } from '@/storage';
 
 /**
  * Adapter interface for catch-up signal persistence.

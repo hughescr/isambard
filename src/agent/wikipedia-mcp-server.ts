@@ -1,7 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { mcpErrorResult, mcpJsonResult } from './mcp-helpers';
+import { mcpErrorResult, mcpJsonResult, withToolErrorHandling } from './mcp-helpers';
 
 const WIKIPEDIA_API_URL = 'https://en.wikipedia.org/api/rest_v1/page/random/summary';
 
@@ -31,23 +31,20 @@ export function createWikipediaMCPServer() {
                 'getRandomArticle',
                 'Fetch a random Wikipedia article summary. Returns structured JSON with title, extract, description, thumbnail URL, and full article URL.',
                 {},
-                async (): Promise<CallToolResult> => {
-                    try {
-                        const response = await fetch(WIKIPEDIA_API_URL, {
-                            headers:  WIKIPEDIA_HEADERS,
-                            redirect: 'follow',
-                        });
+                // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                withToolErrorHandling('getRandomArticle', async (): Promise<CallToolResult> => {
+                    const response = await fetch(WIKIPEDIA_API_URL, {
+                        headers:  WIKIPEDIA_HEADERS,
+                        redirect: 'follow',
+                    });
 
-                        if(!response.ok) {
-                            return mcpErrorResult(new Error(`Wikipedia API returned ${response.status}: ${response.statusText}`));
-                        }
-
-                        const data: unknown = await response.json();
-                        return mcpJsonResult(data);
-                    } catch (error) {
-                        return mcpErrorResult(error);
+                    if(!response.ok) {
+                        return mcpErrorResult(new Error(`Wikipedia API returned ${response.status}: ${response.statusText}`));
                     }
-                },
+
+                    const data: unknown = await response.json();
+                    return mcpJsonResult(data);
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Random Article', readOnlyHint: true, idempotentHint: false } }
             ),
@@ -56,24 +53,21 @@ export function createWikipediaMCPServer() {
                 'Fetch a Wikipedia article\'s full source content by title. Returns JSON with title, source (wikitext), and metadata.',
                 // Stryker disable next-line StringLiteral: describe() is MCP documentation only
                 { title: z.string().describe('The Wikipedia article title (e.g. "Albert Einstein", "Quantum_mechanics")') },
-                async ({ title }): Promise<CallToolResult> => {
-                    try {
-                        const url = `https://en.wikipedia.org/w/rest.php/v1/page/${encodeURIComponent(title)}`;
-                        const response = await fetch(url, {
-                            headers:  WIKIPEDIA_HEADERS,
-                            redirect: 'follow',
-                        });
+                // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
+                withToolErrorHandling('getArticle', async ({ title }): Promise<CallToolResult> => {
+                    const url = `https://en.wikipedia.org/w/rest.php/v1/page/${encodeURIComponent(title)}`;
+                    const response = await fetch(url, {
+                        headers:  WIKIPEDIA_HEADERS,
+                        redirect: 'follow',
+                    });
 
-                        if(!response.ok) {
-                            return mcpErrorResult(new Error(`Wikipedia API returned ${response.status}: ${response.statusText}`));
-                        }
-
-                        const data: unknown = await response.json();
-                        return mcpJsonResult(data);
-                    } catch (error) {
-                        return mcpErrorResult(error);
+                    if(!response.ok) {
+                        return mcpErrorResult(new Error(`Wikipedia API returned ${response.status}: ${response.statusText}`));
                     }
-                },
+
+                    const data: unknown = await response.json();
+                    return mcpJsonResult(data);
+                }),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { title: 'Get Article', readOnlyHint: true, idempotentHint: true } }
             ),

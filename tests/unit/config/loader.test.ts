@@ -78,7 +78,6 @@ describe.concurrent('loadConfig', () => {
 
             // Planned integrations should be undefined
             expect(config.email).toBeUndefined();
-            expect(config.box).toBeUndefined();
 
             // Browser config is always present (FIX 1: browser: {} added unconditionally)
             expect(config.browser).toBeDefined();
