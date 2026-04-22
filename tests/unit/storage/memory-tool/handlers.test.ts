@@ -242,11 +242,11 @@ describe('Memory Tool Handlers', () => {
         });
 
         it.each([
-            [10, 'Line 1\nLine 2', 'line number beyond content'],
-            [-1, 'Line 1', 'negative line number'],
-            [1.5, 'Line 1\nLine 2', 'decimal line number'],
-            [2.999, 'Line 1\nLine 2', 'decimal line number at boundary'],
-        ])('should throw InvalidLineNumberError for invalid line %i (%s)', async (lineNum, content) => {
+            { lineNum: 10,    content: 'Line 1\nLine 2', desc: 'line number beyond content' },
+            { lineNum: -1,    content: 'Line 1',         desc: 'negative line number' },
+            { lineNum: 1.5,   content: 'Line 1\nLine 2', desc: 'decimal line number' },
+            { lineNum: 2.999, content: 'Line 1\nLine 2', desc: 'decimal line number at boundary' },
+        ])('should throw InvalidLineNumberError for invalid line $lineNum ($desc)', async ({ lineNum, content }) => {
             mockBackend.get = mock(async () => ({
                 path:        '/test/file.md' as MemoryPath,
                 content,
