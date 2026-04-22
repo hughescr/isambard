@@ -14,7 +14,7 @@ const strykerConfig = {
     mutate:           ['src/**/*.ts', '!src/index.ts'], // Do not mutate the entry point
     ignorePatterns:   ['**', '!src/**/*.ts', '!tests/**/*.ts', '!tests/**/*.json', '!tools/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts'], // Only include source and test files in the mutation testing process
     thresholds:       { high: 100, low: 100, 'break': 100 },
-    concurrency:      isCI ? 4 : 24,
+    concurrency:      isCI ? 2 : 12,
     tempDirName:      '.stryker-tmp',
     warnings:         { slow: false },
 };
