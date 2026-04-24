@@ -1,6 +1,7 @@
 import { type ContactBackend } from './backend';
 import { type ContactId, type PlatformType } from './types';
 import { generatePersonId, findAvailablePersonId } from './utils';
+import { InvariantViolationError } from '@/errors';
 
 /**
  * Resolve an identifier to an existing contact, or create a new contact if none exists.
@@ -22,7 +23,13 @@ export async function findOrCreateContact(
 ): Promise<ContactId> {
     const matches = await backend.resolveIdentifier(platform, value);
     if(matches.length > 0) {
-        return matches[0].personId;
+        const firstMatch = matches[0];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matches.length > 0 checked just above; unreachable in practice
+        if(firstMatch === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('findOrCreateContact', 'matches[0] undefined despite matches.length > 0');
+        }
+        return firstMatch.personId;
     }
 
     const baseId   = generatePersonId(displayName);

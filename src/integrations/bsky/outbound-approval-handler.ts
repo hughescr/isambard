@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder } from 'discord.js';
+import { InvariantViolationError } from '@/errors';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
@@ -248,9 +249,22 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         };
     }
 
+    /**
+     * Handle a plain reply-approval button.
+     * Throws InvariantViolationError when the embed is present but missing parent URI/CID
+     * (internal contract violation — the embed builder always sets these fields).
+     */
     private async handleApprove(interaction: ButtonInteraction): Promise<void> {
-        // Extract post data from the embed fields
-        const embed  = interaction.message.embeds[0];
+        // Extract post data from the embed fields.
+        // Missing embed is treated as recoverable external state (Discord message may have been edited or cached stale).
+        const embed = interaction.message.embeds[0];
+        if(embed === undefined) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ msg: 'Missing embed on Bluesky approval interaction — cannot proceed' });
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            await this.replyWithApprovalError(interaction, 'Approval failed — please retry');
+            return;
+        }
         // Stryker disable next-line StringLiteral: '' fallback for null description is never exercised in tests — embed description is always present in practice
         const text   = embed.description ?? '';
         const fields = embed.fields;
@@ -259,8 +273,8 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         const parentCid = fields.find(f => f.name === 'Parent CID')?.value;
 
         if(!parentUri || !parentCid) {
-            // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
-            throw new Error('Missing parent URI/CID in embed');
+            // Stryker disable next-line StringLiteral: invariant violation — embed builder always sets these fields; missing means upstream bug
+            throw new InvariantViolationError('handleApprove', 'parent URI or CID missing despite embed present — upstream embed builder bug');
         }
 
         const rootUri = fields.find(f => f.name === 'Root URI')?.value;
@@ -281,7 +295,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
         void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch(() => undefined);
 
-        const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 posting shortly');
+        const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — posting shortly');
 
         await interaction.editReply({
             embeds:     [updatedEmbed],
@@ -292,7 +306,14 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
     private async handleApproveAllowlist(interaction: ButtonInteraction): Promise<void> {
         // Extract the target handle from the embed before doing the approval.
         // follows same pattern as handleApprove — embeds[0] is always present for approval interactions.
-        const embed  = interaction.message.embeds[0];
+        const embed = interaction.message.embeds[0];
+        if(embed === undefined) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ msg: 'Missing embed on Bluesky approve+allowlist interaction — cannot proceed' });
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            await this.replyWithApprovalError(interaction, 'Approval failed — please retry');
+            return;
+        }
         const fields = embed.fields;
         // Stryker disable next-line StringLiteral,ConditionalExpression,ArrowFunction,EqualityOperator: field name is configuration; find() arrow and equality are unobservable — field name presence in embed is integration-tested
         const targetHandle = fields.find(f => f.name === 'Replying to')?.value;
@@ -306,8 +327,20 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         }
     }
 
+    /**
+     * Handle a DM-approval button.
+     * Throws InvariantViolationError when the embed is present but missing convoId
+     * (internal contract violation — we always store convoId when building the embed).
+     */
     private async handleDMApprove(interaction: ButtonInteraction): Promise<void> {
-        const embed  = interaction.message.embeds[0];
+        const embed = interaction.message.embeds[0];
+        if(embed === undefined) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ msg: 'Missing embed on Bluesky DM approval interaction — cannot proceed' });
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            await this.replyWithApprovalError(interaction, 'Approval failed — please retry');
+            return;
+        }
         // Stryker disable next-line StringLiteral: '' fallback for null description is never exercised in tests — embed description is always present in practice
         const text   = embed.description ?? '';
         const fields = embed.fields;
@@ -315,8 +348,8 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         const convoId = fields.find(f => f.name === 'Conversation ID')?.value;
 
         if(!convoId) {
-            // Stryker disable next-line StringLiteral: Error message content is not behavior-affecting
-            throw new Error('Missing conversation ID in embed');
+            // Stryker disable next-line StringLiteral: invariant violation — we always store convoId in the DM embed; missing means upstream bug
+            throw new InvariantViolationError('handleDMApprove', 'convoId missing despite embed present — upstream embed builder bug');
         }
 
         // Stryker disable next-line StringLiteral: ISO timestamp format is convention
@@ -334,7 +367,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
         void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch(() => undefined);
 
-        const updatedEmbed = this.buildApprovedEmbed('DM Approved \u2713 \u2014 sending shortly');
+        const updatedEmbed = this.buildApprovedEmbed('DM Approved ✓ — sending shortly');
 
         await interaction.editReply({
             embeds:     [updatedEmbed],
@@ -345,7 +378,14 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
     private async handleDMApproveAllowlist(interaction: ButtonInteraction): Promise<void> {
         // Extract recipient handles from the embed before doing the approval.
         // follows same pattern as handleDMApprove — embeds[0] is always present for approval interactions.
-        const embed  = interaction.message.embeds[0];
+        const embed = interaction.message.embeds[0];
+        if(embed === undefined) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ msg: 'Missing embed on Bluesky DM approve+allowlist interaction — cannot proceed' });
+            // Stryker disable next-line StringLiteral: UI label is configuration
+            await this.replyWithApprovalError(interaction, 'Approval failed — please retry');
+            return;
+        }
         const fields = embed.fields;
         const recipientHandles = this.parseRecipientHandles(fields);
 

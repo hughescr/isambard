@@ -1,6 +1,7 @@
 import type { Client } from 'discord.js';
 import { type ChannelId, type UserId, createChannelId, createUserId  } from '../types';
 import type { ChannelRegistryManager } from './manager';
+import { InvariantViolationError } from '@/errors';
 
 /**
  * Information about a resolved Discord user (without internal Discord ID).
@@ -158,6 +159,11 @@ export class DMTracker {
 
         if(matchedById.size === 1) {
             const [user] = matchedById.values();
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matchedById.size === 1 guarantees one value; unreachable in practice
+            if(user === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('resolveUserByName', 'matchedById first value undefined despite size === 1');
+            }
             return { status: 'resolved', user };
         }
 

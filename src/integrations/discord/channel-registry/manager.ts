@@ -3,6 +3,7 @@ import type { Client, Channel, DMChannel } from 'discord.js';
 import { createGuildId, type ChannelId, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
+import { InvariantViolationError } from '@/errors';
 
 /** Type guard: check if a Channel has a 'recipient' property (DMChannel). */
 // Stryker disable ConditionalExpression: Equivalent — guard result irrelevant; callers always pair with secondary truthiness check (e.g. && discordChannel.recipient)
@@ -78,6 +79,11 @@ export class ChannelRegistryManager {
         const allRecords = [...guildRecords, ...dmRecords];
         for(let i = 0; i < allRecords.length; i++) {
             const record = allRecords[i];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < allRecords.length; unreachable in practice
+            if(record === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('warmCache', 'allRecords[i] undefined despite i < allRecords.length');
+            }
             // Stryker disable next-line ObjectLiteral,StringLiteral,ArithmeticOperator: Logging for observability
             logger.debug({ index: i + 1, total: allRecords.length, channelId: record.channelId, msg: 'Warming channel...' });
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API per channel

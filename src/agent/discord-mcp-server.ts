@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
 import { createChannelId, createUserId, type UserId, type ChannelId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
-import { PathSecurityError } from '@/errors';
+import { InvariantViolationError, PathSecurityError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import { validateFilePaths, formatLocalDateTime } from '@/utils';
 
@@ -139,6 +139,41 @@ async function sendMessage(
     return retryHelper.withRetry(
         () => channel.send(messageOptions)
     );
+}
+
+/**
+ * Helper: Sends all message chunks to a channel and returns the sent Message objects.
+ * Throws if chunks is empty (splitMessage invariant violation).
+ */
+async function sendAllChunks(
+    channel: TextChannel,
+    chunks: string[],
+    retryHelper: MCPRetryHelper,
+    replyToMessageId?: string,
+    files?: string[]
+): Promise<Message[]> {
+    const firstChunk = chunks[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — splitMessage guarantees ≥1 chunk; unreachable in practice
+    if(firstChunk === undefined) {
+        // Stryker disable next-line StringLiteral: invariant message tested via toContain in discord-mcp-server.test.ts
+        throw new InvariantViolationError('sendAllChunks', 'splitMessage returned empty chunks array');
+    }
+    const sentMessages: Message[] = [];
+    const firstMessage = await sendMessage(channel, firstChunk, retryHelper, replyToMessageId, files);
+    sentMessages.push(firstMessage);
+    // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
+    for(let i = 1; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < chunks.length; unreachable in practice
+        if(chunk === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('sendAllChunks', 'chunks[i] undefined despite i < chunks.length');
+        }
+        // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
+        const msg = await sendMessage(channel, chunk, retryHelper);
+        sentMessages.push(msg);
+    }
+    return sentMessages;
 }
 
 /**
@@ -683,26 +718,20 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                                 return channelResult.error;
                             }
 
-                            // Split message into chunks
+                            // Split message into chunks and send all
                             const chunks = messageSplitter.splitMessage(args.content);
-                            const sentMessages: Message[] = [];
-
-                            // Send first chunk (with reply and files if specified)
-                            const firstMessage = await sendMessage(
+                            const sentMessages = await sendAllChunks(
                                 channelResult.channel,
-                                chunks[0],
+                                chunks,
                                 retryHelper,
                                 args.replyToMessageId,
                                 validatedFiles
                             );
-                            sentMessages.push(firstMessage);
-
-                            // Send remaining chunks (no reply reference, no files)
-                            // Stryker disable next-line EqualityOperator,UpdateOperator: Loop mutation would cause infinite loop
-                            for(let i = 1; i < chunks.length; i++) {
-                                // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
-                                const msg = await sendMessage(channelResult.channel, chunks[i], retryHelper);
-                                sentMessages.push(msg);
+                            const firstMessage = sentMessages[0];
+                            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — sendAllChunks always pushes ≥1 message or throws; unreachable in practice
+                            if(firstMessage === undefined) {
+                                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                                throw new InvariantViolationError('sendMessage tool', 'sendAllChunks returned empty array');
                             }
 
                             // Create thread if requested (on first message only)

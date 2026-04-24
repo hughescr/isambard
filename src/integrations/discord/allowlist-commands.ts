@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder, InteractionContextType, ApplicationIntegrationType, type ChatInputCommandInteraction  } from 'discord.js';
 import { GREEN } from './colors';
+import { InvariantViolationError } from '@/errors';
 import { type ContactBackend, type ContactId, type PersonAllowlist, createContactId  } from '@/storage';
 
 // Stryker disable next-line ObjectLiteral: Platform emoji mapping is UI configuration
@@ -93,53 +94,60 @@ export class AllowlistCommandHandler {
         }
     }
 
+    private buildContactField(
+        contact: Awaited<ReturnType<typeof this.contactBackend.getContact>>,
+        entry: { personId: ContactId, notes?: string }
+    ): { name: string, value: string } {
+        // Stryker disable StringLiteral: Embed field names and formatting strings are UI configuration
+        if(!contact) {
+            return { name: entry.personId, value: '_(contact not found)_' };
+        }
+        const personIdLine = `Person: \`${contact.personId}\``;
+        const uniquePlatforms = [...new Set(
+            contact.identifiers
+                .map(id => id.platform)
+                .filter(p => !EXCLUDED_PLATFORMS.has(p))
+        )];
+        const platformDisplay = uniquePlatforms
+            .map(p => (PLATFORM_EMOJI[p] ? `${PLATFORM_EMOJI[p]} ${p}` : p))
+            .join('  ');
+        const parts = [personIdLine];
+        if(platformDisplay.length > 0) {
+            parts.push(platformDisplay);
+        }
+        if(entry.notes) {
+            parts.push(`Allowlist: ${entry.notes}`);
+        }
+        if(contact.notes) {
+            parts.push(`Contact: ${contact.notes}`);
+        }
+        const nicknames = contact.identifiers
+            .filter(id => id.platform === 'nickname')
+            .map(id => id.value);
+        const nicknameLabel = nicknames.length === 1 ? 'nickname' : 'nicknames';
+        const displayName = nicknames.length > 0
+            ? `${contact.displayName} (${nicknameLabel}: ${nicknames.join(', ')})`
+            : contact.displayName;
+        // Stryker restore StringLiteral
+        return { name: displayName, value: parts.join('\n') };
+    }
+
     private async buildEntryFields(
         entries: { personId: ContactId, notes?: string }[]
     ): Promise<{ name: string, value: string }[]> {
-        // Stryker disable StringLiteral: Embed field names and formatting strings are UI configuration
         const fields: { name: string, value: string }[] = [];
         for(const entry of entries) {
             // eslint-disable-next-line no-await-in-loop -- sequential: loading contacts for display one-by-one
             const contact = await this.contactBackend.getContact(entry.personId);
-            if(contact) {
-                const personIdLine = `Person: \`${contact.personId}\``;
-                const uniquePlatforms = [...new Set(
-                    contact.identifiers
-                        .map(id => id.platform)
-                        .filter(p => !EXCLUDED_PLATFORMS.has(p))
-                )];
-                const platformDisplay = uniquePlatforms
-                    .map(p => (PLATFORM_EMOJI[p] ? `${PLATFORM_EMOJI[p]} ${p}` : p))
-                    .join('  ');
-                const parts = [personIdLine];
-                if(platformDisplay.length > 0) {
-                    parts.push(platformDisplay);
-                }
-                if(entry.notes) {
-                    parts.push(`Allowlist: ${entry.notes}`);
-                }
-                if(contact.notes) {
-                    parts.push(`Contact: ${contact.notes}`);
-                }
-                const nicknames = contact.identifiers
-                    .filter(id => id.platform === 'nickname')
-                    .map(id => id.value);
-                const nicknameLabel = nicknames.length === 1 ? 'nickname' : 'nicknames';
-                const displayName = nicknames.length > 0
-                    ? `${contact.displayName} (${nicknameLabel}: ${nicknames.join(', ')})`
-                    : contact.displayName;
-                fields.push({ name: displayName, value: parts.join('\n') });
-            } else {
-                fields.push({ name: entry.personId, value: '_(contact not found)_' });
-            }
+            fields.push(this.buildContactField(contact, entry));
         }
-        // Stryker restore StringLiteral
         return fields;
     }
 
     private buildEmbeds(fields: { name: string, value: string }[], totalCount: number): EmbedBuilder[] {
         const FIELDS_PER_EMBED = 25;
         const embeds: EmbedBuilder[] = [];
+        // Stryker disable next-line AssignmentOperator: i -= FIELDS_PER_EMBED would infinite-loop (untestable)
         for(let i = 0; i < fields.length; i += FIELDS_PER_EMBED) {
             const chunk = fields.slice(i, i + FIELDS_PER_EMBED);
             const embed = new EmbedBuilder().setColor(GREEN);
@@ -161,7 +169,13 @@ export class AllowlistCommandHandler {
             const omittedCount = totalCount - shownCount;
             embeds.length = MAX_EMBEDS;
             // Stryker disable next-line StringLiteral: Footer text is UI configuration
-            embeds[MAX_EMBEDS - 1].setFooter({ text: `… and ${omittedCount} more not shown` });
+            const lastEmbed = embeds[MAX_EMBEDS - 1];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — embeds.length > MAX_EMBEDS was just checked, then truncated with .length = MAX_EMBEDS; unreachable in practice
+            if(lastEmbed === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('buildAllowlistEmbeds', 'embeds[MAX_EMBEDS - 1] undefined despite embeds.length > MAX_EMBEDS after truncation');
+            }
+            lastEmbed.setFooter({ text: `… and ${omittedCount} more not shown` });
         }
         return embeds;
     }

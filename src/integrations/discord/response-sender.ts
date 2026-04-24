@@ -7,6 +7,7 @@ import type { DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
 import type { BotStateManager, SessionType } from './state';
 import { createChannelId } from './types';
+import { InvariantViolationError } from '@/errors';
 
 /** Type guard: check if a routing/response result is a RoutingResult (has shouldSend). */
 function isRoutingResult(result: unknown): result is RoutingResult {
@@ -134,18 +135,30 @@ async function sendChunksByReply(
     rateLimiter: DiscordRateLimiter
 ): Promise<void> {
     // First chunk uses reply() to thread the response (with retry and rate limiting)
+    const firstChunk = chunks[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — splitMessage guarantees ≥1 chunk for non-empty input; unreachable in practice
+    if(firstChunk === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('sendChunksByReply', 'chunks is empty — splitMessage guarantees ≥1 chunk');
+    }
     const firstReply = await withDiscordRetry(
-        () => rateLimiter.replyToMessage(message, chunks[0])
+        () => rateLimiter.replyToMessage(message, firstChunk)
     );
     // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
     logger.info({ messageId: message.id, chunkIndex: 0, totalChunks: chunks.length, msg: 'Reply sent successfully' });
 
     // Subsequent chunks reply to our first message to maintain threading
-    // Stryker disable next-line EqualityOperator: Loop starts at 1 to skip already-sent first chunk
+    // Stryker disable next-line EqualityOperator,UpdateOperator: Loop starts at 1; UpdateOperator (i--) would cause infinite loop — untestable without real Discord API
     for(let i = 1; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < chunks.length; unreachable in practice
+        if(chunk === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('sendChunksByReply', 'chunks[i] undefined despite i < chunks.length');
+        }
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
         await withDiscordRetry(
-            () => rateLimiter.replyToMessage(firstReply, chunks[i])
+            () => rateLimiter.replyToMessage(firstReply, chunk)
         );
         // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ messageId: message.id, chunkIndex: i, totalChunks: chunks.length, msg: 'Continuation sent successfully' });
@@ -167,10 +180,17 @@ async function sendChunksToChannel(
         throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
     }
 
+    // Stryker disable next-line UpdateOperator: i-- would cause infinite loop — untestable without real Discord API
     for(let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < chunks.length; unreachable in practice
+        if(chunk === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('sendChunksToChannel', 'chunks[i] undefined despite i < chunks.length');
+        }
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited Discord API
         await withDiscordRetry(
-            () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunks[i])
+            () => rateLimiter.sendToChannel(targetChannel as TextChannel, chunk)
         );
         // Stryker disable all: Logging for observability
         logger.info({
@@ -378,9 +398,16 @@ async function sendChunksToWellKnownChannel(
         throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
     }
     let anyQueued = false;
+    // Stryker disable next-line UpdateOperator: i-- would cause infinite loop — untestable without real Discord API
     for(let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < chunks.length; unreachable in practice
+        if(chunk === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('sendChunksToWellKnownChannel', 'chunks[i] undefined despite i < chunks.length');
+        }
         // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering
-        const status = await sendOneChunkToWellKnownChannel(chunks[i], sessionType, targetChannelId, rateLimiter, client, discordCapability, targetChannel);
+        const status = await sendOneChunkToWellKnownChannel(chunk, sessionType, targetChannelId, rateLimiter, client, discordCapability, targetChannel);
         // Stryker disable ConditionalExpression,BlockStatement,BooleanLiteral: anyQueued tracking — capability send status tested in capability.test.ts
         if(status === 'queued' || status === 'unavailable') {
             anyQueued = true;

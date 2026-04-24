@@ -1,5 +1,6 @@
 import type { AllowlistSagaBackend } from './backend';
 import type { AllowlistSaga, AllowlistSagaPlatform } from './types';
+import { InvariantViolationError } from '@/errors';
 import {
     type ContactBackend,
     type ContactId,
@@ -38,9 +39,15 @@ export class AllowlistSagaExecutor {
         // Step 1: Check if identifier already resolves to a contact
         const matches = await this.deps.contactBackend.resolveIdentifier(platform, identifierValue);
         if(matches.length > 0) {
-            const personId = matches[0].personId;
+            const firstMatch = matches[0];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matches.length > 0 checked just above; unreachable in practice
+            if(firstMatch === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('start', 'matches[0] undefined despite matches.length > 0');
+            }
+            const { personId, displayName } = firstMatch;
             await this.deps.personAllowlist.addPerson(personId, { addedBy: addedBy ?? 'outbound-approval' });
-            return { action: 'completed', personId, displayName: matches[0].displayName };
+            return { action: 'completed', personId, displayName };
         }
 
         // Step 2: Create saga in pending_name state
@@ -85,7 +92,13 @@ export class AllowlistSagaExecutor {
             fuzzyMatches,
             matchIndex:       0,
         });
-        return { action: 'review_match', sagaId, matchPersonId: createContactId(fuzzyMatches[0]) };
+        const firstFuzzyMatch = fuzzyMatches[0];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — fuzzyMatches is non-empty when we reach this branch; unreachable in practice
+        if(firstFuzzyMatch === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('submitName', 'fuzzyMatches[0] undefined despite matches.length > 0');
+        }
+        return { action: 'review_match', sagaId, matchPersonId: createContactId(firstFuzzyMatch) };
     }
 
     /**
@@ -97,7 +110,13 @@ export class AllowlistSagaExecutor {
             return { action: 'cancelled' };
         }
 
-        const personId = createContactId(saga.fuzzyMatches[saga.matchIndex]);
+        const fuzzyMatchAtIndex = saga.fuzzyMatches[saga.matchIndex];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matchIndex is a valid index into fuzzyMatches in pending_review state; unreachable in practice
+        if(fuzzyMatchAtIndex === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('confirmMatch', 'fuzzyMatches[matchIndex] undefined despite valid saga state');
+        }
+        const personId = createContactId(fuzzyMatchAtIndex);
 
         // Add the identifier to the existing contact
         await this.deps.contactBackend.addIdentifier(personId, {
@@ -133,7 +152,13 @@ export class AllowlistSagaExecutor {
         if(nextIndex < saga.fuzzyMatches.length) {
             // More matches to review
             await this.deps.allowlistSagaBackend.update(sagaId, { matchIndex: nextIndex });
-            return { action: 'review_match', sagaId, matchPersonId: createContactId(saga.fuzzyMatches[nextIndex]) };
+            const nextFuzzyMatch = saga.fuzzyMatches[nextIndex];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — nextIndex < fuzzyMatches.length checked just above; unreachable in practice
+            if(nextFuzzyMatch === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('skipMatch', 'fuzzyMatches[nextIndex] undefined despite nextIndex < fuzzyMatches.length');
+            }
+            return { action: 'review_match', sagaId, matchPersonId: createContactId(nextFuzzyMatch) };
         }
 
         // No more matches — create new contact

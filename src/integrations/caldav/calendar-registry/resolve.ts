@@ -1,5 +1,5 @@
 import { isCalendarServerId, type CalendarServerEntry } from './types';
-import { AmbiguousCalendarMatchError } from '@/errors';
+import { AmbiguousCalendarMatchError, InvariantViolationError } from '@/errors';
 
 /**
  * Resolves a server identifier (UUID or description name) to a CalendarServerEntry.
@@ -54,6 +54,11 @@ export function resolveCalendar(
     }
     if(matches.length === 1) {
         const cal = matches[0];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — matches.length === 1 ensures index 0 exists; unreachable in practice
+        if(cal === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('resolveCalendar', 'matches[0] undefined despite matches.length === 1');
+        }
         return { calendarPath: cal.calendarPath, label: cal.label };
     }
     throw new AmbiguousCalendarMatchError(

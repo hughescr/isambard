@@ -220,12 +220,12 @@ describe.concurrent('AmbiguousCalendarMatchError', () => {
         );
     });
 
-    test('should store entityType, input, and matches as public properties', () => {
+    test('should store entityType, input, and matches in context', () => {
         const matches = [{ id: 'uuid-1', label: 'Apple' }];
         const error = new AmbiguousCalendarMatchError('server', 'apple', matches);
-        expect(error.entityType).toBe('server');
-        expect(error.input).toBe('apple');
-        expect(error.matches).toEqual(matches);
+        expect(error.context.entityType).toBe('server');
+        expect(error.context.input).toBe('apple');
+        expect(error.context.matches).toEqual(matches);
     });
 
     test('should store context with entityType, input, and matches', () => {
@@ -237,7 +237,7 @@ describe.concurrent('AmbiguousCalendarMatchError', () => {
     test('should handle empty matches array', () => {
         const error = new AmbiguousCalendarMatchError('server', 'test', []);
         expect(error.message).toBe('Multiple servers match "test": . Please use the exact ID.');
-        expect(error.matches).toEqual([]);
+        expect(error.context.matches).toEqual([]);
     });
 
     test('should not be instanceof CaldavAuthError', () => {

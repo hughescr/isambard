@@ -72,7 +72,6 @@ export const MemoryToolKeyGenerator = {
         // Extract layer from path (identity, state, events) or use first path segment as fallback
         const layer = extractLayerFromPath(path);
         // Stryker disable next-line StringLiteral: Empty string and 'unknown' are functionally equivalent here for edge case of root path
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may return undefined despite string[] type
         const layerStr = layer ?? path.split('/')[1] ?? 'unknown';
 
         return {

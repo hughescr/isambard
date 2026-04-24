@@ -248,12 +248,19 @@ function extractBody(content: string, isHtml: boolean, maxBytes: number): string
     if(Buffer.byteLength(text, 'utf8') > maxBytes) {
         const buf = Buffer.from(text, 'utf8');
         let end   = maxBytes;
-        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator: UTF-8 continuation byte detection — infinite loop if condition mutated to true or operand flipped; bit manipulation is tested by the multi-byte truncation test
-        // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise operations
-        while(end > 0 && (buf[end] & 0xC0) === 0x80) {
+        // Stryker disable ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator,BlockStatement: UTF-8 continuation byte detection — infinite loop if condition/body mutated; bit manipulation is tested by the multi-byte truncation test
+        while(end > 0) {
+            const byte = buf[end];
+            if(byte === undefined) {
+                break;
+            }
+            // eslint-disable-next-line no-bitwise -- UTF-8 continuation byte detection requires bitwise
+            if((byte & 0xC0) !== 0x80) {
+                break;
+            }
             end--;
         }
-        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator
+        // Stryker restore ConditionalExpression,EqualityOperator,LogicalOperator,UpdateOperator,BlockStatement
         return buf.subarray(0, end).toString('utf8');
     }
     return text;

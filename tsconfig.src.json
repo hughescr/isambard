@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["src/**/*", "sst-env.d.ts"],
+  "exclude": ["node_modules", "dist", "agents-skills-plugins", "reports", "scratch", "running"]
+}

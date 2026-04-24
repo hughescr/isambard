@@ -289,6 +289,55 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deps.client.getProfile).not.toHaveBeenCalled();
             });
 
+            test('should log error and show retry embed when embed is missing (empty embeds array)', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
+                const interaction = {
+                    customId:    `bsky-send-approve:${TEST_UUID}`,
+                    message:     { embeds: [] as unknown[] },
+                    deferUpdate: mock(async () => ({})),
+                    editReply,
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Missing embed on Bluesky approval interaction — cannot proceed',
+                }));
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ embeds: { data: { title: string } }[], components: unknown[] }])[0];
+                expect(replyArg.embeds[0]?.data?.title).toBe('Approval failed — please retry');
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+            });
+
+            test('should log error and not re-throw when embed is missing and editReply also fails', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async (): Promise<unknown> => {
+                    throw new Error('Discord down');
+                });
+                const interaction = {
+                    customId:    `bsky-send-approve:${TEST_UUID}`,
+                    message:     { embeds: [] },
+                    deferUpdate: mock(async () => ({})),
+                    editReply,
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Missing embed on Bluesky approval interaction — cannot proceed',
+                }));
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Failed to send error editReply for missing embed',
+                }));
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+            });
+
             test('should clear embed buttons in success editReply', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
@@ -301,10 +350,11 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(replyArg.components).toHaveLength(0);
             });
 
-            test('should throw if parentUri is missing from embed', async () => {
+            test('should throw InvariantViolationError (caught by base handler) if parentUri is missing from embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
-                // Embed with no fields at all
+                // Embed with no fields at all — parentUri/parentCid both missing
+                const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-send-approve:${TEST_UUID}`,
                     message:  {
@@ -314,20 +364,28 @@ describe('BskyOutboundApprovalHandler', () => {
                         }],
                     },
                     deferUpdate: mock(async () => ({})),
-                    editReply:   mock(async () => ({})),
+                    editReply,
                     showModal:   mock(async () => ({})),
                 } as unknown as ButtonInteraction;
 
                 await handler.handleButton(interaction);
 
-                // Error was caught and editReply called with error message
+                // InvariantViolationError is caught by base handleButton — logs error + calls editReply with generic error
                 expect(mockLogger.error).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ content: string, embeds: unknown[], components: unknown[] }])[0];
+                expect(replyArg.content).toContain('error occurred');
+                expect(replyArg.embeds).toHaveLength(0);
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
-            test('should throw if parentCid is missing but parentUri is present', async () => {
+            test('should throw InvariantViolationError (caught by base handler) if parentCid is missing but parentUri is present', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 // Only parentUri present — parentCid missing
+                const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-send-approve:${TEST_UUID}`,
                     message:  {
@@ -340,7 +398,7 @@ describe('BskyOutboundApprovalHandler', () => {
                         }],
                     },
                     deferUpdate: mock(async () => ({})),
-                    editReply:   mock(async () => ({})),
+                    editReply,
                     showModal:   mock(async () => ({})),
                 } as unknown as ButtonInteraction;
 
@@ -348,6 +406,12 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 expect(deps.sagaBackend.create).not.toHaveBeenCalled();
                 expect(mockLogger.error).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ content: string, embeds: unknown[], components: unknown[] }])[0];
+                expect(replyArg.content).toContain('error occurred');
+                expect(replyArg.embeds).toHaveLength(0);
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
         });
 
@@ -419,10 +483,11 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(createArg.params.rootCid).toBe(ROOT_CID);
             });
 
-            test('should throw if parentCid is missing but parentUri is present (approveallowlist path)', async () => {
+            test('should throw InvariantViolationError (caught by base handler) and NOT start allowlist if parentCid is missing (approveallowlist path)', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
                 // Only parentUri present — parentCid missing
+                const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-send-approveallowlist:${TEST_UUID}`,
                     message:  {
@@ -436,7 +501,7 @@ describe('BskyOutboundApprovalHandler', () => {
                         }],
                     },
                     deferUpdate: mock(async () => ({})),
-                    editReply:   mock(async () => ({})),
+                    editReply,
                     showModal:   mock(async () => ({})),
                 } as unknown as ButtonInteraction;
 
@@ -444,11 +509,19 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 expect(deps.sagaBackend.create).not.toHaveBeenCalled();
                 expect(mockLogger.error).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ content: string, embeds: unknown[], components: unknown[] }])[0];
+                expect(replyArg.content).toContain('error occurred');
+                expect(replyArg.embeds).toHaveLength(0);
+                expect(replyArg.components).toHaveLength(0);
+                // Critical regression guard: allowlist must NOT fire when approval itself failed
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
-            test('should throw if parentUri is missing from embed (approveallowlist path)', async () => {
+            test('should throw InvariantViolationError (caught by base handler) and NOT start allowlist if parentUri is missing (approveallowlist path)', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-send-approveallowlist:${TEST_UUID}`,
                     message:  {
@@ -458,7 +531,7 @@ describe('BskyOutboundApprovalHandler', () => {
                         }],
                     },
                     deferUpdate: mock(async () => ({})),
-                    editReply:   mock(async () => ({})),
+                    editReply,
                     showModal:   mock(async () => ({})),
                 } as unknown as ButtonInteraction;
 
@@ -466,6 +539,13 @@ describe('BskyOutboundApprovalHandler', () => {
 
                 expect(deps.sagaBackend.create).not.toHaveBeenCalled();
                 expect(mockLogger.error).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ content: string, embeds: unknown[], components: unknown[] }])[0];
+                expect(replyArg.content).toContain('error occurred');
+                expect(replyArg.embeds).toHaveLength(0);
+                expect(replyArg.components).toHaveLength(0);
+                // Critical regression guard: allowlist must NOT fire when approval itself failed
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
             test('should NOT call getProfile when targetHandle is missing from embed', async () => {
@@ -506,6 +586,31 @@ describe('BskyOutboundApprovalHandler', () => {
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: unknown[], components: unknown[] };
                 expect(replyArg.embeds).toHaveLength(1);
                 expect(replyArg.components).toHaveLength(0);
+            });
+
+            test('should log error and show retry embed when embed is missing (approveallowlist path)', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
+                const interaction = {
+                    customId:    `bsky-send-approveallowlist:${TEST_UUID}`,
+                    message:     { embeds: [] as unknown[] },
+                    deferUpdate: mock(async () => ({})),
+                    editReply,
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Missing embed on Bluesky approve+allowlist interaction — cannot proceed',
+                }));
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ embeds: { data: { title: string } }[], components: unknown[] }])[0];
+                expect(replyArg.embeds[0]?.data?.title).toBe('Approval failed — please retry');
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
         });
 
@@ -1174,9 +1279,10 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(replyArg.components).toHaveLength(0);
             });
 
-            test('should throw if convoId is missing from embed', async () => {
+            test('should throw InvariantViolationError (caught by base handler) if convoId is missing from embed', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-dm-approve:${TEST_UUID}`,
                     message:  {
@@ -1186,13 +1292,21 @@ describe('BskyOutboundApprovalHandler', () => {
                         }],
                     },
                     deferUpdate: mock(async () => ({})),
-                    editReply:   mock(async () => ({})),
+                    editReply,
                     showModal:   mock(async () => ({})),
                 } as unknown as ButtonInteraction;
 
                 await handler.handleButton(interaction);
 
+                // InvariantViolationError thrown and caught by base handleButton — generic error editReply
                 expect(mockLogger.error).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ content: string, embeds: unknown[], components: unknown[] }])[0];
+                expect(replyArg.content).toContain('error occurred');
+                expect(replyArg.embeds).toHaveLength(0);
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
             test('should NOT add to allowlist on plain DM approve', async () => {
@@ -1203,6 +1317,30 @@ describe('BskyOutboundApprovalHandler', () => {
                 await handler.handleButton(interaction);
 
                 expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
+            });
+
+            test('should log error and show retry embed when embed is missing (dm-approve path)', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
+                const interaction = {
+                    customId:    `bsky-dm-approve:${TEST_UUID}`,
+                    message:     { embeds: [] as unknown[] },
+                    deferUpdate: mock(async () => ({})),
+                    editReply,
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Missing embed on Bluesky DM approval interaction — cannot proceed',
+                }));
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ embeds: { data: { title: string } }[], components: unknown[] }])[0];
+                expect(replyArg.embeds[0]?.data?.title).toBe('Approval failed — please retry');
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
             });
         });
 
@@ -1332,9 +1470,10 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
-            test('should throw if convoId is missing from embed', async () => {
+            test('should throw InvariantViolationError (caught by base handler) and NOT start allowlist if convoId is missing from embed (dm-approveallowlist path)', async () => {
                 const deps    = makeDeps();
                 const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
                     message:  {
@@ -1347,14 +1486,47 @@ describe('BskyOutboundApprovalHandler', () => {
                         }],
                     },
                     deferUpdate: mock(async () => ({})),
-                    editReply:   mock(async () => ({})),
+                    editReply,
                     showModal:   mock(async () => ({})),
                 } as unknown as ButtonInteraction;
 
                 await handler.handleButton(interaction);
 
+                // InvariantViolationError thrown and caught by base handleButton — generic error editReply
                 expect(deps.client.sendDirectMessage).not.toHaveBeenCalled();
                 expect(mockLogger.error).toHaveBeenCalled();
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ content: string, embeds: unknown[], components: unknown[] }])[0];
+                expect(replyArg.content).toContain('error occurred');
+                expect(replyArg.embeds).toHaveLength(0);
+                expect(replyArg.components).toHaveLength(0);
+                // Critical regression guard: allowlist must NOT fire when approval itself failed
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
+            });
+
+            test('should log error and show retry embed when embed is missing (dm-approveallowlist path)', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const editReply   = mock(async () => ({}));
+                const interaction = {
+                    customId:    `bsky-dm-approveallowlist:${TEST_UUID}`,
+                    message:     { embeds: [] as unknown[] },
+                    deferUpdate: mock(async () => ({})),
+                    editReply,
+                    showModal:   mock(async () => ({})),
+                } as unknown as ButtonInteraction;
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Missing embed on Bluesky DM approve+allowlist interaction — cannot proceed',
+                }));
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = (editReply.mock.calls[0] as unknown as [{ embeds: { data: { title: string } }[], components: unknown[] }])[0];
+                expect(replyArg.embeds[0]?.data?.title).toBe('Approval failed — please retry');
+                expect(replyArg.components).toHaveLength(0);
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
         });
 

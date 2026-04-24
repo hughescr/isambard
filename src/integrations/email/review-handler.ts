@@ -49,7 +49,6 @@ export class ReviewHandler {
         }
 
         // Stryker disable next-line StringLiteral: fallback '' for parseInt produces NaN regardless of value
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: array index may be undefined if customId lacks expected colons
         const uid = Number.parseInt(uidStr ?? '', 10);
         if(Number.isNaN(uid)) {
             return;

@@ -4,6 +4,7 @@ import {
     type CalendarRegistryRecord,
     type CalendarServerEntry
 } from './types';
+import { InvariantViolationError } from '@/errors';
 import { BaseRepository } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
@@ -222,6 +223,11 @@ export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryReco
         }
 
         const server = existing.servers[serverIndex];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — serverIndex !== -1 from findIndex guarantees valid index; unreachable in practice
+        if(server === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('removeCalendar', 'servers[serverIndex] undefined despite serverIndex !== -1 from findIndex');
+        }
         const originalCalendarLength = server.calendars.length;
         const updatedCalendars = server.calendars.filter(c => c.calendarPath !== calendarPath);
         if(updatedCalendars.length === originalCalendarLength) {

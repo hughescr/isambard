@@ -40,9 +40,17 @@ export function truncateToBytes(text: string, maxBytes: number): string {
     // buf[cutPos] is the byte we'd be DROPPING — if it's a continuation,
     // we're mid-sequence and need to back up to find the start byte.
     let cutPos = maxBytes;
-    // Stryker disable next-line EqualityOperator,ConditionalExpression: EqualityOperator — > 0 vs >= 0 is equivalent at boundary (buf[0] is always a start byte in valid UTF-8, never a continuation); ConditionalExpression — cutPos > 0 mutated to `true` is equivalent because buf[0] can never be a continuation byte (0x80-0xBF) in valid UTF-8, so the inner && condition breaks the loop at position 0 anyway
-    // eslint-disable-next-line no-bitwise -- bit-masking is the correct idiom for UTF-8 continuation byte detection
-    while(cutPos > 0 && (buf[cutPos] & 0xC0) === 0x80) {
+    // Stryker disable next-line EqualityOperator,ConditionalExpression,BlockStatement: EqualityOperator — > 0 vs >= 0 is equivalent at boundary; ConditionalExpression — mutated to `true` is equivalent (buf[0] can never be a continuation byte); BlockStatement — empty body would infinite-loop (untestable)
+    while(cutPos > 0) {
+        const byte = buf[cutPos];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — buf is a Buffer with cutPos in [0, cutPos0]; undefined only if buf shrinks at runtime, which cannot happen
+        if(byte === undefined) {
+            break;
+        }
+        // eslint-disable-next-line no-bitwise -- bit-masking idiom for UTF-8 continuation byte detection
+        if((byte & 0xC0) !== 0x80) {
+            break;
+        }
         cutPos--;
     }
     const bytesSaved = buf.length - cutPos;

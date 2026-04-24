@@ -1509,6 +1509,32 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 expect(mockChannel.send).not.toHaveBeenCalled();
             });
         });
+
+        test('should throw when splitMessage returns empty array (guard against invariant violation)', async () => {
+            // Simulate a buggy splitMessage that violates the "always returns ≥1 chunk" invariant
+            mockMessageSplitter.splitMessage = mock(() => []);
+
+            const mockChannel = {
+                id:          '123456789012345678',
+                send:        mock(async () => ({ id: 'sent-message-id' })),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            const server = createServer();
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            const result = await handler({
+                channelId: '123456789012345678',
+                content:   'Test message',
+            });
+
+            // withToolErrorHandling catches the thrown Error and returns it as an error result
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('splitMessage returned empty chunks array');
+        });
     });
 
     describe('askUserQuestion tool', () => {

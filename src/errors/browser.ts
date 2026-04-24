@@ -2,11 +2,26 @@
  * Browser Error Classes
  *
  * Hierarchical error classes for browser automation operations.
- * All errors extend IsambardError.
+ * All errors extend BrowserError which extends IsambardError.
  */
 
 import { IsambardError } from './base';
 import { ErrorCode } from './codes';
+
+// ============================================================================
+// Base Browser Error
+// ============================================================================
+
+/**
+ * Base error class for all browser automation errors.
+ */
+export class BrowserError extends IsambardError {
+    constructor(message: string, code: ErrorCode = ErrorCode.BROWSER_ERROR, context?: Record<string, unknown>) {
+        super(message, code, context);
+        // Stryker disable next-line StringLiteral: error name is informational only
+        this.name = 'BrowserError';
+    }
+}
 
 // ============================================================================
 // Navigate Errors
@@ -16,7 +31,7 @@ import { ErrorCode } from './codes';
  * Error thrown when navigate() times out after all retry attempts.
  * The view is closed; the next call will lazy-reinit.
  */
-export class BrowserNavigateTimeoutError extends IsambardError {
+export class BrowserNavigateTimeoutError extends BrowserError {
     declare public readonly context: { url: string, attempts: number };
 
     constructor(url: string, attempts: number) {

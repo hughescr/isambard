@@ -1,4 +1,5 @@
 import { chain } from 'lodash-es';
+import { InvariantViolationError } from '@/errors';
 /**
  * Maximum message length allowed by Discord API.
  */
@@ -55,6 +56,11 @@ function splitByWords(text: string, maxLength: number): string[] {
     // Pre-condition: callers guarantee non-empty trimmed text, so words is non-empty
     const chunks: string[] = [];
     const firstWord = words[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — non-empty trimmed text always produces ≥1 word; unreachable in practice
+    if(firstWord === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('splitByWords', 'words is empty despite caller guarantee of non-empty trimmed text');
+    }
     const firstWordTooLong = exceedsLimit(firstWord.length, maxLength);
     let currentChunk = firstWordTooLong ? '' : firstWord;
 
@@ -66,6 +72,11 @@ function splitByWords(text: string, maxLength: number): string[] {
     // Process remaining words starting from index 1
     for(let i = 1; i < words.length; i++) {
         const word = words[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < words.length; unreachable in practice
+        if(word === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('splitByWords', 'words[i] undefined despite i < words.length');
+        }
 
         // Handle words longer than maxLength by splitting into characters
         if(exceedsLimit(word.length, maxLength)) {
@@ -163,6 +174,11 @@ function splitBySentences(text: string, maxLength: number): string[] {
     // Pre-condition: sentences is non-empty
     const chunks: string[] = [];
     const firstSentence = sentences[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — sentences.length === 0 early-return above ensures non-empty; unreachable in practice
+    if(firstSentence === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('splitBySentences', 'sentences[0] undefined despite sentences.length === 0 early-return guard');
+    }
     const firstSentenceTooLong = exceedsLimit(firstSentence.length, maxLength);
     let currentChunk = firstSentenceTooLong ? '' : firstSentence;
 
@@ -174,6 +190,11 @@ function splitBySentences(text: string, maxLength: number): string[] {
     // Process remaining sentences starting from index 1
     for(let i = 1; i < sentences.length; i++) {
         const sentence = sentences[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < sentences.length; unreachable in practice
+        if(sentence === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('splitBySentences', 'sentences[i] undefined despite i < sentences.length');
+        }
 
         // Handle sentences longer than maxLength
         if(exceedsLimit(sentence.length, maxLength)) {
@@ -232,6 +253,11 @@ function splitByParagraphs(text: string, maxLength: number): string[] {
 
     const chunks: string[] = [];
     const firstParagraph = paragraphs[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — non-empty trimmed text always produces ≥1 paragraph; unreachable in practice
+    if(firstParagraph === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('splitByParagraphs', 'paragraphs[0] undefined despite non-empty trimmed text');
+    }
     const firstParagraphTooLong = exceedsLimit(firstParagraph.length, maxLength);
     let currentChunk = firstParagraphTooLong ? '' : firstParagraph;
 
@@ -243,6 +269,11 @@ function splitByParagraphs(text: string, maxLength: number): string[] {
     // Process remaining paragraphs starting from index 1
     for(let i = 1; i < paragraphs.length; i++) {
         const paragraph = paragraphs[i];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — loop bounds guarantee i < paragraphs.length; unreachable in practice
+        if(paragraph === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('splitByParagraphs', 'paragraphs[i] undefined despite i < paragraphs.length');
+        }
 
         // Handle paragraphs longer than maxLength
         if(exceedsLimit(paragraph.length, maxLength)) {

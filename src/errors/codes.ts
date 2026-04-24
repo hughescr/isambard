@@ -73,7 +73,10 @@ export enum ErrorCode {
 
     // Browser errors
     BROWSER_ERROR = 'BROWSER_ERROR',
-    BROWSER_NAVIGATE_TIMEOUT = 'BROWSER_NAVIGATE_TIMEOUT'
+    BROWSER_NAVIGATE_TIMEOUT = 'BROWSER_NAVIGATE_TIMEOUT',
+
+    // Invariant violations (logic errors — should never be reached in correct code)
+    INVARIANT_VIOLATION = 'INVARIANT_VIOLATION'
 
 }
 // Stryker restore all

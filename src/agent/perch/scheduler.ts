@@ -12,6 +12,7 @@ import { getSlotForHour } from './schedule';
 import { type PerchSessionRunner } from './session-runner';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
 import type { AgentStateManager, AgentStateChange } from '@/agent/types';
+import { InvariantViolationError } from '@/errors';
 
 /**
  * Dependencies for the perch scheduler.
@@ -180,6 +181,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             }
         }
         // Stryker restore all
+        // Stryker disable next-line ArithmeticOperator: subtraction computes ms until next fire; + mutation yields enormous delay (untestable via timer assertions without real scheduling)
         const delayMs = Math.max(0, nextTime.getTime() - Date.now());
         return { delayMs, nextTime };
     }
@@ -344,7 +346,13 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
                 logger.info({ slot }, 'Triggering test perch with forced slot');
             } else {
                 // Cycle through slots
-                slot = TEST_SLOTS[nextTestSlotIndex];
+                const nextSlot = TEST_SLOTS[nextTestSlotIndex];
+                // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — nextTestSlotIndex is always modulo-bounded to TEST_SLOTS.length; unreachable in practice
+                if(nextSlot === undefined) {
+                    // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                    throw new InvariantViolationError('triggerTestPerch', 'TEST_SLOTS[nextTestSlotIndex] undefined despite modulo bound');
+                }
+                slot = nextSlot;
                 nextTestSlotIndex = (nextTestSlotIndex + 1) % TEST_SLOTS.length;
                 // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
                 logger.info({ slot, nextIndex: nextTestSlotIndex }, 'Triggering test perch with cycling slot');

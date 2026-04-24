@@ -54,7 +54,14 @@ const eslintConfig = [
     },
     boundariesConfig,
     {
-        files:   ['src/**/*.ts', 'src/**/*.tsx'],
+        files:           ['src/**/*.ts', 'src/**/*.tsx'],
+        languageOptions: {
+            parserOptions: {
+                projectService:  false,
+                project:         './tsconfig.src.json',
+                tsconfigRootDir: import.meta.dirname,
+            },
+        },
         plugins: {
             local: {
                 rules: {

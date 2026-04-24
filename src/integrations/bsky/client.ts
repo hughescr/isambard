@@ -1,6 +1,6 @@
 import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost, AppBskyEmbedRecord, AppBskyEmbedImages, AppBskyEmbedVideo, AppBskyEmbedExternal, AppBskyEmbedRecordWithMedia, type AppBskyRichtextFacet, ChatBskyConvoDefs, type ChatBskyActorDefs } from '@atproto/api';
 import { logger } from '@hughescr/logger';
-import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/errors';
+import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError, InvariantViolationError } from '@/errors';
 import { type BskyEmbeddedRecord, type BskyPostEmbed, type BskyFacet, type BskyFacetFeature } from '@/integrations/bsky/embeds';
 import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
 import type { ServiceHealthRegistry } from '@/services';
@@ -176,7 +176,13 @@ export class BlueskyClient {
                 // Stryker disable next-line StringLiteral: error message is informational only
                 throw new BskyError('Post not found', undefined, { uri });
             }
-            return await this.normalizePost(posts[0]);
+            const post = posts[0];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — posts.length === 0 check above ensures non-empty; unreachable in practice
+            if(post === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('getPost', 'posts[0] undefined after posts.length === 0 guard');
+            }
+            return await this.normalizePost(post);
         } catch (err: unknown) {
             if(err instanceof BskyError) {
                 throw err;

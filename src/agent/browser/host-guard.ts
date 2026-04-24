@@ -10,6 +10,7 @@
  */
 import { isIP, isIPv4 } from 'node:net';
 import type { BrowserHostPolicy } from './types';
+import { InvariantViolationError } from '@/errors';
 
 // ============================================================================
 // Result types
@@ -48,7 +49,12 @@ function isBlockedIPv4(addr: string): boolean {
         // Stryker disable next-line BooleanLiteral: defensive guard — only called after isIPv4() which ensures valid input; null return from ipv4Octets is unreachable through public API
         return false;
     }
-    const [a, b, c, d] = octs;
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — isIPv4() ensures exactly 4 octets; unreachable in practice
+    if(octs.length !== 4) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('isBlockedIPv4', 'ipv4Octets returned array without exactly 4 elements');
+    }
+    const [a, b, c, d] = octs as [number, number, number, number];
 
     // Zero address: 0.0.0.0
     if(a === 0 && b === 0 && c === 0 && d === 0) {
@@ -141,8 +147,15 @@ function extractMappedV4(rest: string): string | null {
         return null;
     }
     // Each 16-bit group → two 8-bit octets. Use Math.floor(x / 256) and x % 256 to avoid bitwise ops.
-    const hi = Number.parseInt(hexMatch[1], 16);
-    const lo = Number.parseInt(hexMatch[2], 16);
+    // capture groups: [1] = hi word, [2] = lo word — if you change the regex structure, update the destructure indices
+    const [, hiStr, loStr] = hexMatch;
+    // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — regex has two capture groups; both are always present when hexMatch !== null
+    if(hiStr === undefined || loStr === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('parseHexIPv4', 'regex capture groups absent despite hexMatch !== null');
+    }
+    const hi = Number.parseInt(hiStr, 16);
+    const lo = Number.parseInt(loStr, 16);
     // Stryker disable next-line ArithmeticOperator: division by 256 extracts high byte (equivalent to >> 8 for 0-65535)
     const hiHigh = Math.floor(hi / 256);
     // Stryker disable next-line ArithmeticOperator: modulo 256 extracts low byte (equivalent to & 0xff for 0-65535)
@@ -255,10 +268,11 @@ export function validateUrl(rawUrl: string, policy: BrowserHostPolicy): Validate
     // parsers preserve them. Strip all trailing dots to prevent bypass attacks where a
     // blocklisted hostname like 'localhost' is sent as 'localhost.' and passes the check.
     let hostname = unbracketed;
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: trailing-dot stripping loop; mutations here either over-strip or under-strip, both of which are caught by the trailing-dot test cases
+    // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement,MethodExpression: trailing-dot stripping loop; BlockStatement/MethodExpression mutations would infinite-loop; ConditionalExpression/EqualityOperator mutations either over-strip or under-strip (caught by trailing-dot tests)
     while(hostname.endsWith('.') && hostname.length > 1) {
         hostname = hostname.slice(0, -1);
     }
+    // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement,MethodExpression
 
     // ---- Blocked hostnames ----
     const hostnameError = checkHostname(hostname);

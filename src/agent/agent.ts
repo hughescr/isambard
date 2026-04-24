@@ -15,6 +15,7 @@ import { StreamTracker } from './stream-tracker';
 import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
 import { type AgentStreamEvent, type MessageContext, type PlatformImage  } from './types';
 import { loadRetryConfig } from '@/config';
+import { InvariantViolationError } from '@/errors';
 import { formatLocalDateTime, resolveTimezone } from '@/utils';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
@@ -163,6 +164,11 @@ export function parseToolName(toolName: string | undefined): ParsedToolName {
         const parts = toolName.slice(5).split('__');
         if(parts.length >= 2) {
             const module = parts[0];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — parts.length >= 2 guarantees parts[0] exists; unreachable in practice
+            if(module === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('parseMcpToolName', 'parts[0] undefined despite parts.length >= 2');
+            }
             const tool = parts.slice(1).join('__');
             return { module, tool };
         }
@@ -733,8 +739,14 @@ async function buildUserMessageTextForBatch(
     }
 
     // Build context prefix from memories and events
+    const firstContext = contexts[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — caller guarantees non-empty contexts array; unreachable in practice
+    if(firstContext === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('buildAgentQuery', 'contexts is empty in normal message flow');
+    }
     const contextPrefix = contextBuilder
-        ? await contextBuilder.buildUserMessagePrefix(contexts[0].userId, timezone)
+        ? await contextBuilder.buildUserMessagePrefix(firstContext.userId, timezone)
         : '';
 
     // Format multiple messages with timezone fallback
@@ -1079,12 +1091,18 @@ async function loadUserTimezoneForFlow(
         return undefined;
     }
 
+    const firstCtx = contexts[0];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — contexts.length === 0 guard above makes this unreachable in practice
+    if(firstCtx === undefined) {
+        // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+        throw new InvariantViolationError('loadUserTimezoneForFlow', 'contexts[0] undefined after contexts.length === 0 guard');
+    }
     // Stryker disable BlockStatement: Equivalent mutant - catch block with empty body still returns undefined implicitly
     try {
-        return await contextBuilder.loadUserTimezone(contexts[0].userId);
+        return await contextBuilder.loadUserTimezone(firstCtx.userId);
     } catch (error) {
         /* Stryker disable StringLiteral,ObjectLiteral: Logging for observability */
-        logger.warn({ error, userId: contexts[0].userId }, 'Failed to load user timezone, falling back to server timezone');
+        logger.warn({ error, userId: firstCtx.userId }, 'Failed to load user timezone, falling back to server timezone');
         /* Stryker restore StringLiteral,ObjectLiteral */
         return undefined;
     }

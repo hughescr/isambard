@@ -1,5 +1,6 @@
 import type { FetchedImage } from '../types';
 import type { SceneInfo, BinarySpawnRunner } from './types';
+import { InvariantViolationError } from '@/errors';
 
 // Stryker disable next-line ArithmeticOperator: concurrency limit is configuration
 const FRAME_EXTRACT_CONCURRENCY = 4;
@@ -17,8 +18,14 @@ async function mapWithConcurrency<T, R>(
     async function worker(): Promise<void> {
         while(index < items.length) {
             const i = index++;
+            const item = items[i];
+            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — i was index when < items.length so items[i] exists; unreachable in practice
+            if(item === undefined) {
+                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                throw new InvariantViolationError('mapWithConcurrency', 'items[i] undefined despite i < items.length');
+            }
             // eslint-disable-next-line no-await-in-loop -- sequential within each worker is intentional
-            results[i] = await fn(items[i]);
+            results[i] = await fn(item);
         }
     }
     // Stryker restore BlockStatement

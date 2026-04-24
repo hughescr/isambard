@@ -10,6 +10,7 @@ import {
     type PersonHistoryOptions,
     type PlatformHistoryProvider
 } from './types';
+import { InvariantViolationError } from '@/errors';
 import type { Contact, ContactBackend, PlatformType } from '@/storage';
 
 /**
@@ -196,6 +197,11 @@ export class PersonHistoryCoordinator {
             return { history: undefined, person: undefined };
         }
         const contact = contacts[0];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — contacts.length === 0 check above ensures non-empty; unreachable in practice
+        if(contact === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('getPersonHistory', 'contacts[0] undefined after contacts.length === 0 guard');
+        }
 
         // Step 2: compute time window — use explicit startTime/endTime when provided, otherwise fall back to windowMinutes
         const endTime   = optEndTime   ?? new Date();

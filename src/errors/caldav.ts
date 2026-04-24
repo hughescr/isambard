@@ -61,11 +61,9 @@ export class CaldavTimeoutError extends CaldavError {
  * Prompts the user to use an exact ID.
  */
 export class AmbiguousCalendarMatchError extends CaldavError {
-    constructor(
-        public readonly entityType: 'server' | 'calendar',
-        public readonly input: string,
-        public readonly matches: { id: string, label: string }[]
-    ) {
+    declare public readonly context: { entityType: 'server' | 'calendar', input: string, matches: { id: string, label: string }[] };
+
+    constructor(entityType: 'server' | 'calendar', input: string, matches: { id: string, label: string }[]) {
         const matchList = matches.map(m => `"${m.label}" (${m.id})`).join(', ');
         super(
             `Multiple ${entityType}s match "${input}": ${matchList}. Please use the exact ID.`,

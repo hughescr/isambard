@@ -7,7 +7,7 @@ import {
     channelStorageRecordSchema,
     WELL_KNOWN_CHANNELS
 } from './types';
-import { ItemNotFoundError, ValidationError } from '@/errors';
+import { InvariantViolationError, ItemNotFoundError, ValidationError } from '@/errors';
 import { BaseRepository } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
@@ -139,7 +139,13 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
         }
 
         // Step 2: Extract channelId from PK and fetch full record
-        const pk = items[0].PK as string;
+        const firstItem = items[0];
+        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — items.length !== 0 checked just above; unreachable in practice
+        if(firstItem === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('getWellKnownChannelByType', 'items[0] undefined despite items.length !== 0');
+        }
+        const pk = firstItem.PK as string;
         const channelId = createChannelId(pk.replace('CHANNEL#', ''));
 
         return this.getChannel(channelId);

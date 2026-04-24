@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { mcpJsonResult, withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
 import { createChannelId, type MCPInboxManager, type MCPInboxStateManager, type MCPChannelRegistry, type MCPChannelSummaryResponse, type MCPMessageMetadata } from './types';
+import { InvariantViolationError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 
 /**
@@ -129,15 +130,30 @@ export function createInboxMCPServer(
 
                         // Get time range
                         const timestamps = chain(messages).map('timestamp').sortBy().value();
+                        const firstTimestamp = timestamps[0];
+                        const lastTimestamp  = timestamps[timestamps.length - 1];
+                        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — timestamps is non-empty when messages.length > 0; unreachable in practice
+                        if(firstTimestamp === undefined || lastTimestamp === undefined) {
+                            // note(inbox-mcp): structured refactor to return mcpErrorResult would improve agent UX here
+                            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                            throw new InvariantViolationError('channelSummary tool', 'timestamps empty despite messages.length > 0');
+                        }
                         // Stryker disable next-line ArrayDeclaration,ArithmeticOperator: Array access with [0] and [length-1] for first/last elements
                         const timeRange = {
-                            start: timestamps[0],
-                            end:   timestamps[timestamps.length - 1],
+                            start: firstTimestamp,
+                            end:   lastTimestamp,
                         };
 
+                        const firstMessage = messages[0];
+                        // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — messages.length > 0 guaranteed by outer check; unreachable in practice
+                        if(firstMessage === undefined) {
+                            // note(inbox-mcp): structured refactor to return mcpErrorResult would improve agent UX here
+                            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                            throw new InvariantViolationError('channelSummary tool', 'messages[0] undefined despite messages.length > 0');
+                        }
                         const response: MCPChannelSummaryResponse = {
                             channelId,
-                            channelName:  messages[0].channelName,
+                            channelName:  firstMessage.channelName,
                             messageCount: messages.length,
                             summary:      summary || 'Unable to generate summary.',
                             authors,
@@ -148,7 +164,7 @@ export function createInboxMCPServer(
                         // Stryker disable ObjectLiteral,StringLiteral: Logger info object - content not behavior-affecting
                         logger.info({
                             channelId,
-                            channelName:  messages[0].channelName,
+                            channelName:  firstMessage.channelName,
                             messageCount: messages.length,
                             authorCount:  authors.length,
                             msg:          'Channel summary generated',

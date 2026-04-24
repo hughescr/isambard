@@ -569,7 +569,6 @@ export class ContactCommandHandler {
             contact = results[0];
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- results[0] may be undefined at runtime; noUncheckedIndexedAccess is not enabled
         if(!contact) {
             // Stryker disable next-line StringLiteral: Reply message content is not behavior-affecting
             await interaction.editReply({ content: `No contact found matching \`${personRaw}\`.` });

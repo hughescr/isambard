@@ -1,6 +1,7 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
+import { InvariantViolationError } from '@/errors';
 import type { AllowlistSagaStarter, SagaWriter } from '@/services';
 
 // Stryker disable all: Color constants are UI configuration
@@ -111,6 +112,11 @@ export abstract class BaseOutboundApprovalHandler<TId> {
         }
         const prefix = parts[0];
         const rawId  = parts[1];
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — parts.length >= 2 guarantees indices 0 and 1; unreachable in practice
+        if(prefix === undefined || rawId === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('handleButton', 'parts[0]/parts[1] undefined despite parts.length >= 2');
+        }
 
         if(!this.isKnownButtonPrefix(prefix)) {
             return;
@@ -167,6 +173,11 @@ export abstract class BaseOutboundApprovalHandler<TId> {
         }
         const prefix = parts[0];
         const rawId  = parts[1];
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — parts.length >= 2 guarantees indices 0 and 1; unreachable in practice
+        if(prefix === undefined || rawId === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('handleModalSubmit', 'parts[0]/parts[1] undefined despite parts.length >= 2');
+        }
 
         if(!this.isKnownModalPrefix(prefix)) {
             return;
@@ -199,6 +210,31 @@ export abstract class BaseOutboundApprovalHandler<TId> {
     // ---------------------------------------------------------------------------
     // Shared protected helpers
     // ---------------------------------------------------------------------------
+
+    /**
+     * Reply to the interaction with an amber error embed indicating a transient failure.
+     * Used for missing-embed recovery (external state: Discord message may have been edited or cached stale).
+     * Best-effort: swallows editReply errors and logs them.
+     */
+    protected async replyWithApprovalError(interaction: ButtonInteraction, title: string): Promise<void> {
+        // Stryker disable BlockStatement: try-catch wraps best-effort error reply to Discord
+        try {
+            const errorEmbed = new EmbedBuilder()
+                // Stryker disable next-line StringLiteral: UI label is configuration
+                .setTitle(title)
+                // Stryker disable next-line StringLiteral: UI message is configuration
+                .setDescription('Could not read approval embed data.')
+                .setColor(AMBER);
+            await interaction.editReply({
+                embeds:     [errorEmbed],
+                components: [],
+            });
+        } catch (replyError) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.error({ err: replyError, msg: 'Failed to send error editReply for missing embed' });
+        }
+        // Stryker restore BlockStatement
+    }
 
     /**
      * Build and show a rejection reason modal.

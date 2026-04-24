@@ -29,7 +29,7 @@
     "test": "bun test ${CI:+--timeout 60}",
     "test:full": "bun run lint;bun run typecheck;bun run mutate",
     "test:watch": "bun test --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.src.json"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.118",

@@ -136,7 +136,6 @@ export function createActiveStatusGenerator(
                 }
 
                 case 'using_tool': {
-                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: generatedStatus may be absent at runtime despite typed as optional string
                     baseStatus = phase.generatedStatus ?? ToolStatusMap[phase.toolName] ?? 'Working...';
                     break;
                 }

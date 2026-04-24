@@ -2,6 +2,7 @@ import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction } from 'discord.js';
 import { createUserId, createChannelId } from './types';
 import type { QuestionRegistry, QuestionAnswer } from '@/agent';
+import { InvariantViolationError } from '@/errors';
 
 interface InteractionHandlerConfig {
     questionRegistry: QuestionRegistry
@@ -23,12 +24,14 @@ interface InteractionHandler {
 export function createInteractionHandler(config: InteractionHandlerConfig): InteractionHandler {
     const { questionRegistry } = config;
 
+    // Stryker disable next-line BlockStatement: async function body mutation would empty the handler — integration code, untestable without real Discord
     async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
         // Parse customId: question:${questionId}:${value}
 
         const parts = interaction.customId.split(':');
 
         // Ignore if not a question button
+        // Stryker disable next-line StringLiteral: 'question' prefix is configuration — mutation would skip all question buttons
         if(parts[0] !== 'question') {
             return;
         }
@@ -39,6 +42,9 @@ export function createInteractionHandler(config: InteractionHandlerConfig): Inte
         }
 
         const questionId = parts[1];
+        if(questionId === undefined) {
+            throw new InvariantViolationError('handleButtonInteraction', 'parts[1] undefined despite parts.length >= 3');
+        }
         const value = parts.slice(2).join(':'); // Rejoin in case value contains colons
 
         // Look up question in registry

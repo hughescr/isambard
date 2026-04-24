@@ -15,7 +15,7 @@ import { resolveCalendar, resolveServer } from './calendar-registry/resolve';
 import { createCalendarServerId } from './calendar-registry/types';
 import type { CalDAVClient } from './client';
 import type { CalendarInfo } from './types';
-import { AmbiguousCalendarMatchError } from '@/errors';
+import { AmbiguousCalendarMatchError, InvariantViolationError } from '@/errors';
 
 /**
  * Build the /calendar slash command with subcommands and the 'shared' subcommand group.
@@ -221,7 +221,15 @@ export class CalendarCommandHandler {
             await response.deferUpdate();
             const selectedIndices = response.values;
             // Safe: Discord only returns values we provided (String(0)..String(capped.length-1))
-            return selectedIndices.map(idx => capped[Number(idx)]);
+            return selectedIndices.map((idx) => {
+                const cal = capped[Number(idx)];
+                // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — Discord should only return indices we provided; catches malformed or adversarial Discord payload values
+                if(cal === undefined) {
+                    // Stryker disable next-line StringLiteral,ArithmeticOperator: invariant violation message — debug context only; capped.length - 1 is message-only
+                    throw new InvariantViolationError('selectCalendars', `Discord returned calendar index ${idx} outside provided range [0..${String(capped.length - 1)}]`);
+                }
+                return cal;
+            });
         } catch (error: unknown) {
             const isTimeout = error instanceof Error && error.message.includes('reason: time');
             if(isTimeout) {

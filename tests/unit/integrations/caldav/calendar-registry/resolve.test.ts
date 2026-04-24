@@ -75,11 +75,11 @@ describe.concurrent('resolveServer()', () => {
             thrown = e as AmbiguousCalendarMatchError;
         }
         expect(thrown).not.toBeNull();
-        expect(thrown?.entityType).toBe('server');
-        expect(thrown?.input).toBe('icloud');
-        expect(thrown?.matches).toHaveLength(2);
-        expect(thrown?.matches.map(m => m.id)).toContain(SERVER_UUID_1);
-        expect(thrown?.matches.map(m => m.id)).toContain(SERVER_UUID_2);
+        expect(thrown?.context.entityType).toBe('server');
+        expect(thrown?.context.input).toBe('icloud');
+        expect(thrown?.context.matches).toHaveLength(2);
+        expect(thrown?.context.matches.map(m => m.id)).toContain(SERVER_UUID_1);
+        expect(thrown?.context.matches.map(m => m.id)).toContain(SERVER_UUID_2);
     });
 
     test('UUID input does not fall back to description matching', () => {
@@ -193,10 +193,10 @@ describe.concurrent('resolveCalendar()', () => {
             thrown = e as AmbiguousCalendarMatchError;
         }
         expect(thrown).not.toBeNull();
-        expect(thrown?.entityType).toBe('calendar');
-        expect(thrown?.input).toBe('home');
-        expect(thrown?.matches).toHaveLength(2);
-        expect(thrown?.matches.map(m => m.id)).toContain('/cal/home-1');
-        expect(thrown?.matches.map(m => m.id)).toContain('/cal/home-2');
+        expect(thrown?.context.entityType).toBe('calendar');
+        expect(thrown?.context.input).toBe('home');
+        expect(thrown?.context.matches).toHaveLength(2);
+        expect(thrown?.context.matches.map(m => m.id)).toContain('/cal/home-1');
+        expect(thrown?.context.matches.map(m => m.id)).toContain('/cal/home-2');
     });
 });

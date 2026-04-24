@@ -8,7 +8,7 @@
  */
 
 export { ErrorCode } from './codes';
-export { IsambardError } from './base';
+export { IsambardError, InvariantViolationError } from './base';
 
 export {
     ItemNotFoundError,
@@ -38,7 +38,7 @@ export {
 
 export { PathSecurityError } from './utils';
 
-export { BrowserNavigateTimeoutError } from './browser';
+export { BrowserError, BrowserNavigateTimeoutError } from './browser';
 
 export {
     EmailError,

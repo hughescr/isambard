@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { chain } from 'lodash-es';
+import { InvariantViolationError } from '@/errors';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
@@ -145,6 +146,11 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         }
         const prefix = parts[0];
         const uidStr = parts[1];
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: invariant guard — parts.length >= 2 guarantees indices 0 and 1; unreachable in practice
+        if(prefix === undefined || uidStr === undefined) {
+            // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+            throw new InvariantViolationError('handleSelectMenu', 'parts[0]/parts[1] undefined despite parts.length >= 2');
+        }
 
         // Stryker disable next-line StringLiteral,ConditionalExpression: customId prefix check is configuration
         if(prefix !== 'email-allowlist-select') {

@@ -227,7 +227,7 @@ export function createMemoryMCPServer(
                             return mcpTextResult('No memories found matching tags');
                         }
                         const formatted = results.items.map((r) => {
-                            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: contentPreview may be absent at runtime despite types
+                            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- TagIndexItem types contentPreview as string but it may be absent in legacy DynamoDB items missing the field
                             const preview = r.contentPreview ?? 'No content';
                             return `${r.memoryPath}: ${preview.slice(0, 200)}${preview.length > 200 ? '...' : ''}`;
                         }).join('\n\n');
@@ -268,11 +268,11 @@ export function createMemoryMCPServer(
                         // Normalize: strip trailing slash (except for root)
                         // Stryker disable next-line StringLiteral: ''.trimEnd() is equivalent - paths work via prefix-based list query
                         let dirPath = rawPath;
-                        // Stryker disable ConditionalExpression,MethodExpression,UnaryOperator: trailing-slash normalization — test paths are already normalized; loop is defensive
+                        // Stryker disable ConditionalExpression,MethodExpression,UnaryOperator,LogicalOperator,BlockStatement: trailing-slash normalization — loop is defensive; mutations here cause infinite loops or over-strip paths (untestable via existing normalized test paths)
                         while(dirPath !== '/' && dirPath.endsWith('/')) {
                             dirPath = dirPath.slice(0, -1);
                         }
-                        // Stryker restore ConditionalExpression,MethodExpression,UnaryOperator
+                        // Stryker restore ConditionalExpression,MethodExpression,UnaryOperator,LogicalOperator,BlockStatement
 
                         // Build queryOptions object only if filter params provided
                         const queryOptions = (args.limit ?? args.cursor ?? args.startDate ?? args.endDate)
@@ -288,7 +288,6 @@ export function createMemoryMCPServer(
                         const layer = layerPaths[dirPath];
 
                         // Stryker disable ObjectLiteral,StringLiteral: Logger debug objects - content not behavior-affecting
-                        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: Record<string,V> typed as always having value but runtime may return undefined for unlisted keys
                         const results = layer
                             ? (logger.debug({ layer, dirPath, msg: 'Using GSI1 listByLayer for layer path' }), await backend.listByLayer(layer, queryOptions))
                             : (logger.debug({ dirPath, msg: 'Using directory list for non-layer path' }), await backend.list(dirPath, queryOptions));
