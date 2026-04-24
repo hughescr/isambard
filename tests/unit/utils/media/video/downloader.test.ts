@@ -66,6 +66,7 @@ describe('downloadVideo', () => {
     });
 
     it('fetches directly for non-HLS URLs and writes to disk', async () => {
+        // eslint-disable-next-line no-restricted-syntax -- node:fs/promises is imported dynamically to use the real fs after mock setup (mockFsPromises in setup.ts only mocks the module mock, but this test uses the real fs for temp dirs)
         const { mkdir } = await import('node:fs/promises');
         await mkdir(`${TEST_DIR}/direct`, { recursive: true });
 

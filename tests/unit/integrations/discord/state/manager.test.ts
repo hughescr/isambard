@@ -495,6 +495,7 @@ describe('BotStateManager', () => {
     });
 
     describe('Throttle Logic', () => {
+        // eslint-disable-next-line local/require-fake-timers-cleanup -- useRealTimers() is in a try/finally block; static analysis cannot see into finally
         it('should return true when enough time has passed after recordPresenceUpdate', () => {
             jest.useFakeTimers();
             try {

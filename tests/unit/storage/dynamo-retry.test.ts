@@ -247,8 +247,9 @@ describe('withDynamoTimeout', () => {
 
         it('should propagate errors even if they occur after timeout', async () => {
             const operation = mock(async () => {
-                // This will still run even after timeout
+                // This will still run even after timeout; the setTimeout is controlled by fake timers
                 await new Promise((resolve) => {
+                    // eslint-disable-next-line no-restricted-syntax -- controlled by jest.useFakeTimers(); simulates slow operation that continues after timeout fires
                     setTimeout(resolve, 2000);
                 });
                 throw new Error('Late error');

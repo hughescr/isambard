@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- This file tests createStorageLayer() wiring; dynamic imports are required so that spyOn() can intercept constructors before they are called during module load. Refactoring to static imports + beforeEach spyOn would require restructuring module-level singleton initialization. */
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';

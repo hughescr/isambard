@@ -1114,6 +1114,7 @@ describe.concurrent('createBskyMCPServer', () => {
 
     describe('replyToPost tool', () => {
         test('should return error result when replyToPost throws BskyValidationError', async () => {
+            // eslint-disable-next-line no-restricted-syntax -- BskyValidationError imported dynamically so it exists in the same module instance as production code; static import would be a different reference
             const { BskyValidationError } = await import('@/errors');
             (mockClient.replyToPost as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
@@ -1428,6 +1429,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should validate text before requesting approval when target is not allowlisted', async () => {
+            // eslint-disable-next-line no-restricted-syntax -- BskyValidationError imported dynamically so it exists in the same module instance as production code
             const { BskyValidationError } = await import('@/errors');
             (mockClient.validatePostText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('Post exceeds 300 graphemes (301)', { graphemeLength: 301 });
@@ -2255,6 +2257,7 @@ describe.concurrent('createBskyMCPServer', () => {
         });
 
         test('should validate text before requesting approval when recipients are not allowlisted', async () => {
+            // eslint-disable-next-line no-restricted-syntax -- BskyValidationError imported dynamically so it exists in the same module instance as production code
             const { BskyValidationError } = await import('@/errors');
             (mockClient.validateDMText as ReturnType<typeof mock>).mockImplementation(async (): Promise<never> => {
                 throw new BskyValidationError('DM text exceeds 1000 graphemes (1001)', { graphemeLength: 1001 });

@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- consolidate handler is imported dynamically in a wrapper to test the public export surface; the module is already loaded so the performance cost is a cache lookup, not a re-evaluation */
 import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import {

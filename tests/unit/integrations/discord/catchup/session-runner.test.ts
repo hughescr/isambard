@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- setTimeout calls in mock runAgentSession implementations are intentional: they simulate long-running agent sessions and are controlled by jest.useFakeTimers() + jest.advanceTimersByTime() in the test body */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { createCatchUpSessionRunner,
     type CatchUpSessionRunnerDeps,

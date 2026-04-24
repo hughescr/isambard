@@ -53,6 +53,7 @@ describe('BskyRejectionBackend', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.useRealTimers();
         ddbMock.restore();
     });
@@ -314,9 +315,7 @@ describe('BskyRejectionBackend', () => {
             for(let i = 0; i < 10; i++) {
                 jest.runAllTimers();
                 // eslint-disable-next-line no-await-in-loop -- sequential: must run timers then flush microtasks each tick
-                await new Promise((resolve) => {
-                    process.nextTick(resolve);
-                });
+                await Promise.resolve();
             }
 
             const count = await promise;
@@ -358,9 +357,7 @@ describe('BskyRejectionBackend', () => {
             for(let i = 0; i < 5; i++) {
                 jest.runAllTimers();
                 // eslint-disable-next-line no-await-in-loop -- sequential: must run timers then flush microtasks each tick
-                await new Promise((resolve) => {
-                    process.nextTick(resolve);
-                });
+                await Promise.resolve();
             }
 
             const count = await promise;

@@ -64,7 +64,7 @@ const mockRichTextState = {
     facets:         undefined as Record<string, unknown>[] | undefined,
 };
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+// eslint-disable-next-line local/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- @atproto/api mock is bsky-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
 mock.module('@atproto/api', () => ({
     AtpAgent: class MockAtpAgent {
         app = {
@@ -138,7 +138,8 @@ mock.module('@atproto/api', () => ({
     },
 }));
 
-// Import AFTER mocks are registered
+// Import AFTER mocks are registered (top-level await is intentional: ensures mock.module() runs first)
+// eslint-disable-next-line no-restricted-syntax -- top-level await import is required here to ensure mock.module() is registered before the module loads; this is module-scope setup, not per-test overhead
 const { BlueskyClient } = await import('@/integrations/bsky/client');
 
 // ---------------------------------------------------------------------------

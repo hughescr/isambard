@@ -31,9 +31,7 @@ describe('MemoryToolBackendTagIndex', () => {
         for(let i = 0; i < 10; i++) {
             jest.runAllTimers();
             // eslint-disable-next-line no-await-in-loop -- sequential: must run timers then flush microtasks each tick
-            await new Promise((resolve) => {
-                process.nextTick(resolve);
-            });
+            await Promise.resolve();
         }
     }
 
@@ -76,10 +74,13 @@ describe('MemoryToolBackendTagIndex', () => {
             const promise = backend.incrementTagCounts(tags);
 
             // Let first call complete and fail, then timer is scheduled
+            // process.nextTick has higher microtask priority than Promise, ensuring DynamoDB mock callbacks complete before our assertion
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe async DynamoDB mock callbacks completing
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for the thrown error to propagate through the async error handler chain
                 process.nextTick(resolve);
             });
             expect(callCount).toBe(1);
@@ -91,9 +92,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Advance exactly 100ms to fire first retry
             jest.advanceTimersByTime(100);
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for error propagation chain
                 process.nextTick(resolve);
             });
             expect(callCount).toBe(2);
@@ -104,9 +107,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
             jest.advanceTimersByTime(200);
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for error propagation chain
                 process.nextTick(resolve);
             });
             await promise;
@@ -275,10 +280,13 @@ describe('MemoryToolBackendTagIndex', () => {
             const promise = backend.createTagIndexItems(path, tags, updatedAt, contentPreview, layer);
 
             // Let first batch call complete, then timer is scheduled
+            // process.nextTick has higher microtask priority than Promise, ensuring DynamoDB mock callbacks complete before our assertion
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority than Promise; needed for DynamoDB mock callbacks to complete before assertion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush to let the UnprocessedItems response propagate
                 process.nextTick(resolve);
             });
             expect(batchCallCount).toBe(1);
@@ -290,9 +298,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Advance exactly 100ms to fire first retry
             jest.advanceTimersByTime(100);
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for response propagation chain
                 process.nextTick(resolve);
             });
             expect(batchCallCount).toBe(2);
@@ -303,9 +313,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Second retry delay should be 200ms (BASE_DELAY_MS * 2^1)
             jest.advanceTimersByTime(200);
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for response propagation chain
                 process.nextTick(resolve);
             });
             await promise;

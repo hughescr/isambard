@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions check mock call args defensively; captures may be undefined at index if calls are fewer than expected */
+/* eslint-disable no-restricted-syntax -- setTimeout calls in mock processor implementations are intentional: they simulate async processing and are controlled by jest.useFakeTimers() + jest.advanceTimersByTime() in the test body, not real wall-clock time */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
@@ -47,6 +48,7 @@ describe('MessageCoordinator', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         if(coordinator) {
             coordinator.stop();
         }

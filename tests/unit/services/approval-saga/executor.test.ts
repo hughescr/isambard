@@ -57,6 +57,7 @@ describe('createSagaExecutor', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.useRealTimers();
     });
 

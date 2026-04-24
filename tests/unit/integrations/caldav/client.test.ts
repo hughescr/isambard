@@ -19,7 +19,7 @@ const mockDAVClient = {
 
 const mockCreateDAVClient = mock(async (): Promise<typeof mockDAVClient> => mockDAVClient);
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+// eslint-disable-next-line local/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- tsdav mock is caldav-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
 mock.module('tsdav', () => ({
     createDAVClient: mockCreateDAVClient,
 }));
@@ -42,7 +42,7 @@ interface MockEventInstance {
 
 const mockExpandRecurringEvent = mock((_event: Record<string, unknown>, _options: Record<string, unknown>): MockEventInstance[] => ([]));
 
-// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup
+// eslint-disable-next-line local/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- node-ical mock is caldav-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
 mock.module('node-ical', () => ({
     sync: {
         parseICS: mockParseICS,
@@ -54,6 +54,7 @@ mock.module('node-ical', () => ({
 // Import after mocks are set up
 // ---------------------------------------------------------------------------
 
+// eslint-disable-next-line no-restricted-syntax -- top-level await import is required here to ensure mock.module() is registered before the module loads; this is module-scope setup, not per-test overhead
 const { CalDAVClient } = await import('@/integrations/caldav/client');
 
 // ---------------------------------------------------------------------------

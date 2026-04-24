@@ -12,6 +12,7 @@
  * - @@NO_RESPONSE@@ sentinel is respected
  */
 
+/* eslint-disable no-restricted-syntax -- sendResponseToWellKnownChannel is re-imported per test to avoid module-level spy contamination; these imports are lightweight (same module, cached by bun) and necessary because the function is a module-level export that needs fresh resolution after mock setup */
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type { Message, TextChannel, Client, DMChannel } from 'discord.js';
 import { WellKnownChannelNotFoundError } from '@/errors/discord';

@@ -34,6 +34,7 @@ describe('AllowlistSagaBackend', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.useRealTimers();
         ddbMock.restore();
     });

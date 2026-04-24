@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- This file tests createApp() wiring; dynamic imports are required so that spyOn() can intercept constructors and factory functions before they are called during module load. Refactoring to static imports + beforeEach spyOn would require restructuring how module-level singletons are initialized. */
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';

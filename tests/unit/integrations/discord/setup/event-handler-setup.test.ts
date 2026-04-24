@@ -39,9 +39,7 @@ function makeClientMock() {
             handler(...args);
         }
         // Flush microtasks so async safeAsyncHandler bodies complete
-        await new Promise((resolve) => {
-            setImmediate(resolve);
-        });
+        await Promise.resolve();
     };
 
     return { client, emit, emitAsync };

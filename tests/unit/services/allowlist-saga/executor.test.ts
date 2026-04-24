@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, jest } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import type { AllowlistSagaBackend } from '@/services/allowlist-saga/backend';
 import { AllowlistSagaExecutor } from '@/services/allowlist-saga/executor';
 import type { AllowlistSaga } from '@/services/allowlist-saga/types';
@@ -66,6 +66,10 @@ describe('AllowlistSagaExecutor', () => {
             personAllowlist,
             allowlistSagaBackend,
         });
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
     });
 
     describe('start()', () => {

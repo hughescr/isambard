@@ -34,6 +34,7 @@ describe('ApprovalSagaBackend', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.useRealTimers();
         ddbMock.restore();
     });

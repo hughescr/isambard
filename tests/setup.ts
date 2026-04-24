@@ -1,7 +1,7 @@
 // Test setup and configuration
 /* eslint-disable import-x/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { mock, type Mock } from 'bun:test';
+import { afterEach, jest, mock, type Mock } from 'bun:test';
 
 type ContentItem = CallToolResult['content'][number];
 
@@ -666,3 +666,10 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
         return Array.isArray(locales) ? locales : [locales];
     }
 };
+
+// Phase 4 runtime safety net: reset fake timers after every test to prevent
+// timer-mode leakage between tests (fake timers from test A bleeding into test B).
+// Tests that need fake timers re-enable them in their own beforeEach.
+afterEach(() => {
+    jest.useRealTimers();
+});

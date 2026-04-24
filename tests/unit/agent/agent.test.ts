@@ -1818,6 +1818,7 @@ describe('createClaudeAgent', () => {
             });
 
             // Spy on cleanupSession (it's a fire-and-forget call)
+            // eslint-disable-next-line no-restricted-syntax -- dynamic import required to spy on module-level export before test execution
             const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
             const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
 
@@ -1850,6 +1851,7 @@ describe('createClaudeAgent', () => {
 
             // Spy on cleanupSession — it is called directly (fire-and-forget) for the non-interrupted path.
             // Interrupted sessions are cleaned up by the SessionEnd hook in hooks/lifecycle.ts.
+            // eslint-disable-next-line no-restricted-syntax -- dynamic import required to spy on module-level export before test execution
             const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
             const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
 
@@ -1881,10 +1883,8 @@ describe('createClaudeAgent', () => {
                     };
                     // Abort mid-stream
                     abortController.abort();
-                    // Add a small delay to simulate async processing
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 5);
-                    });
+                    // Yield to the microtask queue to let abort signal propagate
+                    await Promise.resolve();
                     yield {
                         type:    'assistant' as const,
                         message: {
@@ -2239,6 +2239,7 @@ describe('createClaudeAgent', () => {
         beforeEach(async () => {
             mockLogger.debug.mockClear();
             // Import and use the resetLogStreamState function
+            // eslint-disable-next-line no-restricted-syntax -- dynamic import required; resetLogStreamState is module-level state, must be imported after mock setup
             const { resetLogStreamState } = await import('../../../src/agent/agent');
             resetLogStreamState();
         });
@@ -3023,6 +3024,7 @@ describe('createClaudeAgent', () => {
     describe('resetLogStreamState', () => {
         test('should start with empty pendingToolRequests', async () => {
             // Verify initial state by sending a user message with no prior tool requests
+            // eslint-disable-next-line no-restricted-syntax -- dynamic import required; resetLogStreamState is module-level state
             const { resetLogStreamState } = await import('../../../src/agent/agent');
             resetLogStreamState();
             mockLogger.debug.mockClear();
@@ -3086,6 +3088,7 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext]);
 
             // Now reset the state
+            // eslint-disable-next-line no-restricted-syntax -- dynamic import required; resetLogStreamState is module-level state
             const { resetLogStreamState } = await import('../../../src/agent/agent');
             resetLogStreamState();
 

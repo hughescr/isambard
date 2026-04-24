@@ -201,10 +201,13 @@ describe('createMessageSummarizer', () => {
             const resultPromise = summarizer.summarizeMessages(messages);
 
             // Wait for all tasks to be queued (give event loop time to start them)
+            // queueMicrotask has higher priority than Promise microtasks, ensuring p-limit concurrency pool has queued all initial tasks
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: higher priority than Promise; ensures p-limit concurrency pool has queued all initial tasks before we observe maxConcurrent
                 queueMicrotask(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: second flush to ensure all concurrent slots are filled
                 queueMicrotask(resolve);
             });
 
@@ -215,8 +218,9 @@ describe('createMessageSummarizer', () => {
             while(deferreds.length > 0) {
                 const resolver = deferreds.shift();
                 resolver?.('Summary');
-                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
+                // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution so p-limit picks up the next task
                 await new Promise((resolve) => {
+                    // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit picks up the next queued task before we resolve the next deferred
                     queueMicrotask(resolve);
                 });
             }
@@ -251,9 +255,11 @@ describe('createMessageSummarizer', () => {
 
             // Wait for tasks to be queued
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit concurrency pool has queued all initial tasks before we observe maxConcurrent
                 queueMicrotask(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: second flush to ensure all concurrent slots are filled
                 queueMicrotask(resolve);
             });
 
@@ -266,6 +272,7 @@ describe('createMessageSummarizer', () => {
                 resolver?.('Summary');
                 // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
                 await new Promise((resolve) => {
+                    // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit picks up the next queued task before we resolve the next deferred
                     queueMicrotask(resolve);
                 });
             }
@@ -586,9 +593,11 @@ describe('createMessageSummarizer', () => {
 
             // Wait for tasks to be queued
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit concurrency pool has queued all initial tasks before we observe maxConcurrent
                 queueMicrotask(resolve);
             });
             await new Promise((resolve) => {
+                // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: second flush to ensure all concurrent slots are filled
                 queueMicrotask(resolve);
             });
 
@@ -600,6 +609,7 @@ describe('createMessageSummarizer', () => {
                 resolver?.('Summary');
                 // eslint-disable-next-line no-await-in-loop -- sequential: must drain microtasks between each deferred resolution
                 await new Promise((resolve) => {
+                    // eslint-disable-next-line no-restricted-syntax -- queueMicrotask required: ensures p-limit picks up the next queued task before we resolve the next deferred
                     queueMicrotask(resolve);
                 });
             }

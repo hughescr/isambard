@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { homedir } from 'node:os';
 import path from 'node:path';
+// eslint-disable-next-line local/require-fs-mock-reset -- cleanup is done at beforeEach start (each test begins fresh), not in afterEach
 import { mockLogger, mockFsPromises, resetMockFsPrefix } from '../../setup';
 import { loadPlugins, resolveExternalPath, findLatestMarketplaceVersion } from '@/agent/plugin-loader';
 

@@ -271,9 +271,7 @@ describe('createDiscordBot', () => {
 
             // Trigger activity phase update - shouldUpdatePresence will return false
             mockBotStateManager.updateActivityPhase({ type: 'thinking', startedAt: new Date() });
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // presenceManager.updatePhase should NOT have been called (throttle blocked)
             expect(mockUpdatePhase).not.toHaveBeenCalled();
@@ -283,9 +281,7 @@ describe('createDiscordBot', () => {
 
             // Trigger another activity phase update
             mockBotStateManager.updateActivityPhase({ type: 'responding', startedAt: new Date() });
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // Now it should have been called
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -455,9 +451,7 @@ describe('createDiscordBot', () => {
             mockBotStateManager.updateActivityPhase(phase1);
 
             // Step 4: Allow event loop to process subscription callbacks
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // Step 5: Verify presenceManager.updatePhase was called (throttle allowed)
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -472,9 +466,7 @@ describe('createDiscordBot', () => {
             // Step 7: Update again immediately - throttle should block this
             const phase2 = { type: 'responding' as const, startedAt: new Date() };
             mockBotStateManager.updateActivityPhase(phase2);
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // Step 8: Verify presenceManager.updatePhase was NOT called (throttle blocked)
             expect(mockUpdatePhase).not.toHaveBeenCalled();
@@ -485,9 +477,7 @@ describe('createDiscordBot', () => {
             // Step 10: Update again - throttle should allow this
             const phase3 = { type: 'using_tool' as const, startedAt: new Date(), toolName: 'test-tool' };
             mockBotStateManager.updateActivityPhase(phase3);
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // Step 11: Verify presenceManager.updatePhase was called (throttle allows after delay)
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -573,9 +563,7 @@ describe('createDiscordBot', () => {
             // First update should go through (no previous timestamp)
             const phase1 = { type: 'thinking' as const, startedAt: new Date() };
             mockBotStateManager.updateActivityPhase(phase1);
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
             expect(mockUpdatePhase).toHaveBeenCalledWith(phase1);
@@ -584,9 +572,7 @@ describe('createDiscordBot', () => {
             // Immediate second update should be throttled (still at same time)
             const phase2 = { type: 'using_tool' as const, startedAt: new Date(), toolName: 'tool1' };
             mockBotStateManager.updateActivityPhase(phase2);
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             expect(mockUpdatePhase).toHaveBeenCalledTimes(0); // Throttled
 
@@ -596,9 +582,7 @@ describe('createDiscordBot', () => {
             // Third update should now go through
             const phase3 = { type: 'responding' as const, startedAt: new Date() };
             mockBotStateManager.updateActivityPhase(phase3);
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
             expect(mockUpdatePhase).toHaveBeenCalledWith(phase3);
@@ -692,9 +676,7 @@ describe('createDiscordBot', () => {
                 mockUpdatePhase.mockClear();
                 mockBotStateManager.updateActivityPhase(phase);
                 // eslint-disable-next-line no-await-in-loop -- sequential: must observe each phase transition separately
-                await new Promise((resolve) => {
-                    setImmediate(resolve);
-                });
+                await Promise.resolve();
 
                 // Verify subscription fired and presence was updated
                 expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
@@ -1972,9 +1954,7 @@ describe('createDiscordBot', () => {
             guildDeleteHandler!({ id: guildId });
 
             // Wait for async handler to complete
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // Verify coordinator.removeGuildChannels was called with the correct channel IDs
             expect(mockRemoveGuildChannels).toHaveBeenCalledTimes(1);
@@ -2057,9 +2037,7 @@ describe('createDiscordBot', () => {
             guildDeleteHandler!({ id: guildId });
 
             // Wait for async handler to complete
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
 
             // Verify coordinator.removeGuildChannels was called with empty array
             expect(mockRemoveGuildChannels).toHaveBeenCalledTimes(1);
@@ -2117,9 +2095,7 @@ describe('createDiscordBot', () => {
             const guildId = createGuildId('guild-123');
             // Call the handler - it should not throw even without a coordinator
             guildDeleteHandler!({ id: guildId });
-            await new Promise((resolve) => {
-                setImmediate(resolve);
-            });
+            await Promise.resolve();
             // If we get here without throwing, the test passes
             expect(true).toBe(true);
         });

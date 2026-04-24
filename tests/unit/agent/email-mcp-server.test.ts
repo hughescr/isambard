@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access; casts are non-nullable but ?. provides safety */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
@@ -902,8 +903,8 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should use sha1 of messageId for attachment directory name', async () => {
-            const { createHash } = await import('node:crypto');
             const messageId = '<unique-msg-id@example.com>';
+            // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
             const expectedHash = createHash('sha1').update(messageId).digest('hex');
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            99,
@@ -931,8 +932,8 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should include email- prefix in attachment path in output text', async () => {
-            const { createHash } = await import('node:crypto');
             const messageId = '<prefix-test@example.com>';
+            // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
             const expectedHash = createHash('sha1').update(messageId).digest('hex');
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            77,
