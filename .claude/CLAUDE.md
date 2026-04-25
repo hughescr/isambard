@@ -45,7 +45,7 @@ Several hygiene rules are mechanized via ESLint so violations are caught at lint
 **Custom rules** in `tools/eslint-rules/` (all with RuleTester-based tests):
 - `require-fake-timers-cleanup` — every `jest.useFakeTimers()` in a hook or test body must pair with `jest.useRealTimers()` in the matching cleanup hook
 - `require-mock-cleanup` — every `jest.spyOn()` must pair with `jest.restoreAllMocks()` or `mockRestore()` in `afterEach`
-- `require-fs-mock-reset` — mocks imported from `tests/setup.ts` must have their reset helper called in `afterEach`
+- `require-mock-reset` — mocks imported from a configured setup module must have their reset helper called in `afterEach`; configured via `mocks` option mapping identifier → reset function names, and `setupModules` option for import-path suffixes
 - `no-mock-module-in-test-body` — `mock.module()` calls must live only in `tests/setup.ts` (the module is global and order-dependent); tests must not call it inside describe/it blocks
 - `no-internal-in-barrel` — barrel `index.ts` files must not re-export `@internal`-tagged symbols via `export { Name } from './x'`; prevents leaking implementation details through the module's public API surface
 - `no-cross-module-internal` — production code must not import `@internal` symbols from a different architectural module (e.g., `agent` importing from `storage @internal`); enforces module boundary integrity

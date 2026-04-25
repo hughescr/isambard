@@ -2,7 +2,8 @@
  * ESLint Rule: no-cross-module-internal
  *
  * Prevents importing @internal exports from a different architectural module.
- * Module boundaries are defined in eslint-boundaries.config.mjs.
+ * Module boundaries are defined via the rule's `modules` option, which accepts
+ * the same `boundaryElements` array shape as eslint-plugin-boundaries.
  *
  * This rule uses TypeScript's AST and JSDoc parsing to check for @internal tags,
  * rather than fragile regex-based text scanning.
@@ -18,34 +19,44 @@
  */
 
 import path from 'node:path';
+// eslint-disable-next-line import-x/no-extraneous-dependencies -- ESLint rule in tools/ uses devDependencies
+import picomatch from 'picomatch';
 import { isExportInternal, resolveImportToSourceFile } from './_ts-helpers.mjs';
-
-// Module patterns from boundaries config (hardcoded to avoid circular import issues)
-// These MUST stay in sync with eslint-boundaries.config.mjs
-const MODULE_PATTERNS = [
-    { type: 'utils',   pattern: /^src\/utils\// },
-    { type: 'errors',  pattern: /^src\/errors\// },
-    { type: 'config',  pattern: /^src\/config\// },
-    { type: 'storage', pattern: /^src\/storage\// },
-    { type: 'agent',   pattern: /^src\/agent\// },
-    { type: 'discord', pattern: /^src\/integrations\/discord\// },
-    { type: 'email',   pattern: /^src\/integrations\/email\// },
-    { type: 'app',     pattern: /^src\/(app\/|index\.ts$)/ },
-];
 
 /**
  * Determine which module a file belongs to based on its relative path.
+ * @param {string} filePath - absolute path to the file
+ * @param {string} cwd - project root
+ * @param {Array<{type: string, matcher: (s: string) => boolean}>} matchers - pre-built matchers
+ * @returns {string|null} module type or null if not in any known module
  */
-function getModuleForFile(filePath, cwd) {
+export function getModuleForFile(filePath, cwd, matchers) {
+    // Stryker disable all -- function tested via direct unit tests; Bun inspector cannot map per-test coverage for .mjs source files
     const rel = path.relative(cwd, filePath).replaceAll('\\', '/');
-    for(const { type, pattern } of MODULE_PATTERNS) {
-        if(pattern.test(rel)) {
+    for(const { type, matcher } of matchers) {
+        if(matcher(rel)) {
             return type;
         }
     }
     return null; // Not in any known module (e.g., test files, tools)
+    // Stryker restore all
 }
 
+/**
+ * Build picomatch matchers from the `modules` option.
+ * @param {Array<{type: string, pattern: string | string[]}>} modules
+ * @returns {Array<{type: string, matcher: (s: string) => boolean}>}
+ */
+export function buildMatchers(modules) {
+    // Stryker disable all -- function tested via direct unit tests; Bun inspector cannot map per-test coverage for .mjs source files
+    return modules.map(({ type, pattern }) => ({
+        type,
+        matcher: picomatch(pattern),
+    }));
+    // Stryker restore all
+}
+
+// Stryker disable all -- rule meta/schema and create() body tested via RuleTester; Bun inspector cannot map per-test coverage for .mjs source files
 const rule = {
     meta: {
         type: 'problem',
@@ -56,10 +67,48 @@ const rule = {
         messages: {
             crossModuleInternal: "'{{name}}' is marked @internal in module '{{sourceModule}}' and cannot be imported from module '{{importerModule}}'.",
         },
-        schema: [],
+        schema: [
+            {
+                type:       'object',
+                properties: {
+                    modules: {
+                        type:     'array',
+                        minItems: 1,
+                        items:    {
+                            type:       'object',
+                            properties: {
+
+                                type:    { type: 'string', minLength: 1 },
+                                pattern: {
+                                    oneOf: [
+                                        { type: 'string', minLength: 1 },
+                                        {
+                                            type:     'array',
+                                            minItems: 1,
+                                            items:    { type: 'string', minLength: 1 },
+                                        },
+                                    ],
+                                },
+                            },
+                            required:             ['type', 'pattern'],
+                            additionalProperties: false,
+                        },
+                    },
+                },
+                additionalProperties: false,
+            },
+        ],
     },
 
     create(context) {
+        const modules = context.options[0]?.modules;
+
+        // No-op if no modules option provided
+        if(!modules?.length) {
+            return {};
+        }
+
+        const matchers = buildMatchers(modules);
         const cwd = context.cwd;
         const filename = context.filename;
 
@@ -68,7 +117,7 @@ const rule = {
             return {};
         }
 
-        const importerModule = getModuleForFile(filename, cwd);
+        const importerModule = getModuleForFile(filename, cwd, matchers);
 
         // Skip files not in any known module
         if(!importerModule) {
@@ -100,7 +149,7 @@ const rule = {
                     return;
                 }
 
-                const sourceModule = getModuleForFile(sourceFile.fileName, cwd);
+                const sourceModule = getModuleForFile(sourceFile.fileName, cwd, matchers);
 
                 // Skip if same module or unknown module
                 if(!sourceModule || sourceModule === importerModule) {
@@ -132,5 +181,6 @@ const rule = {
         };
     },
 };
+// Stryker restore all
 
 export default rule;

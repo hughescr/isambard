@@ -2,14 +2,14 @@
 import config from '@hughescr/eslint-config-default';
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import jestPlugin from 'eslint-plugin-jest';
-import { boundariesConfig } from './eslint-boundaries.config.mjs';
+import { boundariesConfig, boundaryElements } from './eslint-boundaries.config.mjs';
 import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal.mjs';
 import noInternalInBarrel from './tools/eslint-rules/no-internal-in-barrel.mjs';
 import noMockModuleInTestBody from './tools/eslint-rules/no-mock-module-in-test-body.mjs';
 import noStarExportFromNonBarrel from './tools/eslint-rules/no-star-export-from-non-barrel.mjs';
 import requireFakeTimersCleanup from './tools/eslint-rules/require-fake-timers-cleanup.mjs';
-import requireFsMockReset from './tools/eslint-rules/require-fs-mock-reset.mjs';
 import requireMockCleanup from './tools/eslint-rules/require-mock-cleanup.mjs';
+import requireMockReset from './tools/eslint-rules/require-mock-reset.mjs';
 
 /**
  * ESLint Configuration with Architectural Boundaries
@@ -80,7 +80,7 @@ const eslintConfig = [
             }
         },
         rules: {
-            'local/no-cross-module-internal':       'error',
+            'local/no-cross-module-internal':       ['error', { modules: boundaryElements }],
             'local/no-internal-in-barrel':          'error',
             'local/no-star-export-from-non-barrel': 'error',
 
@@ -104,7 +104,7 @@ const eslintConfig = [
                 rules: {
                     'no-mock-module-in-test-body': noMockModuleInTestBody,
                     'require-fake-timers-cleanup': requireFakeTimersCleanup,
-                    'require-fs-mock-reset':       requireFsMockReset,
+                    'require-mock-reset':          requireMockReset,
                     'require-mock-cleanup':        requireMockCleanup,
                 },
             },
@@ -195,9 +195,15 @@ const eslintConfig = [
             // Every useFakeTimers() in a hook or test body must have matching useRealTimers()
             'local/require-fake-timers-cleanup': 'error',
             // Mocks imported from tests/setup must have their reset helper called in afterEach
-            'local/require-fs-mock-reset':       'error',
+            'local/require-mock-reset':          ['error', {
+                mocks: {
+                    mockFsPromises:  ['resetMockFs', 'resetMockFsPrefix'],
+                    mockSstResource: ['resetMockSstResource'],
+                    mockHeicConvert: ['resetHeicConvertImpl'],
+                },
+            }],
             // Every spyOn() must be paired with restoreAllMocks() or mockRestore() in afterEach
-            'local/require-mock-cleanup':        'error',
+            'local/require-mock-cleanup': 'error',
         },
     }
 ];

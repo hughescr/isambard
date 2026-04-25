@@ -1,7 +1,6 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, afterEach, beforeEach } from 'bun:test';
 import { homedir } from 'node:os';
 import path from 'node:path';
-// eslint-disable-next-line local/require-fs-mock-reset -- cleanup is done at beforeEach start (each test begins fresh), not in afterEach
 import { mockLogger, mockFsPromises, resetMockFsPrefix } from '../../setup';
 import { loadPlugins, resolveExternalPath, findLatestMarketplaceVersion } from '@/agent/plugin-loader';
 
@@ -33,6 +32,10 @@ describe('findLatestMarketplaceVersion', () => {
     beforeEach(async () => {
         resetMockFsPrefix('/mock-find-version');
         await mockFsPromises.mkdir(tempDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        resetMockFsPrefix('/mock-find-version');
     });
 
     test('should return undefined for non-existent plugin directory', async () => {
@@ -141,6 +144,10 @@ describe('loadPlugins', () => {
         mockLogger.warn.mockClear();
         mockLogger.info.mockClear();
         mockLogger.debug.mockClear();
+    });
+
+    afterEach(() => {
+        resetMockFsPrefix('/mock-load-plugins');
     });
 
     describe('in-repo plugin discovery', () => {
