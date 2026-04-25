@@ -1,4 +1,3 @@
-/* eslint-disable complexity -- ESLint rules require sync file operations and native methods, complex logic unavoidable */
 /**
  * ESLint Rule: no-cross-module-internal
  *
@@ -19,8 +18,7 @@
  */
 
 import path from 'node:path';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- ESLint rule in tools/ uses devDependencies
-import ts from 'typescript';
+import { isExportInternal, resolveImportToSourceFile } from './_ts-helpers.mjs';
 
 // Module patterns from boundaries config (hardcoded to avoid circular import issues)
 // These MUST stay in sync with eslint-boundaries.config.mjs
@@ -46,75 +44,6 @@ function getModuleForFile(filePath, cwd) {
         }
     }
     return null; // Not in any known module (e.g., test files, tools)
-}
-
-/**
- * Check if a TypeScript export declaration has @internal JSDoc tag.
- * Uses TypeScript's AST and JSDoc parser.
- */
-function hasInternalJSDocTag(node) {
-    const jsdocTags = ts.getJSDocTags(node);
-    return jsdocTags.some(tag => tag.tagName.text === 'internal');
-}
-
-/**
- * Find if an export in a source file has @internal tag.
- * Uses TypeScript's AST to locate the export and check JSDoc.
- */
-// eslint-disable-next-line sonarjs/cognitive-complexity -- ESLint rule implementation walks TypeScript AST; branching is inherent to handling multiple node types
-function isExportInternal(sourceFile, exportedName) {
-    // Walk through all statements in the file
-    for(const statement of sourceFile.statements) {
-        // Look for ExportDeclaration nodes (export { ... } from '...')
-        if(ts.isExportDeclaration(statement) && statement.exportClause // Named exports
-          && ts.isNamedExports(statement.exportClause)) {
-            for(const element of statement.exportClause.elements) {
-                // element.name is the exported name (after 'as' if present)
-                const exportName = element.name.text;
-                if(exportName === exportedName) {
-                    return hasInternalJSDocTag(statement);
-                }
-            }
-        }
-
-        // Also check direct exports: export const foo = ..., export function foo() {}, etc.
-        if(ts.isVariableStatement(statement)
-          && statement.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ExportKeyword)) {
-            for(const declaration of statement.declarationList.declarations) {
-                if(ts.isIdentifier(declaration.name) && declaration.name.text === exportedName) {
-                    return hasInternalJSDocTag(statement);
-                }
-            }
-        }
-
-        if((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement))
-          && statement.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ExportKeyword)
-          && statement.name?.text === exportedName) {
-            return hasInternalJSDocTag(statement);
-        }
-    }
-
-    return false;
-}
-
-/**
- * Resolve import source to actual file path using TypeScript's module resolution.
- */
-function resolveImportToSourceFile(importSource, filename, program, compilerOptions) {
-    // Try TypeScript's module resolution
-    const resolved = ts.resolveModuleName(
-        importSource,
-        filename,
-        compilerOptions,
-        ts.sys
-    );
-
-    if(resolved.resolvedModule) {
-        const resolvedPath = resolved.resolvedModule.resolvedFileName;
-        return program.getSourceFile(resolvedPath);
-    }
-
-    return null;
 }
 
 const rule = {

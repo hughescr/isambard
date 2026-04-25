@@ -31,12 +31,31 @@ Target: 100% mutation score (break threshold in stryker.conf.mjs). If mutants su
 ### Test Performance Anti-Patterns
 Since Stryker runs each test potentially hundreds of times, even small per-test overhead compounds dramatically. Every test should target <1ms execution. Avoid these patterns:
 
-1. **Real wall-clock delays** — Never use `Date.now()` elapsed time assertions or `setTimeout` with real timers in tests. Always use `jest.useFakeTimers()` + `jest.advanceTimersByTime()`.
-2. **`setTimeout(resolve, 0)` for microtask flushing** — Use `await Promise.resolve()` instead (nanoseconds vs 1-4ms macrotask minimum).
-3. **Dynamic `await import()` per test** — Import modules once at file scope with `import * as mod from '...'`, then `spyOn(mod, 'fn')` in each test. Dynamic imports trigger ESM re-evaluation (~50ms each).
-4. **`done` callback + real `setTimeout`** — Use fake timers: `jest.advanceTimersByTime(N)` instead of waiting real milliseconds.
-5. **Real delays in mock implementations** — Mock implementations should resolve immediately (`async () => 'result'`), not `await new Promise(r => setTimeout(r, 10))`.
+1. **Real wall-clock delays** — Never use `Date.now()` elapsed time assertions or `setTimeout` with real timers in tests. Always use `jest.useFakeTimers()` + `jest.advanceTimersByTime()`. *(enforced by ESLint: `no-restricted-syntax` bans `setTimeout`/`setInterval` in test files)*
+2. **`setTimeout(resolve, 0)` for microtask flushing** — Use `await Promise.resolve()` instead (nanoseconds vs 1-4ms macrotask minimum). *(enforced indirectly: `setTimeout` and `new Promise(r => setTimeout(r, N))` are both banned by `no-restricted-syntax`)*
+3. **Dynamic `await import()` per test** — Import modules once at file scope with `import * as mod from '...'`, then `spyOn(mod, 'fn')` in each test. Dynamic imports trigger ESM re-evaluation (~50ms each). *(enforced by ESLint: `no-restricted-syntax` bans `AwaitExpression > ImportExpression` in test files)*
+4. **`done` callback + real `setTimeout`** — Use fake timers: `jest.advanceTimersByTime(N)` instead of waiting real milliseconds. *(enforced by ESLint: `jest/no-done-callback` plus the `setTimeout` ban)*
+5. **Real delays in mock implementations** — Mock implementations should resolve immediately (`async () => 'result'`), not `await new Promise(r => setTimeout(r, 10))`. *(not statically lint-enforced; rely on code review)*
 6. **Unawaited `.rejects` assertions** — Bun correctly handles these (unlike Jest), but `await` triggers the `no-confusing-void-expression` lint rule, so leave them unawaited.
+
+### Test Hygiene Enforcement
+
+Several hygiene rules are mechanized via ESLint so violations are caught at lint time:
+
+**Custom rules** in `tools/eslint-rules/` (all with RuleTester-based tests):
+- `require-fake-timers-cleanup` — every `jest.useFakeTimers()` in a hook or test body must pair with `jest.useRealTimers()` in the matching cleanup hook
+- `require-mock-cleanup` — every `jest.spyOn()` must pair with `jest.restoreAllMocks()` or `mockRestore()` in `afterEach`
+- `require-fs-mock-reset` — mocks imported from `tests/setup.ts` must have their reset helper called in `afterEach`
+- `no-mock-module-in-test-body` — `mock.module()` calls must live only in `tests/setup.ts` (the module is global and order-dependent); tests must not call it inside describe/it blocks
+- `no-internal-in-barrel` — barrel `index.ts` files must not re-export `@internal`-tagged symbols via `export { Name } from './x'`; prevents leaking implementation details through the module's public API surface
+- `no-cross-module-internal` — production code must not import `@internal` symbols from a different architectural module (e.g., `agent` importing from `storage @internal`); enforces module boundary integrity
+- `no-star-export-from-non-barrel` — barrel `index.ts` files must not use `export * from './x'` when `./x` is a non-barrel file (i.e., not an `index.ts`); star re-exports leak all names silently including future `@internal` additions. `export *` from another barrel (`index.ts`) is allowed by default (`allowBarrelOfBarrels: true`)
+
+**`eslint-plugin-jest`** enforces hook ordering, no-done-callback, no-focused-tests, and expect correctness.
+
+**Bypass**: `// eslint-disable-next-line <rule-name> -- <specific reason>`. A description after `--` is required by `eslint-comments/require-description`.
+
+**Intentionally disabled**: `jest/require-hook` is off. The project's module-level `mock.module()` setup pattern (which `no-mock-module-in-test-body` separately governs) conflicts with requiring all setup code to live in hooks. See `eslint.config.mjs` for the inline rationale.
 
 ### Codex Consultation
 Consult Codex for:

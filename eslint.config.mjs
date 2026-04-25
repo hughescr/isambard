@@ -4,7 +4,9 @@ import config from '@hughescr/eslint-config-default';
 import jestPlugin from 'eslint-plugin-jest';
 import { boundariesConfig } from './eslint-boundaries.config.mjs';
 import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal.mjs';
+import noInternalInBarrel from './tools/eslint-rules/no-internal-in-barrel.mjs';
 import noMockModuleInTestBody from './tools/eslint-rules/no-mock-module-in-test-body.mjs';
+import noStarExportFromNonBarrel from './tools/eslint-rules/no-star-export-from-non-barrel.mjs';
 import requireFakeTimersCleanup from './tools/eslint-rules/require-fake-timers-cleanup.mjs';
 import requireFsMockReset from './tools/eslint-rules/require-fs-mock-reset.mjs';
 import requireMockCleanup from './tools/eslint-rules/require-mock-cleanup.mjs';
@@ -71,12 +73,27 @@ const eslintConfig = [
         plugins: {
             local: {
                 rules: {
-                    'no-cross-module-internal': noCrossModuleInternal
+                    'no-cross-module-internal':       noCrossModuleInternal,
+                    'no-internal-in-barrel':          noInternalInBarrel,
+                    'no-star-export-from-non-barrel': noStarExportFromNonBarrel,
                 }
             }
         },
         rules: {
-            'local/no-cross-module-internal': 'error'
+            'local/no-cross-module-internal':       'error',
+            'local/no-internal-in-barrel':          'error',
+            'local/no-star-export-from-non-barrel': 'error',
+
+            // Prefer ?? over || when the left-hand side could be null/undefined
+            // (|| swallows 0, '', false which are legitimate values).
+            // Exception: use eslint-disable when '' should map to undefined (e.g. name || undefined).
+            '@typescript-eslint/prefer-nullish-coalescing': 'error',
+
+            // Bans throwing non-Error values (strings, numbers, plain objects).
+            // throw new Error('...') is still allowed by this rule — requiring IsambardError
+            // specifically is a stricter convention enforced by code review, not lint.
+            // Tests are exempt (see base config test overrides which keep this off for test files).
+            '@typescript-eslint/only-throw-error': 'error',
         }
     },
     {
