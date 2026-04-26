@@ -3,7 +3,6 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createCaldavMCPServer, type UserResolveResult } from '../../../src/agent/caldav-mcp-server';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent } from '../../../src/integrations/caldav';
 import type { CalendarServerEntry } from '../../../src/integrations/caldav/calendar-registry/types';
-
 import { textContent } from '../../setup';
 
 interface RegisteredTool {

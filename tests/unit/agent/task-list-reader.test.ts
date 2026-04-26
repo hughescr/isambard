@@ -6,7 +6,6 @@
  */
 import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { Dirent } from 'node:fs';
-
 import { mockLogger } from '../../setup';
 import { createTaskListReader } from '@/agent/task-list-reader';
 

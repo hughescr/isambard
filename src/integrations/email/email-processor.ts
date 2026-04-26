@@ -125,7 +125,11 @@ export class EmailProcessor {
         }
         // Stryker restore BlockStatement
 
-        await this.invokeCallback(email, verdict, senderAllowed);
+        // onSafe is suppressed for allowlisted senders — onAuthFailed already handles that case.
+        // onReview/onUnsafe still fire regardless: admin must know about suspicious emails even from known senders.
+        if(!(verdict.verdict === 'safe' && senderAllowed)) {
+            await this.invokeCallback(email, verdict);
+        }
 
         // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({
@@ -159,10 +163,8 @@ export class EmailProcessor {
         }
     }
 
-    // onSafe is suppressed for allowlisted senders — onAuthFailed already handles that case.
-    // onReview/onUnsafe still fire regardless: admin must know about suspicious emails even from known senders.
-    private async invokeCallback(email: EmailMetadata, verdict: ClassifierVerdict, senderAllowed: boolean): Promise<void> {
-        if(verdict.verdict === 'safe' && !senderAllowed && this.callbacks.onSafe) {
+    private async invokeCallback(email: EmailMetadata, verdict: ClassifierVerdict): Promise<void> {
+        if(verdict.verdict === 'safe' && this.callbacks.onSafe) {
             await this.callbacks.onSafe(email, verdict);
         } else if(verdict.verdict === 'uncertain' && this.callbacks.onReview) {
             await this.callbacks.onReview(email, verdict);

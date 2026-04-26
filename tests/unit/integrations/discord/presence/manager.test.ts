@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from '
 import { type Client, type ActivitiesOptions, ActivityType  } from 'discord.js';
 import { mockWithDiscordRetry, originalWithDiscordRetry } from '../../../../setup';
 import { PresenceManager, type PresenceManagerDeps  } from '@/integrations/discord/presence/manager';
-
 import type { PresencePhase, PresenceConfig } from '@/integrations/discord/presence/types';
 
 // Typed mock shapes that expose both real interface and bun mock methods
