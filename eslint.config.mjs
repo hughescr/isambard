@@ -1,15 +1,12 @@
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import config from '@hughescr/eslint-config-default';
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
+import moduleBoundariesPlugin from '@hughescr/eslint-plugin-module-boundaries';
+// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
+import testHygienePlugin from '@hughescr/eslint-plugin-test-hygiene';
+// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import jestPlugin from 'eslint-plugin-jest';
 import { boundariesConfig, boundaryElements } from './eslint-boundaries.config.mjs';
-import noCrossModuleInternal from './tools/eslint-rules/no-cross-module-internal.mjs';
-import noInternalInBarrel from './tools/eslint-rules/no-internal-in-barrel.mjs';
-import noMockModuleInTestBody from './tools/eslint-rules/no-mock-module-in-test-body.mjs';
-import noStarExportFromNonBarrel from './tools/eslint-rules/no-star-export-from-non-barrel.mjs';
-import requireFakeTimersCleanup from './tools/eslint-rules/require-fake-timers-cleanup.mjs';
-import requireMockCleanup from './tools/eslint-rules/require-mock-cleanup.mjs';
-import requireMockReset from './tools/eslint-rules/require-mock-reset.mjs';
 
 /**
  * ESLint Configuration with Architectural Boundaries
@@ -71,18 +68,12 @@ const eslintConfig = [
             },
         },
         plugins: {
-            local: {
-                rules: {
-                    'no-cross-module-internal':       noCrossModuleInternal,
-                    'no-internal-in-barrel':          noInternalInBarrel,
-                    'no-star-export-from-non-barrel': noStarExportFromNonBarrel,
-                }
-            }
+            '@hughescr/module-boundaries': moduleBoundariesPlugin,
         },
         rules: {
-            'local/no-cross-module-internal':       ['error', { modules: boundaryElements }],
-            'local/no-internal-in-barrel':          'error',
-            'local/no-star-export-from-non-barrel': 'error',
+            '@hughescr/module-boundaries/no-cross-module-internal':       ['error', { modules: boundaryElements }],
+            '@hughescr/module-boundaries/no-internal-in-barrel':          'error',
+            '@hughescr/module-boundaries/no-star-export-from-non-barrel': 'error',
 
             // Prefer ?? over || when the left-hand side could be null/undefined
             // (|| swallows 0, '', false which are legitimate values).
@@ -99,15 +90,8 @@ const eslintConfig = [
     {
         files:   ['tests/**/*.ts'],
         plugins: {
-            jest:  jestPlugin,
-            local: {
-                rules: {
-                    'no-mock-module-in-test-body': noMockModuleInTestBody,
-                    'require-fake-timers-cleanup': requireFakeTimersCleanup,
-                    'require-mock-reset':          requireMockReset,
-                    'require-mock-cleanup':        requireMockCleanup,
-                },
-            },
+            jest:                     jestPlugin,
+            '@hughescr/test-hygiene': testHygienePlugin,
         },
         settings: {
             jest: {
@@ -191,11 +175,11 @@ const eslintConfig = [
 
             // ── Phase 3: custom hygiene rules ────────────────────────────────────────
             // Ban mock.module() outside tests/setup.ts — it is global and order-dependent
-            'local/no-mock-module-in-test-body': 'error',
+            '@hughescr/test-hygiene/no-mock-module-in-test-body': 'error',
             // Every useFakeTimers() in a hook or test body must have matching useRealTimers()
-            'local/require-fake-timers-cleanup': 'error',
+            '@hughescr/test-hygiene/require-fake-timers-cleanup': 'error',
             // Mocks imported from tests/setup must have their reset helper called in afterEach
-            'local/require-mock-reset':          ['error', {
+            '@hughescr/test-hygiene/require-mock-reset':          ['error', {
                 mocks: {
                     mockFsPromises:  ['resetMockFs', 'resetMockFsPrefix'],
                     mockSstResource: ['resetMockSstResource'],
@@ -203,7 +187,7 @@ const eslintConfig = [
                 },
             }],
             // Every spyOn() must be paired with restoreAllMocks() or mockRestore() in afterEach
-            'local/require-mock-cleanup': 'error',
+            '@hughescr/test-hygiene/require-mock-cleanup': 'error',
         },
     }
 ];

@@ -42,14 +42,16 @@ Since Stryker runs each test potentially hundreds of times, even small per-test 
 
 Several hygiene rules are mechanized via ESLint so violations are caught at lint time:
 
-**Custom rules** in `tools/eslint-rules/` (all with RuleTester-based tests):
-- `require-fake-timers-cleanup` — every `jest.useFakeTimers()` in a hook or test body must pair with `jest.useRealTimers()` in the matching cleanup hook
-- `require-mock-cleanup` — every `jest.spyOn()` must pair with `jest.restoreAllMocks()` or `mockRestore()` in `afterEach`
-- `require-mock-reset` — mocks imported from a configured setup module must have their reset helper called in `afterEach`; configured via `mocks` option mapping identifier → reset function names, and `setupModules` option for import-path suffixes
-- `no-mock-module-in-test-body` — `mock.module()` calls must live only in `tests/setup.ts` (the module is global and order-dependent); tests must not call it inside describe/it blocks
-- `no-internal-in-barrel` — barrel `index.ts` files must not re-export `@internal`-tagged symbols via `export { Name } from './x'`; prevents leaking implementation details through the module's public API surface
-- `no-cross-module-internal` — production code must not import `@internal` symbols from a different architectural module (e.g., `agent` importing from `storage @internal`); enforces module boundary integrity
-- `no-star-export-from-non-barrel` — barrel `index.ts` files must not use `export * from './x'` when `./x` is a non-barrel file (i.e., not an `index.ts`); star re-exports leak all names silently including future `@internal` additions. `export *` from another barrel (`index.ts`) is allowed by default (`allowBarrelOfBarrels: true`)
+**`@hughescr/eslint-plugin-test-hygiene`** (package in `node_modules/@hughescr/eslint-plugin-test-hygiene`, source at `~/code/hughescr/eslint-plugin-test-hygiene`):
+- `@hughescr/test-hygiene/require-fake-timers-cleanup` — every `jest.useFakeTimers()` in a hook or test body must pair with `jest.useRealTimers()` in the matching cleanup hook
+- `@hughescr/test-hygiene/require-mock-cleanup` — every `jest.spyOn()` must pair with `jest.restoreAllMocks()` or `mockRestore()` in `afterEach`
+- `@hughescr/test-hygiene/require-mock-reset` — mocks imported from a configured setup module must have their reset helper called in `afterEach`; configured via `mocks` option mapping identifier → reset function names, and `setupModules` option for import-path suffixes
+- `@hughescr/test-hygiene/no-mock-module-in-test-body` — `mock.module()` calls must live only in `tests/setup.ts` (the module is global and order-dependent); tests must not call it inside describe/it blocks
+
+**`@hughescr/eslint-plugin-module-boundaries`** (package in `node_modules/@hughescr/eslint-plugin-module-boundaries`, source at `~/code/hughescr/eslint-plugin-module-boundaries`):
+- `@hughescr/module-boundaries/no-internal-in-barrel` — barrel `index.ts` files must not re-export `@internal`-tagged symbols via `export { Name } from './x'`; prevents leaking implementation details through the module's public API surface
+- `@hughescr/module-boundaries/no-cross-module-internal` — production code must not import `@internal` symbols from a different architectural module (e.g., `agent` importing from `storage @internal`); enforces module boundary integrity
+- `@hughescr/module-boundaries/no-star-export-from-non-barrel` — barrel `index.ts` files must not use `export * from './x'` when `./x` is a non-barrel file (i.e., not an `index.ts`); star re-exports leak all names silently including future `@internal` additions. `export *` from another barrel (`index.ts`) is allowed by default (`allowBarrelOfBarrels: true`)
 
 **`eslint-plugin-jest`** enforces hook ordering, no-done-callback, no-focused-tests, and expect correctness.
 

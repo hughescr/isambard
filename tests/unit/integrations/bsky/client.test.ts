@@ -64,7 +64,7 @@ const mockRichTextState = {
     facets:         undefined as Record<string, unknown>[] | undefined,
 };
 
-// eslint-disable-next-line local/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- @atproto/api mock is bsky-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
+// eslint-disable-next-line @hughescr/test-hygiene/no-mock-module-in-test-body, @typescript-eslint/no-floating-promises -- @atproto/api mock is bsky-client-specific and cannot be shared via tests/setup.ts; mock.module() is a floating promise (module mock setup)
 mock.module('@atproto/api', () => ({
     AtpAgent: class MockAtpAgent {
         app = {

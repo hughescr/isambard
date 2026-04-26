@@ -59,6 +59,8 @@
   },
   "devDependencies": {
     "@hughescr/eslint-config-default": "^5.1.0",
+    "@hughescr/eslint-plugin-module-boundaries": "*",
+    "@hughescr/eslint-plugin-test-hygiene": "*",
     "@hughescr/stryker-bun-runner": "^1.2.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@stryker-mutator/api": "^9.6.1",
