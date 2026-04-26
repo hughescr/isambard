@@ -148,7 +148,7 @@ describe.concurrent('CheckpointManager', () => {
             const existingCheckpoint: MemoryToolItemData = {
                 path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
                 content:     '{}',
-                contentType: 'application/json' as ContentType,
+                contentType: 'application/json',
                 metadata:    {},
                 createdAt:   now,
                 updatedAt:   now,
@@ -281,7 +281,7 @@ describe.concurrent('CheckpointManager', () => {
             const existingCheckpoint: MemoryToolItemData = {
                 path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
                 content:     '{}',
-                contentType: 'application/json' as ContentType,
+                contentType: 'application/json',
                 metadata:    {},
                 createdAt:   now,
                 updatedAt:   now,
@@ -306,7 +306,7 @@ describe.concurrent('CheckpointManager', () => {
 
     describe('listAll', () => {
         test('should return empty array when no checkpoints exist', async () => {
-            mockBackend.list = mock(async () => ({ items: [], nextCursor: undefined }));
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({ items: [], nextCursor: undefined }));
 
             const result = await manager.listAll();
 
@@ -332,12 +332,12 @@ describe.concurrent('CheckpointManager', () => {
                 updatedAt:  now,
             };
 
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         path:        '/state/services/discord/channels/111111111/checkpoint' as MemoryPath,
                         content:     JSON.stringify(checkpoint1),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -345,7 +345,7 @@ describe.concurrent('CheckpointManager', () => {
                     {
                         path:        '/state/services/discord/channels/222222222/checkpoint' as MemoryPath,
                         content:     JSON.stringify(checkpoint2),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -370,12 +370,12 @@ describe.concurrent('CheckpointManager', () => {
                 updatedAt:  now,
             };
 
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         path:        '/state/services/discord/channels/111111111/checkpoint' as MemoryPath,
                         content:     JSON.stringify(checkpoint),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -383,7 +383,7 @@ describe.concurrent('CheckpointManager', () => {
                     {
                         path:        '/state/services/discord/channels/111111111/metadata' as MemoryPath,
                         content:     '{}',
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -407,12 +407,12 @@ describe.concurrent('CheckpointManager', () => {
                 updatedAt:  now,
             };
 
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         path:        '/state/services/discord/channels/111111111/checkpoint' as MemoryPath,
                         content:     JSON.stringify(validCheckpoint),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -420,7 +420,7 @@ describe.concurrent('CheckpointManager', () => {
                     {
                         path:        '/state/services/discord/channels/222222222/checkpoint' as MemoryPath,
                         content:     'invalid json',
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -453,12 +453,12 @@ describe.concurrent('CheckpointManager', () => {
                 updatedAt:  now,
             };
 
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         path:        '/state/services/discord/channels/111111111/checkpoint' as MemoryPath,
                         content:     JSON.stringify(validCheckpoint),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -466,7 +466,7 @@ describe.concurrent('CheckpointManager', () => {
                     {
                         path:        '/state/services/discord/channels/333333333/checkpoint' as MemoryPath,
                         content:     JSON.stringify(invalidCheckpoint),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,
@@ -490,13 +490,13 @@ describe.concurrent('CheckpointManager', () => {
                 updatedAt:  now,
             };
 
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         // This has valid checkpoint data but wrong path suffix
                         path:        '/state/services/discord/channels/111111111/data' as MemoryPath,
                         content:     JSON.stringify(validCheckpoint),
-                        contentType: 'application/json' as ContentType,
+                        contentType: 'application/json',
                         metadata:    {},
                         createdAt:   now,
                         updatedAt:   now,

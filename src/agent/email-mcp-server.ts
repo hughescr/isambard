@@ -222,7 +222,7 @@ async function saveEmailAttachments(
 /**
  * Normalizes a to-address argument (string, object, array, or undefined) to an array or undefined.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns T[] | undefined
+
 function normalizeToAddresses<T>(to: T | T[] | undefined): T[] | undefined {
     if(to === undefined) {
         return undefined;

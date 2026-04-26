@@ -42,7 +42,7 @@ describe('ChannelRegistryManager', () => {
                 return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);
             }
             return Promise.resolve(null);
-        }) as unknown as Client['channels']['fetch'];
+        });
     };
 
     beforeEach(() => {
@@ -133,7 +133,7 @@ describe('ChannelRegistryManager', () => {
                     return Promise.resolve({ id: channelId, name: 'general' } as unknown as Channel);
                 }
                 return Promise.resolve(null);
-            }) as unknown as typeof client.channels.fetch;
+            });
 
             await manager.warmCache();
 
@@ -175,7 +175,7 @@ describe('ChannelRegistryManager', () => {
                     return Promise.resolve({ id: channelId, name: 'DM - testuser' } as unknown as Channel);
                 }
                 return Promise.resolve(null);
-            }) as unknown as typeof client.channels.fetch;
+            });
 
             await manager.warmCache();
 
@@ -1149,7 +1149,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id: channel.channelId,
                 // No 'name' property at all
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             // Fetch channel - should trigger buildChannelMetadata with no-name channel
             const result = await manager.getChannel(channel.channelId);
@@ -1172,7 +1172,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id:   channel.channelId,
                 name: null, // Explicitly null
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             // Fetch channel - should trigger buildChannelMetadata with null name
             const result = await manager.getChannel(channel.channelId);
@@ -1197,7 +1197,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id:        dmChannelId,
                 recipient: { username: 'testuser' },
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             const result = await manager.getChannel(dmChannelId);
 
@@ -1219,7 +1219,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id:   dmChannelId,
                 name: 'DM - olduser',
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             const result = await manager.getChannel(dmChannelId);
 
@@ -1241,7 +1241,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id:   dmChannelId,
                 name: '@existinguser',
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             const result = await manager.getChannel(dmChannelId);
 
@@ -1263,7 +1263,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id:   dmChannelId,
                 name: 'plainuser',
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             const result = await manager.getChannel(dmChannelId);
 
@@ -1285,7 +1285,7 @@ describe('ChannelRegistryManager', () => {
             client.channels.fetch = mock(() => Promise.resolve({
                 id: dmChannelId,
                 // No recipient or name
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             const result = await manager.getChannel(dmChannelId);
 
@@ -1308,7 +1308,7 @@ describe('ChannelRegistryManager', () => {
                 id:        dmChannelId,
                 recipient: { username: 'recipient-user' },
                 name:      'DM - old-user',
-            } as unknown as Channel)) as unknown as typeof client.channels.fetch;
+            } as unknown as Channel));
 
             const result = await manager.getChannel(dmChannelId);
 

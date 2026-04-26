@@ -675,7 +675,6 @@ export class BlueskyClient {
         };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- conditional spread in map callback produces structurally equivalent shapes
     private normalizeImageEmbed(view: AppBskyEmbedImages.View): BskyPostEmbed {
         return {
             type:   'images',
@@ -689,7 +688,6 @@ export class BlueskyClient {
         };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- conditional spreads produce structurally equivalent shapes
     private normalizeVideoEmbed(view: AppBskyEmbedVideo.View): BskyPostEmbed {
         return {
             type:  'video',
@@ -706,7 +704,6 @@ export class BlueskyClient {
         };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- conditional spread produces structurally equivalent shapes
     private normalizeExternalEmbed(view: AppBskyEmbedExternal.View): BskyPostEmbed {
         return {
             type:     'external',
@@ -720,7 +717,6 @@ export class BlueskyClient {
         };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- early return undefined when record/media normalization fails
     private normalizeRecordWithMediaEmbed(view: AppBskyEmbedRecordWithMedia.View): BskyPostEmbed | undefined {
         // Stryker disable next-line ConditionalExpression: type guard on embedded record — must check ViewRecord to safely cast
         if(!AppBskyEmbedRecord.isViewRecord(view.record.record)) {
@@ -735,7 +731,6 @@ export class BlueskyClient {
         return { type: 'recordWithMedia', record: normalizedRecord, media: normalizedMedia };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- returns undefined for null/unrecognized embed types
     private normalizePostEmbed(embed: unknown): BskyPostEmbed | undefined {
         if(embed === undefined || embed === null) {
             return undefined;
@@ -786,7 +781,6 @@ export class BlueskyClient {
         return promise;
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- returns undefined for unknown feature types (future-proof)
     private buildFacetFeature(f: Record<string, unknown>, didHandleMap: Map<string, string>): BskyFacetFeature | undefined {
         // Stryker disable next-line ConditionalExpression,LogicalOperator: type discriminant paired with typeof guard — defensive check for malformed AT Protocol data
         if(f.$type === 'app.bsky.richtext.facet#mention' && typeof f.did === 'string') {

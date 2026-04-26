@@ -113,7 +113,7 @@ export class BotStateManagerImpl implements BotStateManager {
      * Deep clone mode context.
      * Handles catching_up context with Set<ChannelId>.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ModeContext (discriminated union member)
+
     private cloneModeContext(context: ModeContext): ModeContext {
         // Stryker disable StringLiteral,BlockStatement: Equivalent — cloning with/without viewedChannels deep copy has same behavior since markChannelViewed always creates a new Set via spread (never mutates in place)
         if(isCatchingUpContext(context)) {
@@ -121,7 +121,7 @@ export class BotStateManagerImpl implements BotStateManager {
             return {
                 ...context,
                 viewedChannels: new Set(context.viewedChannels),
-            } as CatchingUpModeContext;
+            };
         }
         // Stryker restore StringLiteral,BlockStatement
         // Other contexts are plain objects
@@ -430,7 +430,7 @@ export class BotStateManagerImpl implements BotStateManager {
             modeContext: {
                 ...context,
                 sessionId,
-            } as typeof this.currentState.modeContext,
+            },
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability

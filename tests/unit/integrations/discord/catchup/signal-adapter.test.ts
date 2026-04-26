@@ -35,7 +35,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             await adapter.storeCompletionSignal(signal);
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion');
             expect(mockBackend.create).toHaveBeenCalledWith({
                 path:        '/state/catchup-completion' as MemoryPath,
                 content:     JSON.stringify(signal),
@@ -62,9 +62,9 @@ describe('createCatchUpSignalAdapter', () => {
 
             await adapter.storeCompletionSignal(signal);
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion');
             expect(mockBackend.update).toHaveBeenCalledWith(
-                '/state/catchup-completion' as MemoryPath,
+                '/state/catchup-completion',
                 { content: JSON.stringify(signal) }
             );
         });
@@ -114,7 +114,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             const result = await adapter.loadCompletionSignal();
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion');
             expect(result).toEqual(signal);
         });
 
@@ -123,7 +123,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             const result = await adapter.loadCompletionSignal();
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-completion');
             expect(result).toBeNull();
         });
 
@@ -160,7 +160,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             await adapter.storeInProgressSignal(signal);
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress');
             expect(mockBackend.create).toHaveBeenCalledWith({
                 path:        '/state/catchup-inprogress' as MemoryPath,
                 content:     JSON.stringify(signal),
@@ -187,9 +187,9 @@ describe('createCatchUpSignalAdapter', () => {
 
             await adapter.storeInProgressSignal(signal);
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress');
             expect(mockBackend.update).toHaveBeenCalledWith(
-                '/state/catchup-inprogress' as MemoryPath,
+                '/state/catchup-inprogress',
                 { content: JSON.stringify(signal) }
             );
         });
@@ -237,7 +237,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             const result = await adapter.loadInProgressSignal();
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress');
             expect(result).toEqual(signal);
         });
 
@@ -246,7 +246,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             const result = await adapter.loadInProgressSignal();
 
-            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress' as MemoryPath);
+            expect(mockBackend.get).toHaveBeenCalledWith('/state/catchup-inprogress');
             expect(result).toBeNull();
         });
 
@@ -278,7 +278,7 @@ describe('createCatchUpSignalAdapter', () => {
 
             await adapter.deleteInProgressSignal();
 
-            expect(mockBackend.delete).toHaveBeenCalledWith('/state/catchup-inprogress' as MemoryPath);
+            expect(mockBackend.delete).toHaveBeenCalledWith('/state/catchup-inprogress');
         });
 
         test('should swallow errors and log them', async () => {

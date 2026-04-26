@@ -201,7 +201,7 @@ function getRetentionReason(
     }
 
     // Must be blocking an active task
-    // eslint-disable-next-line sonarjs/function-return-type -- blockedTask && ... legitimately returns boolean-ish union
+
     const activeBlocked = task.blocks.filter((id) => {
         const blockedTask = allTasks.get(id);
         return blockedTask && blockedTask.status !== 'completed';

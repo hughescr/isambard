@@ -263,7 +263,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             if(result.completed) {
                 // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
-                // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
                 void deps.activityLogger?.log({ type: 'perch-end', summary: 'Perch session completed' }).catch(() => undefined);
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
@@ -369,7 +369,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             });
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
             void deps.activityLogger?.log({ type: 'perch-start', summary: `Perch session started (slot: ${slot})` }).catch(() => undefined);
 
             // Stryker disable BlockStatement: Defensive error handling for context/prompt build failures
@@ -438,7 +438,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             }
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
             void deps.activityLogger?.log({ type: 'perch-suspend', summary: 'Perch suspended' }).catch(() => undefined);
 
             // Transition to idle BEFORE aborting (so runSessionAndFinalize sees idle mode)
@@ -515,7 +515,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             });
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
             void deps.activityLogger?.log({ type: 'perch-resume', summary: 'Perch resumed' }).catch(() => undefined);
 
             // Run session and finalize
@@ -538,7 +538,6 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             suspendedState = null;
         },
 
-        // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns AbortController | null
         getAbortController(): AbortController | null {
             return currentAbortController;
         },

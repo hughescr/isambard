@@ -59,7 +59,7 @@ function createMockStateManager(initialState?: Partial<MockStateManagerState>): 
 
     return {
         getMode:       mock(() => state.mode),
-        getState:      mock(() => ({ ...state, modeContext: { ...state.modeContext } } as BotState)),
+        getState:      mock(() => ({ ...state, modeContext: { ...state.modeContext } })),
         startPerching: mock((activity: string) => {
             state.mode = 'perching';
             state.modeContext = { activityType: activity } as PerchingModeContext;
@@ -1156,7 +1156,7 @@ describe('PerchSessionRunner - Suspension', () => {
         await runner.resumeAfterSuspension();
 
         // Verify the prompt includes only the "after" event
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('/events/after.md');
         expect(secondCall[0].prompt).not.toContain('/events/before.md');
     });
@@ -1402,7 +1402,7 @@ describe('PerchSessionRunner - Timeout', () => {
         expect(sessionMock).toHaveBeenCalledTimes(2);
 
         // Verify second call had timeout prompt (check for timeout keywords in prompt)
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('PERCH SESSION TIMEOUT');
         expect(secondCall[0].prompt).toContain('wrap up');
     });
@@ -1495,7 +1495,7 @@ describe('PerchSessionRunner - Timeout', () => {
         await sessionPromise;
 
         // Verify timeout prompt includes duration
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('45 minutes');
         expect(secondCall[0].prompt).toContain('max: 45 minutes');
     });
@@ -1536,7 +1536,7 @@ describe('PerchSessionRunner - Timeout', () => {
         await sessionPromise;
 
         // Verify timeout prompt includes timeout marker
-        const secondCall = sessionWithPartialWork.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionWithPartialWork.mock.calls[1];
         expect(secondCall[0].prompt).toContain('TIMEOUT');
     });
 
@@ -1572,7 +1572,7 @@ describe('PerchSessionRunner - Timeout', () => {
 
         // Verify second call happened with default empty partialWork
         expect(sessionMock).toHaveBeenCalledTimes(2);
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         // The prompt should contain the timeout message (line 257 fallback was used)
         expect(secondCall[0].prompt).toContain('TIMEOUT');
     });
@@ -1678,7 +1678,7 @@ describe('PerchSessionRunner - Timeout', () => {
         await sessionPromise;
 
         // Check that duration was calculated (45 minutes = 2700000ms)
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toMatch(/45 minutes/);
     });
 
@@ -1756,7 +1756,7 @@ describe('PerchSessionRunner - Timeout', () => {
         // Verify timeout occurred at correct time
         expect(sessionMock).toHaveBeenCalledTimes(2);
 
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('30 minutes');
         expect(secondCall[0].prompt).toContain('max: 30 minutes');
     });
@@ -2154,7 +2154,7 @@ describe('PerchSessionRunner - Mutant Killers', () => {
 
         // Verify second call was made with timeout prompt (not another timeout)
         expect(sessionMock).toHaveBeenCalledTimes(2);
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('TIMEOUT');
     });
 
@@ -2213,7 +2213,7 @@ describe('PerchSessionRunner - Mutant Killers', () => {
 
         // Verify timeout wrap-up happened (line 244 condition was true)
         expect(sessionMock).toHaveBeenCalledTimes(2);
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('TIMEOUT');
     });
 
@@ -2384,7 +2384,7 @@ describe('PerchSessionRunner - Mutant Killers', () => {
         await sessionPromise;
 
         // Verify the prompt shows correct minutes (45)
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('45 minutes');
     });
 
@@ -2584,7 +2584,7 @@ describe('PerchSessionRunner - Timeout Return Path', () => {
         expect(sessionMock).toHaveBeenCalledTimes(2);
 
         // Assert: second call's prompt contains 'PERCH SESSION TIMEOUT'
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toContain('PERCH SESSION TIMEOUT');
 
         // Assert: goIdle was called
@@ -2658,7 +2658,7 @@ describe('PerchSessionRunner - Timeout Return Path', () => {
         );
 
         // Assert: prompt includes duration
-        const secondCall = sessionMock.mock.calls[1] as [RunAgentSessionOptions];
+        const secondCall = sessionMock.mock.calls[1];
         expect(secondCall[0].prompt).toMatch(/45 minutes/);
     });
 });

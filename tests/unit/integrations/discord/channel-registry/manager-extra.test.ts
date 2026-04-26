@@ -42,7 +42,7 @@ describe('ChannelRegistryManager - Additional Mutation Tests', () => {
                 return Promise.resolve({ id: channelId, name: channel.channelName } as unknown as Channel);
             }
             return Promise.resolve(null);
-        }) as unknown as Client['channels']['fetch'];
+        });
     };
 
     beforeEach(() => {

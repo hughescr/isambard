@@ -185,7 +185,7 @@ export class MessageCoordinator {
      * This avoids extra microtask hops in the interrupted/no-callback paths.
      * Callers are responsible for cleanup (stopTypingIndicator, activeQuery) in their own finally blocks.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Promise<void> | void
+
     private handleProcessingResult(
         result: ProcessResult,
         state: ChannelState,

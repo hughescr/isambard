@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { retryAsyncGenerator } from '../../../../src/utils/retry/retry-async-generator';
-import type { ErrorClassification, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
+import type { ErrorClassifier, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
 
 describe('retryAsyncGenerator', () => {
     let mockLogger: RetryLogger;
@@ -53,7 +53,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -81,7 +81,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -110,7 +110,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -139,7 +139,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Immediate error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Immediate error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -158,7 +158,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -181,7 +181,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -202,7 +202,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'permanent', message: 'Permanent error' }));
 
             const results: number[] = [];
 
@@ -234,11 +234,11 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock((error: unknown) => {
+            const classifier = mock<ErrorClassifier>((error: unknown) => {
                 if(error === transientError) {
-                    return { category: 'transient', message: 'Transient error' } as ErrorClassification;
+                    return { category: 'transient', message: 'Transient error' };
                 }
-                return { category: 'permanent', message: 'Permanent error' } as ErrorClassification;
+                return { category: 'permanent', message: 'Permanent error' };
             });
 
             const results: number[] = [];
@@ -269,11 +269,11 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'Rate limited',
                 retryAfterMs: 5000,
-            } as ErrorClassification));
+            }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -292,7 +292,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -315,7 +315,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -338,7 +338,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Network timeout' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Network timeout' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -366,7 +366,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: (undefined)[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -383,7 +383,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: (null)[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -401,7 +401,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy, classifier, deps })) {
@@ -428,7 +428,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -449,7 +449,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { classifier, deps })) {
@@ -492,10 +492,10 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
-            for await (const value of retryAsyncGenerator(generatorFactory, { policy: invalidPolicy as Partial<RetryPolicy>, classifier, deps })) {
+            for await (const value of retryAsyncGenerator(generatorFactory, { policy: invalidPolicy, classifier, deps })) {
                 results.push(value);
             }
 
@@ -515,7 +515,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: invalidPolicy as unknown as Partial<RetryPolicy>, classifier, deps })) {
@@ -542,10 +542,10 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
-            for await (const value of retryAsyncGenerator(generatorFactory, { policy: partialPolicy as Partial<RetryPolicy>, classifier, deps })) {
+            for await (const value of retryAsyncGenerator(generatorFactory, { policy: partialPolicy, classifier, deps })) {
                 results.push(value);
             }
 
@@ -559,7 +559,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: {}, classifier, deps })) {
@@ -584,11 +584,11 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'Rate limited',
                 retryAfterMs: 7500,
-            } as ErrorClassification));
+            }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -613,11 +613,11 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'No delay retry',
                 retryAfterMs: 0,
-            } as ErrorClassification));
+            }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -641,20 +641,20 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock((error: unknown) => {
+            const classifier = mock<ErrorClassifier>((error: unknown) => {
                 const err = error as Error;
                 if(err.message === 'Retry 1') {
                     return {
                         category:     'rate_limited',
                         message:      'Retry 1',
                         retryAfterMs: 1000,
-                    } as ErrorClassification;
+                    };
                 }
                 return {
                     category:     'rate_limited',
                     message:      'Retry 2',
                     retryAfterMs: 3000,
-                } as ErrorClassification;
+                };
             });
 
             const results: number[] = [];
@@ -680,11 +680,11 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category:     'transient',
                 message:      'Transient error',
                 retryAfterMs: undefined, // Explicitly undefined
-            } as ErrorClassification));
+            }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -719,11 +719,11 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock((error: unknown) => {
+            const classifier = mock<ErrorClassifier>((error: unknown) => {
                 if(error === transientError) {
-                    return { category: 'transient', message: 'Transient error' } as ErrorClassification;
+                    return { category: 'transient', message: 'Transient error' };
                 }
-                return { category: 'permanent', message: 'Permanent error' } as ErrorClassification;
+                return { category: 'permanent', message: 'Permanent error' };
             });
 
             const results: number[] = [];
@@ -758,15 +758,15 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock((error: unknown) => {
+            const classifier = mock<ErrorClassifier>((error: unknown) => {
                 if(error === rateLimitError) {
                     return {
                         category:     'rate_limited',
                         message:      'Rate limited',
                         retryAfterMs: 2000,
-                    } as ErrorClassification;
+                    };
                 }
-                return { category: 'transient', message: 'Transient error' } as ErrorClassification;
+                return { category: 'transient', message: 'Transient error' };
             });
 
             const results: number[] = [];
@@ -800,16 +800,16 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock((error: unknown) => {
+            const classifier = mock<ErrorClassifier>((error: unknown) => {
                 const err = error as Error;
                 if(err.message.startsWith('Rate limit')) {
                     return {
                         category:     'rate_limited',
                         message:      err.message,
                         retryAfterMs: 1500,
-                    } as ErrorClassification;
+                    };
                 }
-                return { category: 'transient', message: err.message } as ErrorClassification;
+                return { category: 'transient', message: err.message };
             });
 
             const results: number[] = [];
@@ -840,7 +840,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             // Custom sleep that advances time by specific amounts
             const customSleep = mock((ms: number) => {
@@ -887,7 +887,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -911,7 +911,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'permanent', message: 'Permanent error' }));
 
             // eslint-disable-next-line sonarjs/no-unused-collection -- results collected within error-throwing async; test verifies error behavior not collection contents
             const results: number[] = [];
@@ -936,7 +936,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -960,7 +960,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'transient' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -995,7 +995,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
@@ -1017,7 +1017,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
@@ -1045,7 +1045,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'transient' }));
 
             const results: number[] = [];
             for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
@@ -1072,7 +1072,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             // Test with maxAttempts = 1 (boundary case)
             expect(async () => {
@@ -1113,7 +1113,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             expect(async () => {
                 for await (const _ of retryAsyncGenerator(generatorFactory, {
@@ -1141,7 +1141,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             // Use maxAttempts = 3 to make it clear
             expect(async () => {
@@ -1180,7 +1180,7 @@ describe('retryAsyncGenerator with real timers', () => {
         }
 
         const generatorFactory = mock(generator);
-        const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+        const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
         const results: number[] = [];
         for await (const value of retryAsyncGenerator(generatorFactory, { classifier })) {

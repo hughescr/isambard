@@ -254,7 +254,7 @@ describe('browserMcpServer — getBodyText', () => {
 
     test('getBodyText returns error when evaluate throws', async () => {
         const adapter = makeFakeAdapter({
-            evaluate: mock(async (): Promise<never> => { throw new Error('JS error'); }) as BrowserAdapter['evaluate'],
+            evaluate: mock(async (): Promise<never> => { throw new Error('JS error'); }),
         });
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         const result = await callTool(server, 'getBodyText');
@@ -290,7 +290,7 @@ describe('browserMcpServer — getFullHTML', () => {
 
     test('getFullHTML returns error when evaluate throws', async () => {
         const adapter = makeFakeAdapter({
-            evaluate: mock(async (): Promise<never> => { throw new Error('JS error'); }) as BrowserAdapter['evaluate'],
+            evaluate: mock(async (): Promise<never> => { throw new Error('JS error'); }),
         });
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         const result = await callTool(server, 'getFullHTML');
@@ -344,7 +344,7 @@ describe('browserMcpServer — getLinks', () => {
 
     test('getLinks returns error when evaluate throws', async () => {
         const adapter = makeFakeAdapter({
-            evaluate: mock(async (): Promise<never> => { throw new Error('JS error'); }) as BrowserAdapter['evaluate'],
+            evaluate: mock(async (): Promise<never> => { throw new Error('JS error'); }),
         });
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         const result = await callTool(server, 'getLinks');
@@ -574,7 +574,7 @@ describe('browserMcpServer — evaluate', () => {
 
     test('evaluate returns error when adapter.evaluate throws', async () => {
         const adapter = makeFakeAdapter({
-            evaluate: mock(async (): Promise<never> => { throw new Error('SyntaxError'); }) as BrowserAdapter['evaluate'],
+            evaluate: mock(async (): Promise<never> => { throw new Error('SyntaxError'); }),
         });
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         const result = await callTool(server, 'evaluate', { expression: 'bad syntax;;;' });

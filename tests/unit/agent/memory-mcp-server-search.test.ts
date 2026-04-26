@@ -2,14 +2,14 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, ContentType, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
 import { textContent } from '../../setup';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
     path:        '/mock/path' as MemoryPath,
     content:     'mock content',
-    contentType: 'text/plain' as ContentType,
+    contentType: 'text/plain',
     metadata:    {},
     createdAt:   '2025-01-01T00:00:00.000Z',
     updatedAt:   '2025-01-01T00:00:00.000Z',
@@ -219,12 +219,12 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
     describe('list tool', () => {
         test('should return directory contents when items exist', async () => {
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         path:        '/identity/core-values' as MemoryPath,
                         content:     'My core values',
-                        contentType: 'text/plain' as ContentType,
+                        contentType: 'text/plain',
                         metadata:    {},
                         createdAt:   '2025-01-01T00:00:00.000Z',
                         updatedAt:   '2025-01-01T00:00:00.000Z',
@@ -232,7 +232,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                     {
                         path:        '/identity/beliefs' as MemoryPath,
                         content:     'My beliefs',
-                        contentType: 'text/plain' as ContentType,
+                        contentType: 'text/plain',
                         metadata:    {},
                         createdAt:   '2025-01-01T00:00:00.000Z',
                         updatedAt:   '2025-01-01T00:00:00.000Z',
@@ -254,7 +254,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should return empty message for empty directory', async () => {
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items:      [],
                 nextCursor: undefined,
             }));
@@ -271,7 +271,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should return error when backend.list throws Error', async () => {
-            mockBackend.list = mock(async () => {
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => {
                 throw new Error('Database connection failed');
             });
 
@@ -287,7 +287,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should return error when backend.list throws non-Error', async () => {
-            mockBackend.list = mock(async () => {
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => {
                 throw 'Network error';
             });
 
@@ -301,12 +301,12 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
         });
 
         test('should join multiple paths with newlines', async () => {
-            mockBackend.list = mock(async () => ({
+            mockBackend.list = mock<MemoryToolBackend['list']>(async () => ({
                 items: [
                     {
                         path:        '/users/alice/pref-1' as MemoryPath,
                         content:     'Preference 1',
-                        contentType: 'text/plain' as ContentType,
+                        contentType: 'text/plain',
                         metadata:    {},
                         createdAt:   '2025-01-01T00:00:00.000Z',
                         updatedAt:   '2025-01-01T00:00:00.000Z',
@@ -314,7 +314,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
                     {
                         path:        '/users/alice/pref-2' as MemoryPath,
                         content:     'Preference 2',
-                        contentType: 'text/plain' as ContentType,
+                        contentType: 'text/plain',
                         metadata:    {},
                         createdAt:   '2025-01-01T00:00:00.000Z',
                         updatedAt:   '2025-01-01T00:00:00.000Z',
@@ -333,12 +333,12 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
 
         describe('layer path routing', () => {
             test('should use listByLayer for /events path', async () => {
-                mockBackend.listByLayer = mock(async () => ({
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/events/conversation/2025-01-01T00-00-00Z' as MemoryPath,
                             content:     'Event content',
-                            contentType: 'text/plain' as ContentType,
+                            contentType: 'text/plain',
                             metadata:    {},
                             createdAt:   '2025-01-01T00:00:00.000Z',
                             updatedAt:   '2025-01-01T00:00:00.000Z',
@@ -358,7 +358,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             });
 
             test('should use listByLayer for /identity path', async () => {
-                mockBackend.listByLayer = mock(async () => ({
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items:      [],
                     nextCursor: undefined,
                 }));
@@ -373,7 +373,7 @@ describe.concurrent('Memory MCP Server Search and List Tools', () => {
             });
 
             test('should use listByLayer for /state path', async () => {
-                mockBackend.listByLayer = mock(async () => ({
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items:      [],
                     nextCursor: undefined,
                 }));

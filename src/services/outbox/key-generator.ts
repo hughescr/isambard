@@ -42,7 +42,7 @@ export const OutboxKeyGenerator = {
      * Parses an SK back into its components.
      * Returns undefined if the SK is not in the expected format.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns object | undefined
+
     parseSK(sk: string): { priority: OutboxPriority, dedupeKey: string } | undefined {
         if(!sk.startsWith(ITEM_SK_PREFIX)) {
             return undefined;

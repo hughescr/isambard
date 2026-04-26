@@ -23,7 +23,7 @@ async function runTextProcess(
             stdout: 'pipe',
             stderr: 'pipe',
             cwd:    options?.cwd,
-        }) as unknown as PipedProc;
+        });
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if(msg.includes('ENOENT') || msg.includes('not found')) {
@@ -61,7 +61,7 @@ async function runBinaryProcess(
         proc = Bun.spawn(cmd, {
             stdout: 'pipe',
             stderr: 'pipe',
-        }) as unknown as PipedProc;
+        });
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if(msg.includes('ENOENT') || msg.includes('not found')) {

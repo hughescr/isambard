@@ -37,7 +37,7 @@ function getHttpErrorMessage(error: unknown, status: number): string {
  * Extract retry after value from HTTP error.
  * Checks response body first (already in ms), then headers (in seconds, converts to ms).
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number | undefined
+
 function getRetryAfter(error: unknown): number | undefined {
     if(!(typeof error === 'object' && error !== null)) {
         return undefined;
@@ -69,7 +69,7 @@ function getRetryAfter(error: unknown): number | undefined {
 /**
  * Classify HTTP status error
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+
 export function classifyHttpStatus(
     error: unknown,
     permanentStatuses: number[]
@@ -116,7 +116,7 @@ export function classifyHttpStatus(
 /**
  * Classify network error
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+
 export function classifyNetworkError(error: unknown, fallbackMessage = 'Unknown error'): ErrorClassification | undefined {
     // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for code field
     if(!(typeof error === 'object' && error !== null && 'code' in error)) {

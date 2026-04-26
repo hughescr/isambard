@@ -74,7 +74,6 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         return prefix === 'bsky-send-reject-reason' || prefix === 'bsky-dm-reject-reason';
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | null (null signals empty/invalid UUID)
     protected parseId(raw: string): string | null {
         // Stryker disable next-line ConditionalExpression: falsy guard — empty string uuid causes early return
         return raw || null;
@@ -157,7 +156,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         await this.rejectionBackend.recordRejection(rejectionItem);
 
         // Stryker disable next-line StringLiteral,EqualityOperator,ConditionalExpression: activity log type selection and summary text are informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
         void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch(() => undefined);
 
         // Persist succeeded — update Discord to show rejection
@@ -210,7 +209,6 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         // Stryker restore BlockStatement
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns BskyRejectionItem (discriminated union)
     private extractRejectionItem(prefix: string, embed: { description?: string | null, fields?: { name: string, value: string }[] }, reason: string, uuid: string): BskyRejectionItem {
         // Stryker disable next-line StringLiteral: '' fallback for null/undefined description is defensive configuration
         const text       = embed.description ?? '';
@@ -292,7 +290,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         });
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
         void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch(() => undefined);
 
         const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — posting shortly');
@@ -364,7 +362,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         });
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
         void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch(() => undefined);
 
         const updatedEmbed = this.buildApprovedEmbed('DM Approved ✓ — sending shortly');

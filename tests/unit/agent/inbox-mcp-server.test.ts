@@ -21,7 +21,7 @@ describe('createInboxMCPServer', () => {
             getMessage:         mock(() => undefined),
             markAsRead:         mock(async () => { /* intentionally empty */ }),
             markChannelRead:    mock(async () => { /* intentionally empty */ }),
-        } as unknown as MCPInboxManager;
+        };
 
         mockChannelRegistry = {
             resolveChannelId:   mock((nameOrId: string) => nameOrId),
@@ -47,7 +47,7 @@ describe('createInboxMCPServer', () => {
     };
 
     // Helper function to extract text content from CallToolResult
-    // eslint-disable-next-line sonarjs/function-return-type -- Returns string or undefined depending on content type
+
     const getTextContent = (result: CallToolResult): string | undefined => {
         const content = result.content[0] as Record<string, unknown> | undefined;
         if(content && 'text' in content && typeof content.text === 'string') {
@@ -426,7 +426,6 @@ describe('createInboxMCPServer', () => {
                 isRead:      false,
             };
 
-            // eslint-disable-next-line sonarjs/function-return-type -- Returns UnreadMessage or undefined based on message ID lookup
             mockInboxManager.getMessage = mock((_channelId, messageId): UnreadMessage | undefined => {
                 if(messageId === '111') {
                     return message1;
@@ -469,7 +468,6 @@ describe('createInboxMCPServer', () => {
                 isRead:      false,
             };
 
-            // eslint-disable-next-line sonarjs/function-return-type -- Returns UnreadMessage or undefined based on message ID lookup
             mockInboxManager.getMessage = mock((_channelId, messageId): UnreadMessage | undefined => {
                 if(messageId === '111') {
                     return message1;
@@ -633,7 +631,7 @@ describe('createInboxMCPServer', () => {
 
             const mockStateManager: MCPInboxStateManager = {
                 markChannelViewed: mock(() => undefined),
-            } as unknown as MCPInboxStateManager;
+            };
 
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
             const handler = getToolHandler(server, 'getChannelSummary');
@@ -687,7 +685,7 @@ describe('createInboxMCPServer', () => {
 
             const mockStateManager: MCPInboxStateManager = {
                 markChannelViewed: mock(() => undefined),
-            } as unknown as MCPInboxStateManager;
+            };
 
             const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
             const handler = getToolHandler(server, 'fetchMessages');

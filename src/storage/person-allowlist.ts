@@ -237,7 +237,7 @@ export class PersonAllowlist {
                 ExclusiveStartKey: lastEvaluatedKey,
             }));
             items.push(...(result.Items ?? []));
-            lastEvaluatedKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
+            lastEvaluatedKey = result.LastEvaluatedKey;
         } while(lastEvaluatedKey);
 
         return items.map((item) => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { retryAsync } from '../../../../src/utils/retry/retry-async';
-import type { ErrorClassification, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
+import type { ErrorClassifier, RetryDeps, RetryLogger, RetryPolicy } from '../../../../src/utils/retry/types';
 
 describe('retryAsync', () => {
     let mockLogger: RetryLogger;
@@ -47,7 +47,7 @@ describe('retryAsync', () => {
     describe('Successful operations', () => {
         it('should return result immediately on first successful attempt', async () => {
             const operation = mock(() => Promise.resolve('success'));
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -67,7 +67,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -88,7 +88,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -104,7 +104,7 @@ describe('retryAsync', () => {
         it('should throw immediately on permanent error without retrying', async () => {
             const error = new Error('Permanent error');
             const operation = mock(() => Promise.reject(error));
-            const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'permanent', message: 'Permanent error' }));
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Permanent error');
 
@@ -127,11 +127,11 @@ describe('retryAsync', () => {
                 return Promise.reject(permanentError);
             });
 
-            const classifier = mock((error: unknown) => {
+            const classifier = mock<ErrorClassifier>((error: unknown) => {
                 if(error === transientError) {
-                    return { category: 'transient', message: 'Transient error' } as ErrorClassification;
+                    return { category: 'transient', message: 'Transient error' };
                 }
-                return { category: 'permanent', message: 'Permanent error' } as ErrorClassification;
+                return { category: 'permanent', message: 'Permanent error' };
             });
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Permanent error');
@@ -155,11 +155,11 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'Rate limited',
                 retryAfterMs: 5000,
-            } as ErrorClassification));
+            }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -178,10 +178,10 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category: 'rate_limited',
                 message:  'Rate limited',
-            } as ErrorClassification));
+            }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -198,7 +198,7 @@ describe('retryAsync', () => {
         it('should throw after maxAttempts transient errors', async () => {
             const error = new Error('Transient error');
             const operation = mock(() => Promise.reject(error));
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Transient error');
 
@@ -212,7 +212,7 @@ describe('retryAsync', () => {
         it('should throw original error on final attempt', async () => {
             const originalError = new Error('Original error message');
             const operation = mock(() => Promise.reject(originalError));
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow('Original error message');
         });
@@ -229,7 +229,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -262,7 +262,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             await retryAsync(operation, { policy, classifier, deps });
 
@@ -285,7 +285,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'Network timeout' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Network timeout' }));
 
             await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -302,7 +302,7 @@ describe('retryAsync', () => {
 
         it('should log error on permanent failure', async () => {
             const operation = mock(() => Promise.reject(new Error('Permanent error')));
-            const classifier = mock(() => ({ category: 'permanent', message: 'Permanent error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'permanent', message: 'Permanent error' }));
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
 
@@ -316,7 +316,7 @@ describe('retryAsync', () => {
 
         it('should log error on max attempts exhausted', async () => {
             const operation = mock(() => Promise.reject(new Error('Transient error')));
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
 
@@ -332,7 +332,7 @@ describe('retryAsync', () => {
     describe('Edge cases', () => {
         it('should handle operation returning undefined', async () => {
             const operation = mock(() => Promise.resolve(undefined));
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -341,7 +341,7 @@ describe('retryAsync', () => {
 
         it('should handle operation returning null', async () => {
             const operation = mock(() => Promise.resolve(null));
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -352,7 +352,7 @@ describe('retryAsync', () => {
         it('should handle maxAttempts of 1', async () => {
             const policy: RetryPolicy = { ...defaultPolicy, maxAttempts: 1 };
             const operation = mock(() => Promise.reject(new Error('Error')));
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             expect(retryAsync(operation, { policy, classifier, deps })).rejects.toThrow();
 
@@ -370,11 +370,11 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({
+            const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'Rate limited',
                 retryAfterMs: 0,
-            } as ErrorClassification));
+            }));
 
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -392,7 +392,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'Transient error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Transient error' }));
 
             await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -403,7 +403,7 @@ describe('retryAsync', () => {
     describe('Mutation testing: elapsed time tracking', () => {
         it('should track increasing elapsed time across retries (kills now() + startTime)', async () => {
             const operation = mock(() => Promise.reject(new Error('transient')));
-            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'transient' }));
 
             expect(retryAsync(operation, { policy: defaultPolicy, classifier, deps })).rejects.toThrow();
 
@@ -430,7 +430,7 @@ describe('retryAsync', () => {
     describe('Mutation testing: attempt counting', () => {
         it('should make exactly maxAttempts attempts before giving up', async () => {
             const operation = mock(() => Promise.reject(new Error('always fails')));
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 3 },
@@ -444,7 +444,7 @@ describe('retryAsync', () => {
 
         it('should make exactly maxAttempts attempts with different maxAttempts value', async () => {
             const operation = mock(() => Promise.reject(new Error('always fails')));
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 5 },
@@ -466,7 +466,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'transient' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'transient' }));
 
             await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
@@ -484,7 +484,7 @@ describe('retryAsync', () => {
     describe('Mutation testing: loop boundary conditions', () => {
         it('should respect loop boundary exactly at maxAttempts', async () => {
             const operation = mock(() => Promise.reject(new Error('always fails')));
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             // Test with maxAttempts = 1 (boundary case)
             expect(retryAsync(operation, {
@@ -515,7 +515,7 @@ describe('retryAsync', () => {
                 return Promise.reject(new Error('always fails'));
             });
 
-            const classifier = mock(() => ({ category: 'transient', message: 'always fails' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'always fails' }));
 
             expect(retryAsync(operation, {
                 policy: { ...defaultPolicy, maxAttempts: 4 },
@@ -532,7 +532,7 @@ describe('retryAsync', () => {
     describe('Default behavior', () => {
         it('should use default policy when not provided', async () => {
             const operation = mock(() => Promise.resolve('success'));
-            const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+            const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
             const result = await retryAsync(operation, { classifier, deps });
 
@@ -553,7 +553,7 @@ describe('retryAsync', () => {
 describe('retryAsync with real timers', () => {
     it('should use default deps when not provided', async () => {
         const operation = mock(() => Promise.resolve('success'));
-        const classifier = mock(() => ({ category: 'transient', message: 'Error' } as ErrorClassification));
+        const classifier = mock<ErrorClassifier>(() => ({ category: 'transient', message: 'Error' }));
 
         const result = await retryAsync(operation, { classifier });
 

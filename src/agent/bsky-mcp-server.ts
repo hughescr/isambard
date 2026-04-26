@@ -104,7 +104,7 @@ function collectVideoPlaylistsFromDM(msg: BskyDirectMessage): string[] {
  * Build a video embed hint text block for MCP tool responses.
  * Returns undefined when no video playlists are found.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- intentional: undefined signals no hint needed; callers guard on undefined
+
 function buildVideoEmbedHint(playlists: string[]): string | undefined {
     if(playlists.length === 0) {
         return undefined;

@@ -4,7 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, MessageCreateOptions } from 'discord.js';
 import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
-import type { MCPChannelRegistry, MCPDMTracker, MCPMessageSplitter, MCPQuestionButtonBuilder, MCPRetryHelper, MCPMessageSearchService } from '../../../src/agent/types';
+import type { MCPChannelRegistry, MCPMessageSearchService } from '../../../src/agent/types';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId, UserId } from '../../../src/integrations/discord/types';
 import { mockFsPromises, resetMockFsPrefix, textContent } from '../../setup';
@@ -166,11 +166,11 @@ describe('createDiscordMCPServer', () => {
         searchService:    mockSearchService,
         client:           mockClient as unknown as Client,
         questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-        channelRegistry:  mockChannelRegistry as unknown as MCPChannelRegistry,
-        dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-        messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-        buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-        retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+        channelRegistry:  mockChannelRegistry,
+        dmTracker:        mockDMTracker,
+        messageSplitter:  mockMessageSplitter,
+        buttonBuilder:    mockButtonBuilder,
+        retryHelper:      mockRetryHelper,
         timezone,
     });
 
@@ -2401,11 +2401,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 searchService:    mockSearchService,
                 client:           mockClientWithoutUser as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockChannelRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                channelRegistry:  mockChannelRegistry,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'askUserQuestion');
 
@@ -2518,11 +2518,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 searchService:    mockSearchService,
                 client:           clientWithoutUser as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockChannelRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                channelRegistry:  mockChannelRegistry,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'askUserQuestion');
 
@@ -2654,10 +2654,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
                 channelRegistry:  mockUnmutedChannelRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -2715,10 +2715,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
                 channelRegistry:  mockAllChannelsRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -2778,10 +2778,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
                 channelRegistry:  mockExcludeMutedRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -2810,10 +2810,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
                 channelRegistry:  mockErrorChannelRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -3096,10 +3096,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
                 channelRegistry:  mockThrowingRegistry as unknown as MCPChannelRegistry,
-                dmTracker:        mockDMTracker as unknown as MCPDMTracker,
-                messageSplitter:  mockMessageSplitter as unknown as MCPMessageSplitter,
-                buttonBuilder:    mockButtonBuilder as unknown as MCPQuestionButtonBuilder,
-                retryHelper:      mockRetryHelper as unknown as MCPRetryHelper,
+                dmTracker:        mockDMTracker,
+                messageSplitter:  mockMessageSplitter,
+                buttonBuilder:    mockButtonBuilder,
+                retryHelper:      mockRetryHelper,
             });
             const handler = getToolHandler(server, 'listChannels');
 

@@ -751,7 +751,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
                 metadata: {},
-            } as unknown as MemoryToolItemData);
+            });
 
             const result = await runReconciliation(deps, options);
 
@@ -1280,7 +1280,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
                 metadata: { someOtherKey: 'preserved' },
-            } as unknown as MemoryToolItemData);
+            });
 
             const result = await runReconciliation(deps, options);
 
@@ -1343,7 +1343,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
                 metadata: {},
-            } as unknown as MemoryToolItemData);
+            });
 
             const result = await runReconciliation(deps, options);
 
@@ -1429,7 +1429,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
                 metadata: {},
-            } as unknown as MemoryToolItemData);
+            });
 
             // Start reconciliation without awaiting — so we can observe mid-flight state
             const reconciliationPromise = runReconciliation(deps, options);
@@ -1504,7 +1504,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
                 metadata: {},
-            } as unknown as MemoryToolItemData);
+            });
 
             const result = await runReconciliation(deps, options);
 
@@ -1559,7 +1559,7 @@ describe('runReconciliation', () => {
             updateMemoryMetadata.mockResolvedValue({
                 ...memoryItem,
                 metadata: { someOtherKey: 'preserved' },
-            } as unknown as MemoryToolItemData);
+            });
 
             const result = await runReconciliation(deps, options);
 

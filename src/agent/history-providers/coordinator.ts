@@ -110,7 +110,7 @@ export class PersonHistoryCoordinator {
     /**
      * Build platform-specific metadata from _internal contact fields for a given provider.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Record<string, string> | undefined
+
     private buildProviderMetadata(
         platform:     string,
         internalData: Contact['_internal']

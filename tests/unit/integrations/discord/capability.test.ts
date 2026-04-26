@@ -17,7 +17,7 @@ function makeRegistry(discordAvailable: boolean): ServiceHealthRegistry {
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),
         stop:               mock(() => undefined),
-    } as unknown as ServiceHealthRegistry;
+    };
 }
 
 function makeLogger(): DiscordCapabilityLogger {

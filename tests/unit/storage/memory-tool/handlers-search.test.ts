@@ -2,7 +2,7 @@
 import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
+import type { MemoryPath } from '@/storage/memory-tool/types';
 
 // Helper to create a minimal mock backend for concurrent tests
 const createMockBackend = (): MemoryToolBackend => ({
@@ -59,11 +59,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
 
             it('should search by time range', async () => {
-                mockBackend.searchByTimeRange = mock(async () => [
+                mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                     {
                         path:        '/events/log.md' as MemoryPath,
                         content:     'Event log',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-15T00:00:00.000Z',
@@ -85,12 +85,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
 
             it('should search by layer only', async () => {
-                mockBackend.listByLayer = mock(async () => ({
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/core.md' as MemoryPath,
                             content:     'Core identity',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -109,8 +109,8 @@ describe('Memory Tool Handlers - Search Operations', () => {
             it('should return "No results found" when no search criteria provided', async () => {
                 // Set up spies to verify backend methods are NOT called
                 mockBackend.searchByTags = mock(async () => ({ items: [], nextCursor: undefined }));
-                mockBackend.searchByTimeRange = mock(async () => []);
-                mockBackend.listByLayer = mock(async () => ({ items: [], nextCursor: undefined }));
+                mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => []);
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({ items: [], nextCursor: undefined }));
 
                 const result = await searchHandler(mockBackend, {});
 
@@ -144,7 +144,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
 
             it('should pass undefined limit to searchByTimeRange when limit not specified', async () => {
-                mockBackend.searchByTimeRange = mock(async () => []);
+                mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => []);
 
                 await searchHandler(mockBackend, {
                     time_range: { start: '2025-01-10T00:00:00.000Z', end: '2025-01-20T00:00:00.000Z' },
@@ -199,7 +199,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should return "No results found" when layer search returns empty', async () => {
                 const backend = createMockBackend();
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items:      [],
                     nextCursor: undefined,
                 }));
@@ -343,7 +343,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
         describe('mock verification', () => {
             it('should pass max_items to getAutoLoadItems', async () => {
-                mockBackend.getAutoLoadItems = mock(async () => []);
+                mockBackend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => []);
 
                 await recallHandler(mockBackend, { max_items: 50 });
 
@@ -357,11 +357,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
         describe('output formatting', () => {
             test('should return auto-load items grouped by layer', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -370,7 +370,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     {
                         path:        '/state/current.md' as MemoryPath,
                         content:     'Current state',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -392,11 +392,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 // This test specifically targets the mutant that changes
                 // `item.content ?? '[no content]'` at line 423.
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/empty.md' as MemoryPath,
                         content:     undefined as unknown as string,
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -412,11 +412,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should filter layers based on include_layers parameter', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -425,7 +425,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     {
                         path:        '/state/current.md' as MemoryPath,
                         content:     'Current state',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -443,11 +443,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should skip empty layers', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -464,7 +464,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should return empty message when no items', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => []);
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => []);
 
                 const result = await recallHandler(backend, {});
 
@@ -473,11 +473,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should group items by "other" when layer is null', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/unknown.md' as MemoryPath,
                         content:     'Unknown layer',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -493,11 +493,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should include "other" layer items when include_layers is not specified', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/unknown.md' as MemoryPath,
                         content:     'Unknown layer',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -512,11 +512,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should join layer sections with double newline', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -525,7 +525,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     {
                         path:        '/state/current.md' as MemoryPath,
                         content:     'Current state',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -542,11 +542,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should join layer items with single newline', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -555,7 +555,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     {
                         path:        '/identity/secondary.md' as MemoryPath,
                         content:     'Secondary identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -570,11 +570,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should filter out "other" layer when include_layers is specified', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -583,7 +583,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                     {
                         path:        '/unknown.md' as MemoryPath,
                         content:     'Unknown',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -602,11 +602,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should skip truly empty layer with zero items', async () => {
                 const backend = createMockBackend();
-                backend.getAutoLoadItems = mock(async () => [
+                backend.getAutoLoadItems = mock<MemoryToolBackend['getAutoLoadItems']>(async () => [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -638,12 +638,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
         describe('mock verification', () => {
             it('should list items by layer without content', async () => {
-                mockBackend.listByLayer = mock(async () => ({
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/core.md' as MemoryPath,
                             content:     'Core identity',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -661,12 +661,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
             });
 
             it('should apply limit parameter', async () => {
-                mockBackend.listByLayer = mock(async () => ({
+                mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/state/note.md' as MemoryPath,
                             content:     'Note',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -686,12 +686,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
         describe('output formatting', () => {
             test('should include content with line numbers when requested', async () => {
                 const backend = createMockBackend();
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/core.md' as MemoryPath,
                             content:     'Line 1\nLine 2\nLine 3',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -711,7 +711,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should return empty message when no items found', async () => {
                 const backend = createMockBackend();
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items:      [],
                     nextCursor: undefined,
                 }));
@@ -725,12 +725,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 // This test specifically targets the mutant that changes
                 // `item.content ? formatLineNumbers(item.content) : '[no content]'` at line 453.
                 const backend = createMockBackend();
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/empty.md' as MemoryPath,
                             content:     undefined as unknown as string,
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -748,12 +748,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
             test('should join items with double newline when include_content is false', async () => {
                 const backend = createMockBackend();
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/core.md' as MemoryPath,
                             content:     'Core identity',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -762,7 +762,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                         {
                             path:        '/identity/secondary.md' as MemoryPath,
                             content:     'Secondary',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: '2025-01-01T00:00:00.000Z',
@@ -787,12 +787,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
                 const updatedAt = twoDaysAgo.toISOString();
 
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/core.md' as MemoryPath,
                             content:     'Core identity',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: updatedAt,
@@ -815,12 +815,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 fiveHoursAgo.setHours(fiveHoursAgo.getHours() - 5);
                 const updatedAt = fiveHoursAgo.toISOString();
 
-                backend.listByLayer = mock(async () => ({
+                backend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                     items: [
                         {
                             path:        '/identity/core.md' as MemoryPath,
                             content:     'Line 1\nLine 2',
-                            contentType: 'text/markdown' as ContentType,
+                            contentType: 'text/markdown',
                             metadata:    {},
 
                             createdAt: updatedAt,
@@ -877,12 +877,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         it('should log search with layer as query when no tags provided', async () => {
-            mockBackend.listByLayer = mock(async () => ({
+            mockBackend.listByLayer = mock<MemoryToolBackend['listByLayer']>(async () => ({
                 items: [
                     {
                         path:        '/identity/core.md' as MemoryPath,
                         content:     'Core identity',
-                        contentType: 'text/markdown' as ContentType,
+                        contentType: 'text/markdown',
                         metadata:    {},
 
                         createdAt: '2025-01-01T00:00:00.000Z',
@@ -904,11 +904,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         it('should log search with time_range as query when no tags or layer provided', async () => {
-            mockBackend.searchByTimeRange = mock(async () => [
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
                     path:        '/events/log.md' as MemoryPath,
                     content:     'Event log',
-                    contentType: 'text/markdown' as ContentType,
+                    contentType: 'text/markdown',
                     metadata:    {},
 
                     createdAt: '2025-01-15T00:00:00.000Z',
@@ -943,11 +943,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
         it('should format time_range search with content preview (>100 chars)', async () => {
             const longContent = 'B'.repeat(150);
-            mockBackend.searchByTimeRange = mock(async () => [
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
                     path:        '/events/log.md' as MemoryPath,
                     content:     longContent,
-                    contentType: 'text/markdown' as ContentType,
+                    contentType: 'text/markdown',
                     metadata:    {},
 
                     createdAt: '2025-01-15T00:00:00.000Z',
@@ -966,11 +966,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
 
         it('should format time_range search with content preview (<=100 chars)', async () => {
             const shortContent = 'Short event log';
-            mockBackend.searchByTimeRange = mock(async () => [
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
                     path:        '/events/short.md' as MemoryPath,
                     content:     shortContent,
-                    contentType: 'text/markdown' as ContentType,
+                    contentType: 'text/markdown',
                     metadata:    {},
 
                     createdAt: '2025-01-15T00:00:00.000Z',
@@ -987,11 +987,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         it('should format time_range search with no content', async () => {
-            mockBackend.searchByTimeRange = mock(async () => [
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
                     path:        '/events/empty.md' as MemoryPath,
                     content:     undefined as unknown as string,
-                    contentType: 'text/markdown' as ContentType,
+                    contentType: 'text/markdown',
                     metadata:    {},
 
                     createdAt: '2025-01-15T00:00:00.000Z',
@@ -1007,12 +1007,12 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         it('should format time_range search with contentPreview field', async () => {
-            mockBackend.searchByTimeRange = mock(async () => [
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
                     path:           '/events/preview.md' as MemoryPath,
                     content:        'Full content that is very long',
                     contentPreview: 'Preview text from field',
-                    contentType:    'text/markdown' as ContentType,
+                    contentType:    'text/markdown',
                     metadata:       {},
 
                     createdAt: '2025-01-15T00:00:00.000Z',
@@ -1029,11 +1029,11 @@ describe('Memory Tool Handlers - Search Operations', () => {
         });
 
         it('should join time_range search results with double newline', async () => {
-            mockBackend.searchByTimeRange = mock(async () => [
+            mockBackend.searchByTimeRange = mock<MemoryToolBackend['searchByTimeRange']>(async () => [
                 {
                     path:        '/events/log1.md' as MemoryPath,
                     content:     'Log 1',
-                    contentType: 'text/markdown' as ContentType,
+                    contentType: 'text/markdown',
                     metadata:    {},
 
                     createdAt: '2025-01-15T00:00:00.000Z',
@@ -1042,7 +1042,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 {
                     path:        '/events/log2.md' as MemoryPath,
                     content:     'Log 2',
-                    contentType: 'text/markdown' as ContentType,
+                    contentType: 'text/markdown',
                     metadata:    {},
 
                     createdAt: '2025-01-16T00:00:00.000Z',

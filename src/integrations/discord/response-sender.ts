@@ -87,7 +87,7 @@ interface SendToWellKnownConfig {
  * Handles a WellKnownChannelNotFoundError during routing.
  * Returns a fallback routing result or a skip result depending on useFallbackOnError.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns RoutingResult | SendResponseResult (discriminated union)
+
 function handleWellKnownChannelError(
     routeError: WellKnownChannelNotFoundError,
     sessionType: SessionType,

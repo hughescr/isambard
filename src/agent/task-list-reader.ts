@@ -53,7 +53,7 @@ interface TaskListReaderOptions {
 /**
  * Parses a task file's content string and returns a validated Task, or undefined if invalid.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Task | undefined
+
 function parseTaskFile(content: string): Task | undefined {
     // Stryker disable BlockStatement: Error handling fallback - returns undefined on parse error
     try {

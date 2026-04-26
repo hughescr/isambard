@@ -102,10 +102,10 @@ describe('StreamEventHandler', () => {
                         { type: 'text', text: 'This is regular text' },
                     ],
                 },
-            } as AgentStreamEvent);
+            });
 
             // Trigger another thinking phase event to capture context
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             // Verify thinkingContent is still undefined (text blocks should not be accumulated)
@@ -136,7 +136,7 @@ describe('StreamEventHandler', () => {
             } as AgentStreamEvent);
 
             // Trigger thinking phase update
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             // Verify only blocks with type: 'thinking' AND thinking property were accumulated
@@ -162,7 +162,7 @@ describe('StreamEventHandler', () => {
                         },
                     ],
                 },
-            } as AgentStreamEvent);
+            });
             await flushPromises();
 
             // Verify updateActivityPhase was called with 'using_tool' phase
@@ -194,7 +194,7 @@ describe('StreamEventHandler', () => {
                         },
                     ],
                 },
-            } as AgentStreamEvent);
+            });
             await flushPromises();
 
             // Verify updatePhase was called ONLY ONCE with 'using_tool'
@@ -233,7 +233,7 @@ describe('StreamEventHandler', () => {
                         },
                     ],
                 },
-            } as AgentStreamEvent);
+            });
             await flushPromises();
 
             // Should ONLY have 'using_tool' update, NOT 'thinking'
@@ -269,7 +269,7 @@ describe('StreamEventHandler', () => {
                         },
                     ],
                 },
-            } as AgentStreamEvent);
+            });
             await flushPromises();
 
             // Verify ONLY 'using_tool' update happened (early return prevented 'responding')
@@ -290,7 +290,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.clearActivityPhase.mockClear();
 
             // Send result event
-            onStreamEvent({ type: 'result', subtype: 'success' } as AgentStreamEvent);
+            onStreamEvent({ type: 'result', subtype: 'success' });
             await flushPromises();
 
             // Verify idle phase transition (clears activity)
@@ -304,9 +304,9 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send various non-result events
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hi' } } as AgentStreamEvent);
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Read' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hi' } });
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Read' });
             await flushPromises();
 
             // Verify NO idle phase transitions occurred
@@ -326,9 +326,9 @@ describe('StreamEventHandler', () => {
 
             // Send events that would reach the else-if but are NOT 'result' type
             // These events don't match 'assistant' or 'tool_progress', so they reach the final else-if
-            onStreamEvent({ type: 'tool_result', tool_name: 'Bash' } as AgentStreamEvent);
-            onStreamEvent({ type: 'user' } as AgentStreamEvent);
-            onStreamEvent({ type: 'system', subtype: 'init' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_result', tool_name: 'Bash' });
+            onStreamEvent({ type: 'user' });
+            onStreamEvent({ type: 'system', subtype: 'init' });
             await flushPromises();
 
             // Verify NO idle phase transitions occurred
@@ -365,7 +365,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Trigger responding phase (fires async synopsis via updatePhaseWithSynopsis)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
             await flushPromises();
 
             // updateActivityPhase should NOT have been called — null means skip the update entirely
@@ -389,18 +389,18 @@ describe('StreamEventHandler', () => {
             } as unknown as AgentStreamEvent);
 
             // Trigger thinking phase update with accumulated content
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
 
             // Clear mocks after the initial thinking transition (pre-generated synopsis path)
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Transition to responding to reset currentPhase
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
             await flushPromises();
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Transition back to thinking with accumulated content — triggers the inline async block
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             // updateActivityPhase should NOT have been called with thinking phase
@@ -420,7 +420,7 @@ describe('StreamEventHandler', () => {
 
             // Should not throw
             expect(() => {
-                onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+                onStreamEvent({ type: 'assistant' });
             }).not.toThrow();
 
             await flushPromises();
@@ -462,10 +462,10 @@ describe('StreamEventHandler', () => {
                         },
                     ],
                 },
-            } as AgentStreamEvent);
+            });
 
             // Send tool_progress to capture context
-            onStreamEvent({ type: 'tool_progress', tool_name: 'WebFetch' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'WebFetch' });
             await flushPromises();
 
             // Verify toolInput was stored and redacted
@@ -501,7 +501,7 @@ describe('StreamEventHandler', () => {
             } as unknown as AgentStreamEvent);
 
             // Second event to trigger thinking phase update with accumulated content
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             // Verify fallback to thinkingSynopsis was used
@@ -529,11 +529,11 @@ describe('StreamEventHandler', () => {
             const longText1 = 'X'.repeat(150);
             const longText2 = 'Y'.repeat(60);
 
-            onStreamEvent({ type: 'assistant', delta: { text: longText1 } } as AgentStreamEvent);
-            onStreamEvent({ type: 'assistant', delta: { text: longText2 } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: longText1 } });
+            onStreamEvent({ type: 'assistant', delta: { text: longText2 } });
 
             // Trigger tool phase to capture accumulated text
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Bash' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Bash' });
             await flushPromises();
 
             const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
@@ -553,14 +553,14 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send 5 tool calls (exceeds MAX_RECENT_TOOLS of 3)
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' } as AgentStreamEvent);
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool2' } as AgentStreamEvent);
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool3' } as AgentStreamEvent);
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool4' } as AgentStreamEvent);
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool5' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' });
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool2' });
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool3' });
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool4' });
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool5' });
 
             // Trigger thinking phase to capture recentToolCalls
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
@@ -590,7 +590,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Trigger responding phase (fires async synopsis)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
 
             // Synopsis should have been requested
             expect(controlledGenerator.generateSynopsis).toHaveBeenCalled();
@@ -628,7 +628,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Trigger responding phase (fires async synopsis)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
 
             // Complete the handler BEFORE synopsis rejects
             complete();
@@ -676,7 +676,7 @@ describe('StreamEventHandler', () => {
             } as unknown as AgentStreamEvent);
 
             // Step 2: Transition to responding (to set currentPhase away from thinking)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
             await flushPromises();
 
             // Step 3: Clear mocks and transition back to thinking — this triggers the
@@ -684,7 +684,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
             (controlledGenerator.generateSynopsis as ReturnType<typeof mock>).mockClear();
 
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
 
             // Synopsis should have been requested for thinking phase
             expect(controlledGenerator.generateSynopsis).toHaveBeenCalled();
@@ -733,13 +733,13 @@ describe('StreamEventHandler', () => {
             } as unknown as AgentStreamEvent);
 
             // Step 2: Transition to responding
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
             await flushPromises();
 
             // Step 3: Clear mocks and transition back to thinking
             mockBotStateManager.updateActivityPhase.mockClear();
 
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
 
             // Complete the handler BEFORE synopsis rejects
             complete();
@@ -767,7 +767,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send task_progress event with summary
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' });
             await flushPromises();
 
             // generateSynopsis should have been called with subagentSummary and default thinking phase
@@ -785,7 +785,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send task_progress event with NO summary field
-            onStreamEvent({ type: 'system', subtype: 'task_progress' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress' });
             await flushPromises();
 
             // Neither synopsis generation nor phase update should occur
@@ -800,7 +800,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send task_progress event with summary: undefined
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: undefined } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: undefined });
             await flushPromises();
 
             // Neither synopsis generation nor phase update should occur
@@ -822,7 +822,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Set currentPhase to 'using_tool' via tool_progress event
-            onStreamEvent({ type: 'tool_progress', tool_name: 'SomeTool' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'SomeTool' });
             await flushPromises();
 
             // Clear captured data before sending task_progress
@@ -830,7 +830,7 @@ describe('StreamEventHandler', () => {
             capturedBasePhases.length = 0;
 
             // Send task_progress — currentPhase is 'using_tool', should collapse to 'thinking'
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Processing subagent' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Processing subagent' });
             await flushPromises();
 
             // Synopsis context should have phase: 'thinking' (collapsed from 'using_tool')
@@ -856,7 +856,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Set currentPhase to 'responding' via assistant event with delta text
-            onStreamEvent({ type: 'assistant', delta: { text: 'some text' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'some text' } });
             await flushPromises();
 
             // Clear captured data before sending task_progress
@@ -864,7 +864,7 @@ describe('StreamEventHandler', () => {
             capturedBasePhases.length = 0;
 
             // Send task_progress — currentPhase is 'responding', should stay 'responding'
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Subagent responding' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Subagent responding' });
             await flushPromises();
 
             // Synopsis context should have phase: 'responding'
@@ -886,12 +886,12 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Store a subagentSummary via task_progress
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Stored summary' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Stored summary' });
             await flushPromises();
 
             // Clear and trigger a tool phase
             capturedContexts.length = 0;
-            onStreamEvent({ type: 'tool_progress', tool_name: 'NewTool' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'NewTool' });
             await flushPromises();
 
             // The tool phase synopsis call should include the stored subagentSummary
@@ -909,24 +909,24 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Store a subagentSummary via task_progress
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Thinking summary' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Thinking summary' });
             await flushPromises();
 
             // Clear and trigger a thinking→responding→thinking cycle to get the inline thinking async path
             capturedContexts.length = 0;
 
             // First transition to responding to change currentPhase away from thinking
-            onStreamEvent({ type: 'assistant', delta: { text: 'response' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'response' } });
             await flushPromises();
 
             // Now go back to thinking (currentPhase was 'responding', recentToolCalls may be empty but thinking phase still fires)
             // Need tool history to trigger synopsis. Use a tool_progress to add to recentToolCalls
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Tool1' });
             await flushPromises();
             capturedContexts.length = 0;
 
             // Back to thinking — recentToolCalls has entries, so synopsis will fire
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             const thinkingContext = capturedContexts.find(ctx => ctx.phase === 'thinking');
@@ -943,18 +943,18 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Store a subagentSummary
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Old summary' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Old summary' });
             await flushPromises();
 
             // Send result event — should clear latestSubagentSummary
-            onStreamEvent({ type: 'result', subtype: 'success' } as AgentStreamEvent);
+            onStreamEvent({ type: 'result', subtype: 'success' });
             await flushPromises();
 
             // Clear captured contexts and trigger a new processing cycle
             capturedContexts.length = 0;
 
             // Start a new responding phase
-            onStreamEvent({ type: 'assistant', delta: { text: 'New response' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'New response' } });
             await flushPromises();
 
             // The new synopsis call should NOT include the old subagentSummary
@@ -977,7 +977,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send task_progress event while throttled
-            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Throttled summary' } as AgentStreamEvent);
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Throttled summary' });
             await flushPromises();
 
             // Synopsis should NOT have been called (throttled)
@@ -989,7 +989,7 @@ describe('StreamEventHandler', () => {
             capturedContexts.length = 0;
 
             // Trigger a tool phase — should include the stored subagentSummary
-            onStreamEvent({ type: 'tool_progress', tool_name: 'VerifyTool' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'VerifyTool' });
             await flushPromises();
 
             // The subsequent synopsis call should include the stored subagentSummary
@@ -1009,7 +1009,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Trigger a tool phase immediately without any prior text events
-            onStreamEvent({ type: 'tool_progress', tool_name: 'Read' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Read' });
             await flushPromises();
 
             const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
@@ -1028,7 +1028,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Trigger the very first tool phase — recentToolCalls is captured BEFORE adding the current tool
-            onStreamEvent({ type: 'tool_progress', tool_name: 'FirstTool' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress', tool_name: 'FirstTool' });
             await flushPromises();
 
             const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
@@ -1049,7 +1049,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Fire a tool_progress event with no tool_name (undefined)
-            onStreamEvent({ type: 'tool_progress' } as AgentStreamEvent);
+            onStreamEvent({ type: 'tool_progress' });
             await flushPromises();
 
             const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
@@ -1070,7 +1070,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Trigger responding phase (uses updatePhaseWithSynopsis)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
             await flushPromises();
 
             // The catch block should have called safeUpdatePhase(basePhase) — basePhase has type: 'responding'
@@ -1090,7 +1090,7 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Trigger responding phase (calls updatePhaseWithSynopsis, which takes the else branch)
-            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Hello' } });
             await flushPromises();
 
             // The else branch should have called safeUpdatePhase(basePhase) with type: 'responding'
@@ -1109,13 +1109,13 @@ describe('StreamEventHandler', () => {
             mockBotStateManager.updateActivityPhase.mockClear();
 
             // Send two consecutive thinking events (no delta.text → both 'thinking')
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             const afterFirst = (mockBotStateManager.updateActivityPhase.mock.calls as unknown[][]).length;
 
             // Second event: same phase ('thinking') — should NOT re-fire
-            onStreamEvent({ type: 'assistant' } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' });
             await flushPromises();
 
             const afterSecond = (mockBotStateManager.updateActivityPhase.mock.calls as unknown[][]).length;
@@ -1137,7 +1137,7 @@ describe('StreamEventHandler', () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 
             // Send a text delta to accumulate text
-            onStreamEvent({ type: 'assistant', delta: { text: 'Some accumulated text' } } as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant', delta: { text: 'Some accumulated text' } });
             await flushPromises();
 
             // The first responding event fires updatePhaseWithSynopsis with the accumulated text

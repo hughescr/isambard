@@ -242,7 +242,7 @@ describe('discovery', () => {
         it('should capture errors from guild discovery', async () => {
             mockGuild.channels.fetch = mock(async () => {
                 throw new Error('Network error');
-            }) as unknown as typeof mockGuild.channels.fetch;
+            });
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
 
@@ -260,7 +260,7 @@ describe('discovery', () => {
         it('should handle non-Error exceptions', async () => {
             mockGuild.channels.fetch = mock(async () => {
                 throw 'String error';
-            }) as unknown as typeof mockGuild.channels.fetch;
+            });
 
             mockClient.guilds.cache.set('guild-123', mockGuild);
 
@@ -388,7 +388,7 @@ describe('discovery', () => {
 
                 const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
-                await handler('not-a-channel' as unknown as GuildChannel);
+                await handler('not-a-channel');
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
             });
@@ -398,7 +398,7 @@ describe('discovery', () => {
 
                 const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
-                await handler(42 as unknown as GuildChannel);
+                await handler(42);
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
             });
@@ -408,7 +408,7 @@ describe('discovery', () => {
 
                 const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelCreate')?.[1];
 
-                await handler(undefined as unknown as GuildChannel);
+                await handler(undefined);
 
                 expect(mockManager.upsertChannel).not.toHaveBeenCalled();
             });
@@ -554,7 +554,7 @@ describe('discovery', () => {
 
                 const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
-                await handler({} as unknown as GuildChannel, 'not-a-channel' as unknown as GuildChannel);
+                await handler({}, 'not-a-channel');
 
                 expect(mockManager.getChannel).not.toHaveBeenCalled();
             });
@@ -564,7 +564,7 @@ describe('discovery', () => {
 
                 const handler = (mockClient.on as ReturnType<typeof mock>).mock.calls.find(call => call[0] === 'channelUpdate')?.[1];
 
-                await handler({} as unknown as GuildChannel, undefined as unknown as GuildChannel);
+                await handler({}, undefined);
 
                 expect(mockManager.getChannel).not.toHaveBeenCalled();
             });

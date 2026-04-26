@@ -359,7 +359,7 @@ export interface ClaudeAgent {
 /**
  * Builds the mcpServers configuration object based on provided servers.
  */
-// eslint-disable-next-line complexity, sonarjs/function-return-type -- mechanical server registration; legitimately returns Record | undefined
+// eslint-disable-next-line complexity -- mechanical server registration; legitimately returns Record | undefined
 function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, mediaMcpServer?: McpServerConfig, contactsMcpServer?: McpServerConfig, userContextMcpServer?: McpServerConfig, browserMcpServer?: McpServerConfig, specialMode?: 'catchup' | 'perching'): Record<string, McpServerConfig> | undefined {
     if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer && !bskyMcpServer && !caldavMcpServer && !wikipediaMcpServer && !mediaMcpServer && !contactsMcpServer && !userContextMcpServer && !browserMcpServer) {
         return undefined;
@@ -674,12 +674,12 @@ export function logStreamEvent(message: AgentStreamEvent): void {
         }
 
         case 'tool_progress': {
-            logToolProgressEvent(message as AgentStreamEvent & { tool_name?: string });
+            logToolProgressEvent(message);
             break;
         }
 
         case 'tool_result': {
-            logToolResultEvent(message as AgentStreamEvent & { tool_name?: string });
+            logToolResultEvent(message);
             break;
         }
 
@@ -1134,7 +1134,6 @@ function prependMessageAnnotations(userMessageText: string, options?: HandleInpu
     return text;
 }
 
-// eslint-disable-next-line sonarjs/function-return-type -- returns union of string or async generator; caller uses type-narrowing via hasImages guard
 function buildPromptForHandleInput(
     userMessageText: string,
     images: PlatformImage[] | undefined

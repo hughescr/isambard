@@ -50,7 +50,7 @@ export class DMTracker {
     /**
      * Gets an existing DM channel for a user, or undefined if not tracked.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ChannelId | undefined
+
     getDMChannel(userId: UserId): ChannelId | undefined {
         return this.dmUserMap.get(userId);
     }

@@ -10,7 +10,6 @@
 
 import { describe, expect, test, mock } from 'bun:test';
 import { originalWithDiscordRetry as withDiscordRetry, originalClassifyDiscordError as classifyDiscordError } from '../../../setup';
-import type { RetryDeps } from '@/utils/retry/types';
 
 describe('classifyDiscordError', () => {
     test('classifies ECONNRESET as transient', () => {
@@ -134,7 +133,7 @@ describe('withDiscordRetry', () => {
         };
 
         const result = await withDiscordRetry(operation, {
-            deps: { sleep: mockSleep, logger: mockLogger } as Partial<RetryDeps>,
+            deps: { sleep: mockSleep, logger: mockLogger },
         });
 
         expect(result).toBe('success');
@@ -159,7 +158,7 @@ describe('withDiscordRetry', () => {
 
         expect(
             withDiscordRetry(operation, {
-                deps: { logger: mockLogger } as Partial<RetryDeps>,
+                deps: { logger: mockLogger },
             })
         ).rejects.toThrow('rate limit exceeded');
 
@@ -188,7 +187,7 @@ describe('withDiscordRetry', () => {
         expect(
             withDiscordRetry(operation, {
                 policy: { maxAttempts: 3 },
-                deps:   { sleep: mockSleep, logger: mockLogger } as Partial<RetryDeps>,
+                deps:   { sleep: mockSleep, logger: mockLogger },
             })
         ).rejects.toThrow('Connection reset');
 
@@ -221,7 +220,7 @@ describe('withDiscordRetry', () => {
                     maxAttempts: 5,
                     baseDelayMs: 2000,
                 },
-                deps: { sleep: mockSleep, logger: mockLogger } as Partial<RetryDeps>,
+                deps: { sleep: mockSleep, logger: mockLogger },
             })
         ).rejects.toThrow('Timeout');
 
@@ -240,7 +239,7 @@ describe('withDiscordRetry', () => {
 
         expect(
             withDiscordRetry(operation, {
-                deps: { logger: mockLogger } as Partial<RetryDeps>,
+                deps: { logger: mockLogger },
             })
         ).rejects.toThrow('Invalid channel ID');
 

@@ -115,20 +115,20 @@ function makeFactory() {
 describe('createWebViewAdapter — lazy init', () => {
     test('does not construct FakeWebView until first method call', () => {
         const factory = makeFactory();
-        createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        createWebViewAdapter(defaultConfig, factory, immediateDelay);
         expect(factory).not.toHaveBeenCalled();
     });
 
     test('constructs FakeWebView on first navigate call', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(factory).toHaveBeenCalledTimes(1);
     });
 
     test('reuses existing FakeWebView on subsequent calls', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.navigate('https://example.com/2');
         expect(factory).toHaveBeenCalledTimes(1);
@@ -136,7 +136,7 @@ describe('createWebViewAdapter — lazy init', () => {
 
     test('triggers lazy-init on evaluate call', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.evaluate('1 + 1');
         expect(factory).toHaveBeenCalledTimes(1);
     });
@@ -151,7 +151,7 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, viewportWidth: 1920, viewportHeight: 1080 },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         await adapter.navigate('https://example.com');
@@ -163,7 +163,7 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'webkit' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         await adapter.navigate('https://example.com');
@@ -174,7 +174,7 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, dataStorePath: '/tmp/test-profile' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         await adapter.navigate('https://example.com');
@@ -183,14 +183,14 @@ describe('createWebViewAdapter — constructor mapping', () => {
 
     test('omits dataStore when dataStorePath is not provided', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(fakeView.constructorOptions.dataStore).toBeUndefined();
     });
 
     test('wires console callback when constructing', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(typeof fakeView.constructorOptions.console).toBe('function');
     });
@@ -199,7 +199,7 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'auto' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         await adapter.navigate('https://example.com');
@@ -210,7 +210,7 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'chrome' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         await adapter.navigate('https://example.com');
@@ -221,7 +221,7 @@ describe('createWebViewAdapter — constructor mapping', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'chrome', chromePath: '/usr/bin/chromium' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         await adapter.navigate('https://example.com');
@@ -236,25 +236,25 @@ describe('createWebViewAdapter — constructor mapping', () => {
 describe('createWebViewAdapter — state getters before init', () => {
     test('url returns empty string before any call', () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         expect(adapter.url).toBe('');
     });
 
     test('title returns empty string before any call', () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         expect(adapter.title).toBe('');
     });
 
     test('loading returns false before any call', () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         expect(adapter.loading).toBe(false);
     });
 
     test('isClosed returns true before any call (view is null, never inited)', () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         // view === null before first method call, so isClosed === true
         expect(adapter.isClosed).toBe(true);
     });
@@ -267,14 +267,14 @@ describe('createWebViewAdapter — state getters before init', () => {
 describe('createWebViewAdapter — state getters after init', () => {
     test('url delegates to underlying view after init', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(adapter.url).toBe('https://example.com');
     });
 
     test('loading delegates to underlying view after init', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         // FakeWebView.navigate sets loading = false after navigate
         expect(adapter.loading).toBe(false);
@@ -282,7 +282,7 @@ describe('createWebViewAdapter — state getters after init', () => {
 
     test('loading returns true when view is loading', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         fakeView.setLoading(true);
         expect(adapter.loading).toBe(true);
@@ -296,7 +296,7 @@ describe('createWebViewAdapter — state getters after init', () => {
 describe('createWebViewAdapter — close', () => {
     test('isClosed flips to true after close()', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.close();
         expect(adapter.isClosed).toBe(true);
@@ -304,7 +304,7 @@ describe('createWebViewAdapter — close', () => {
 
     test('close() is idempotent — calling twice does not throw', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.close();
         expect(() => adapter.close()).not.toThrow();
@@ -312,14 +312,14 @@ describe('createWebViewAdapter — close', () => {
 
     test('close() without init does not throw', () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         expect(() => adapter.close()).not.toThrow();
         expect(adapter.isClosed).toBe(true);
     });
 
     test('url returns empty string after close()', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.close();
         expect(adapter.url).toBe('');
@@ -327,7 +327,7 @@ describe('createWebViewAdapter — close', () => {
 
     test('title returns empty string after close()', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.close();
         expect(adapter.title).toBe('');
@@ -335,7 +335,7 @@ describe('createWebViewAdapter — close', () => {
 
     test('loading returns false after close()', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.close();
         expect(adapter.loading).toBe(false);
@@ -343,7 +343,7 @@ describe('createWebViewAdapter — close', () => {
 
     test('navigate after close re-inits a new view', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.close();
         await adapter.navigate('https://example.com/2');
@@ -353,7 +353,7 @@ describe('createWebViewAdapter — close', () => {
 
     test('close() calls view.close() on the underlying view', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const closeSpy = spyOn(fakeView, 'close');
         adapter.close();
@@ -362,7 +362,7 @@ describe('createWebViewAdapter — close', () => {
 
     test('close() calls view.close() exactly once even when called twice', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const closeSpy = spyOn(fakeView, 'close');
         adapter.close();
@@ -391,7 +391,7 @@ describe('createWebViewAdapter — platform precheck', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'webkit' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         expect(adapter.navigate('https://example.com')).rejects.toThrow(/macOS/i);
@@ -402,7 +402,7 @@ describe('createWebViewAdapter — platform precheck', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'webkit' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         expect(adapter.navigate('https://example.com')).resolves.toBeUndefined();
@@ -413,7 +413,7 @@ describe('createWebViewAdapter — platform precheck', () => {
         const factory = makeFactory();
         const adapter = createWebViewAdapter(
             { ...defaultConfig, backend: 'chrome' },
-            factory as unknown as (opts: FakeWebViewOptions) => FakeWebView,
+            factory,
             immediateDelay
         );
         expect(adapter.navigate('https://example.com')).resolves.toBeUndefined();
@@ -427,7 +427,7 @@ describe('createWebViewAdapter — platform precheck', () => {
 describe('createWebViewAdapter — evaluate mutex', () => {
     test('two concurrent evaluate() calls resolve in order without throwing', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
 
         await adapter.evaluate('1'); // trigger init so fakeView is set
 
@@ -461,7 +461,7 @@ describe('createWebViewAdapter — evaluate mutex', () => {
 describe('createWebViewAdapter — scroll validation', () => {
     test('scroll(NaN, 0) rejects before touching the view', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const scrollSpy = spyOn(fakeView, 'scroll');
         expect(adapter.scroll(Number.NaN, 0)).rejects.toThrow(/finite/i);
@@ -470,7 +470,7 @@ describe('createWebViewAdapter — scroll validation', () => {
 
     test('scroll(0, Infinity) rejects before touching the view', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const scrollSpy = spyOn(fakeView, 'scroll');
         expect(adapter.scroll(0, Infinity)).rejects.toThrow(/finite/i);
@@ -479,7 +479,7 @@ describe('createWebViewAdapter — scroll validation', () => {
 
     test('scroll(-Infinity, 0) rejects before touching the view', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const scrollSpy = spyOn(fakeView, 'scroll');
         expect(adapter.scroll(-Infinity, 0)).rejects.toThrow(/finite/i);
@@ -488,14 +488,14 @@ describe('createWebViewAdapter — scroll validation', () => {
 
     test('scroll(0, 0) does not reject', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(adapter.scroll(0, 0)).resolves.toBeUndefined();
     });
 
     test('scroll(-100, 200) does not reject', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(adapter.scroll(-100, 200)).resolves.toBeUndefined();
     });
@@ -508,14 +508,14 @@ describe('createWebViewAdapter — scroll validation', () => {
 describe('createWebViewAdapter — navigation delegation', () => {
     test('navigate delegates to view.navigate', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         expect(fakeView.navigate).toHaveBeenCalledWith('https://example.com');
     });
 
     test('reload delegates to view.reload', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.reload();
         expect(fakeView.reload).toHaveBeenCalled();
@@ -523,7 +523,7 @@ describe('createWebViewAdapter — navigation delegation', () => {
 
     test('goBack delegates to view.goBack', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.goBack();
         expect(fakeView.goBack).toHaveBeenCalled();
@@ -531,7 +531,7 @@ describe('createWebViewAdapter — navigation delegation', () => {
 
     test('goForward delegates to view.goForward', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.goForward();
         expect(fakeView.goForward).toHaveBeenCalled();
@@ -549,7 +549,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate resolves immediately when view.navigate completes before timeout', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         // Default fakeView.navigate resolves immediately — wins the race over immediateDelay
         await adapter.navigate('https://example.com');
         expect(fakeView.navigate).toHaveBeenCalledWith('https://example.com');
@@ -558,7 +558,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate calls reload() after first timeout — immediateDelay fires, navigate hangs', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init
 
         // navigate hangs forever so immediateDelay wins — timeout fires
@@ -578,7 +578,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate calls reload() twice after second timeout', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -598,7 +598,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate closes view and throws BrowserNavigateTimeoutError after three consecutive timeouts', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init
 
         const closeSpy = spyOn(fakeView, 'close');
@@ -623,7 +623,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate throws BrowserNavigateTimeoutError with correct url and attempts=3', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init');
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -643,7 +643,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: isClosed is true after timeout-close (view=null) so next call lazy-reinits', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -658,7 +658,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: view is lazily reinited on next call after timeout-close', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init — factory called once
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -677,7 +677,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: close() throws during timeout recovery — view=null still set, clean error thrown', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init');
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -701,7 +701,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: reload() throws /pending/ error — falls back to close+reinit+navigate', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init'); // trigger init — factory called once
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -720,7 +720,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: reload() throws non-pending error — error propagates out of navigate', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init');
 
         // First navigate hangs so timeout fires and reload() is called
@@ -745,7 +745,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: reload() throws non-Error plain string with pending — fallback fires on String(err) match', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init');
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -767,7 +767,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 
     test('navigate: reload() throws uppercase PENDING error — case-insensitive regex still matches', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, immediateDelay);
         await adapter.evaluate('init');
 
         fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
@@ -785,7 +785,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
     test('navigate: delay is called with navigationTimeoutMs on each attempt', async () => {
         const { delayCalls, fakeDelay } = makeControllableDelay();
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, fakeDelay);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, fakeDelay);
         // evaluate() doesn't use delay — resolves normally with fakeDelay
         await adapter.evaluate('init'); // trigger init
 
@@ -843,7 +843,7 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
 describe('createWebViewAdapter — input delegation', () => {
     test('click delegates to view.click', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.click('button', { timeout: 5000 });
         expect(fakeView.click).toHaveBeenCalledWith('button', { timeout: 5000 });
@@ -851,7 +851,7 @@ describe('createWebViewAdapter — input delegation', () => {
 
     test('type delegates to view.type', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.type('hello world');
         expect(fakeView.type).toHaveBeenCalledWith('hello world');
@@ -859,7 +859,7 @@ describe('createWebViewAdapter — input delegation', () => {
 
     test('press delegates to view.press', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.press('Enter', { modifiers: ['Shift'] });
         expect(fakeView.press).toHaveBeenCalledWith('Enter', { modifiers: ['Shift'] });
@@ -873,7 +873,7 @@ describe('createWebViewAdapter — input delegation', () => {
 describe('createWebViewAdapter — screenshot delegation', () => {
     test('screenshot delegates to view.screenshot with buffer encoding', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const result = await adapter.screenshot({ format: 'jpeg', quality: 80 });
         expect(fakeView.screenshot).toHaveBeenCalledWith({ format: 'jpeg', quality: 80, encoding: 'buffer' });
@@ -882,7 +882,7 @@ describe('createWebViewAdapter — screenshot delegation', () => {
 
     test('screenshot with no options passes only encoding', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const result = await adapter.screenshot();
         expect(fakeView.screenshot).toHaveBeenCalledWith({ encoding: 'buffer' });
@@ -897,7 +897,7 @@ describe('createWebViewAdapter — screenshot delegation', () => {
 describe('createWebViewAdapter — resize delegation', () => {
     test('resize delegates to view.resize', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         adapter.resize(1920, 1080);
         expect(fakeView.resize).toHaveBeenCalledWith(1920, 1080);
@@ -911,7 +911,7 @@ describe('createWebViewAdapter — resize delegation', () => {
 describe('createWebViewAdapter — scrollTo delegation', () => {
     test('scrollTo delegates to view.scrollTo', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         await adapter.scrollTo('#footer', { block: 'start', timeout: 5000 });
         expect(fakeView.scrollTo).toHaveBeenCalledWith('#footer', { block: 'start', timeout: 5000 });
@@ -925,7 +925,7 @@ describe('createWebViewAdapter — scrollTo delegation', () => {
 describe('createWebViewAdapter — waitForSelector', () => {
     test('waitForSelector resolves when element is immediately present', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         fakeView.evaluate = mock(async (_expr: string): Promise<boolean> => true);
         await adapter.waitForSelector('button');
@@ -933,7 +933,7 @@ describe('createWebViewAdapter — waitForSelector', () => {
 
     test('waitForSelector rejects when element never appears within 1ms timeout', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         fakeView.evaluate = mock(async (_expr: string): Promise<null> => null);
         // timeout=1ms: evaluate returns null, deadline will be passed on next check
@@ -944,7 +944,7 @@ describe('createWebViewAdapter — waitForSelector', () => {
         // immediateDelay makes poll sleep instant — test runs fast without real timers
         const shortPollConfig: WebViewAdapterConfig = { ...defaultConfig, actionTimeoutMs: 5000 };
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(shortPollConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(shortPollConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
 
         let pollCount = 0;
@@ -973,7 +973,7 @@ describe('createWebViewAdapter — waitForSelector', () => {
 describe('createWebViewAdapter — getConsoleLogs', () => {
     test('returns empty array before any console events', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const logs = adapter.getConsoleLogs();
         expect(logs).toEqual([]);
@@ -981,7 +981,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
     test('captures console events via the constructor callback', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
 
         // Trigger the console callback that was wired to the fake view
@@ -997,7 +997,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
     test('limit parameter restricts number of returned entries', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const consoleCb = fakeView.constructorOptions.console!;
         consoleCb('log', '1');
@@ -1010,7 +1010,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
     test('limit equal to entry count returns all entries', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const consoleCb = fakeView.constructorOptions.console!;
         consoleCb('log', '1');
@@ -1023,7 +1023,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
     test('limit greater than entry count returns all entries', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const consoleCb = fakeView.constructorOptions.console!;
         consoleCb('log', '1');
@@ -1035,7 +1035,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
 
     test('ring buffer caps at 200 entries', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         const consoleCb = fakeView.constructorOptions.console!;
         for(let i = 0; i < 250; i++) {
@@ -1048,7 +1048,7 @@ describe('createWebViewAdapter — getConsoleLogs', () => {
     // FIX 8: console logs cleared on close + reinit
     test('getConsoleLogs returns empty array after close() and reinit — no stale entries', async () => {
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(defaultConfig, factory as unknown as (opts: FakeWebViewOptions) => FakeWebView, immediateDelay);
+        const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
 
         // First session: navigate, add console logs
         await adapter.navigate('https://example.com');

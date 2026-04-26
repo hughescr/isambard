@@ -5,7 +5,6 @@ import { createCatchUpSessionRunner,
     type CatchUpCompletionSignal,
     type CatchUpInProgressSignal,
     type RunAgentSessionOptions,
-    type AgentSessionResult,
     type InterruptingMessage
 } from '@/integrations/discord/catchup/session-runner';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
@@ -79,7 +78,7 @@ describe('CatchUpSessionRunner', () => {
         mockStoreInProgressSignal.mockResolvedValue(undefined);
         mockLoadInProgressSignal.mockResolvedValue(null);
         mockDeleteInProgressSignal.mockResolvedValue(undefined);
-        mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+        mockRunAgentSession.mockResolvedValue({ completed: true });
 
         deps = {
             stateManager:           mockStateManager,
@@ -112,7 +111,7 @@ describe('CatchUpSessionRunner', () => {
             mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue({
                 startedAt: new Date('2025-01-25T11:50:00.000Z').toISOString(),
-            } as CatchUpInProgressSignal);
+            });
 
             const runner = createCatchUpSessionRunner(deps);
             const result = await runner.shouldStartCatchUp();
@@ -125,7 +124,7 @@ describe('CatchUpSessionRunner', () => {
             mockTotalUnread = 5;
             mockLoadInProgressSignal.mockResolvedValue({
                 startedAt: new Date('2025-01-25T11:50:00.000Z').toISOString(),
-            } as CatchUpInProgressSignal);
+            });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.shouldStartCatchUp();
@@ -154,7 +153,7 @@ describe('CatchUpSessionRunner', () => {
                 completedAt:       thirtySecondsAgo.toISOString(),
                 channelsProcessed: 2,
                 messagesProcessed: 5,
-            } as CatchUpCompletionSignal);
+            });
 
             const runner = createCatchUpSessionRunner(deps);
             const result = await runner.shouldStartCatchUp();
@@ -172,7 +171,7 @@ describe('CatchUpSessionRunner', () => {
                 completedAt:       fiveSecondsAgo.toISOString(),
                 channelsProcessed: 2,
                 messagesProcessed: 5,
-            } as CatchUpCompletionSignal);
+            });
 
             const runner = createCatchUpSessionRunner(deps);
             const result = await runner.shouldStartCatchUp();
@@ -242,8 +241,8 @@ describe('CatchUpSessionRunner', () => {
                 completedAt:       new Date('2025-01-25T11:00:00.000Z').toISOString(),
                 channelsProcessed: 1,
                 messagesProcessed: 3,
-            } as CatchUpCompletionSignal);
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            });
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -268,7 +267,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 5,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
             });
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -283,7 +282,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 5,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
             });
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -300,7 +299,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 5,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 5 }],
             });
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -365,7 +364,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('789'), channelName: 'support', messageCount: 3 }],
             });
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             await runner.resumeAfterSuspension();
 
@@ -381,7 +380,7 @@ describe('CatchUpSessionRunner', () => {
             });
 
             // Session returns completed=true, no suspension
-            mockRunAgentSession.mockResolvedValue({ completed: true, sessionId: 'session-123' } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true, sessionId: 'session-123' });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -405,7 +404,7 @@ describe('CatchUpSessionRunner', () => {
             });
 
             // Session returns completed=false, but suspendedState is null (not suspended, just aborted)
-            mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-789' } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-789' });
 
             const runner = createCatchUpSessionRunner(deps);
             await runner.startCatchUp();
@@ -507,7 +506,7 @@ describe('CatchUpSessionRunner', () => {
             });
 
             // Session returns incomplete without suspension
-            mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-xyz' } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-xyz' });
 
             const runner = createCatchUpSessionRunner(deps);
 
@@ -848,7 +847,7 @@ describe('CatchUpSessionRunner', () => {
             mockModeContext.viewedChannels = new Set([viewedChannel1, viewedChannel2]);
 
             // Mock channel name resolution
-            // eslint-disable-next-line sonarjs/function-return-type -- Returns channel name or undefined based on channelId lookup
+
             const mockResolveChannelName = mock((channelId: ChannelId): string | undefined => {
                 if(channelId === viewedChannel1) {
                     return 'general';
@@ -865,7 +864,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'support', messageCount: 3 }],
             });
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
 
@@ -899,7 +898,7 @@ describe('CatchUpSessionRunner', () => {
                 totalUnread: 3,
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
             });
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
 
@@ -928,7 +927,7 @@ describe('CatchUpSessionRunner', () => {
                 channels:    [{ channelId: createChannelId('123'), channelName: 'general', messageCount: 3 }],
             });
             // Session returns NOT completed (suspended again)
-            mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-456' } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: false, sessionId: 'session-456' });
 
             const runner = createCatchUpSessionRunner(deps);
 
@@ -982,7 +981,7 @@ describe('CatchUpSessionRunner', () => {
                 },
             ]);
 
-            mockRunAgentSession.mockResolvedValue({ completed: true } as AgentSessionResult);
+            mockRunAgentSession.mockResolvedValue({ completed: true });
 
             const runner = createCatchUpSessionRunner(deps);
 

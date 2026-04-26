@@ -3,7 +3,7 @@ import { BskyCheckpointManager } from '@/integrations/bsky/checkpoint/checkpoint
 import { MAX_PROCESSED_URIS, type BskyFeedCheckpoint, type BskyNotificationCheckpoint } from '@/integrations/bsky/checkpoint/types';
 import type { BskyFeedItem, BskyNotification } from '@/integrations/bsky/types';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
-import type { MemoryToolItemData, MemoryPath, ContentType } from '@/storage/memory-tool/types';
+import type { MemoryToolItemData, MemoryPath } from '@/storage/memory-tool/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -15,7 +15,7 @@ function makeItem(content: string): MemoryToolItemData {
     return {
         path:        '/state/services/bsky/feeds/following/checkpoint' as MemoryPath,
         content,
-        contentType: 'application/json' as ContentType,
+        contentType: 'application/json',
         metadata:    {},
         createdAt:   NOW,
         updatedAt:   NOW,

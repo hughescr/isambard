@@ -59,7 +59,7 @@ function makeOptions(
     return {
         contactBackend:       (overrides.backend  ?? makeMockBackend())  as unknown as PersonHistoryCoordinatorOptions['contactBackend'],
         providers:            overrides.providers ?? [],
-        messageSearchService: (overrides.search   ?? makeMockSearch())   as unknown as PersonHistoryCoordinatorOptions['messageSearchService'],
+        messageSearchService: overrides.search   ?? makeMockSearch(),
     };
 }
 

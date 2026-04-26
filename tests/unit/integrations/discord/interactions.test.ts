@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { MessageFlags, type ButtonInteraction, type Message, type User, type InteractionResponse } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, type Message, type User } from 'discord.js';
 import { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import { createInteractionHandler } from '@/integrations/discord/interactions';
@@ -38,8 +38,8 @@ describe('createInteractionHandler', () => {
             channel:   {
                 isThread: () => false,
             },
-            reply:  mock().mockResolvedValue({} as InteractionResponse),
-            update: mock().mockResolvedValue({} as InteractionResponse),
+            reply:  mock().mockResolvedValue({}),
+            update: mock().mockResolvedValue({}),
         } as unknown as ButtonInteraction;
     }
 
@@ -274,8 +274,8 @@ describe('createInteractionHandler', () => {
                 isThread: () => true,
                 parentId: 'parent-ch', // Parent channel ID
             },
-            reply:  mock().mockResolvedValue({} as InteractionResponse),
-            update: mock().mockResolvedValue({} as InteractionResponse),
+            reply:  mock().mockResolvedValue({}),
+            update: mock().mockResolvedValue({}),
         } as unknown as ButtonInteraction;
 
         await handler.handleButtonInteraction(mockInteraction);

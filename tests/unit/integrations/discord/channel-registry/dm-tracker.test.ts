@@ -209,13 +209,13 @@ describe('DMTracker', () => {
 
             const mockMember = {
                 user: mockUser,
-            } as unknown as { user: typeof mockUser };
+            };
 
             // Mock guild.members.fetch to return a collection with the member
             const mockMembers = new Map([[userId, mockMember]]);
 
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined =>
-                [...mockMembers.values()].find(m => predicate(m as unknown as typeof mockMember));
+                [...mockMembers.values()].find(m => predicate(m));
 
             const mockGuild: { members: { fetch: ReturnType<typeof mock> } } = {
                 members: {
@@ -262,12 +262,12 @@ describe('DMTracker', () => {
 
             const mockMember = {
                 user: mockUser,
-            } as unknown as { user: typeof mockUser };
+            };
 
             const mockMembers = new Map([[userId, mockMember]]);
 
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined =>
-                [...mockMembers.values()].find(m => predicate(m as unknown as typeof mockMember));
+                [...mockMembers.values()].find(m => predicate(m));
 
             const mockGuild: { members: { fetch: ReturnType<typeof mock> } } = {
                 members: {
@@ -335,7 +335,7 @@ describe('DMTracker', () => {
 
             // Implement find() to actually check the predicate
             (mockMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined =>
-                [...mockMembers.values()].find(m => predicate(m as unknown as typeof mockMember));
+                [...mockMembers.values()].find(m => predicate(m));
 
             const mockGuild: { members: { fetch: ReturnType<typeof mock> } } = {
                 members: {
@@ -375,7 +375,7 @@ describe('DMTracker', () => {
 
             const mockMember = {
                 user: mockUser,
-            } as unknown as { user: typeof mockUser };
+            };
 
             // First guild - no match
             const emptyMembers = new Map();
@@ -390,7 +390,7 @@ describe('DMTracker', () => {
             // Second guild - has the user
             const matchingMembers = new Map([[userId, mockMember]]);
             (matchingMembers as unknown as { find: (predicate: (m: typeof mockMember) => boolean) => typeof mockMember | undefined }).find = (predicate: (m: typeof mockMember) => boolean): typeof mockMember | undefined =>
-                [...matchingMembers.values()].find(m => predicate(m as unknown as typeof mockMember));
+                [...matchingMembers.values()].find(m => predicate(m));
 
             const mockGuild2: { members: { fetch: ReturnType<typeof mock> } } = {
                 members: {

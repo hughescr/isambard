@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { AnswerClassifier } from '@/agent/answer-classifier/classifier';
-import type { MessageToClassify, ClassificationResult } from '@/agent/answer-classifier/types';
+import type { ClassificationResult, MessageToClassify } from '@/agent/answer-classifier/types';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import { userIdSchema, channelIdSchema } from '@/integrations/discord/types';
 
@@ -268,7 +268,7 @@ describe('AnswerClassifier', () => {
 
     describe('Layer 3: LLM fallback', () => {
         it('should call LLM classifier for ambiguous messages', async () => {
-            const llmClassifier = mock(async () => 'answer' as ClassificationResult);
+            const llmClassifier = mock<(question: PendingQuestion, message: MessageToClassify) => Promise<ClassificationResult>>(async () => 'answer');
             const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
@@ -281,7 +281,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should return LLM result when configured', async () => {
-            const llmClassifier = mock(async () => 'answer' as ClassificationResult);
+            const llmClassifier = mock<(question: PendingQuestion, message: MessageToClassify) => Promise<ClassificationResult>>(async () => 'answer');
             const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
@@ -294,7 +294,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should propagate interruption from LLM', async () => {
-            const llmClassifier = mock(async () => 'interruption' as ClassificationResult);
+            const llmClassifier = mock<(question: PendingQuestion, message: MessageToClassify) => Promise<ClassificationResult>>(async () => 'interruption');
             const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
@@ -307,7 +307,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should not call LLM for structural matches', async () => {
-            const llmClassifier = mock(async () => 'answer' as ClassificationResult);
+            const llmClassifier = mock<(question: PendingQuestion, message: MessageToClassify) => Promise<ClassificationResult>>(async () => 'answer');
             const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,
@@ -321,7 +321,7 @@ describe('AnswerClassifier', () => {
         });
 
         it('should not call LLM for heuristic matches', async () => {
-            const llmClassifier = mock(async () => 'interruption' as ClassificationResult);
+            const llmClassifier = mock<(question: PendingQuestion, message: MessageToClassify) => Promise<ClassificationResult>>(async () => 'interruption');
             const classifier = new AnswerClassifier({ classifyWithLLM: llmClassifier });
             const message: MessageToClassify = {
                 ...baseMessage,

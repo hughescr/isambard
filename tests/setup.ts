@@ -659,7 +659,7 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
             calendar:        'gregory',
             numberingSystem: 'latn',
             timeZone:        this.options.timeZone ?? 'UTC',
-        } as Intl.ResolvedDateTimeFormatOptions;
+        };
     }
 
     static supportedLocalesOf(locales: string | string[]): string[] {

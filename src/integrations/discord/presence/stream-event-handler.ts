@@ -290,7 +290,7 @@ export function createStreamEventHandler(
                     type:      string
                     thinking?: string
                 }
-                const content = event.message?.content as ContentBlock[] | undefined;
+                const content: ContentBlock[] | undefined = event.message?.content;
                 if(content) {
                     for(const block of content) {
                     // Stryker disable next-line ConditionalExpression: Type guard - only thinking blocks have .thinking property

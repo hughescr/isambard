@@ -75,7 +75,7 @@ export class MemoryToolBackendQuery {
     /**
      * Encodes LastEvaluatedKey as a base64 cursor.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
+
     private encodeCursor(lastEvaluatedKey: Record<string, unknown> | undefined): string | undefined {
         if(lastEvaluatedKey) {
             return Buffer.from(JSON.stringify(lastEvaluatedKey)).toString('base64');
@@ -106,7 +106,7 @@ export class MemoryToolBackendQuery {
         // Sort by createdAt ascending (oldest first, newest last)
         items = items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 
-        const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
+        const nextCursor = this.encodeCursor(result.LastEvaluatedKey);
 
         return { items, nextCursor };
     }
@@ -128,7 +128,7 @@ export class MemoryToolBackendQuery {
             throw new Error('Tag index not configured');
         }
         // queryByTags still takes string[], so spread the Set
-        return this.tagIndex.queryByTags([...tags], layer as string | undefined, options);
+        return this.tagIndex.queryByTags([...tags], layer, options);
     }
 
     async listByLayer(
@@ -167,7 +167,7 @@ export class MemoryToolBackendQuery {
         );
 
         const items = ((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item));
-        const nextCursor = this.encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined);
+        const nextCursor = this.encodeCursor(result.LastEvaluatedKey);
 
         return { items, nextCursor };
     }

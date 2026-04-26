@@ -222,7 +222,7 @@ export class CalDAVClient {
             }
 
             // We've confirmed type === 'VEVENT' above
-            const vevent = component as unknown as ical.VEvent;
+            const vevent = component;
 
             // Stryker disable next-line LogicalOperator -- both rrule and recurrences indicate a recurring event; either alone is sufficient
             if(vevent.rrule || vevent.recurrences) {
@@ -276,7 +276,6 @@ export class CalDAVClient {
         };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
     #extractParameterValue(value: ical.ParameterValue | undefined): string | undefined {
         if(value === undefined) {
             return undefined;
@@ -289,7 +288,6 @@ export class CalDAVClient {
         return str.length > 0 ? str : undefined;
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string[] | undefined
     #extractAttendees(vevent: ical.VEvent): string[] | undefined {
         if(!vevent.attendee) {
             return undefined;
@@ -326,7 +324,6 @@ export class CalDAVClient {
         return start.dateOnly === true;
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CalendarEvent['status'] (union with undefined)
     #normalizeStatus(status?: string): CalendarEvent['status'] {
         if(!status) {
             return undefined;

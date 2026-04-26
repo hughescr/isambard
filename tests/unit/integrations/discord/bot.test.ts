@@ -1750,7 +1750,7 @@ describe('createDiscordBot', () => {
             const mockClient = {
                 on: mock((event: string, handler: (arg: unknown) => void) => {
                     if(event === 'channelDelete') {
-                        channelDeleteHandler = handler as (channel: { id: string }) => void;
+                        channelDeleteHandler = handler;
                     }
                     return mockClient;
                 }),
@@ -1822,7 +1822,7 @@ describe('createDiscordBot', () => {
             const mockClient = {
                 on: mock((event: string, handler: (arg: unknown) => void) => {
                     if(event === 'channelDelete') {
-                        channelDeleteHandler = handler as (channel: { id: string }) => void;
+                        channelDeleteHandler = handler;
                     }
                     return mockClient;
                 }),
@@ -1876,7 +1876,7 @@ describe('createDiscordBot', () => {
             const mockClient = {
                 on: mock((event: string, handler: (arg: unknown) => void) => {
                     if(event === 'guildDelete') {
-                        guildDeleteHandler = handler as (guild: { id: string }) => void;
+                        guildDeleteHandler = handler;
                     }
                     return mockClient;
                 }),
@@ -1968,7 +1968,7 @@ describe('createDiscordBot', () => {
             const mockClient = {
                 on: mock((event: string, handler: (arg: unknown) => void) => {
                     if(event === 'guildDelete') {
-                        guildDeleteHandler = handler as (guild: { id: string }) => void;
+                        guildDeleteHandler = handler;
                     }
                     return mockClient;
                 }),
@@ -2050,7 +2050,7 @@ describe('createDiscordBot', () => {
             const mockClient = {
                 on: mock((event: string, handler: (arg: unknown) => void) => {
                     if(event === 'guildDelete') {
-                        guildDeleteHandler = handler as (guild: { id: string }) => void;
+                        guildDeleteHandler = handler;
                     }
                     return mockClient;
                 }),

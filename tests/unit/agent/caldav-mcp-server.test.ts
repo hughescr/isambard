@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createCaldavMCPServer, type UserResolveResult } from '../../../src/agent/caldav-mcp-server';
 import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent } from '../../../src/integrations/caldav';
 import type { CalendarServerEntry } from '../../../src/integrations/caldav/calendar-registry/types';
-import type { UserId } from '../../../src/integrations/discord/types';
+
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -341,7 +341,7 @@ describe.concurrent('createCaldavMCPServer', () => {
         test('should resolve user name to userId and fetch calendars', async () => {
             const resolveUser = mock(async (): Promise<UserResolveResult> => ({
                 status: 'resolved',
-                user:   { userId: 'discord-123' as UserId, username: 'craig', displayName: 'Craig', nickname: null },
+                user:   { userId: 'discord-123', username: 'craig', displayName: 'Craig', nickname: null },
             }));
             const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry, resolveUser });
             const handler = getToolHandler(server, 'getUpcomingEvents');

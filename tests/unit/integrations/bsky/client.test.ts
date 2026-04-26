@@ -93,7 +93,7 @@ mock.module('@atproto/api', () => ({
         detectFacets = mockDetectFacets;
         get graphemeLength() { return mockRichTextState.graphemeLength; }
         get text()           { return mockRichTextState.text; }
-        // eslint-disable-next-line sonarjs/function-return-type -- Getter returns the mock state which can be undefined
+
         get facets(): Record<string, unknown>[] | undefined { return mockRichTextState.facets; }
     },
     ChatBskyConvoDefs: {

@@ -257,12 +257,12 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): void {
                     await runner.startCatchUp();
                 } else {
                     // Not doing catch-up, transition to idle mode
-                    // eslint-disable-next-line sonarjs/void-use -- intentionally fire-and-forget; catch handles rejection
+
                     void presenceManager?.updatePhase({ type: 'idle', since: new Date() }).catch(() => undefined);
                 }
             } else if(!perchConfig?.testMode?.triggerOnStartup) {
                 // No catch-up system and not in perch test mode, transition to idle after startup
-                // eslint-disable-next-line sonarjs/void-use -- intentionally fire-and-forget; catch handles rejection
+
                 void presenceManager?.updatePhase({ type: 'idle', since: new Date() }).catch(() => undefined);
             }
             // If triggerOnStartup is enabled, perch scheduler handles presence - no action needed here

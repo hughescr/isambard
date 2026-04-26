@@ -25,7 +25,7 @@ type ValidateUrlResult = ValidateUrlOk | ValidateUrlError;
 // ============================================================================
 
 /** Split a dotted-decimal IPv4 string into four octets as numbers, or return null. */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number[] | null
+
 function ipv4Octets(addr: string): number[] | null {
     const parts = addr.split('.');
     // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement: defensive guard — only called after isIPv4() which already validates 4 octets; unreachable through public API
@@ -130,7 +130,7 @@ function isBlockedIPv6(addr: string): boolean {
  *   hex groups:   '7f00:1' (two colon-separated 16-bit hex groups)
  * Returns the dotted-quad string or null if unrecognised.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | null
+
 function extractMappedV4(rest: string): string | null {
     // Try dotted-quad form first: four decimal octets separated by dots
     // Stryker disable next-line Regex: dotted-quad pattern — alternative regex would also match four groups of digits with dots
@@ -195,7 +195,6 @@ function matchesPattern(hostname: string, pattern: string): boolean {
 // Inner helpers called from validateUrl to keep cyclomatic complexity low
 // ============================================================================
 
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ValidateUrlError | null
 function checkHostname(hostname: string): ValidateUrlError | null {
     if(hostname === 'localhost' || hostname.endsWith('.localhost')) {
         // Stryker disable next-line StringLiteral: error message is informational only
@@ -208,7 +207,6 @@ function checkHostname(hostname: string): ValidateUrlError | null {
     return null;
 }
 
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ValidateUrlError | null
 function checkIpRanges(hostname: string): ValidateUrlError | null {
     if(isIPv4(hostname) && isBlockedIPv4(hostname)) {
         // Stryker disable next-line StringLiteral: error message is informational only
@@ -235,7 +233,7 @@ function checkIpRanges(hostname: string): ValidateUrlError | null {
  * @param rawUrl - The URL string to validate.
  * @param policy - Optional host policy (allowlist patterns).
  */
-// eslint-disable-next-line sonarjs/function-return-type -- intentional discriminated union return type
+
 export function validateUrl(rawUrl: string, policy: BrowserHostPolicy): ValidateUrlResult {
     // ---- Parse ----
     let parsed: URL;

@@ -42,7 +42,7 @@ export interface DynamoDBResourceProvider {
     IsambardMemory: { name: string }
 }
 
-export function loadConfig(resources: ResourceProvider = Resource as ResourceProvider): Config {
+export function loadConfig(resources: ResourceProvider = Resource): Config {
     const rawConfig = {
         app: {
             nodeEnv:  resources.NodeEnv.value,

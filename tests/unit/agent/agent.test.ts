@@ -2480,7 +2480,6 @@ describe('createClaudeAgent', () => {
             // Should log 2 tool responses
             expect(toolResponseLogs).toHaveLength(2);
 
-            // eslint-disable-next-line sonarjs/function-return-type -- map callback returns string | undefined from optional chaining on cast value
             const toolNames = toolResponseLogs.map((log: unknown[]) => {
                 const logData = log[0] as { toolName?: string };
                 return logData?.toolName;

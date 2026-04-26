@@ -624,7 +624,7 @@ describe('ContactCommandHandler - link subcommand', () => {
 
     test('replies with not-found message when ContactNotFoundError thrown', async () => {
         backend.addIdentifier.mockImplementation(async () => {
-            throw new ContactNotFoundError('no-such-person' as Contact['personId']);
+            throw new ContactNotFoundError('no-such-person');
         });
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'link', {
             person:   'no-such-person',
@@ -741,7 +741,7 @@ describe('ContactCommandHandler - unlink subcommand', () => {
 
     test('replies with not-found message when ContactNotFoundError thrown', async () => {
         backend.removeIdentifier.mockImplementation(async () => {
-            throw new ContactNotFoundError('no-such-person' as Contact['personId']);
+            throw new ContactNotFoundError('no-such-person');
         });
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'unlink', {
             person:   'no-such-person',
@@ -758,7 +758,7 @@ describe('ContactCommandHandler - unlink subcommand', () => {
 
     test('replies with error on ContactLastIdentifierError', async () => {
         backend.removeIdentifier.mockImplementation(async () => {
-            throw new ContactLastIdentifierError('alice-wonderland' as Contact['personId']);
+            throw new ContactLastIdentifierError('alice-wonderland');
         });
         const { asChatInput, editReply } = createMockInteraction(ADMIN_USER_ID, 'unlink', {
             person:   'alice-wonderland',
@@ -1397,7 +1397,7 @@ describe('ContactCommandHandler - delete subcommand', () => {
     test('stores pending deletion in approval handler', async () => {
         backend.getContact.mockImplementation(async () => SAMPLE_CONTACT);
         const storeSpy = mock(() => {});
-        approvalHandler.storePendingDeletion = storeSpy as unknown as typeof approvalHandler.storePendingDeletion;
+        approvalHandler.storePendingDeletion = storeSpy;
 
         const { asChatInput } = createMockInteraction(ADMIN_USER_ID, 'delete', {
             person: 'alice-wonderland',
@@ -1406,7 +1406,7 @@ describe('ContactCommandHandler - delete subcommand', () => {
         await handler.handle(asChatInput);
 
         expect(storeSpy).toHaveBeenCalledWith(
-            expect.any(String) as unknown as string,
+            expect.any(String) as unknown,
             SAMPLE_CONTACT.personId
         );
     });
@@ -1621,7 +1621,7 @@ describe('ContactCommandHandler - edit subcommand', () => {
         await handler.handle(asChatInput);
 
         expect(backend.putContact).toHaveBeenCalledWith(
-            expect.objectContaining({ notes: 'Updated notes' }) as unknown as Contact
+            expect.objectContaining({ notes: 'Updated notes' }) as unknown
         );
         expect(editReply).toHaveBeenCalledWith(
             expect.objectContaining({ content: expect.stringContaining('updated') as unknown as string })

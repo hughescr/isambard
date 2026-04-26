@@ -55,7 +55,7 @@ export function clearConversationContext(): void {
  * Helper: Validates thread creation parameters.
  * Returns error result if createThread is true but threadName is missing, null otherwise.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CallToolResult | null
+
 function validateThreadCreation(createThread?: boolean, threadName?: string): CallToolResult | null {
     if(createThread && !threadName) {
         // Stryker disable next-line all: Logging for observability
@@ -207,7 +207,7 @@ async function createThreadIfRequested(
  * Helper: Validates options count for askUserQuestion.
  * Returns error result if options exceed Discord's 25-button limit, null otherwise.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns CallToolResult | null
+
 function validateQuestionOptions(options?: { label: string, value: string }[]): CallToolResult | null {
     // Stryker disable next-line EqualityOperator: 25 options is valid max
     if(options && options.length > 25) {

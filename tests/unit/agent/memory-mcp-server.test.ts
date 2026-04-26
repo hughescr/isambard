@@ -20,7 +20,7 @@ interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTo
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
     path:        '/mock/path' as MemoryPath,
     content:     'mock content',
-    contentType: 'text/plain' as ContentType,
+    contentType: 'text/plain',
     metadata:    {},
 
     createdAt: '2025-01-01T00:00:00.000Z',

@@ -36,8 +36,8 @@ describe('EmailHistoryProvider', () => {
 
     beforeEach(() => {
         mockSearch.mockClear();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- using partial mock for test
-        provider = new EmailHistoryProvider('bot@isambard.ai', mockClient as any);
+
+        provider = new EmailHistoryProvider('bot@isambard.ai', mockClient);
     });
 
     test('has platform = "email"', () => {
@@ -50,7 +50,7 @@ describe('EmailHistoryProvider', () => {
         await provider.fetchHistory({ identifier: 'alice@example.com' });
 
         expect(mockSearch).toHaveBeenCalledTimes(1);
-        const [params] = mockSearch.mock.calls[0] as [WildDuckSearchParams];
+        const [params] = mockSearch.mock.calls[0];
         expect(params.query?.correspondent).toBe('alice@example.com');
         expect(params.searchable).toBe(true);
         expect(params.mailbox).toBeUndefined();

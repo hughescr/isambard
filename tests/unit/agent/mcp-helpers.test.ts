@@ -27,7 +27,7 @@ function makeRegistry(available: Record<string, boolean>, entries: Record<string
         subscribe:          mock(() => () => undefined),
         buildStatusSummary: mock(() => undefined),
         stop:               mock(() => undefined),
-    } as unknown as ServiceHealthRegistry;
+    };
 }
 
 function makeLoop(): ReconnectionLoop {

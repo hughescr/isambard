@@ -27,7 +27,6 @@ interface ServiceHealthRegistryDeps {
 
 const SERVICE_NAMES = serviceNameSchema.options;
 
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
 function buildRetryPart(nextRetryAt: Date, now: Date): string | undefined {
     const retryMs = nextRetryAt.getTime() - now.getTime();
     if(retryMs <= 0) {
@@ -40,7 +39,6 @@ function buildRetryPart(nextRetryAt: Date, now: Date): string | undefined {
         : `retry in ~${retrySec}s`;
 }
 
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined
 function buildServiceStatusLine(name: ServiceName, entry: ServiceHealthEntry, now: Date): string | undefined {
     if(entry.state === 'online' || entry.state === 'disabled') {
         return undefined;
@@ -173,7 +171,6 @@ export class ServiceHealthRegistryImpl implements ServiceHealthRegistry {
         };
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- intentional: undefined signals all services online; callers treat undefined as "no issues to report"
     buildStatusSummary(): string | undefined {
         const now = new Date();
         const lines: string[] = [];

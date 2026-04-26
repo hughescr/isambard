@@ -177,7 +177,7 @@ export function formatMemoryPreview(
  * Extract a rejection summary line from WildDuck message fields and metadata.
  * Returns a formatted string if the message has rejectedAt + reason + to, else undefined.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns string | undefined across multiple paths
+
 function formatRejectedDraftLine(
     subject:    string | undefined,
     to:         { address: string, name?: string }[] | undefined,
@@ -460,7 +460,7 @@ class ContextBuilderImpl implements ContextBuilder {
      * Build the service health section showing any degraded or offline services.
      * Returns formatted section string, or undefined if all services are online or no registry is configured.
      */
-    // eslint-disable-next-line sonarjs/function-return-type -- intentional: undefined signals all services online; callers treat undefined as "no section to show"
+
     #buildServiceHealthSection(): string | undefined {
         // Stryker disable next-line ConditionalExpression,BlockStatement: optional dependency guard — healthRegistry is always provided in tested paths
         if(!this.#healthRegistry) {

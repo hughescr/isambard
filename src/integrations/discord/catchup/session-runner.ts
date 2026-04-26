@@ -228,7 +228,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
         deps.stateManager.goIdle();
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
         void deps.activityLogger?.log({ type: 'catchup-complete', summary: 'Catch-up completed' }).catch(() => undefined);
 
         // Invoke callback if provided
@@ -419,7 +419,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             deps.stateManager.startCatchUp(catchUpContext);
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
             void deps.activityLogger?.log({ type: 'catchup-start', summary: 'Catch-up started' }).catch(() => undefined);
 
             // Build catch-up prompt
@@ -466,7 +466,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             deps.stateManager.goIdle();
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
             void deps.activityLogger?.log({ type: 'catchup-suspend', summary: 'Catch-up suspended' }).catch(() => undefined);
 
             // Abort current session
@@ -571,7 +571,6 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
         completeCatchUp,
 
-        // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns AbortController | null
         getAbortController(): AbortController | null {
             return currentAbortController;
         },

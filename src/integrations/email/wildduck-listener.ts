@@ -255,7 +255,7 @@ export class WildDuckListener {
                 return;
             }
 
-            if(typeof data === 'object' && data !== null && 'command' in data && (data as { command: unknown }).command === 'EXISTS') {
+            if(typeof data === 'object' && data !== null && 'command' in data && (data).command === 'EXISTS') {
                 void this.fetchAndProcess();
             }
         });

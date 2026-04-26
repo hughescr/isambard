@@ -62,7 +62,6 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         return prefix === 'email-send-reject-reason';
     }
 
-    // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns number | null (null signals invalid UID)
     protected parseId(raw: string): number | null {
         const uid = Number.parseInt(raw, 10);
         // Stryker disable next-line ConditionalExpression: NaN guard — invalid UID causes early return
@@ -110,7 +109,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         await this.wildDuckClient.updateMessageFlags(EmailFolder.Drafts, uid, { addFlags: ['SendRejectedByAdmin'] });
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
         void this.activityLogger?.log({ type: 'email-rejected', summary: 'Email rejected' }).catch(() => undefined);
 
         // Persist succeeded — update Discord to show rejection
@@ -181,7 +180,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             });
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-            // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
             void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch(() => undefined);
 
             // Kick off the allowlist saga for each selected recipient address.
@@ -238,7 +237,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         });
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
-        // eslint-disable-next-line sonarjs/void-use -- fire-and-forget activity log; errors are suppressed via .catch
+
         void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch(() => undefined);
 
         const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 sending shortly');

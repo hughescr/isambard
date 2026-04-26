@@ -69,7 +69,7 @@ describe('Bot Lifecycle Integration', () => {
             start:          mock(async () => undefined),
             stop:           mock(async () => undefined),
             triggerCatchUp: mock(async () => undefined),
-        } as DiscordBot;
+        };
 
         // Mock Claude Agent
         mockClaudeAgent = {
@@ -258,7 +258,7 @@ describe('Bot Lifecycle Integration', () => {
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
             });
-            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as unknown as ContextBuilder);
+            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder);
             const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             // @ts-expect-error - Mocking constructor
@@ -447,7 +447,7 @@ describe('Bot Lifecycle Integration', () => {
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
             });
-            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder as unknown as ContextBuilder);
+            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder);
             const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
             const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);

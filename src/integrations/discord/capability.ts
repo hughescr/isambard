@@ -97,8 +97,8 @@ function buildOutboxItem(channelId: string, content: ChannelContent, options: Se
             ? { text: content }
             : {
                 text:       content.content,
-                embeds:     content.embeds as unknown[],
-                components: content.components as unknown[],
+                embeds:     content.embeds,
+                components: content.components,
             },
         priority:  options?.priority ?? 'medium',
         dedupeKey: options?.dedupeKey ?? crypto.randomUUID(),

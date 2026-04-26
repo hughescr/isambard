@@ -57,8 +57,8 @@ export async function createApp(): Promise<App> {
     logger.info('Stale sessions cleaned up');
 
     // Load configuration (required)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
-    const config = loadConfig(Resource as any);
+
+    const config = loadConfig(Resource);
 
     // Set OAuth token for Agent SDK
     process.env.CLAUDE_CODE_OAUTH_TOKEN = config.agent.oauthToken;
@@ -70,8 +70,8 @@ export async function createApp(): Promise<App> {
     const questionRegistry = new QuestionRegistry();
 
     // Create DynamoDB client (REQUIRED)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- SST Resource type is complex
-    const dynamoDBConfig = loadDynamoDBConfig(Resource as any);
+
+    const dynamoDBConfig = loadDynamoDBConfig(Resource);
 
     // Create infrastructure layers
     const storage = createStorageLayer(dynamoDBConfig, config.reconciliation);

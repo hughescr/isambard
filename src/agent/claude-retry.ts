@@ -9,7 +9,7 @@ interface ClaudeRetryOptions {
 /**
  * Check if error is a network error by message content (Claude-specific)
  */
-// eslint-disable-next-line sonarjs/function-return-type -- legitimately returns ErrorClassification | undefined
+
 function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefined {
     if(!(error instanceof Error)) {
         return undefined;

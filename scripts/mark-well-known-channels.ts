@@ -24,7 +24,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { Resource } from 'sst';
-import { loadDynamoDBConfig, type DynamoDBResourceProvider } from '../src/config/loader';
+import { loadDynamoDBConfig } from '../src/config/loader';
 import { ChannelRegistryBackend } from '../src/integrations/discord/channel-registry/backend';
 import { type WellKnownChannel, WELL_KNOWN_CHANNELS } from '../src/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId, type ChannelId, type GuildId } from '../src/integrations/discord/types';
@@ -56,7 +56,7 @@ async function main() {
     }
 
     // Load DynamoDB config from SST resources
-    const dynamoConfig = loadDynamoDBConfig(Resource as unknown as DynamoDBResourceProvider);
+    const dynamoConfig = loadDynamoDBConfig(Resource);
 
     logger.info({ tableName: dynamoConfig.tableName, msg: 'Connecting to DynamoDB' });
 

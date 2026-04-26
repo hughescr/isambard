@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
 import type { AnswerClassifier } from '@/agent/answer-classifier/classifier';
-import type { ClassificationResult } from '@/agent/answer-classifier/types';
+import type { ClassificationResult, MessageToClassify } from '@/agent/answer-classifier/types';
 import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
@@ -709,7 +709,7 @@ describe('Discord Event Handlers', () => {
                 } as unknown as QuestionRegistry;
 
                 mockAnswerClassifier = {
-                    classify: mock(async (_question: PendingQuestion, _message) => 'answer' as ClassificationResult),
+                    classify: mock<(question: PendingQuestion, message: MessageToClassify) => Promise<ClassificationResult>>(async (_question: PendingQuestion, _message: MessageToClassify) => 'answer'),
                 };
             });
 

@@ -238,7 +238,7 @@ export class ContactBackend extends BaseRepository<Contact> {
             }));
             // Stryker restore StringLiteral,ObjectLiteral
             allItems.push(...(result.Items ?? []) as Record<string, unknown>[]);
-            lastKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
+            lastKey = result.LastEvaluatedKey;
         } while(lastKey);
         return allItems.map((item) => {
             const { PK: _pk, SK: _sk, GSI2PK: _gsi2pk, GSI2SK: _gsi2sk, ...rest } = item;

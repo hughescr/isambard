@@ -176,11 +176,11 @@ export function setupChannelEventHandlers(
         if(!hasGuild(channel) || !channel.guild) {
             return;
         }
-        if(!isTextBasedChannel(channel as GuildChannel)) {
+        if(!isTextBasedChannel(channel)) {
             return;
         }
 
-        const metadata = createChannelMetadata(channel as GuildChannel, channel.guild);
+        const metadata = createChannelMetadata(channel, channel.guild);
         void manager.upsertChannel(metadata);
     });
 
@@ -190,13 +190,13 @@ export function setupChannelEventHandlers(
         if(!hasGuild(newChannel) || !newChannel.guild) {
             return;
         }
-        if(!isTextBasedChannel(newChannel as GuildChannel)) {
+        if(!isTextBasedChannel(newChannel)) {
             return;
         }
 
         const channelId = createChannelId(newChannel.id);
         void manager.getChannel(channelId).then(
-            // eslint-disable-next-line sonarjs/function-return-type -- legitimately returns Promise<void> | undefined
+
             (existing) => {
                 if(existing) {
                     // Update name if changed

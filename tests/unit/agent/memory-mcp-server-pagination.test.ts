@@ -2,14 +2,14 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
-import type { MemoryPath, ContentType, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
+import type { MemoryPath, MemoryToolItemData, TagIndexItem } from '../../../src/storage/memory-tool/types';
 import { textContent } from '../../setup';
 
 // Helper to create mock memory item data
 const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemData => ({
     path:        '/mock/path' as MemoryPath,
     content:     'mock content',
-    contentType: 'text/plain' as ContentType,
+    contentType: 'text/plain',
     metadata:    {},
     createdAt:   '2025-01-01T00:00:00.000Z',
     updatedAt:   '2025-01-01T00:00:00.000Z',
