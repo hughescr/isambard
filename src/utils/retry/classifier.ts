@@ -118,16 +118,25 @@ export function classifyHttpStatus(
  */
 
 export function classifyNetworkError(error: unknown, fallbackMessage = 'Unknown error'): ErrorClassification | undefined {
-    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: Property check for code field
-    if(!(typeof error === 'object' && error !== null && 'code' in error)) {
+    // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: defensive type guard — non-objects have no .code/.name, so all branch mutations are equivalent (non-object inputs always return undefined either way)
+    if(!(typeof error === 'object' && error !== null)) {
         return undefined;
     }
 
-    // Stryker disable next-line StringLiteral: Network error code configuration — exact strings are protocol constants
-    const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
+    // Stryker disable next-line StringLiteral: Network error code configuration — exact strings are protocol/SDK constants
+    // POSIX codes: ETIMEDOUT, ECONNRESET, ECONNREFUSED
+    // Smithy/AWS-SDK codes: FailedToOpenSocket (transient socket failure), TimeoutError (throwOnRequestTimeout), NetworkingError (general)
+    // NOTE: NetworkingError covers DNS NXDOMAIN and other permanent failures; those exhaust the retry budget before surfacing.
+    const networkErrorCodes = new Set<string>(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'FailedToOpenSocket', 'TimeoutError', 'NetworkingError']);
 
-    if(typeof error.code === 'string' && networkErrorCodes.has(error.code)) {
-        const errorRecord = error as Record<string, unknown>;
+    // Check both error.code (POSIX/Smithy) AND error.name (Smithy fetch-http-handler sets name only,
+    // e.g. TimeoutError from @smithy/fetch-http-handler has name="TimeoutError" but no code property).
+    const errorRecord = error as Record<string, unknown>;
+    const code = typeof errorRecord.code === 'string' ? errorRecord.code : undefined;
+    const name = typeof errorRecord.name === 'string' ? errorRecord.name : undefined;
+
+    // Stryker disable next-line ConditionalExpression,BlockStatement: Either code or name field may carry the classification — both are required for full Smithy coverage
+    if((code !== undefined && networkErrorCodes.has(code)) || (name !== undefined && networkErrorCodes.has(name))) {
         const message = typeof errorRecord.message === 'string' && errorRecord.message
             ? errorRecord.message
             : fallbackMessage;

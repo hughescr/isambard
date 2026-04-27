@@ -1,5 +1,6 @@
 import { type DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
 import { type TagIndexItem, type MemoryPath  } from './types';
@@ -55,10 +56,14 @@ async function retryWithBackoff<T>(
  * Manages the tag index table with fat pointers carrying preview data.
  */
 export class MemoryToolBackendTagIndex {
+    private readonly getDocClient: () => DynamoDBDocumentClient;
+
     constructor(
-        private readonly docClient: DynamoDBDocumentClient,
+        docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
         private readonly tableName: string
-    ) {}
+    ) {
+        this.getDocClient = resolveDocClientGetter(docClientOrHolder);
+    }
 
     /**
      * Splits an array into chunks of the given size.
@@ -107,7 +112,7 @@ export class MemoryToolBackendTagIndex {
             // Stryker disable BlockStatement: try/catch body mutations → skip send (infinite-loop) or swallow errors (loop spins on unprocessed items); both untestable without real DynamoDB
             try {
                 // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite retry, each attempt depends on prior unprocessed items
-                const result = await this.docClient.send(new BatchWriteCommand({
+                const result = await this.getDocClient().send(new BatchWriteCommand({
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- UnprocessedItems has complex type
                     RequestItems: unprocessedItems,
                 }));
@@ -182,7 +187,7 @@ export class MemoryToolBackendTagIndex {
         const normalizedTags = normalizeTags(tags);
         const operations = [...normalizedTags].map(tag =>
             retryWithBackoff(
-                async () => this.docClient.send(new UpdateCommand({
+                async () => this.getDocClient().send(new UpdateCommand({
                     TableName: this.tableName,
                     Key:       {
                         PK: `TAG#${tag}`,
@@ -218,7 +223,7 @@ export class MemoryToolBackendTagIndex {
 
         const operations = [...normalizedTags].map(async (tag) => {
             const result = await retryWithBackoff(
-                async () => this.docClient.send(new UpdateCommand({
+                async () => this.getDocClient().send(new UpdateCommand({
                     TableName: this.tableName,
                     Key:       {
                         PK: `TAG#${tag}`,
@@ -241,7 +246,7 @@ export class MemoryToolBackendTagIndex {
                 // Stryker disable BlockStatement: try-catch block for ConditionalCheckFailedException
                 try {
                     await retryWithBackoff(
-                        async () => this.docClient.send(new DeleteCommand({
+                        async () => this.getDocClient().send(new DeleteCommand({
                             TableName: this.tableName,
                             Key:       {
                                 PK: `TAG#${tag}`,
@@ -294,7 +299,7 @@ export class MemoryToolBackendTagIndex {
             }
 
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
-            const result = await this.docClient.send(new QueryCommand({
+            const result = await this.getDocClient().send(new QueryCommand({
                 TableName: this.tableName,
                 ...queryParams,
             }));
@@ -529,7 +534,7 @@ export class MemoryToolBackendTagIndex {
             );
         }
 
-        const result = await this.docClient.send(new QueryCommand({
+        const result = await this.getDocClient().send(new QueryCommand({
             TableName: this.tableName,
             ...queryParams,
         }));

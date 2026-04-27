@@ -30,3 +30,7 @@ export { BaseOutboundApprovalHandler } from './outbound-approval-handler-base';
 
 // Rate limiters
 export { TokenBucketRateLimiter } from './rate-limiters';
+
+// Error boundaries
+export type { ErrorBoundaryLogger, ErrorBoundaryRegistration } from './error-boundary';
+export { registerErrorBoundaries } from './error-boundary';

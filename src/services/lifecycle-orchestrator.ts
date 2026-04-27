@@ -72,6 +72,7 @@ export const serviceLifecycleMachine = setup({
             on: {
                 CONNECT_SUCCESS: { target: 'online', actions: 'recordOnline' },
                 CONNECT_FAIL:    { target: 'offline', actions: ['recordOffline', 'setNextRetry'] },
+                CONNECTION_LOST: { target: 'offline', actions: ['incrementEpoch', 'recordOffline'] },
             },
         },
         recovering: {
@@ -79,6 +80,7 @@ export const serviceLifecycleMachine = setup({
                 CONNECT_SUCCESS: { target: 'online', actions: 'recordOnline' },
                 CONNECT_FAIL:    { target: 'offline', actions: ['recordOffline', 'setNextRetry'] },
                 RECOVERY_FAIL:   { target: 'offline', actions: 'recordOffline' },
+                CONNECTION_LOST: { target: 'offline', actions: ['incrementEpoch', 'recordOffline'] },
             },
         },
         online: {

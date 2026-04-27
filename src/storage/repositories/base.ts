@@ -14,6 +14,8 @@ import {
     type UpdateCommandOutput,
     type ScanCommandInput
 } from '@aws-sdk/lib-dynamodb';
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports -- DynamoDBClientHolder used in instanceof check at runtime
+import { DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import { withDynamoTimeout } from '@/storage/dynamo-retry';
 
 export interface DynamoDBKey {
@@ -25,19 +27,31 @@ export interface DynamoDBKey {
  * Abstract base repository with common DynamoDB operations.
  * Concrete repositories should extend this class.
  *
+ * Accepts either a {@link DynamoDBClientHolder} (production — swappable on reconnect)
+ * or a raw {@link DynamoDBDocumentClient} (tests — static, never swapped).
+ *
+ * The `docClient` getter calls through to the holder on every operation so that a
+ * `holder.swap()` during DynamoDB reconnect is picked up immediately without
+ * restarting backends.
+ *
  * When `timeoutMs` is provided to the constructor, all DynamoDB operations
  * that also receive an `operation` string will be wrapped with `withDynamoTimeout`.
  * Existing subclasses that don't pass `timeoutMs` retain original behaviour (no timeout).
  */
 export abstract class BaseRepository<_T> {
-    protected readonly docClient:  DynamoDBDocumentClient;
-    protected readonly tableName:  string;
-    protected readonly timeoutMs?: number;
+    private readonly getDocClientFn: () => DynamoDBDocumentClient;
+    protected readonly tableName:    string;
+    protected readonly timeoutMs?:   number;
 
-    constructor(docClient: DynamoDBDocumentClient, tableName: string, timeoutMs?: number) {
-        this.docClient = docClient;
+    constructor(client: DynamoDBDocumentClient | DynamoDBClientHolder, tableName: string, timeoutMs?: number) {
+        this.getDocClientFn = resolveDocClientGetter(client);
         this.tableName = tableName;
         this.timeoutMs = timeoutMs;
+    }
+
+    /** Returns the current live DynamoDBDocumentClient. */
+    protected get docClient(): DynamoDBDocumentClient {
+        return this.getDocClientFn();
     }
 
     protected async putItem(item: Record<string, unknown>, operation?: string): Promise<void> {

@@ -13,8 +13,8 @@ import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, createCatchUpSignalAdapter, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
-import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
-import { PersonAllowlist } from '@/storage';
+import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
+import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe } from '@/storage';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -75,16 +75,112 @@ export async function createApp(): Promise<App> {
 
     // Create infrastructure layers
     const storage = createStorageLayer(dynamoDBConfig, config.reconciliation);
+
+    // Wire DynamoDB health monitoring.
+    // DynamoDB is a required dependency — we probe it with DescribeTable to detect
+    // persistent failures (e.g. FailedToOpenSocket after a transient outage).
+    //
+    // Reconnect strategy: probe the LIVE client (via holder.getClient()) first.
+    // On persistent failure, build a fresh DynamoDBClient pair and call holder.swap()
+    // so all backends immediately start using the new connection pool without restart.
+    // Stryker disable BlockStatement: Composition root — dynamodb reconnection wiring is not unit-testable
+    healthRegistry.sendEvent('dynamodb', 'CONFIGURE');
+
+    const dynamoDBReconnectionLoop = createReconnectionLoop({
+        service:   'dynamodb',
+        registry:  healthRegistry,
+        connectFn: async () => {
+            // First, try probing the LIVE client — if it succeeds, no swap needed.
+            // If it fails, build a fresh client pair and swap into the holder so all
+            // backends pick up the new connection pool on their next operation.
+            let probeClient = storage.holder.getClient();
+            let freshPair: ReturnType<typeof createDynamoDBClient> | undefined;
+            // Stryker disable BlockStatement: try-finally ensures fresh client is destroyed on probe failure
+            try {
+                await probeDynamoDB(probeClient, dynamoDBConfig.tableName);
+            } catch{
+                // Live client failed — build fresh pair and probe it
+                freshPair = createDynamoDBClient(dynamoDBConfig);
+                probeClient = freshPair.client;
+                let swapped = false;
+                try {
+                    await probeDynamoDB(probeClient, dynamoDBConfig.tableName);
+                    // Fresh probe succeeded — atomically swap so all backends use new client
+                    storage.holder.swap(freshPair.client, freshPair.docClient);
+                    swapped = true;
+                } finally {
+                    // Destroy fresh client if swap did not happen (probe failed or threw)
+                    if(!swapped) {
+                        freshPair.client.destroy();
+                    }
+                }
+            }
+            // Stryker restore BlockStatement
+        },
+    });
+
+    // Subscribe to health changes: auto-start reconnection loop when DynamoDB goes offline
+    const unsubscribeDynamoDBReconnect = healthRegistry.subscribe((change) => {
+        if(change.service === 'dynamodb' && change.newState === 'offline' && !dynamoDBReconnectionLoop.isRunning()) {
+            dynamoDBReconnectionLoop.start();
+        }
+    });
+
+    // Wire the DynamoDB health notifier so any network-classified errors thrown by
+    // withDynamoTimeout (in BaseRepository) also signal CONNECTION_LOST to the
+    // health registry — triggering the reconnection loop without waiting for the
+    // next periodic probe.
+    // Stryker disable BlockStatement: Composition root — health notifier wiring is not unit-testable
+    setDynamoHealthNotifier((err) => {
+        healthRegistry.sendEvent('dynamodb', 'CONNECTION_LOST', {
+            error: err instanceof Error ? err.message : String(err),
+        });
+    });
+    // Stryker restore BlockStatement
+
+    // Perform initial DynamoDB health probe against the live client.
+    // On success: mark online. On failure: start reconnection loop.
+    // Stryker disable BlockStatement: try-catch wraps DynamoDB probe - error handling
+    try {
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('Probing DynamoDB connectivity...');
+        await probeDynamoDB(storage.holder.getClient(), dynamoDBConfig.tableName);
+        healthRegistry.sendEvent('dynamodb', 'CONNECT_SUCCESS');
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('DynamoDB connectivity verified');
+    } catch (err) {
+        healthRegistry.sendEvent('dynamodb', 'CONNECT_FAIL', { error: err instanceof Error ? err.message : String(err) });
+        // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+        logger.error({
+            error: err instanceof Error ? err.message : String(err),
+            msg:   'DynamoDB probe failed at startup, starting reconnection loop',
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+        dynamoDBReconnectionLoop.start();
+    }
+    // Stryker restore BlockStatement
+
+    // Periodic DynamoDB background probe — detects post-startup connection failures
+    // that would otherwise go unnoticed until the next operation fails.
+    // Interval: 60s. Sends CONNECTION_LOST on failure, which the lifecycle state machine
+    // handles by transitioning online/degraded → offline, triggering the reconnection loop.
+    const dynamoDBProbeIntervalMs = 60_000;
+    // Stryker disable BlockStatement: Composition root — interval wiring is not unit-testable
+    const dynamoDBProbeInterval = setInterval(() => {
+        void runDynamoDBProbe(storage.holder.getClient(), dynamoDBConfig.tableName, healthRegistry, logger);
+    }, dynamoDBProbeIntervalMs);
+    // Stryker restore BlockStatement
+
     const discordInfra = createDiscordInfrastructure({
         discordConfig: config.discord,
-        docClient:     storage.docClient,
+        docClient:     storage.holder,
         tableName:     storage.tableName,
         memoryBackend: storage.memoryBackend,
     });
 
     // Outbox and approval saga backends (always available — DynamoDB is required)
-    const outboxBackend      = new OutboxBackend(storage.docClient, storage.tableName);
-    const approvalSagaBackend = new ApprovalSagaBackend(storage.docClient, storage.tableName);
+    const outboxBackend      = new OutboxBackend(storage.holder, storage.tableName);
+    const approvalSagaBackend = new ApprovalSagaBackend(storage.holder, storage.tableName);
 
     // Discord capability facade (wraps Discord sends with outbox fallback)
     const discordCapability = new DiscordCapabilityImpl({
@@ -97,7 +193,7 @@ export async function createApp(): Promise<App> {
     const activityLogger = createActivityLogger(storage.memoryBackend);
 
     // Create unified PersonAllowlist singleton (always available — shared by email + bsky)
-    const personAllowlist = new PersonAllowlist(storage.docClient, storage.tableName, storage.contactBackend);
+    const personAllowlist = new PersonAllowlist(storage.holder, storage.tableName, storage.contactBackend);
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Loading person allowlist...');
     await personAllowlist.load();
@@ -106,7 +202,7 @@ export async function createApp(): Promise<App> {
 
     // Create AllowlistSagaBackend, AllowlistSagaExecutor, and AllowlistInteractionHandler.
     // These are shared between email and bsky approval flows to start the allowlist saga.
-    const allowlistSagaBackend = new AllowlistSagaBackend(storage.docClient, storage.tableName);
+    const allowlistSagaBackend = new AllowlistSagaBackend(storage.holder, storage.tableName);
     const allowlistSagaExecutor = new AllowlistSagaExecutor({
         contactBackend: storage.contactBackend,
         personAllowlist,
@@ -166,7 +262,7 @@ export async function createApp(): Promise<App> {
         try {
             emailSetup = await setupEmail({
                 emailConfig:        config.email,
-                docClient:          storage.docClient,
+                docClient:          storage.holder,
                 tableName:          storage.tableName,
                 client:             discordInfra.discordClient,
                 adminDiscordUserId: config.adminDiscordUserId,
@@ -281,7 +377,7 @@ export async function createApp(): Promise<App> {
             logger.info('Setting up Bluesky safety rails...');
             bskySetup = await setupBsky({
                 bskyClient,
-                docClient:             storage.docClient,
+                docClient:             storage.holder,
                 tableName:             storage.tableName,
                 client:                discordInfra.discordClient,
                 adminDiscordChannelId: config.email.adminDiscordChannelId,
@@ -472,7 +568,7 @@ export async function createApp(): Promise<App> {
     healthRegistry.sendEvent('caldav', 'CONFIGURE');
     // Stryker disable next-line StringLiteral,ObjectLiteral: Composition root — CalDAV has no auth step, always available
     healthRegistry.sendEvent('caldav', 'CONNECT_SUCCESS');
-    const caldavRegistry = new CalendarRegistryBackend(storage.docClient, storage.tableName);
+    const caldavRegistry = new CalendarRegistryBackend(storage.holder, storage.tableName);
     // Stryker disable next-line ObjectLiteral: Composition root — CalDAV service wiring object is configuration
     const calendarService = { client: caldavClient, registry: caldavRegistry };
     const calendarHandler = new CalendarCommandHandler(
@@ -816,6 +912,7 @@ export async function createApp(): Promise<App> {
             logger.info('Stopping Isambard application...');
 
             // Stop reconnection loops if running
+            dynamoDBReconnectionLoop.stop();
             discordReconnectionLoop.stop();
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
             if(emailReconnectionLoop) {
@@ -835,6 +932,7 @@ export async function createApp(): Promise<App> {
             unsubscribeSagaRetry();
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe — only registered after first successful start()
             unsubscribeDiscordRecovery?.();
+            unsubscribeDynamoDBReconnect();
             unsubscribeDiscordReconnect();
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe - equivalent mutant
             unsubscribeEmailReconnect?.();
@@ -882,6 +980,16 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement
 
             await bot.stop();
+
+            // Clear periodic DynamoDB probe interval.
+            clearInterval(dynamoDBProbeInterval);
+
+            // Clear health notifier so withDynamoTimeout no longer fires after shutdown.
+            setDynamoHealthNotifier(undefined);
+
+            // Destroy the DynamoDB client holder — cancels any pending grace timer and
+            // synchronously destroys both the current and any in-grace previous client.
+            storage.holder.destroy();
 
             // Stop health registry after bot.stop() so health subscribers can still
             // react to service state changes during graceful shutdown.
@@ -950,12 +1058,28 @@ if(import.meta.main) {
 
     logger.info('Isambard starting...');
 
+    // Register process-level error boundaries to capture unhandled errors.
+    // Capture registration so we can remove handlers on hot reload (prevents duplicate handlers).
+    const errorBoundaryRegistration = registerErrorBoundaries(logger);
+
     // Copy agents and skills to scratch/.claude/ for SDK filesystem discovery
     const aspSourceRoot = path.resolve(import.meta.dir, '..', 'agents-skills-plugins');
     const targetClaudeDir = path.join(process.cwd(), '.claude');
     await syncAgentsAndSkills(aspSourceRoot, targetClaudeDir);
 
-    const app = await createApp();
+    // Wrap createApp() in try-catch for a clear startup failure log + clean exit.
+    let app: App;
+    try {
+        app = await createApp();
+    } catch (err) {
+        logger.error({
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+            msg:   'Fatal: application failed to start',
+        });
+        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- Fatal startup error requires exit
+        process.exit(1);
+    }
 
     // Start the application
     await app.start();
@@ -984,6 +1108,8 @@ if(import.meta.main) {
     if(import.meta.hot) {
         import.meta.hot.dispose(async () => {
             logger.info('Hot reload detected, cleaning up...');
+            // Remove error boundary handlers to prevent duplicate handlers on next hot reload
+            errorBoundaryRegistration.unregister();
             // Remove signal handlers before cleanup to prevent duplicate calls
             process.off('SIGINT', sigintHandler);
             process.off('SIGTERM', sigtermHandler);

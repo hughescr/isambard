@@ -1342,7 +1342,8 @@ describe('createApp', () => {
             const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
             const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    {} as unknown as DynamoDBClient,
+                // Must include destroy() — app.stop() calls storage.holder.destroy()
+                client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
             });

@@ -5,7 +5,7 @@ import {
     type CalendarServerEntry
 } from './types';
 import { InvariantViolationError } from '@/errors';
-import { BaseRepository } from '@/storage';
+import { BaseRepository, type DynamoDBClientHolder } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
 /**
@@ -15,7 +15,7 @@ import { stripDynamoKeys } from '@/utils';
  */
 export class CalendarRegistryBackend extends BaseRepository<CalendarRegistryRecord> {
     constructor(
-        docClient: DynamoDBDocumentClient,
+        docClient: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName: string,
         timeoutMs = 10_000
     ) {

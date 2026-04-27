@@ -42,7 +42,6 @@ describe('MemoryToolBackendCore', () => {
         };
 
         backend = new MemoryToolBackendCore(
-            client,
             'TestTable',
             putItem,
             getItem,

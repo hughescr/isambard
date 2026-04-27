@@ -1,4 +1,3 @@
-import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DateTime } from 'luxon';
 import { type DynamoDBKey } from '../repositories/base';
 import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
@@ -32,7 +31,6 @@ export interface UpdateMemoryToolItemInput {
  */
 export class MemoryToolBackendCore {
     constructor(
-        private readonly docClient: DynamoDBDocumentClient,
         private readonly tableName: string,
         private readonly putItem: (item: Record<string, unknown>) => Promise<void>,
         private readonly getItem: <R>(key: DynamoDBKey) => Promise<R | undefined>,

@@ -35,6 +35,7 @@ describe('ServiceHealthRegistryImpl', () => {
             expect(registry.getState('email')).toBe('disabled');
             expect(registry.getState('bluesky')).toBe('disabled');
             expect(registry.getState('caldav')).toBe('disabled');
+            expect(registry.getState('dynamodb')).toBe('disabled');
         });
 
         test('should return starting after CONFIGURE', () => {
@@ -105,13 +106,14 @@ describe('ServiceHealthRegistryImpl', () => {
     });
 
     describe('getAll()', () => {
-        test('should return all 4 services', () => {
+        test('should return all 5 services', () => {
             const all = registry.getAll();
             expect(Object.keys(all)).toContain('discord');
             expect(Object.keys(all)).toContain('email');
             expect(Object.keys(all)).toContain('bluesky');
             expect(Object.keys(all)).toContain('caldav');
-            expect(Object.keys(all)).toHaveLength(4);
+            expect(Object.keys(all)).toContain('dynamodb');
+            expect(Object.keys(all)).toHaveLength(5);
         });
 
         test('should return all services initially in disabled state', () => {

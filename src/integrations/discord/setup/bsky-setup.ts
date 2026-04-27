@@ -11,7 +11,7 @@ import {
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { TokenBucketRateLimiter, type ApprovalSagaBackend } from '@/services';
-import type { PersonAllowlist } from '@/storage';
+import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
@@ -25,7 +25,7 @@ function isSendableChannel(channel: unknown): channel is { send: (options: unkno
 
 export interface BskySetupOptions {
     bskyClient:                  BlueskyClient
-    docClient:                   DynamoDBDocumentClient
+    docClient:                   DynamoDBDocumentClient | DynamoDBClientHolder
     tableName:                   string
     /** Discord client instance */
     client:                      Client

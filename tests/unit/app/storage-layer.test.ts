@@ -104,14 +104,16 @@ describe('createStorageLayer', () => {
         const result = await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
 
         // Verify all required fields are present
-        expect(result).toHaveProperty('docClient');
+        expect(result).toHaveProperty('holder');
         expect(result).toHaveProperty('tableName');
         expect(result).toHaveProperty('memoryBackend');
         expect(result).toHaveProperty('taskPersistenceCoordinator');
         expect(result).toHaveProperty('reconciliationScheduler');
 
         // Verify values
-        expect(result.docClient).toBe(mockDocClient);
+        expect(result.holder).toBeDefined();
+        // holder.getDocClient() returns the wrapped docClient
+        expect(result.holder.getDocClient()).toBe(mockDocClient);
         expect(result.tableName).toBe('TestTable');
         expect(result.memoryBackend).toBeDefined();
         expect(result.taskPersistenceCoordinator).toBeDefined();
@@ -195,8 +197,12 @@ describe('createStorageLayer', () => {
         const { createStorageLayer } = await import('@/app/storage-layer');
         await createStorageLayer(mockDynamoDBConfig);
 
-        // Verify MemoryToolBackend constructor was called with correct args
-        expect(MemoryToolBackendSpy).toHaveBeenCalledWith(mockDocClient, 'TestTable');
+        // Verify MemoryToolBackend constructor was called with the holder (not raw docClient)
+        // The holder wraps the docClient created by createDynamoDBClient
+        expect(MemoryToolBackendSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ getDocClient: expect.any(Function) }),
+            'TestTable'
+        );
     });
 
     test('should create task persistence chain with all factories called', async () => {

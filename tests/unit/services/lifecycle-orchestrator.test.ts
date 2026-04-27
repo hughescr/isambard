@@ -203,6 +203,35 @@ describe('serviceLifecycleMachine', () => {
             expect(actor.getSnapshot().value).toBe('starting');
             actor.stop();
         });
+
+        test('should transition starting → offline on CONNECTION_LOST', () => {
+            const actor = actorInState('starting');
+            actor.send({ type: 'CONNECTION_LOST' });
+            expect(actor.getSnapshot().value).toBe('offline');
+            actor.stop();
+        });
+
+        test('should record offline details (failureCount, lastOfflineAt) on CONNECTION_LOST from starting', () => {
+            const before = new Date();
+            const actor = actorInState('starting');
+            actor.send({ type: 'CONNECTION_LOST', error: 'probe failed during startup' });
+            const after = new Date();
+            const ctx = actor.getSnapshot().context;
+            expect(ctx.failureCount).toBe(1);
+            expect(ctx.lastOfflineAt).toBeInstanceOf(Date);
+            expect(ctx.lastOfflineAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
+            expect(ctx.lastOfflineAt!.getTime()).toBeLessThanOrEqual(after.getTime());
+            expect(ctx.lastError).toEqual({ code: 'CONNECTION_FAILED', message: 'probe failed during startup' });
+            actor.stop();
+        });
+
+        test('should increment epoch on CONNECTION_LOST from starting', () => {
+            const actor = actorInState('starting');
+            const epochBefore = actor.getSnapshot().context.epoch;
+            actor.send({ type: 'CONNECTION_LOST' });
+            expect(actor.getSnapshot().context.epoch).toBe(epochBefore + 1);
+            actor.stop();
+        });
     });
 
     describe('online state transitions', () => {
@@ -446,6 +475,31 @@ describe('serviceLifecycleMachine', () => {
             const actor = actorInState('recovering');
             actor.send({ type: 'RECONNECT_ATTEMPT' });
             expect(actor.getSnapshot().value).toBe('recovering');
+            actor.stop();
+        });
+
+        test('should transition recovering → offline on CONNECTION_LOST', () => {
+            const actor = actorInState('recovering');
+            actor.send({ type: 'CONNECTION_LOST' });
+            expect(actor.getSnapshot().value).toBe('offline');
+            actor.stop();
+        });
+
+        test('should record offline details on CONNECTION_LOST from recovering', () => {
+            const actor = actorInState('recovering');
+            actor.send({ type: 'CONNECTION_LOST', error: 'connection lost mid-recovery' });
+            const ctx = actor.getSnapshot().context;
+            expect(ctx.failureCount).toBeGreaterThan(0);
+            expect(ctx.lastOfflineAt).toBeInstanceOf(Date);
+            expect(ctx.lastError).toEqual({ code: 'CONNECTION_FAILED', message: 'connection lost mid-recovery' });
+            actor.stop();
+        });
+
+        test('should increment epoch on CONNECTION_LOST from recovering', () => {
+            const actor = actorInState('recovering');
+            const epochBefore = actor.getSnapshot().context.epoch;
+            actor.send({ type: 'CONNECTION_LOST' });
+            expect(actor.getSnapshot().context.epoch).toBe(epochBefore + 1);
             actor.stop();
         });
     });

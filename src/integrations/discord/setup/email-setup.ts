@@ -21,7 +21,7 @@ import {
     OutboundApprovalHandler
 } from '@/integrations/email';
 import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
-import type { PersonAllowlist } from '@/storage';
+import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
@@ -35,7 +35,7 @@ function isSendableChannel(channel: unknown): channel is { send: (options: unkno
 
 export interface EmailSetupOptions {
     emailConfig:                 EmailConfig
-    docClient:                   DynamoDBDocumentClient
+    docClient:                   DynamoDBDocumentClient | DynamoDBClientHolder
     tableName:                   string
     /** Discord client instance */
     client:                      Client

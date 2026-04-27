@@ -8,7 +8,7 @@ import {
     WELL_KNOWN_CHANNELS
 } from './types';
 import { InvariantViolationError, ItemNotFoundError, ValidationError } from '@/errors';
-import { BaseRepository } from '@/storage';
+import { BaseRepository, type DynamoDBClientHolder } from '@/storage';
 import { stripDynamoKeys } from '@/utils';
 
 /**
@@ -17,7 +17,7 @@ import { stripDynamoKeys } from '@/utils';
  */
 export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord> {
     constructor(
-        docClient: DynamoDBDocumentClient,
+        docClient: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName: string,
         timeoutMs = 10_000
     ) {

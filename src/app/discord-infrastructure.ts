@@ -35,7 +35,7 @@ import {
     type BotStateManager
 
 } from '@/integrations/discord';
-import type { MemoryToolBackend } from '@/storage';
+import type { DynamoDBClientHolder, MemoryToolBackend } from '@/storage';
 
 /**
  * Options for creating Discord infrastructure.
@@ -43,8 +43,8 @@ import type { MemoryToolBackend } from '@/storage';
 interface DiscordInfrastructureOptions {
     /** Discord configuration (bot token, home guild, etc.) */
     discordConfig: DiscordConfig
-    /** DynamoDB document client for channel registry backend */
-    docClient:     DynamoDBDocumentClient
+    /** DynamoDB document client or holder for channel registry backend */
+    docClient:     DynamoDBDocumentClient | DynamoDBClientHolder
     /** DynamoDB table name for channel registry */
     tableName:     string
     /** Memory tool backend for checkpoint manager */

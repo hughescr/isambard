@@ -1,4 +1,5 @@
 import { type DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import { type MemoryToolBackendTagIndex } from './backend-tag-index';
 import { sigmoidScore } from './sigmoid';
 import {
@@ -35,12 +36,16 @@ const MAX_DATE = '9999-12-31T23:59:59.999Z';
  * Handles list, search, and time-range queries.
  */
 export class MemoryToolBackendQuery {
+    private readonly getDocClient: () => DynamoDBDocumentClient;
+
     constructor(
-        private readonly docClient: DynamoDBDocumentClient,
+        docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
         private readonly tableName: string,
         private readonly stripKeys: (item: MemoryToolItem) => MemoryToolItemData,
         private readonly tagIndex?: MemoryToolBackendTagIndex
-    ) {}
+    ) {
+        this.getDocClient = resolveDocClientGetter(docClientOrHolder);
+    }
 
     /**
      * Gets normalized date bounds from options.
@@ -94,7 +99,7 @@ export class MemoryToolBackendQuery {
 
         this.applyPaginationOptions(queryParams, options);
 
-        const result = await this.docClient.send(
+        const result = await this.getDocClient().send(
             new QueryCommand({
                 TableName: this.tableName,
                 ...queryParams,
@@ -159,7 +164,7 @@ export class MemoryToolBackendQuery {
 
         this.applyPaginationOptions(queryParams, options);
 
-        const result = await this.docClient.send(
+        const result = await this.getDocClient().send(
             new QueryCommand({
                 TableName: this.tableName,
                 ...queryParams,
@@ -204,7 +209,7 @@ export class MemoryToolBackendQuery {
                 queryParams.Limit = perLayerLimit;
             }
 
-            return this.docClient.send(new QueryCommand({
+            return this.getDocClient().send(new QueryCommand({
                 TableName: this.tableName,
                 ...queryParams,
             }));

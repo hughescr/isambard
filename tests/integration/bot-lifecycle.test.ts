@@ -82,7 +82,8 @@ describe('Bot Lifecycle Integration', () => {
         };
 
         // Mock DynamoDB client creation
-        const mockClient = {} as DynamoDBClient;
+        // Must include destroy() — app.stop() calls storage.holder.destroy()
+        const mockClient = { destroy: mock(() => {}) } as unknown as DynamoDBClient;
         // mockDocClient.send must return empty Items so outbox drain (triggered on Discord CONNECT_SUCCESS)
         // does not throw when the health subscription fires during app.start()
         const mockDocClient = {

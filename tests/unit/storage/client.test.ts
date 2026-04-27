@@ -1,9 +1,9 @@
-import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { mockClient } from 'aws-sdk-client-mock';
 import type { DynamoDBConfig } from '@/config/schemas';
-import { createDynamoDBClient, buildClientConfig } from '@/storage/client';
+import { createDynamoDBClient, buildClientConfig, probeDynamoDB } from '@/storage/client';
 
 // AWS SDK is mocked globally in tests/setup.ts
 
@@ -36,12 +36,20 @@ describe.concurrent('buildClientConfig', () => {
         expect(handlerConfig.connectionTimeout).toBe(5000);
     });
 
-    test('should configure requestTimeout to 15000ms', async () => {
+    test('should configure requestTimeout to 30000ms', async () => {
         const clientConfig = buildClientConfig();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
         const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
 
-        expect(handlerConfig.requestTimeout).toBe(15_000);
+        expect(handlerConfig.requestTimeout).toBe(30_000);
+    });
+
+    test('should configure throwOnRequestTimeout to true', async () => {
+        const clientConfig = buildClientConfig();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accessing private configProvider for test verification
+        const handlerConfig = await (clientConfig.requestHandler as any).configProvider;
+
+        expect(handlerConfig.throwOnRequestTimeout).toBe(true);
     });
 });
 
@@ -243,5 +251,35 @@ describe.concurrent('DynamoDBDocumentClient marshalling', () => {
 
         // Verify send was called (our mock returns empty object)
         expect(result).toBeDefined();
+    });
+});
+
+describe('probeDynamoDB', () => {
+    test('should resolve when DescribeTable succeeds', async () => {
+        const mockSend = mock(async () => ({ Table: { TableName: 'TestTable' } }));
+        const stubClient = { send: mockSend } as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- mock object for testing
+
+        await probeDynamoDB(stubClient, 'TestTable');
+        expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    test('should reject when DescribeTable throws', async () => {
+        const mockSend = mock(async () => {
+            throw new Error('FailedToOpenSocket');
+        });
+        const stubClient = { send: mockSend } as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- mock object for testing
+
+        expect(probeDynamoDB(stubClient, 'TestTable')).rejects.toThrow('FailedToOpenSocket');
+    });
+
+    test('should call DescribeTable with correct TableName', async () => {
+        const mockSend = mock(async () => ({}));
+        const stubDdbClient = { send: mockSend } as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- mock object for testing
+
+        await probeDynamoDB(stubDdbClient, 'MySpecialTable');
+
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        const sentCommand = (mockSend.mock.calls as unknown[][])[0]?.[0];
+        expect((sentCommand as { input: unknown }).input).toEqual({ TableName: 'MySpecialTable' });
     });
 });

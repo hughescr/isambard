@@ -5,6 +5,7 @@ import {
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { type DynamoDBClientHolder, resolveDocClientGetter } from './client-holder';
 import { type ContactBackend, type ContactId, type PlatformType, createContactId } from '@/storage/contacts';
 
 const PK = 'PERSON#ALLOWLIST';
@@ -19,7 +20,7 @@ export interface PersonAllowlistEntry {
 }
 
 export class PersonAllowlist {
-    private readonly docClient:      DynamoDBDocumentClient;
+    private readonly getDocClient:   () => DynamoDBDocumentClient;
     private readonly tableName:      string;
     private readonly contactBackend: ContactBackend;
 
@@ -29,8 +30,8 @@ export class PersonAllowlist {
     /** Reverse map: "{platform}#{normalizedValue}" → ContactId */
     private reverseMap = new Map<string, ContactId>();
 
-    constructor(docClient: DynamoDBDocumentClient, tableName: string, contactBackend: ContactBackend) {
-        this.docClient      = docClient;
+    constructor(docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder, tableName: string, contactBackend: ContactBackend) {
+        this.getDocClient   = resolveDocClientGetter(docClientOrHolder);
         this.tableName      = tableName;
         this.contactBackend = contactBackend;
     }
@@ -51,7 +52,7 @@ export class PersonAllowlist {
      * Orphaned personIds (no contact found) are logged and skipped.
      */
     async load(): Promise<void> {
-        const result = await this.docClient.send(new GetCommand({
+        const result = await this.getDocClient().send(new GetCommand({
             TableName: this.tableName,
             Key:       { PK, SK: SK_INDEX },
         }));
@@ -125,7 +126,7 @@ export class PersonAllowlist {
         }
 
         // Stryker disable StringLiteral,ObjectLiteral,ArrayDeclaration: DynamoDB expression strings, attribute maps, and Set initializers are configuration
-        await this.docClient.send(new TransactWriteCommand({
+        await this.getDocClient().send(new TransactWriteCommand({
             TransactItems: [
                 {
                     Put: {
@@ -166,7 +167,7 @@ export class PersonAllowlist {
      */
     async removePerson(personId: ContactId): Promise<void> {
         // Stryker disable StringLiteral,ObjectLiteral,ArrayDeclaration: DynamoDB expression strings, attribute maps, and Set initializers are configuration
-        await this.docClient.send(new TransactWriteCommand({
+        await this.getDocClient().send(new TransactWriteCommand({
             TransactItems: [
                 {
                     Delete: {
@@ -224,7 +225,7 @@ export class PersonAllowlist {
 
         do {
             // eslint-disable-next-line no-await-in-loop -- sequential pagination required by DynamoDB
-            const result = await this.docClient.send(new QueryCommand({
+            const result = await this.getDocClient().send(new QueryCommand({
                 TableName:                 this.tableName,
                 // Stryker disable StringLiteral,ObjectLiteral: DynamoDB expression strings and attribute maps are configuration
                 KeyConditionExpression:    '#pk = :pk AND begins_with(#sk, :prefix)',

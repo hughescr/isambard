@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { withDynamoTimeout, DynamoTimeoutError } from '@/storage/dynamo-retry';
+import { withDynamoTimeout, setDynamoHealthNotifier, DynamoTimeoutError } from '@/storage/dynamo-retry';
 import type { RetryLogger } from '@/utils/retry/types';
+
+// Top-level belt-and-suspenders: always clear the module-level health notifier after
+// every test in this file, regardless of which describe block set it.  The inner
+// `setDynamoHealthNotifier / health notifier integration` describe block has its own
+// beforeEach/afterEach guards; this outer hook is an extra safety net so that any
+// future test that sets the notifier without explicit cleanup doesn't leak state.
+afterEach(() => {
+    setDynamoHealthNotifier(undefined);
+});
 
 describe('DynamoTimeoutError', () => {
     it('should create error with operation name and timeout', () => {
@@ -267,5 +276,178 @@ describe('withDynamoTimeout', () => {
             // Should get timeout error (race winner)
             expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
+    });
+});
+
+describe('setDynamoHealthNotifier / health notifier integration', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        // Ensure notifier starts cleared before each test
+        setDynamoHealthNotifier(undefined);
+    });
+
+    afterEach(() => {
+        // Always clear notifier after each test to prevent leaking between test files
+        setDynamoHealthNotifier(undefined);
+        jest.useRealTimers();
+    });
+
+    it('should call notifier with DynamoTimeoutError when timeout fires', async () => {
+        const notifier = mock((_err: unknown) => {});
+        setDynamoHealthNotifier(notifier);
+
+        const operation = mock(() => new Promise<never>(() => {}));
+
+        const resultPromise = withDynamoTimeout(operation, {
+            timeoutMs: 1000,
+            operation: 'GetItem',
+        });
+
+        jest.advanceTimersByTime(1001);
+
+        expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+        // Allow rejection to propagate
+        try {
+            await resultPromise;
+        } catch{
+            // expected
+        }
+
+        expect(notifier).toHaveBeenCalledTimes(1);
+        expect(notifier.mock.calls[0][0]).toBeInstanceOf(DynamoTimeoutError);
+    });
+
+    it('should call notifier with network-classified Error (ETIMEDOUT) when operation throws', async () => {
+        const notifier = mock((_err: unknown) => {});
+        setDynamoHealthNotifier(notifier);
+
+        const networkError = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+        const operation = mock(async () => {
+            throw networkError;
+        });
+
+        const resultPromise = withDynamoTimeout(operation, {
+            timeoutMs: 5000,
+            operation: 'PutItem',
+        });
+
+        try {
+            await resultPromise;
+        } catch{
+            // expected
+        }
+
+        expect(notifier).toHaveBeenCalledTimes(1);
+        expect(notifier.mock.calls[0][0]).toBe(networkError);
+    });
+
+    it('should call notifier with FailedToOpenSocket network error', async () => {
+        const notifier = mock((_err: unknown) => {});
+        setDynamoHealthNotifier(notifier);
+
+        const networkError = Object.assign(new Error('FailedToOpenSocket'), { code: 'FailedToOpenSocket' });
+        const operation = mock(async () => {
+            throw networkError;
+        });
+
+        const resultPromise = withDynamoTimeout(operation, {
+            timeoutMs: 5000,
+            operation: 'Query',
+        });
+
+        try {
+            await resultPromise;
+        } catch{
+            // expected
+        }
+
+        expect(notifier).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT call notifier when no notifier is set', async () => {
+        // Notifier is cleared in beforeEach; do not set one here
+        const networkError = Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' });
+        const operation = mock(async () => {
+            throw networkError;
+        });
+
+        const resultPromise = withDynamoTimeout(operation, {
+            timeoutMs: 5000,
+            operation: 'DeleteItem',
+        });
+
+        try {
+            await resultPromise;
+        } catch{
+            // expected — just verifying it doesn't crash without a notifier
+        }
+    });
+
+    it('should NOT call notifier for non-network errors (e.g. validation error)', async () => {
+        const notifier = mock((_err: unknown) => {});
+        setDynamoHealthNotifier(notifier);
+
+        const validationError = new Error('ValidationException: item must have key');
+        const operation = mock(async () => {
+            throw validationError;
+        });
+
+        const resultPromise = withDynamoTimeout(operation, {
+            timeoutMs: 5000,
+            operation: 'PutItem',
+        });
+
+        try {
+            await resultPromise;
+        } catch{
+            // expected
+        }
+
+        expect(notifier).not.toHaveBeenCalled();
+    });
+
+    it('should still re-throw the original error after calling notifier', async () => {
+        const notifier = mock((_err: unknown) => {});
+        setDynamoHealthNotifier(notifier);
+
+        const networkError = Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' });
+        const operation = mock(async () => {
+            throw networkError;
+        });
+
+        const resultPromise = withDynamoTimeout(operation, {
+            timeoutMs: 5000,
+            operation: 'GetItem',
+        });
+
+        let caught: unknown;
+        try {
+            await resultPromise;
+        } catch (err) {
+            caught = err;
+        }
+
+        expect(caught).toBe(networkError);
+        expect(notifier).toHaveBeenCalledTimes(1);
+    });
+
+    it('should clear notifier when setDynamoHealthNotifier is called with undefined', async () => {
+        const notifier = mock((_err: unknown) => {});
+        setDynamoHealthNotifier(notifier);
+        setDynamoHealthNotifier(undefined);
+
+        const networkError = Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' });
+        const operation = mock(async () => {
+            throw networkError;
+        });
+
+        try {
+            await withDynamoTimeout(operation, { timeoutMs: 5000, operation: 'Scan' });
+        } catch{
+            // expected
+        }
+
+        expect(notifier).not.toHaveBeenCalled();
     });
 });

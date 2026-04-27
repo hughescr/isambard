@@ -106,7 +106,8 @@ Object.assign(MockDynamoDBDocumentClient.prototype.send, {
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@aws-sdk/client-dynamodb', () => ({
-    DynamoDBClient: MockDynamoDBClient,
+    DynamoDBClient:       MockDynamoDBClient,
+    DescribeTableCommand: class DescribeTableCommand { constructor(public input: unknown) {} },
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await

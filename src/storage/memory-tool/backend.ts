@@ -1,5 +1,6 @@
 import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { type DynamoDBClientHolder } from '../client-holder';
 import { BaseRepository } from '../repositories/base';
 import { stripDynamoKeys } from '../utils/index.js';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
@@ -23,11 +24,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     private readonly queryOps:    MemoryToolBackendQuery;
     private readonly tagIndexOps: MemoryToolBackendTagIndex;
 
-    constructor(docClient: DynamoDBDocumentClient, tableName: string) {
-        super(docClient, tableName);
+    constructor(docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder, tableName: string) {
+        super(docClientOrHolder, tableName);
 
         this.coreOps = new MemoryToolBackendCore(
-            docClient,
             tableName,
             this.putItem.bind(this),
             this.getItem.bind(this),
@@ -36,12 +36,12 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         );
 
         this.tagIndexOps = new MemoryToolBackendTagIndex(
-            docClient,
+            docClientOrHolder,
             tableName
         );
 
         this.queryOps = new MemoryToolBackendQuery(
-            docClient,
+            docClientOrHolder,
             tableName,
             stripDynamoKeys,
             this.tagIndexOps

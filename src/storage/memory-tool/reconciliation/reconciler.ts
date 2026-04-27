@@ -9,6 +9,7 @@
 
 import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
@@ -22,12 +23,15 @@ import type { ReconciliationProgress, ReconciliationResult } from './types';
  * Dependencies interface for testability
  */
 export interface ReconcilerDeps {
-    docClient:            DynamoDBDocumentClient
+    docClient:            DynamoDBDocumentClient | DynamoDBClientHolder
     tableName:            string
     tagIndex:             MemoryToolBackendTagIndex
     getMemory:            (path: MemoryPath) => Promise<MemoryToolItemData | undefined>
     updateMemoryMetadata: (path: MemoryPath, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
 }
+
+/** @internal Resolved deps with a concrete docClient (holder already resolved at run-start). */
+type ResolvedReconcilerDeps = Omit<ReconcilerDeps, 'docClient'> & { docClient: DynamoDBDocumentClient };
 
 /**
  * Options for reconciliation run
@@ -148,7 +152,7 @@ export async function retryWithBackoff<T>(
 // ============================================================================
 
 interface PhaseAContext {
-    deps:     ReconcilerDeps
+    deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
     progress: ReconciliationProgress
 }
@@ -529,7 +533,7 @@ async function scanLayer(
  * Phase A: Scan all memory items and ensure tag indices are complete
  */
 async function runPhaseA(
-    deps: ReconcilerDeps,
+    deps: ResolvedReconcilerDeps,
     options: ReconcilerOptions
 ): Promise<ReconciliationProgress> {
     const progress: ReconciliationProgress = {
@@ -571,7 +575,7 @@ async function runPhaseA(
 // ============================================================================
 
 interface PhaseBContext {
-    deps:     ReconcilerDeps
+    deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
     progress: ReconciliationProgress
 }
@@ -687,7 +691,7 @@ async function scanTagItems(
  * Phase B: Enumerate all tags via GSI2 TAG_COUNTS, then query each tag's index items and delete orphaned entries
  */
 async function runPhaseB(
-    deps: ReconcilerDeps,
+    deps: ResolvedReconcilerDeps,
     options: ReconcilerOptions
 ): Promise<ReconciliationProgress> {
     const progress: ReconciliationProgress = {
@@ -735,7 +739,7 @@ async function runPhaseB(
 // ============================================================================
 
 interface PhaseCContext {
-    deps:     ReconcilerDeps
+    deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
     progress: ReconciliationProgress
 }
@@ -910,7 +914,7 @@ async function processMetaCount(
  * Phase C: Verify all META_COUNT items match actual tag index counts
  */
 async function runPhaseC(
-    deps: ReconcilerDeps,
+    deps: ResolvedReconcilerDeps,
     options: ReconcilerOptions
 ): Promise<ReconciliationProgress> {
     const progress: ReconciliationProgress = {
@@ -970,11 +974,19 @@ export async function runReconciliation(
 ): Promise<ReconciliationResult> {
     const startTime = Date.now();
 
+    // Resolve holder → raw docClient once at the start of each reconciliation run.
+    // This ensures the reconciler uses the live client (after any swap) rather than
+    // whatever docClient was captured at scheduler-construction time.
+    const resolvedDeps: ResolvedReconcilerDeps = {
+        ...deps,
+        docClient: resolveDocClientGetter(deps.docClient)(),
+    };
+
     /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({ msg: 'Starting tag index reconciliation' });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
-    const phaseA = await runPhaseA(deps, options);
+    const phaseA = await runPhaseA(resolvedDeps, options);
     /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:               'A',
@@ -987,7 +999,7 @@ export async function runReconciliation(
     });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
-    const phaseB = await runPhaseB(deps, options);
+    const phaseB = await runPhaseB(resolvedDeps, options);
     /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:             'B',
@@ -998,7 +1010,7 @@ export async function runReconciliation(
     });
     /* Stryker restore StringLiteral,ObjectLiteral */
 
-    const phaseC = await runPhaseC(deps, options);
+    const phaseC = await runPhaseC(resolvedDeps, options);
     /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
     logger.info({
         phase:           'C',

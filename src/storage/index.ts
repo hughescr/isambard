@@ -1,5 +1,8 @@
 // Client
-export { createDynamoDBClient } from './client';
+export { createDynamoDBClient, probeDynamoDB } from './client';
+
+// Client Holder
+export { DynamoDBClientHolder } from './client-holder';
 
 // Storage utilities
 export { createPrefixedKey, parsePrefixedKey } from './utils';
@@ -13,8 +16,11 @@ export { TaskSessionBackend, createSessionId, type SessionId } from './task-sess
 // Memory Tool
 export * from './memory-tool';
 
-// DynamoDB Timeout
-export { withDynamoTimeout } from './dynamo-retry';
+// DynamoDB Timeout and Health Notifier
+export { withDynamoTimeout, setDynamoHealthNotifier } from './dynamo-retry';
+
+// DynamoDB Probe Callback
+export { runDynamoDBProbe, type ProbeEventSender } from './dynamo-probe-callback';
 
 // Contacts
 export * from './contacts';

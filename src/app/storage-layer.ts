@@ -1,13 +1,20 @@
 import { logger } from '@hughescr/logger';
 import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator  } from '@/agent';
 import type { DynamoDBConfig, ReconciliationConfig } from '@/config';
-import { type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend  } from '@/storage';
+import { DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend  } from '@/storage';
 
 /**
  * Storage layer components
  */
-interface StorageLayer {
-    docClient:                  ReturnType<typeof createDynamoDBClient>['docClient']
+export interface StorageLayer {
+    /**
+     * Live DynamoDB client holder.
+     * Call `holder.swap()` on reconnect to atomically replace the wedged client pair
+     * across all backends without restarting the process.
+     *
+     * @internal
+     */
+    holder:                     DynamoDBClientHolder
     tableName:                  string
     memoryBackend:              MemoryToolBackend
     contactBackend:             ContactBackend
@@ -28,13 +35,18 @@ export function createStorageLayer(
     reconciliationConfig?: ReconciliationConfig
 ): StorageLayer {
     // Create DynamoDB client
-    const { docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
+    const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
+
+    // Wrap in a holder so all backends pick up the live client on every operation.
+    // On DynamoDB reconnect, holder.swap() atomically replaces both client references
+    // without restarting any backend.
+    const holder = new DynamoDBClientHolder(client, docClient);
 
     // Create memory backend
-    const memoryBackend = new MemoryToolBackend(docClient, tableName);
+    const memoryBackend = new MemoryToolBackend(holder, tableName);
 
     // Create contact backend
-    const contactBackend = new ContactBackend(docClient, tableName);
+    const contactBackend = new ContactBackend(holder, tableName);
 
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
@@ -46,7 +58,7 @@ export function createStorageLayer(
             config:         reconciliationConfig,
             runReconciliation,
             reconcilerDeps: {
-                docClient,
+                docClient:            holder,
                 tableName,
                 tagIndex:             memoryBackend.getTagIndexBackend(),
                 getMemory:            path => memoryBackend.get(path),
@@ -59,7 +71,7 @@ export function createStorageLayer(
     }
 
     // Create task persistence system
-    const taskSessionBackend = new TaskSessionBackend(docClient, tableName);
+    const taskSessionBackend = new TaskSessionBackend(holder, tableName);
     const taskCleanupProcessor = createTaskCleanupProcessor({ logger });
     const taskDirectoryCopier = createTaskDirectoryCopier({
         logger,
@@ -75,7 +87,7 @@ export function createStorageLayer(
     logger.info('Task persistence system initialized');
 
     return {
-        docClient,
+        holder,
         tableName,
         memoryBackend,
         contactBackend,
