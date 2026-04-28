@@ -69,11 +69,11 @@ echo "==> Downloading llama.cpp source (latest release)..."
 bunx node-llama-cpp source download --release latest --skipBuild
 
 echo "==> Applying Patch 1: addon.cpp atomic copy-constructor fix..."
-sed -i '' \
-    's/static std::atomic_bool loaded = false;/static std::atomic_bool loaded(false);/' \
+# perl -i works identically on BSD and GNU; sed -i differs and is fragile under Homebrew GNU sed.
+perl -i -pe 's/static std::atomic_bool loaded = false;/static std::atomic_bool loaded(false);/' \
     "$ADDON_CPP"
 
-# Verify patch 1 applied
+# Verify patch 1 applied (or was already applied — both are OK)
 if grep -q 'static std::atomic_bool loaded = false;' "$ADDON_CPP"; then
     echo "ERROR: Patch 1 failed to apply — 'loaded = false' still present in $ADDON_CPP" >&2
     exit 1
@@ -81,12 +81,11 @@ fi
 echo "   Patch 1 applied OK."
 
 echo "==> Applying Patch 2: CMakeLists llama-common library rename..."
-sed -i '' \
-    's/target_link_libraries(${PROJECT_NAME} "common")/target_link_libraries(${PROJECT_NAME} "llama-common")/' \
+perl -i -pe 's/target_link_libraries\(\$\{PROJECT_NAME\} "common"\)/target_link_libraries(\${PROJECT_NAME} "llama-common")/' \
     "$CMAKELISTS"
 
-# Verify patch 2 applied
-if grep -q '"common"' "$CMAKELISTS"; then
+# Verify patch 2 applied (or was already applied)
+if grep -q 'target_link_libraries(${PROJECT_NAME} "common")' "$CMAKELISTS"; then
     echo "ERROR: Patch 2 failed to apply — '\"common\"' still present in $CMAKELISTS" >&2
     exit 1
 fi
