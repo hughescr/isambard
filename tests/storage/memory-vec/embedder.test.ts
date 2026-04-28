@@ -68,9 +68,9 @@ describe('loadEmbedder / Embedder.load', () => {
         await embedder.close();
     });
 
-    it('passes default contextSize 512 to createEmbeddingContext', async () => {
+    it('passes default contextSize 32768 to createEmbeddingContext', async () => {
         const embedder = await loadEmbedder();
-        expect(mockLlamaModel.createEmbeddingContext).toHaveBeenCalledWith({ contextSize: 512 });
+        expect(mockLlamaModel.createEmbeddingContext).toHaveBeenCalledWith({ contextSize: 32_768 });
         await embedder.close();
     });
 
@@ -126,11 +126,11 @@ describe('loadEmbedder options forwarding', () => {
         jest.restoreAllMocks();
     });
 
-    it('passes null-coalesced contextSize=512 to createEmbeddingContext when opts is undefined', async () => {
-        // Verify default opts=undefined causes contextSize=512, NOT undefined
+    it('passes null-coalesced contextSize=32768 to createEmbeddingContext when opts is undefined', async () => {
+        // Verify default opts=undefined causes contextSize=32768, NOT undefined
         const embedder = await loadEmbedder();
         const callArg = mockLlamaModel.createEmbeddingContext.mock.calls[0][0] as Record<string, unknown>;
-        expect(callArg).toEqual({ contextSize: 512 });
+        expect(callArg).toEqual({ contextSize: 32_768 });
         await embedder.close();
     });
 
@@ -142,7 +142,7 @@ describe('loadEmbedder options forwarding', () => {
         await embedder.close();
     });
 
-    it('passes custom contextSize=256 (not 512) to createEmbeddingContext', async () => {
+    it('passes custom contextSize=256 (not 32768) to createEmbeddingContext', async () => {
         const embedder = await loadEmbedder({ contextSize: 256 });
         const callArg = mockLlamaModel.createEmbeddingContext.mock.calls[0][0] as Record<string, unknown>;
         expect(callArg).toEqual({ contextSize: 256 });

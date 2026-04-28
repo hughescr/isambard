@@ -27,12 +27,12 @@ import { Resource } from 'sst';
 import { loadDynamoDBConfig } from '@/config';
 import {
     createDynamoDBClient,
-    createLayerName,
     DynamoDBClientHolder,
     loadEmbedder,
     MemoryToolBackend,
     MemoryToolKeyGenerator,
     VectorIndex,
+    type LayerName,
     type ModelQuant,
     type ModelSlug
 } from '@/storage';
@@ -62,7 +62,7 @@ Requires SST shell for DynamoDB credentials:
 `;
 
 interface BackfillOptions {
-    layer?:             'identity' | 'state' | 'events'
+    layer?:             string
     dbPath:             string
     modelSlug:          ModelSlug
     modelQuant:         ModelQuant
@@ -72,8 +72,10 @@ interface BackfillOptions {
     rateLimitRcuPerSec: number
 }
 
-function isLayerValue(val: string): val is 'identity' | 'state' | 'events' {
-    return val === 'identity' || val === 'state' || val === 'events';
+// Canonical layers for help text; CLI accepts any non-empty string so ad-hoc
+// LAYER#<name> partitions (e.g. /users/{userId}/...) can be backfilled too.
+function isLayerValue(val: string): boolean {
+    return val.length > 0;
 }
 
 function isModelSlug(val: string): val is ModelSlug {
@@ -86,7 +88,7 @@ function isModelQuant(val: string): val is ModelQuant {
 
 // eslint-disable-next-line sonarjs/cognitive-complexity, complexity -- CLI arg parser is inherently complex; each branch handles one flag's required value
 function parseArgs(argv: string[]): BackfillOptions {
-    let layer: 'identity' | 'state' | 'events' | undefined;
+    let layer: string | undefined;
     let dbPath = DEFAULT_DB_PATH;
     let modelSlug: ModelSlug = '0.6b';
     let modelQuant: ModelQuant = 'Q8_0';
@@ -95,7 +97,11 @@ function parseArgs(argv: string[]): BackfillOptions {
     let showHelp = false;
     let rateLimitRcuPerSec = 10;
 
-    const args = argv.slice(2); // strip 'bun' + script path
+    // Expand `--flag=value` into ['--flag', 'value'] so the loop below handles both forms.
+    const args = argv.slice(2).flatMap((a) => {
+        const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+        return eq > 0 ? [a.slice(0, eq), a.slice(eq + 1)] : [a];
+    });
     for(let i = 0; i < args.length; i++) {
         const arg = args[i];
         // eslint-disable-next-line unicorn/prefer-switch -- complexity is in the value-consuming branches, not the discriminant alone; switch doesn't help here
@@ -108,8 +114,7 @@ function parseArgs(argv: string[]): BackfillOptions {
         } else if(arg === '--layer') {
             const val = args[++i];
             if(!val || !isLayerValue(val)) {
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- val may be undefined when --layer is the last arg; we check both to provide a clear error message
-                throw new Error(`Invalid --layer value: ${val ?? '(missing)'}. Must be identity, state, or events.`);
+                throw new Error(`--layer requires a value (typically identity, state, events; or 'users' for /users/* memories).`);
             }
             layer = val;
         } else if(arg === '--db-path') {
@@ -201,7 +206,7 @@ async function main(): Promise<void> {
 
             // eslint-disable-next-line no-await-in-loop -- sequential pagination is intentional: each page must complete before fetching the next
             const page = await (opts.layer
-                ? backend.listByLayer(createLayerName(opts.layer), { limit: pageSize, cursor })
+                ? backend.listByLayer(opts.layer as LayerName, { limit: pageSize, cursor })
                 : backend.list(scanPath, { limit: pageSize, cursor }));
 
             cursor = page.nextCursor;
@@ -217,7 +222,10 @@ async function main(): Promise<void> {
                     // eslint-disable-next-line no-await-in-loop -- sequential hash-check per item is intentional
                     contentHash = await sha256Hex(text);
                 } catch (err) {
-                    logger.warn({ err, path: item.path, msg: 'Failed to compute hash, skipping' });
+                    const errInfo = err instanceof Error
+                        ? { name: err.name, message: err.message, stack: err.stack, cause: err.cause }
+                        : { value: String(err) };
+                    logger.warn({ err: errInfo, path: item.path, msg: 'Failed to compute hash, skipping' });
                     totalErrors++;
                     continue;
                 }
@@ -256,7 +264,10 @@ async function main(): Promise<void> {
                         process.stdout.write(`  Indexed ${totalIndexed} items so far...\n`);
                     }
                 } catch (err) {
-                    logger.warn({ err, path: item.path, msg: 'Failed to embed/upsert item' });
+                    const errInfo = err instanceof Error
+                        ? { name: err.name, message: err.message, stack: err.stack, cause: err.cause }
+                        : { value: String(err) };
+                    logger.warn({ err: errInfo, path: item.path, msg: 'Failed to embed/upsert item' });
                     totalErrors++;
                 }
             }

@@ -74,13 +74,13 @@ export class Embedder {
         // 1. Assert llama.cpp version is compatible
         await assertLlamaCppCompatible();
 
-        // 2. Resolve options — defaults: 0.6b Q8_0, contextSize=512, gpuLayers=max
+        // 2. Resolve options — defaults: 0.6b Q8_0, contextSize=32_768, gpuLayers=max
         // Each option is independently overridable; all have well-tested defaults.
         // Options: { slug, quant, contextSize, gpuLayers } — any subset can be specified.
         const slug: ModelSlug = opts?.slug ?? '0.6b';
         const quant: ModelQuant = opts?.quant ?? DEFAULT_QUANT[slug];
         // Defaults expressed as named constants so mutations alter identifiable named values (not bare literals)
-        const DEFAULT_CONTEXT_SIZE = 512;
+        const DEFAULT_CONTEXT_SIZE = 32_768;
         const DEFAULT_GPU_LAYERS = 'max' as const;
         const contextSize: number = opts?.contextSize ?? DEFAULT_CONTEXT_SIZE;
         // gpuLayers defaults to 'max'; number | 'max' because 0 is a valid value (CPU-only mode)
