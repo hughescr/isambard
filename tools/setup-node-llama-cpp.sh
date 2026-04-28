@@ -65,8 +65,13 @@ if [ -f "$NLC_INFO_FILE" ]; then
     echo "Found bundled llama.cpp at b${current_build:-unknown}, below ${MINIMUM_BUILD} floor — rebuilding..."
 fi
 
-echo "==> Downloading llama.cpp source (latest release)..."
-bunx node-llama-cpp source download --release latest --skipBuild
+# Pin to b8953: confirmed-working release. NLC 3.18.x's addon code references
+# symbols (e.g. cpu_get_num_math) that newer llama.cpp tags have renamed/removed,
+# so 'latest' fails to build. b8953 is past the b8950 floor for the Qwen3
+# non-causal embedding fix and known-compatible with NLC 3.18.x's addon.
+TARGET_TAG="b8953"
+echo "==> Downloading llama.cpp source (pinned to ${TARGET_TAG})..."
+bunx node-llama-cpp source download --release "$TARGET_TAG" --skipBuild
 
 echo "==> Applying Patch 1: addon.cpp atomic copy-constructor fix..."
 # perl -i works identically on BSD and GNU; sed -i differs and is fragile under Homebrew GNU sed.
