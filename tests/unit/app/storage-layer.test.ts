@@ -199,9 +199,11 @@ describe('createStorageLayer', () => {
 
         // Verify MemoryToolBackend constructor was called with the holder (not raw docClient)
         // The holder wraps the docClient created by createDynamoDBClient
+        // Third arg (indexer) is undefined when no vectorIndexConfig provided
         expect(MemoryToolBackendSpy).toHaveBeenCalledWith(
             expect.objectContaining({ getDocClient: expect.any(Function) }),
-            'TestTable'
+            'TestTable',
+            undefined
         );
     });
 
@@ -418,5 +420,187 @@ describe('createStorageLayer', () => {
         // Import and call createStorageLayer - should throw
         const { createStorageLayer } = await import('@/app/storage-layer');
         expect(() => createStorageLayer(mockDynamoDBConfig)).toThrow('Memory backend initialization failed');
+    });
+
+    test('should NOT create vector index or asyncIndexer when vectorIndexConfig is undefined', async () => {
+        // Mock all dependencies
+        const storageClientModule = await import('@/storage/client');
+        spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+        }));
+
+        const memoryToolModule = await import('@/storage/memory-tool');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
+            getTagIndexBackend: mock(() => ({})),
+            get:                mock(async () => undefined),
+            updateMetadataOnly: mock(async () => ({})),
+        })));
+
+        const taskSessionModule = await import('@/storage/task-session');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
+
+        const taskCleanupModule = await import('@/agent/task-cleanup-processor');
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
+
+        const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
+
+        const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
+
+        const { createStorageLayer } = await import('@/app/storage-layer');
+        const result = await createStorageLayer(mockDynamoDBConfig);
+
+        expect(result.vectorIndex).toBeUndefined();
+        expect(result.asyncIndexer).toBeUndefined();
+    });
+
+    test('should NOT create vector index when vectorIndexConfig.enabled is false', async () => {
+        // Mock all dependencies
+        const storageClientModule = await import('@/storage/client');
+        spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+        }));
+
+        const memoryToolModule = await import('@/storage/memory-tool');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
+            getTagIndexBackend: mock(() => ({})),
+            get:                mock(async () => undefined),
+            updateMetadataOnly: mock(async () => ({})),
+        })));
+
+        const taskSessionModule = await import('@/storage/task-session');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
+
+        const taskCleanupModule = await import('@/agent/task-cleanup-processor');
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
+
+        const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
+
+        const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
+
+        const { createStorageLayer } = await import('@/app/storage-layer');
+        const result = await createStorageLayer(mockDynamoDBConfig, undefined, {
+            enabled:    false,
+            dbPath:     'memory-vec.sqlite',
+            modelSlug:  '0.6b',
+            modelQuant: 'Q8_0',
+        });
+
+        expect(result.vectorIndex).toBeUndefined();
+        expect(result.asyncIndexer).toBeUndefined();
+    });
+
+    test('should NOT create vector index when embedder is undefined even if vectorIndexConfig.enabled is true', async () => {
+        // Mock all dependencies
+        const storageClientModule = await import('@/storage/client');
+        spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+        }));
+
+        const memoryToolModule = await import('@/storage/memory-tool');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
+            getTagIndexBackend: mock(() => ({})),
+            get:                mock(async () => undefined),
+            updateMetadataOnly: mock(async () => ({})),
+        })));
+
+        const taskSessionModule = await import('@/storage/task-session');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
+
+        const taskCleanupModule = await import('@/agent/task-cleanup-processor');
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
+
+        const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
+
+        const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
+
+        const { createStorageLayer } = await import('@/app/storage-layer');
+        const result = await createStorageLayer(mockDynamoDBConfig, undefined, {
+            enabled:    true,
+            dbPath:     'memory-vec.sqlite',
+            modelSlug:  '0.6b',
+            modelQuant: 'Q8_0',
+        }, undefined); // no embedder
+
+        expect(result.vectorIndex).toBeUndefined();
+        expect(result.asyncIndexer).toBeUndefined();
+    });
+
+    test('should create vector index and asyncIndexer when vectorIndexConfig.enabled and embedder provided', async () => {
+        // Mock all dependencies
+        const storageClientModule = await import('@/storage/client');
+        spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+        }));
+
+        const memoryToolModule = await import('@/storage/memory-tool');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
+            getTagIndexBackend: mock(() => ({})),
+            get:                mock(async () => undefined),
+            updateMetadataOnly: mock(async () => ({})),
+        })));
+
+        const taskSessionModule = await import('@/storage/task-session');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
+
+        const taskCleanupModule = await import('@/agent/task-cleanup-processor');
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
+
+        const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
+
+        const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
+
+        // Mock VectorIndex.open to avoid real SQLite file creation
+        const vecStoreModule = await import('@/storage/memory-vec-store');
+        const mockVectorIndex = {
+            isClosed: false,
+            close:    mock(() => {}),
+            getHash:  mock((): string | undefined => undefined),
+            upsert:   mock(() => {}),
+            'delete': mock(() => {}),
+            query:    mock(() => []),
+        };
+        const VectorIndexOpenSpy = spyOn(vecStoreModule.VectorIndex, 'open').mockResolvedValue(mockVectorIndex as unknown as typeof vecStoreModule.VectorIndex.prototype);
+        spies.push(VectorIndexOpenSpy);
+
+        const mockEmbedder = {
+            encode: mock(async () => ({ data: new Uint8Array(128) })),
+            close:  mock(async () => {}),
+        };
+
+        const { createStorageLayer } = await import('@/app/storage-layer');
+        const result = await createStorageLayer(mockDynamoDBConfig, undefined, {
+            enabled:    true,
+            dbPath:     'memory-vec.sqlite',
+            modelSlug:  '0.6b',
+            modelQuant: 'Q8_0',
+        }, mockEmbedder);
+
+        expect(VectorIndexOpenSpy).toHaveBeenCalledWith('memory-vec.sqlite');
+        expect(result.vectorIndex).toBeDefined();
+        expect(result.asyncIndexer).toBeDefined();
     });
 });

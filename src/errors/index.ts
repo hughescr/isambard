@@ -11,6 +11,7 @@ export { ErrorCode } from './codes';
 export { IsambardError, InvariantViolationError } from './base';
 
 export {
+    StorageError,
     ItemNotFoundError,
     ValidationError,
     DynamoTimeoutError,

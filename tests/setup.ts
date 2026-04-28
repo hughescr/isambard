@@ -1,7 +1,31 @@
 // Test setup and configuration
 /* eslint-disable import-x/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
+import { existsSync } from 'node:fs';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Database } from 'bun:sqlite';
 import { afterEach, jest, mock, type Mock } from 'bun:test';
+
+// Configure Bun to use the Homebrew-installed libsqlite3.dylib on macOS.
+// Database.setCustomSQLite MUST be called before the first new Database() in the process.
+// It can only be called once — this is the single correct place to do it (preloaded first).
+// On non-macOS, this is a no-op (system SQLite supports extensions by default).
+/* istanbul ignore next -- platform-specific macOS setup */
+// Stryker disable all -- platform macOS setup; cannot be unit-tested in Bun
+if(process.platform === 'darwin') {
+    let sqlitePath: string | null = process.env.SQLITE_VEC_LIB_PATH ?? null;
+    // eslint-disable-next-line n/no-sync -- sync probe required before any Database is opened; no async alternative at this point in preload execution
+    if(sqlitePath === null && existsSync('/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib')) {
+        sqlitePath = '/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib';
+    }
+    // eslint-disable-next-line n/no-sync -- sync probe required before any Database is opened; no async alternative at this point in preload execution
+    if(sqlitePath === null && existsSync('/usr/local/opt/sqlite3/lib/libsqlite3.dylib')) {
+        sqlitePath = '/usr/local/opt/sqlite3/lib/libsqlite3.dylib';
+    }
+    if(sqlitePath !== null) {
+        Database.setCustomSQLite(sqlitePath);
+    }
+}
+// Stryker restore all
 
 type ContentItem = CallToolResult['content'][number];
 
@@ -674,3 +698,70 @@ Intl.DateTimeFormat = class MockDateTimeFormat {
 afterEach(() => {
     jest.useRealTimers();
 });
+
+// ---------------------------------------------------------------------------
+// Mock node-llama-cpp — the native addon is not available in test environments
+// (and loading it would require actual GGUF files and a GPU).
+// Tests import mockLlamaContext / mockLlamaModel to assert on calls.
+// ---------------------------------------------------------------------------
+
+/** Mutable mock for the embedding context returned by model.createEmbeddingContext() */
+export const mockLlamaContext = {
+    getEmbeddingFor: mock(async (_text: string) => ({
+        // Return a 1024-element Float32Array with alternating positive/negative values
+        // so packSignBits produces a non-trivial (non-all-zero / non-all-FF) pattern
+        vector: new Float32Array(1024).map((_v, i) => (i % 2 === 0 ? 0.5 : -0.5)),
+    })),
+    dispose: mock(async () => undefined),
+};
+
+/** Mutable mock for the model returned by llama.loadModel() */
+export const mockLlamaModel = {
+    createEmbeddingContext: mock(async (_opts: unknown) => mockLlamaContext),
+    dispose:                mock(async () => undefined),
+    gpuLayers:              33,
+};
+
+/** Mutable mock for the top-level Llama instance */
+export const mockLlamaInstance = {
+    loadModel: mock(async (_opts: unknown) => mockLlamaModel),
+    dispose:   mock(async () => undefined),
+};
+
+/** Mock for the top-level getLlama factory — exported so tests can verify call args */
+export const mockGetLlama = mock(async (_opts?: unknown) => mockLlamaInstance);
+
+/** Reset all node-llama-cpp mocks to their default implementations */
+export function resetNodeLlamaCppMocks(): void {
+    mockLlamaContext.getEmbeddingFor.mockReset();
+    mockLlamaContext.getEmbeddingFor.mockImplementation(async (_text: string) => ({
+        vector: new Float32Array(1024).map((_v, i) => (i % 2 === 0 ? 0.5 : -0.5)),
+    }));
+    mockLlamaContext.dispose.mockReset();
+    mockLlamaContext.dispose.mockImplementation(async () => undefined);
+    mockLlamaModel.createEmbeddingContext.mockReset();
+    mockLlamaModel.createEmbeddingContext.mockImplementation(async (_opts: unknown) => mockLlamaContext);
+    mockLlamaModel.dispose.mockReset();
+    mockLlamaModel.dispose.mockImplementation(async () => undefined);
+    mockLlamaInstance.loadModel.mockReset();
+    mockLlamaInstance.loadModel.mockImplementation(async (_opts: unknown) => mockLlamaModel);
+    mockLlamaInstance.dispose.mockReset();
+    mockLlamaInstance.dispose.mockImplementation(async () => undefined);
+    mockGetLlama.mockReset();
+    mockGetLlama.mockImplementation(async (_opts?: unknown) => mockLlamaInstance);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
+mock.module('node-llama-cpp', () => ({
+    getLlama:      mockGetLlama,
+    // Minimal LlamaLogLevel enum — only 'warn' is used in production code
+    LlamaLogLevel: {
+        disabled: 'disabled',
+        fatal:    'fatal',
+        error:    'error',
+        warn:     'warn',
+        info:     'info',
+        log:      'log',
+        debug:    'debug',
+    },
+}));

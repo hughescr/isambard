@@ -167,8 +167,17 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
      * the previous trigger).
      */
     function getNextTriggerDelay(): { delayMs: number, nextTime: Date } {
+        // hashSeed uses current hour so each hourly call gets a unique deterministic seed.
+        // currentDate uses new Date() (respects jest.setSystemTime) so cron-parser starts from
+        // the correct time in tests instead of Luxon.DateTime.local() which bypasses fake timers.
+        const now = new Date();
         // Stryker disable next-line StringLiteral,ObjectLiteral: Cron expression format and config
-        const expression = CronExpressionParser.parse('H * * * *', { tz: config.timezone });
+        const expression = CronExpressionParser.parse('H * * * *', {
+            tz:          config.timezone,
+            currentDate: now,
+            // Stryker disable next-line ArithmeticOperator: hour-bucketed seed — division is intentional to group by hour; any numeric seed is valid (static NoCoverage)
+            hashSeed:    Math.floor(now.getTime() / 3_600_000).toString(),
+        });
         let nextTime = expression.next().toDate();
         // Skip past the previously scheduled hour to avoid double-fires:
         // a fresh parser picks a random minute that may land in the same hour

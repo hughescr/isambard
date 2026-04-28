@@ -30,3 +30,33 @@ export { PersonAllowlist, type PersonAllowlistEntry } from './person-allowlist';
 
 // Activity Logger
 export { createActivityLogger, type ActivityLogger, type ActivityLogEntry, type ActivityType } from './activity-log';
+
+// Memory-Vec embedding library
+export {
+    Embedder,
+    EmbedderClosedError,
+    ggufPath,
+    IncompatibleLlamaCppError,
+    loadEmbedder,
+    MemoryVecError,
+    ModelFileNotFoundError,
+    type EmbedderOptions,
+    type EmbedResult,
+    type ModelQuant,
+    type ModelSlug
+} from './memory-vec';
+
+// Memory-Vec-Store: SQLite vector index + async indexer
+export {
+    VectorIndex,
+    AsyncIndexer,
+    VectorIndexError,
+    VectorIndexClosedError,
+    VectorIndexUnavailableError,
+    type EmbedderLike,
+    type VectorIndexEntry,
+    type IndexerJob,
+    type IndexerUpsertJob,
+    type IndexerDeleteJob,
+    type VectorQueryResult
+} from './memory-vec-store';

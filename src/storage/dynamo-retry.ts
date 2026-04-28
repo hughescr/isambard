@@ -14,8 +14,7 @@
  */
 
 import { DynamoTimeoutError } from '@/errors';
-import { classifyNetworkError } from '@/utils';
-import type { RetryLogger } from '@/utils';
+import { classifyNetworkError, type RetryLogger  } from '@/utils';
 
 export interface DynamoTimeoutOptions {
     timeoutMs: number

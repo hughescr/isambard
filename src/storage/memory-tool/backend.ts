@@ -1,12 +1,13 @@
 import { type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder } from '../client-holder';
+import type { IndexerJob } from '../memory-vec-store/types.js';
 import { BaseRepository } from '../repositories/base';
 import { stripDynamoKeys } from '../utils/index.js';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
-import { normalizeTags, generateContentPreview } from './key-generator';
+import { MemoryToolKeyGenerator, normalizeTags, generateContentPreview } from './key-generator';
 import {
     type MemoryPath,
     type MemoryToolItemData,
@@ -16,6 +17,15 @@ import {
 } from './types';
 
 /**
+ * Minimal interface for the async indexer dependency.
+ * Typed as an interface to keep tests lightweight (no concrete class import required).
+ * @internal
+ */
+export interface MemoryIndexer {
+    enqueue: (job: IndexerJob) => void
+}
+
+/**
  * Memory tool backend facade that delegates to specialized modules.
  * Provides a unified API for all memory tool operations.
  */
@@ -23,9 +33,16 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     private readonly coreOps:     MemoryToolBackendCore;
     private readonly queryOps:    MemoryToolBackendQuery;
     private readonly tagIndexOps: MemoryToolBackendTagIndex;
+    private readonly indexer:     MemoryIndexer | undefined;
 
-    constructor(docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder, tableName: string) {
+    constructor(
+        docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
+        tableName:         string,
+        indexer?:          MemoryIndexer
+    ) {
         super(docClientOrHolder, tableName);
+
+        this.indexer = indexer;
 
         this.coreOps = new MemoryToolBackendCore(
             tableName,
@@ -46,6 +63,25 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             stripDynamoKeys,
             this.tagIndexOps
         );
+    }
+
+    /**
+     * Enqueues an indexer job if an indexer is configured.
+     * Errors from enqueue are swallowed — never propagate to callers.
+     */
+    private enqueueIndex(job: IndexerJob): void {
+        // Stryker disable next-line ConditionalExpression: optimization guard — no indexer means nothing to enqueue
+        if(!this.indexer) {
+            return;
+        }
+        // Stryker disable BlockStatement: defensive catch — indexer errors must never propagate to DynamoDB callers
+        try {
+            this.indexer.enqueue(job);
+        } catch (error) {
+            /* Stryker disable all: Defensive error handling for indexer */
+            logger.warn({ error, msg: 'MemoryToolBackend: indexer.enqueue failed, ignoring' });
+            /* Stryker restore all */
+        }
     }
 
     // Core CRUD operations
@@ -75,6 +111,13 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
                 /* Stryker restore all */
             }
         }
+
+        // Enqueue vector index upsert job (fire-and-forget)
+        const keys = MemoryToolKeyGenerator.createKeys(result.path);
+        const layer = extractLayerFromPath(result.path);
+        // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
+        const layerStr = layer ?? 'unknown';
+        this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path: result.path, content: result.content });
 
         return result;
     }
@@ -122,6 +165,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
                     /* Stryker restore all */
                 }
             }
+
+            // Enqueue vector index upsert job (fire-and-forget)
+            const keys = MemoryToolKeyGenerator.createKeys(path);
+            this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path, content: result.content });
         }
 
         return result;
@@ -148,6 +195,10 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
                 /* Stryker restore all */
             }
         }
+
+        // Enqueue vector index delete job (fire-and-forget)
+        const keys = MemoryToolKeyGenerator.createKeys(path);
+        this.enqueueIndex({ kind: 'delete', pk: keys.PK, sk: keys.SK });
 
         return existing;
     }

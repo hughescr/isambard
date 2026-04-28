@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpTextResult } from './mcp-helpers';
-import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType } from '@/storage';
+import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType, type VectorIndex, MemoryToolKeyGenerator, type EmbedderLike } from '@/storage';
 
 /**
  * Upserts a memory at the given path: updates if it exists, creates if it does not.
@@ -51,8 +51,120 @@ function appendCursorInfo(formatted: string, nextCursor: string | undefined): st
  */
 export function createMemoryMCPServer(
     backend: MemoryToolBackend,
-    options?: { recordAccess?: (paths: MemoryPath[]) => Promise<void> }
+    options?: {
+        recordAccess?: (paths: MemoryPath[]) => Promise<void>
+        /** Optional vector index for semantic search */
+        vectorIndex?:  VectorIndex
+        /** Optional embedder for encoding semantic search queries */
+        embedder?:     EmbedderLike
+    }
 ) {
+    // Build semantic_search tool only when both vector deps are present.
+    // When absent, the tool is not registered at all (not even as a stub that errors).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- conditional tool array requires any[] to allow mixed ZodRawShape generics across different tool() calls; no-unsafe-assignment is intentional here
+    const semanticSearchTools: any[] = options?.vectorIndex && options.embedder
+        ? [
+            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
+            tool(
+                'semantic_search',
+                'Semantic search over memories by content similarity. Use the `search` tool for tag-based filtering instead. The query is embedded the same way memory content is, so phrase it in the form a matching memory would take — declarative statements rather than questions.',
+                // Stryker restore StringLiteral
+                {
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    query: z.string().describe('Natural language query to search for semantically similar memories'),
+                    // Stryker disable next-line StringLiteral,ArrayDeclaration: z.enum values and describe() are schema configuration
+                    layer: z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    limit: z.number().int().positive().default(5).describe('Maximum number of results to return (default: 5)'),
+                },
+                async (args): Promise<CallToolResult> => {
+                    // At this point options.vectorIndex and options.embedder are guaranteed non-null
+                    // because this tool is only registered when both are present.
+                    const vectorIndex = options.vectorIndex!;
+                    const embedder    = options.embedder!;
+                    try {
+                        // Encode the query text into a 128-byte bit vector
+                        const encodeResult = await embedder.encode([args.query]);
+                        const queryVec = encodeResult.data.slice(0, 128);
+
+                        // Query the vector index for nearest neighbors
+                        const layerFilter = args.layer ? createLayerName(args.layer) : undefined;
+                        const queryResults = vectorIndex.query(queryVec, args.limit, layerFilter);
+
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: early-return guard for empty results — removing body is equivalent because empty results produce '' string which hits the second guard below
+                        if(queryResults.length === 0) {
+                            return mcpTextResult('No semantically similar memories found');
+                        }
+
+                        // Resolve paths from PK/SK and fetch full items in parallel
+                        const itemPromises = queryResults.map(async (r) => {
+                            const pathStr = MemoryToolKeyGenerator.parsePath(r.pk, r.sk);
+                            const memPath = createMemoryPath(pathStr);
+                            const item = await backend.get(memPath);
+                            return { r, item };
+                        });
+                        const resolvedItems = await Promise.all(itemPromises);
+
+                        // Fire-and-forget: record access for state-layer memories (scoring)
+                        // Stryker disable next-line ConditionalExpression: recordAccess is fire-and-forget optimization
+                        if(options.recordAccess) {
+                            const statePaths = resolvedItems
+                                .filter(({ item }) => item?.path.startsWith('/state/'))
+                                .map(({ item }) => item!.path);
+                            // Stryker disable BlockStatement: recordAccess catch is fire-and-forget
+                            if(statePaths.length > 0) {
+                                options.recordAccess(statePaths).catch((error: unknown) => {
+                                    logger.warn({ error, paths: statePaths, msg: 'Failed to record memory access from semantic_search' });
+                                });
+                            }
+                            // Stryker restore BlockStatement
+                        }
+
+                        // Format results: 200-char preview with '...' suffix for longer content, joined by blank lines
+                        const PREVIEW_LIMIT = 200;
+                        const ELLIPSIS = '...';
+                        const RESULT_SEPARATOR = '\n\n';
+                        // Empty string for the else branch of the ellipsis ternary (no suffix when content fits)
+                        const NO_ELLIPSIS = '';
+                        const formatted = resolvedItems
+                            .filter(({ item }) => item !== undefined)
+                            .map(({ r, item }) => {
+                                // Truncate content to PREVIEW_LIMIT chars; suffix is ELLIPSIS if truncated, otherwise nothing
+                                const content = item!.content;
+                                const preview = content.slice(0, PREVIEW_LIMIT);
+                                const isTruncated = content.length > PREVIEW_LIMIT;
+                                const ellipsis = isTruncated ? ELLIPSIS : NO_ELLIPSIS;
+                                return `${item!.path} [distance: ${r.distance}, layer: ${r.layer}]\n${preview}${ellipsis}`;
+                            })
+                            .join(RESULT_SEPARATOR);
+
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator: guard for case where all looked-up items were deleted
+                        if(!formatted) {
+                            return mcpTextResult('No semantically similar memories found');
+                        }
+                        return mcpTextResult(formatted);
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        return {
+                            content: [{ type: 'text' as const, text: `Error in semantic search: ${message}` }],
+                            isError: true,
+                        };
+                    }
+                },
+                // Tool annotations: semantic_search is read-only, non-destructive, non-idempotent (results vary by index state), closed-world
+                // Stryker disable next-line ObjectLiteral: Tool annotations outer object is MCP server configuration
+                {
+                    annotations: {
+                        readOnlyHint:    true,
+                        destructiveHint: false,
+                        idempotentHint:  false,
+                        openWorldHint:   false,
+                    },
+                }
+            ),
+        ]
+        : [];
+
     return createSdkMcpServer({
         name:    'memory',
         version: '1.0.0',
@@ -243,6 +355,10 @@ export function createMemoryMCPServer(
                 // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
+
+            // semantic_search tool is conditionally included above (see semanticSearchTools).
+            // It is only registered when both vectorIndex and embedder are present.
+            ...(semanticSearchTools as []),
 
             // Stryker disable StringLiteral: Tool name and description are MCP server configuration
             tool(
