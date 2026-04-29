@@ -69,10 +69,11 @@ describe('createStorageLayer', () => {
         // Mock reconciliation scheduler
         const reconciliationModule = await import('@/storage/memory-tool/reconciliation');
         const mockReconciliationScheduler = {
-            start:      mock(() => {}),
-            stop:       mock(() => {}),
-            getState:   mock(() => ({ isRunning: false, currentPhase: null })),
-            triggerNow: mock(async () => undefined),
+            start:       mock(() => {}),
+            stop:        mock(() => {}),
+            getState:    mock(() => ({ isRunning: false, currentPhase: null })),
+            triggerNow:  mock(async () => undefined),
+            notifyDrift: mock(() => {}),
         };
         const createReconciliationSchedulerSpy = spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue(mockReconciliationScheduler);
         spies.push(createReconciliationSchedulerSpy);
@@ -200,10 +201,12 @@ describe('createStorageLayer', () => {
         // Verify MemoryToolBackend constructor was called with the holder (not raw docClient)
         // The holder wraps the docClient created by createDynamoDBClient
         // Third arg (indexer) is undefined when no vectorIndexConfig provided
+        // Fourth arg is the drift callback closure (always provided)
         expect(MemoryToolBackendSpy).toHaveBeenCalledWith(
             expect.objectContaining({ getDocClient: expect.any(Function) }),
             'TestTable',
-            undefined
+            undefined,
+            expect.any(Function)
         );
     });
 
@@ -602,5 +605,60 @@ describe('createStorageLayer', () => {
         expect(VectorIndexOpenSpy).toHaveBeenCalledWith('memory-vec.sqlite');
         expect(result.vectorIndex).toBeDefined();
         expect(result.asyncIndexer).toBeDefined();
+    });
+
+    test('drift callback calls notifyDrift on the reconciliation scheduler when set', async () => {
+        const storageClientModule = await import('@/storage/client');
+        spies.push(spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client:    {} as unknown as DynamoDBClient,
+            docClient: {} as unknown as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+        }));
+
+        // Capture the drift callback passed to MemoryToolBackend
+        let capturedDriftCallback: (() => void) | undefined;
+        const memoryToolModule = await import('@/storage/memory-tool');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation((_holder, _tableName, _indexer, driftCallback: (() => void) | undefined) => {
+            capturedDriftCallback = driftCallback;
+            return {
+                getTagIndexBackend: mock(() => ({})),
+                get:                mock(async () => undefined),
+                updateMetadataOnly: mock(async () => ({})),
+            };
+        }));
+
+        // Create a mock reconciliation scheduler with a notifyDrift spy
+        const mockNotifyDrift = mock(() => {});
+        const reconciliationModule = await import('@/storage/memory-tool/reconciliation');
+        const mockReconciliationScheduler: ReconciliationScheduler = {
+            start:       mock(() => {}),
+            stop:        mock(() => {}),
+            getState:    mock(() => ({ isRunning: false as const, currentPhase: null, lastCompletedAt: undefined })),
+            triggerNow:  mock(async () => undefined),
+            notifyDrift: mockNotifyDrift,
+        };
+        spies.push(spyOn(reconciliationModule, 'createReconciliationScheduler').mockReturnValue(mockReconciliationScheduler));
+
+        const taskSessionModule = await import('@/storage/task-session');
+        // @ts-expect-error - Mocking constructor
+        spies.push(spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})));
+        const taskCleanupModule = await import('@/agent/task-cleanup-processor');
+        spies.push(spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor));
+        const taskDirectoryCopierModule = await import('@/agent/task-directory-copier');
+        spies.push(spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier));
+        const taskPersistenceModule = await import('@/agent/task-persistence-coordinator');
+        spies.push(spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator));
+
+        const { createStorageLayer } = await import('@/app/storage-layer');
+        await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
+
+        // The drift callback should have been captured and, when invoked, delegates to notifyDrift
+        expect(capturedDriftCallback).toBeDefined();
+        expect(mockNotifyDrift).not.toHaveBeenCalled();
+
+        // Invoke the drift callback — should call reconciliationScheduler.notifyDrift()
+        capturedDriftCallback!();
+        expect(mockNotifyDrift).toHaveBeenCalledTimes(1);
     });
 });

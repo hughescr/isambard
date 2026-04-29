@@ -98,14 +98,18 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                             return mcpJsonResult({ events: [], message: 'No calendars configured for this user' });
                         }
 
-                        const events = await client.getEvents(servers, new Date(args.startDate), new Date(args.endDate));
+                        const { events, failed } = await client.getEvents(servers, new Date(args.startDate), new Date(args.endDate));
                         return mcpJsonResult({
                             events: events.map(e => ({
                                 ...e,
                                 start: e.start.toISOString(),
                                 end:   e.end.toISOString(),
                             })),
-                            count: events.length,
+                            count:        events.length,
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed count to agent only when non-zero
+                            failedCount:  failed.length > 0 ? failed.length : undefined,
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed UIDs to agent only when non-zero
+                            failedEvents: failed.length > 0 ? failed.map(f => f.uid) : undefined,
                         });
                     })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration
@@ -134,18 +138,22 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                         }
 
                         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Zod .default(7) makes type non-optional, but handler is called directly in tests without schema processing
-                        const days   = args.days ?? 7;
-                        const now    = new Date();
-                        const end    = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-                        const events = await client.getEvents(servers, now, end);
+                        const days             = args.days ?? 7;
+                        const now              = new Date();
+                        const end              = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+                        const { events, failed } = await client.getEvents(servers, now, end);
                         return mcpJsonResult({
                             events: events.map(e => ({
                                 ...e,
                                 start: e.start.toISOString(),
                                 end:   e.end.toISOString(),
                             })),
-                            count:     events.length,
-                            daysAhead: days,
+                            count:        events.length,
+                            daysAhead:    days,
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed count to agent only when non-zero
+                            failedCount:  failed.length > 0 ? failed.length : undefined,
+                            // Stryker disable next-line ConditionalExpression,EqualityOperator: surface failed UIDs to agent only when non-zero
+                            failedEvents: failed.length > 0 ? failed.map(f => f.uid) : undefined,
                         });
                     })),
                 // Stryker disable next-line ObjectLiteral,StringLiteral,BooleanLiteral: Tool annotations are MCP server configuration

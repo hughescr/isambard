@@ -8,7 +8,7 @@
 import { logger } from '@hughescr/logger';
 import type { SummarizeEventBatchesFn } from './event-summarizer';
 import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
-import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
+import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type FailedCalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName  } from '@/storage';
 import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
@@ -250,6 +250,21 @@ async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Prom
 }
 
 /**
+ * Append a short human-readable note about failed recurring event expansions to the
+ * already-formatted calendar string.  Returns the string unchanged when `failed` is empty.
+ */
+function appendFailedNote(calendarText: string, failed: FailedCalendarEvent[]): string {
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no failures = return unchanged string
+    if(failed.length === 0) {
+        return calendarText;
+    }
+    // Stryker disable next-line StringLiteral: note text is cosmetic UI output, not behaviour-affecting
+    const plural = failed.length === 1 ? 'event' : 'events';
+    // Stryker disable next-line StringLiteral: note text is cosmetic UI output, not behaviour-affecting
+    return `${calendarText}\n\n⚠️ ${failed.length} recurring ${plural} couldn't be parsed and may be missing from the calendar above.`;
+}
+
+/**
  * Classify a caught error into a human-readable reason string for calendar unavailability messages.
  */
 function classifyCalendarError(error: unknown): string {
@@ -383,6 +398,7 @@ class ContextBuilderImpl implements ContextBuilder {
     /**
      * Build the calendar context section for a specific user.
      * Returns formatted calendar section string, or undefined if no service, no calendars, or no events.
+     * Appends a note when some recurring events could not be parsed.
      */
     async #buildCalendarSection(userId: string, userTimezone?: string, now: Date = new Date()): Promise<string | undefined> {
         if(!this.#calendarService) {
@@ -397,14 +413,15 @@ class ContextBuilderImpl implements ContextBuilder {
                 return undefined;
             }
 
-            const events = await this.#calendarService.client.getContextEvents(servers, now);
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section
+            const { events, failed } = await this.#calendarService.client.getContextEvents(servers, now);
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section (failed-only is too sparse to display)
             if(events.length === 0) {
                 return undefined;
             }
 
             const timezone = resolveTimezone(userTimezone);
-            return formatCalendarContext(events, now, timezone);
+            const calendarText = formatCalendarContext(events, now, timezone);
+            return appendFailedNote(calendarText, failed);
         } catch (error) {
             logger.warn({ error, userId }, 'Failed to load calendar context');
             return `[Calendar unavailable: ${classifyCalendarError(error)}]`;
@@ -416,6 +433,7 @@ class ContextBuilderImpl implements ContextBuilder {
      * Build the calendar context section for all registered users (for perch sessions).
      * Loads all users' calendars and merges their events, using Izzy's local timezone.
      * Returns formatted calendar section string, or undefined if no service, no users, or no events.
+     * Appends a note when some recurring events could not be parsed.
      */
     async #buildPerchCalendarSection(now: Date = new Date()): Promise<string | undefined> {
         if(!this.#calendarService) {
@@ -431,24 +449,28 @@ class ContextBuilderImpl implements ContextBuilder {
             }
 
             // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for allEvents
-            const allEvents: CalendarEvent[] = [];
+            const allEvents: CalendarEvent[]       = [];
+            // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for allFailed
+            const allFailed: FailedCalendarEvent[] = [];
             for(const userId of userIds) {
                 // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited CalDAV API, few users
                 const servers = await this.#calendarService.registry.getAllCalendars(userId);
                 // Stryker disable next-line ConditionalExpression,EqualityOperator: skip users with no servers
                 if(servers.length > 0) {
                     // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited CalDAV API
-                    const events = await this.#calendarService.client.getContextEvents(servers, now);
+                    const { events, failed } = await this.#calendarService.client.getContextEvents(servers, now);
                     allEvents.push(...events);
+                    allFailed.push(...failed);
                 }
             }
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section (failed-only is too sparse to display)
             if(allEvents.length === 0) {
                 return undefined;
             }
 
-            return formatCalendarContext(allEvents, now, resolveTimezone());
+            const calendarText = formatCalendarContext(allEvents, now, resolveTimezone());
+            return appendFailedNote(calendarText, allFailed);
         } catch (error) {
             logger.warn({ error }, 'Failed to load perch calendar context');
             return `[Calendar unavailable: ${classifyCalendarError(error)}]`;

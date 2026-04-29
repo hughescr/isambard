@@ -23,7 +23,8 @@ export {
     TextNotUniqueError,
     InvalidLineNumberError,
     ContactNotFoundError,
-    ContactLastIdentifierError
+    ContactLastIdentifierError,
+    ContactIdentifierLimitError
 } from './storage';
 
 export {

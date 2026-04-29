@@ -6,11 +6,12 @@ import {
     TransactWriteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
-import { ErrorCode } from '@/errors';
+import { ErrorCode, ContactIdentifierLimitError } from '@/errors';
 import { ContactBackend } from '@/storage/contacts/backend';
 import {
     type Contact,
-    type ContactId
+    type ContactId,
+    type ContactIdentifier
 } from '@/storage/contacts/types';
 
 const PERSON_ID   = 'alice-smith' as ContactId;
@@ -215,6 +216,113 @@ describe('ContactBackend', () => {
                 item => item.Put?.Item?.SK !== 'PROFILE'
             );
             expect(emailLookup?.Put?.Item?.PK).toBe('CONTACT_LOOKUP#email#alice@example.com');
+        });
+    });
+
+    // ======================================================================
+    // putContact — identifier count limit
+    // ======================================================================
+    describe('putContact (identifier count limit)', () => {
+        /** Build an array of n distinct identifiers */
+        function makeIdentifiers(n: number): ContactIdentifier[] {
+            return Array.from({ length: n }, (_, i): ContactIdentifier => ({
+                platform: 'email',
+                value:    `user${i}@example.com`,
+            }));
+        }
+
+        test('succeeds with exactly 24 identifiers (new contact)', async () => {
+            const contact24: Contact = {
+                ...ALICE,
+                identifiers: makeIdentifiers(24),
+            };
+            ddbMock.on(GetCommand).resolves(notFound());
+            ddbMock.on(TransactWriteCommand).resolves({});
+
+            // Should not throw — 24 identifiers + 1 profile = 25 items, exactly at the limit
+            expect(backend.putContact(contact24)).resolves.toBeUndefined();
+
+            // Verify DynamoDB was still called
+            expect(ddbMock.commandCalls(TransactWriteCommand)).toHaveLength(1);
+        });
+
+        test('throws ContactIdentifierLimitError with 25 identifiers (new contact)', async () => {
+            const contact25: Contact = {
+                ...ALICE,
+                displayName: 'Alice Smith',
+                identifiers: makeIdentifiers(25),
+            };
+            ddbMock.on(GetCommand).resolves(notFound());
+
+            expect(
+                backend.putContact(contact25)
+            ).rejects.toBeInstanceOf(ContactIdentifierLimitError);
+        });
+
+        test('thrown error has correct code for 25 identifiers', async () => {
+            const contact25: Contact = {
+                ...ALICE,
+                identifiers: makeIdentifiers(25),
+            };
+            ddbMock.on(GetCommand).resolves(notFound());
+
+            expect(
+                backend.putContact(contact25)
+            ).rejects.toMatchObject({
+                code:    ErrorCode.CONTACT_IDENTIFIER_LIMIT,
+                context: {
+                    personId:    PERSON_ID,
+                    displayName: 'Alice Smith',
+                    count:       25,
+                    limit:       24,
+                },
+            });
+        });
+
+        test('throws before any DynamoDB TransactWrite when over limit (new contact)', async () => {
+            const contact25: Contact = {
+                ...ALICE,
+                identifiers: makeIdentifiers(25),
+            };
+            ddbMock.on(GetCommand).resolves(notFound());
+
+            // Intentionally no mock for TransactWriteCommand — it must never be called
+            expect(
+                backend.putContact(contact25)
+            ).rejects.toBeInstanceOf(ContactIdentifierLimitError);
+
+            // TransactWriteCommand must NOT have been invoked
+            expect(ddbMock.commandCalls(TransactWriteCommand)).toHaveLength(0);
+        });
+
+        test('throws ContactIdentifierLimitError with 25 identifiers (update existing contact)', async () => {
+            // Existing contact has 2 identifiers; trying to set 25
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+
+            const contact25: Contact = {
+                ...ALICE,
+                identifiers: makeIdentifiers(25),
+            };
+
+            expect(
+                backend.putContact(contact25)
+            ).rejects.toBeInstanceOf(ContactIdentifierLimitError);
+        });
+
+        test('throws before TransactWrite when over limit (update existing contact)', async () => {
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+
+            const contact25: Contact = {
+                ...ALICE,
+                identifiers: makeIdentifiers(25),
+            };
+
+            // Intentionally no mock for TransactWriteCommand
+            expect(
+                backend.putContact(contact25)
+            ).rejects.toBeInstanceOf(ContactIdentifierLimitError);
+
+            expect(ddbMock.commandCalls(TransactWriteCommand)).toHaveLength(0);
         });
     });
 

@@ -8,7 +8,7 @@ import {
     type ContactProfileItem,
     type PlatformType
 } from './types';
-import { ContactLastIdentifierError, ContactNotFoundError } from '@/errors';
+import { ContactIdentifierLimitError, ContactLastIdentifierError, ContactNotFoundError } from '@/errors';
 import { BaseRepository } from '@/storage';
 
 /** Shorthand for the strongly-typed TransactItems array */
@@ -22,6 +22,13 @@ function identifierKey(id: ContactIdentifier): string {
     // Stryker disable next-line MethodExpression: toLowerCase and toUpperCase are equivalent here — both normalize case for equality comparison; only the direction differs
     return `${id.platform}#${id.value.toLowerCase().trim()}`;
 }
+
+/**
+ * DynamoDB hard limit for items in a single TransactWriteItems call.
+ * The contact profile record occupies one slot, leaving this many slots for identifiers.
+ */
+const DYNAMO_TRANSACT_WRITE_LIMIT = 25;
+const MAX_IDENTIFIERS_PER_CONTACT = DYNAMO_TRANSACT_WRITE_LIMIT - 1; // 24
 
 /**
  * DynamoDB backend for contact/address book storage.
@@ -59,6 +66,17 @@ export class ContactBackend extends BaseRepository<Contact> {
         // We'll get the existing contact's identifiers and include deletes for any that are
         // being removed.
         const existing = await this.getContact(contact.personId);
+
+        // Fail fast: DynamoDB's TransactWriteItems limit is 25 items. The profile record
+        // occupies one slot, leaving MAX_IDENTIFIERS_PER_CONTACT (24) for lookup items.
+        if(contact.identifiers.length > MAX_IDENTIFIERS_PER_CONTACT) {
+            throw new ContactIdentifierLimitError(
+                contact.personId,
+                contact.displayName,
+                contact.identifiers.length,
+                MAX_IDENTIFIERS_PER_CONTACT
+            );
+        }
 
         const transactItems: TransactItems = [];
 

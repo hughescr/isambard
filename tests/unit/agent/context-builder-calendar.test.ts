@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
 import { CaldavAuthError, CaldavTimeoutError } from '../../../src/errors';
-import type { CalDAVClient, CalendarRegistryBackend, CalendarServerEntry } from '../../../src/integrations/caldav';
+import type { CalDAVClient, CalendarRegistryBackend, CalendarEventsResult, CalendarServerEntry } from '../../../src/integrations/caldav';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 import { mockLogger } from '../../setup';
@@ -49,7 +49,7 @@ describe('createContextBuilder calendar context injection', () => {
         backend = new MemoryToolBackend(mockDocClient, 'test-table');
 
         mockCalDAVClient = {
-            getContextEvents: mock(async () => [fakeEvent]),
+            getContextEvents: mock(async (): Promise<CalendarEventsResult> => ({ events: [fakeEvent], failed: [] })),
         } as unknown as CalDAVClient;
 
         mockCalendarRegistry = {
@@ -105,7 +105,7 @@ describe('createContextBuilder calendar context injection', () => {
             setupBackendMocks();
 
             mockCalendarRegistry.listRegisteredUserIds = mock(async () => ['user-alice']);
-            mockCalDAVClient.getContextEvents = mock(async () => []);
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [], failed: [] }));
 
             const calendarService: CalendarService = {
                 client:   mockCalDAVClient,
@@ -183,7 +183,7 @@ describe('createContextBuilder calendar context injection', () => {
 
             mockCalendarRegistry.listRegisteredUserIds = mock(async () => ['user-alice', 'user-bob']);
             mockCalendarRegistry.getAllCalendars = mock(async () => [fakeServer]);
-            mockCalDAVClient.getContextEvents = mock(async () => [fakeEvent]);
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [fakeEvent], failed: [] }));
 
             const calendarService: CalendarService = {
                 client:   mockCalDAVClient,
@@ -220,14 +220,14 @@ describe('createContextBuilder calendar context injection', () => {
             setupBackendMocks();
 
             mockCalendarRegistry.listRegisteredUserIds = mock(async () => ['user-alice']);
-            mockCalDAVClient.getContextEvents = mock(async () => [{
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [{
                 uid:           'evt-allday',
                 summary:       'UTC perch event',
                 start:         new Date('2026-03-18T00:00:00Z'),
                 end:           new Date('2026-03-19T00:00:00Z'),
                 isAllDay:      true,
                 calendarLabel: 'Work',
-            }]);
+            }], failed: [] }));
 
             const calendarService: CalendarService = {
                 client:   mockCalDAVClient,
@@ -340,7 +340,7 @@ describe('createContextBuilder calendar context injection', () => {
         test('should NOT include calendar section when getContextEvents returns empty', async () => {
             setupBackendMocks();
 
-            mockCalDAVClient.getContextEvents = mock(async () => []);
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [], failed: [] }));
 
             const calendarService: CalendarService = {
                 client:   mockCalDAVClient,
@@ -553,14 +553,14 @@ describe('createContextBuilder calendar context injection', () => {
             setupBackendMocks();
 
             // Use an all-day event to avoid timezone-dependent time rendering
-            mockCalDAVClient.getContextEvents = mock(async () => [{
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [{
                 uid:           'evt-allday',
                 summary:       'All day event',
                 start:         new Date('2026-03-18T00:00:00Z'),
                 end:           new Date('2026-03-19T00:00:00Z'),
                 isAllDay:      true,
                 calendarLabel: 'Main',
-            }]);
+            }], failed: [] }));
 
             const calendarService: CalendarService = {
                 client:   mockCalDAVClient,
@@ -578,14 +578,14 @@ describe('createContextBuilder calendar context injection', () => {
         test('should use server local timezone as default when userTimezone is not provided', async () => {
             setupBackendMocks();
 
-            mockCalDAVClient.getContextEvents = mock(async () => [{
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({ events: [{
                 uid:           'evt-allday',
                 summary:       'UTC event',
                 start:         new Date('2026-03-18T00:00:00Z'),
                 end:           new Date('2026-03-19T00:00:00Z'),
                 isAllDay:      true,
                 calendarLabel: 'Work',
-            }]);
+            }], failed: [] }));
 
             const calendarService: CalendarService = {
                 client:   mockCalDAVClient,
@@ -611,6 +611,64 @@ describe('createContextBuilder calendar context injection', () => {
             await contextBuilder.buildUserMessagePrefix('user-xyz');
 
             expect(mockCalendarRegistry.getAllCalendars).toHaveBeenCalledWith('user-xyz');
+        });
+
+        test('should append failed-events note to calendar section when expansions fail', async () => {
+            setupBackendMocks();
+
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({
+                events: [fakeEvent],
+                failed: [{ uid: 'bad-uid', reason: 'Malformed RRULE' }],
+            }));
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('## Calendar');
+            expect(result).toContain("1 recurring event couldn't be parsed");
+        });
+
+        test('plural note when multiple expansions fail', async () => {
+            setupBackendMocks();
+
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({
+                events: [fakeEvent],
+                failed: [
+                    { uid: 'bad-1', reason: 'Malformed RRULE' },
+                    { uid: 'bad-2', reason: 'Unsupported BYDAY' },
+                ],
+            }));
+
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain("2 recurring events couldn't be parsed");
+        });
+
+        test('no failed note appended when all expansions succeed', async () => {
+            setupBackendMocks();
+
+            // Default mock already returns failed: []
+            const calendarService: CalendarService = {
+                client:   mockCalDAVClient,
+                registry: mockCalendarRegistry,
+            };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain('## Calendar');
+            expect(result).not.toContain("couldn't be parsed");
         });
 
         test('should still include other sections when calendar section is present', async () => {

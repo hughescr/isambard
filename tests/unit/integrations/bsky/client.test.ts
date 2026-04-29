@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
@@ -146,9 +146,18 @@ const { BlueskyClient } = await import('@/integrations/bsky/client');
 // Shared test data
 // ---------------------------------------------------------------------------
 
+// Disable sleep in tests so retry-on-rate-limit does not add real wall-clock delay.
+// Retry is still exercised; only the sleep between attempts is skipped.
+const NOOP_RETRY_DEPS = {
+    sleep:  () => Promise.resolve(),
+    now:    () => 0,
+    logger: { warn: () => undefined, error: () => undefined, debug: () => undefined },
+} as const;
+
 const CLIENT_OPTIONS = {
     handle:      'test.bsky.social',
     appPassword: 'app-password-secret',
+    retryDeps:   NOOP_RETRY_DEPS,
 };
 
 const AUTHOR_BASIC = {
@@ -353,6 +362,84 @@ describe.concurrent('BlueskyClient', () => {
             mockLogin.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded', 'Too many requests'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.login()).rejects.toBeInstanceOf(BskyRateLimitError);
+        });
+
+        describe('rate limit header parsing (extractRateLimitRetryAfterMs)', () => {
+            beforeEach(() => {
+                jest.useFakeTimers();
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('sets retryAfterMs when valid ratelimit-reset header is present', () => {
+                // Set current time to a known value: Unix epoch 1_000_000 sec
+                jest.setSystemTime(new Date(1_000_000_000));
+                // Reset time is 30 seconds in the future: epoch 1_000_030 sec
+                const resetEpoch = Math.floor(Date.now() / 1000) + 30;
+                const errWithHeaders = Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': String(resetEpoch) },
+                });
+                mockLogin.mockRejectedValueOnce(errWithHeaders);
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+
+                expect(client.login()).rejects.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: 30_000 }),
+                });
+            });
+
+            test('sets retryAfterMs to 0 when reset time is in the past', () => {
+                jest.setSystemTime(new Date(1_000_000_000));
+                // Reset time is 10 seconds in the PAST
+                const resetEpoch = Math.floor(Date.now() / 1000) - 10;
+                const errWithHeaders = Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': String(resetEpoch) },
+                });
+                mockLogin.mockRejectedValueOnce(errWithHeaders);
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+
+                // Negative delay is clamped to 0
+                expect(client.login()).rejects.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: 0 }),
+                });
+            });
+
+            test('caps retryAfterMs to 300_000ms when reset is far in the future', () => {
+                jest.setSystemTime(new Date(1_000_000_000));
+                // Reset time is 10 minutes (600s) in the future — above 300s cap
+                const resetEpoch = Math.floor(Date.now() / 1000) + 600;
+                const errWithHeaders = Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': String(resetEpoch) },
+                });
+                mockLogin.mockRejectedValueOnce(errWithHeaders);
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+
+                // Capped to 300s = 300_000ms
+                expect(client.login()).rejects.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: 300_000 }),
+                });
+            });
+
+            test('omits retryAfterMs when ratelimit-reset header value is not a finite number', () => {
+                const errWithHeaders = Object.assign(new Error('Rate limited'), {
+                    status:  429,
+                    error:   'RateLimitExceeded',
+                    headers: { 'ratelimit-reset': 'not-a-number' },
+                });
+                mockLogin.mockRejectedValueOnce(errWithHeaders);
+                const client = new BlueskyClient(CLIENT_OPTIONS);
+
+                expect(client.login()).rejects.not.toMatchObject({
+                    context: expect.objectContaining({ retryAfterMs: expect.anything() }),
+                });
+            });
         });
 
         test('throws BskyError on generic XRPC failure', async () => {
@@ -623,8 +710,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
-        test('throws BskyRateLimitError on 429', async () => {
-            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+        test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockGetTimeline.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
         });
@@ -686,8 +774,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
-        test('throws BskyRateLimitError on 429', async () => {
-            mockGetAuthorFeed.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+        test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockGetAuthorFeed.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
@@ -743,8 +832,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
-        test('throws BskyRateLimitError on 429', async () => {
-            mockGetPosts.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+        test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockGetPosts.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
@@ -854,8 +944,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.getNotifications()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
-        test('throws BskyRateLimitError on 429', async () => {
-            mockListNotifications.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+        test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockListNotifications.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.getNotifications()).rejects.toBeInstanceOf(BskyRateLimitError);
         });
@@ -936,8 +1027,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
-        test('throws BskyRateLimitError on 429', async () => {
-            mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+        test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockGetProfile.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
@@ -992,8 +1084,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
-        test('throws BskyRateLimitError on 429', async () => {
-            mockSearchPosts.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+        test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockSearchPosts.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
@@ -2676,10 +2769,11 @@ describe.concurrent('BlueskyClient', () => {
             expect(mockSendEvent).toHaveBeenCalledWith('bluesky', 'CONNECTION_LOST', expect.objectContaining({ error: expect.any(String) }));
         });
 
-        test('does not send CONNECTION_LOST on rate limit error (429)', async () => {
+        test('does not send CONNECTION_LOST on rate limit error (429) after exhausting retries', async () => {
             const mockSendEvent  = mock(() => undefined);
             const healthRegistry = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
-            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded', 'Too many requests'));
+            // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
+            mockGetTimeline.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded', 'Too many requests'));
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
             expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
             await Promise.resolve();
@@ -2711,6 +2805,152 @@ describe.concurrent('BlueskyClient', () => {
             expect(client.login()).rejects.toBeInstanceOf(BskyAuthError);
             await Promise.resolve();
             expect(mockSendEvent).not.toHaveBeenCalled();
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Rate-limit retry behavior (non-concurrent to isolate retry call counts)
+// ---------------------------------------------------------------------------
+
+describe('BlueskyClient — rate-limit retry behavior', () => {
+    beforeEach(() => {
+        mockGetTimeline.mockReset();
+        mockGetFeed.mockReset();
+        mockGetAuthorFeed.mockReset();
+        mockGetPosts.mockReset();
+        mockListNotifications.mockReset();
+        mockGetProfile.mockReset();
+        mockSearchPosts.mockReset();
+        mockLike.mockReset();
+        mockFollow.mockReset();
+        mockDeleteFollow.mockReset();
+        mockUpdateSeen.mockReset();
+        mockListConvos.mockReset();
+        mockGetMessages.mockReset();
+        mockSendMessage.mockReset();
+        mockUpdateRead.mockReset();
+        mockWithProxy.mockReset();
+        mockGetConvoForMembers.mockReset();
+        mockWithProxy.mockImplementation(() => ({
+            chat: {
+                bsky: {
+                    convo: {
+                        listConvos:         mockListConvos,
+                        getConvoForMembers: mockGetConvoForMembers,
+                        getMessages:        mockGetMessages,
+                        sendMessage:        mockSendMessage,
+                        updateRead:         mockUpdateRead,
+                    },
+                },
+            },
+        }));
+        mockLogin.mockResolvedValue({});
+        mockLogger.error.mockClear();
+    });
+
+    describe('Read methods succeed on retry after a single 429', () => {
+        test('getFeed retries once on 429 and succeeds', async () => {
+            mockGetTimeline.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetTimeline.mockResolvedValueOnce({ data: { feed: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getFeed();
+            expect(result.items).toEqual([]);
+            expect(mockGetTimeline).toHaveBeenCalledTimes(2);
+        });
+
+        test('getAuthorFeed retries once on 429 and succeeds', async () => {
+            mockGetAuthorFeed.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetAuthorFeed.mockResolvedValueOnce({ data: { feed: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getAuthorFeed('actor.bsky.social');
+            expect(result.items).toEqual([]);
+            expect(mockGetAuthorFeed).toHaveBeenCalledTimes(2);
+        });
+
+        test('getNotifications retries once on 429 and succeeds', async () => {
+            mockListNotifications.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockListNotifications.mockResolvedValueOnce({ data: { notifications: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getNotifications();
+            expect(result.notifications).toEqual([]);
+            expect(mockListNotifications).toHaveBeenCalledTimes(2);
+        });
+
+        test('getProfile retries once on 429 and succeeds', async () => {
+            mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:abc', handle: 'user.bsky.social' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getProfile('user.bsky.social');
+            expect(result.handle).toBe('user.bsky.social');
+            expect(mockGetProfile).toHaveBeenCalledTimes(2);
+        });
+
+        test('getPost retries once on 429 and succeeds', async () => {
+            mockGetPosts.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_VIEW] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.getPost('at://did:plc:author123/app.bsky.feed.post/abc123');
+            expect(result.uri).toBe(POST_VIEW.uri);
+            expect(mockGetPosts).toHaveBeenCalledTimes(2);
+        });
+
+        test('searchPosts retries once on 429 and succeeds', async () => {
+            mockSearchPosts.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockSearchPosts.mockResolvedValueOnce({ data: { posts: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const result = await client.searchPosts('hello');
+            expect(result.posts).toEqual([]);
+            expect(mockSearchPosts).toHaveBeenCalledTimes(2);
+        });
+
+        test('listConversations retries once on 429 and succeeds', async () => {
+            mockListConvos.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockListConvos.mockResolvedValueOnce({ data: { convos: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.listConversations();
+            expect(result.conversations).toEqual([]);
+            expect(mockListConvos).toHaveBeenCalledTimes(2);
+        });
+
+        test('getMessages retries once on 429 and succeeds', async () => {
+            mockGetMessages.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [], cursor: undefined } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            const result = await client.getMessages('convo-123');
+            expect(result.messages).toEqual([]);
+            expect(mockGetMessages).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    describe('Write methods do NOT retry on 429 (exactly one call)', () => {
+        test('likePost does not retry on 429 (called exactly once)', async () => {
+            mockLike.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await Promise.resolve();
+            expect(mockLike).toHaveBeenCalledTimes(1);
+        });
+
+        test('sendDirectMessage does not retry on 429 (called exactly once)', async () => {
+            mockDetectFacets.mockResolvedValueOnce(undefined);
+            mockSendMessage.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            expect(client.sendDirectMessage('convo-123', 'hello')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await Promise.resolve();
+            expect(mockSendMessage).toHaveBeenCalledTimes(1);
+        });
+
+        test('markConversationRead does not retry on 429 (called exactly once)', async () => {
+            mockUpdateRead.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+            expect(client.markConversationRead('convo-123')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await Promise.resolve();
+            expect(mockUpdateRead).toHaveBeenCalledTimes(1);
         });
     });
 });

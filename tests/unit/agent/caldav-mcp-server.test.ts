@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createCaldavMCPServer, type UserResolveResult } from '../../../src/agent/caldav-mcp-server';
-import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent } from '../../../src/integrations/caldav';
+import type { CalDAVClient, CalendarRegistryBackend, CalendarEvent, CalendarEventsResult } from '../../../src/integrations/caldav';
 import type { CalendarServerEntry } from '../../../src/integrations/caldav/calendar-registry/types';
 import { textContent } from '../../setup';
 
@@ -41,8 +41,8 @@ describe.concurrent('createCaldavMCPServer', () => {
 
     beforeEach(() => {
         mockClient = {
-            getEvents:         mock(async (): Promise<CalendarEvent[]> => [mockEvent()]),
-            getContextEvents:  mock(async (): Promise<CalendarEvent[]> => [mockEvent()]),
+            getEvents:         mock(async (): Promise<CalendarEventsResult> => ({ events: [mockEvent()], failed: [] })),
+            getContextEvents:  mock(async (): Promise<CalendarEventsResult> => ({ events: [mockEvent()], failed: [] })),
             discoverCalendars: mock(async () => []),
             invalidateCache:   mock(() => undefined),
         } as unknown as CalDAVClient;
@@ -122,9 +122,10 @@ describe.concurrent('createCaldavMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { events: unknown[], count: number };
+            const parsed = JSON.parse(text) as { events: unknown[], count: number, failedCount?: number };
             expect(parsed.events).toHaveLength(1);
             expect(parsed.count).toBe(1);
+            expect(parsed.failedCount).toBeUndefined();
         });
 
         test('should pass servers and parsed dates to client.getEvents', async () => {
@@ -139,6 +140,25 @@ describe.concurrent('createCaldavMCPServer', () => {
                 new Date('2026-03-18'),
                 new Date('2026-03-25')
             );
+        });
+
+        test('should include failedCount and failedEvents when expansion failures occur', async () => {
+            (mockClient.getEvents as ReturnType<typeof mock>).mockImplementation(async (): Promise<CalendarEventsResult> => ({
+                events: [mockEvent()],
+                failed: [{ uid: 'bad-event', reason: 'Malformed RRULE' }],
+            }));
+            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const handler = getToolHandler(server, 'getCalendarEvents');
+
+            const result = await handler({ user: 'user-123', startDate: '2026-03-18', endDate: '2026-03-25' });
+
+            expect(result.isError).toBeUndefined();
+            const text   = textContent(result.content[0]);
+            const parsed = JSON.parse(text) as { events: unknown[], count: number, failedCount: number, failedEvents: string[] };
+            expect(parsed.events).toHaveLength(1);
+            expect(parsed.count).toBe(1);
+            expect(parsed.failedCount).toBe(1);
+            expect(parsed.failedEvents).toEqual(['bad-event']);
         });
 
         test('should serialize event dates to ISO strings', async () => {
@@ -192,10 +212,27 @@ describe.concurrent('createCaldavMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             const text   = textContent(result.content[0]);
-            const parsed = JSON.parse(text) as { events: unknown[], count: number, daysAhead: number };
+            const parsed = JSON.parse(text) as { events: unknown[], count: number, daysAhead: number, failedCount?: number };
             expect(parsed.events).toHaveLength(1);
             expect(parsed.count).toBe(1);
             expect(parsed.daysAhead).toBe(7);
+            expect(parsed.failedCount).toBeUndefined();
+        });
+
+        test('should include failedCount and failedEvents in getUpcomingEvents when expansion failures occur', async () => {
+            (mockClient.getEvents as ReturnType<typeof mock>).mockImplementation(async (): Promise<CalendarEventsResult> => ({
+                events: [],
+                failed: [{ uid: 'bad-weekly', reason: 'Unsupported BYDAY' }, { uid: 'bad-monthly', reason: 'Invalid COUNT' }],
+            }));
+            const server  = createCaldavMCPServer({ client: mockClient, registry: mockRegistry });
+            const handler = getToolHandler(server, 'getUpcomingEvents');
+
+            const result = await handler({ user: 'user-123' });
+
+            const text   = textContent(result.content[0]);
+            const parsed = JSON.parse(text) as { failedCount: number, failedEvents: string[] };
+            expect(parsed.failedCount).toBe(2);
+            expect(parsed.failedEvents).toEqual(['bad-weekly', 'bad-monthly']);
         });
 
         test('should accept custom days parameter', async () => {

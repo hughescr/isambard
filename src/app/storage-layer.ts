@@ -74,8 +74,16 @@ export async function createStorageLayer(
         logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
     }
 
-    // Create memory backend (with optional async indexer)
-    const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer);
+    // Declare reconciliationScheduler before memoryBackend so the drift callback closure
+    // can reference it by binding (late-binding: value is assigned below, after memoryBackend).
+    let reconciliationScheduler: ReconciliationScheduler | undefined;
+
+    // Create memory backend (with optional async indexer).
+    // The drift callback is a late-binding closure that reads reconciliationScheduler at
+    // call time — the scheduler is assigned after memoryBackend is constructed.
+    const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer, () => {
+        reconciliationScheduler?.notifyDrift();
+    });
 
     // Create contact backend
     const contactBackend = new ContactBackend(holder, tableName);
@@ -84,7 +92,6 @@ export async function createStorageLayer(
     logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
 
     // Create reconciliation scheduler if enabled
-    let reconciliationScheduler: ReconciliationScheduler | undefined;
     if(reconciliationConfig?.enabled) {
         reconciliationScheduler = createReconciliationScheduler({
             config:         reconciliationConfig,

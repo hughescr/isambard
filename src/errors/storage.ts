@@ -237,6 +237,30 @@ export class ContactLastIdentifierError extends StorageError {
 }
 
 /**
+ * Error thrown when a contact has too many identifiers to fit in a single DynamoDB TransactWriteItems call.
+ * DynamoDB's hard limit is 25 items per transaction; the contact profile record occupies one slot,
+ * leaving 24 slots for identifier lookup items.
+ * @param personId - The contact's person ID
+ * @param displayName - The contact's display name for human-readable error messages
+ * @param count - The number of identifiers on the contact
+ * @param limit - The maximum number of identifiers allowed
+ */
+export class ContactIdentifierLimitError extends StorageError {
+    declare public readonly context: { personId: string, displayName: string, count: number, limit: number };
+
+    constructor(personId: string, displayName: string, count: number, limit: number) {
+        super(
+            // Stryker disable next-line StringLiteral: message content is tested in ContactIdentifierLimitError unit tests
+            `Contact "${displayName}" (${personId}) has ${count} identifiers, exceeding the limit of ${limit} per contact`,
+            ErrorCode.CONTACT_IDENTIFIER_LIMIT,
+            { personId, displayName, count, limit }
+        );
+        // Stryker disable next-line StringLiteral: error class name is tested in ContactIdentifierLimitError unit tests
+        this.name = 'ContactIdentifierLimitError';
+    }
+}
+
+/**
  * Error thrown when DynamoDB operations are throttled during reconciliation.
  */
 export class ReconciliationThrottledError extends ReconciliationError {

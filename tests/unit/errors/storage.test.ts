@@ -17,7 +17,8 @@ import {
     ReconciliationError,
     ReconciliationThrottledError,
     ContactNotFoundError,
-    ContactLastIdentifierError
+    ContactLastIdentifierError,
+    ContactIdentifierLimitError,
 } from '@/errors/storage';
 
 describe.concurrent('StorageError', () => {
@@ -443,6 +444,41 @@ describe.concurrent('ContactLastIdentifierError', () => {
     test('should have correct code', () => {
         const error = new ContactLastIdentifierError('alice-smith');
         expect(error.code).toBe(ErrorCode.CONTACT_LAST_IDENTIFIER);
+    });
+});
+
+describe.concurrent('ContactIdentifierLimitError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
+        expect(error).toBeInstanceOf(ContactIdentifierLimitError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name', () => {
+        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
+        expect(error.name).toBe('ContactIdentifierLimitError');
+    });
+
+    test('should include personId, displayName, count, and limit in message', () => {
+        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
+        expect(error.message).toBe(
+            'Contact "Alice Smith" (alice-smith) has 25 identifiers, exceeding the limit of 24 per contact'
+        );
+    });
+
+    test('should store all fields in context', () => {
+        const error = new ContactIdentifierLimitError('bob-jones', 'Bob Jones', 30, 24);
+        expect(error.context.personId).toBe('bob-jones');
+        expect(error.context.displayName).toBe('Bob Jones');
+        expect(error.context.count).toBe(30);
+        expect(error.context.limit).toBe(24);
+    });
+
+    test('should have correct code', () => {
+        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
+        expect(error.code).toBe(ErrorCode.CONTACT_IDENTIFIER_LIMIT);
     });
 });
 

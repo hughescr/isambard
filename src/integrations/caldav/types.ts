@@ -25,3 +25,22 @@ export interface CalendarEvent {
     recurrenceId?: string    // For recurring event instances
     timezone?:     string    // IANA timezone from the calendar source (e.g. 'America/New_York'); undefined for floating/all-day events
 }
+
+/**
+ * A recurring event that could not be expanded (e.g. malformed RRULE).
+ */
+export interface FailedCalendarEvent {
+    uid:    string
+    reason: string
+    rrule?: string
+}
+
+/**
+ * Result of fetching calendar events.
+ * `events` contains successfully parsed events; `failed` contains events that
+ * could not be expanded (e.g. malformed RRULE) — never silently dropped.
+ */
+export interface CalendarEventsResult {
+    events: CalendarEvent[]
+    failed: FailedCalendarEvent[]
+}

@@ -56,13 +56,16 @@ async function retryWithBackoff<T>(
  * Manages the tag index table with fat pointers carrying preview data.
  */
 export class MemoryToolBackendTagIndex {
-    private readonly getDocClient: () => DynamoDBDocumentClient;
+    private readonly getDocClient:    () => DynamoDBDocumentClient;
+    private readonly onDriftDetected: (() => void) | undefined;
 
     constructor(
         docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
-        private readonly tableName: string
+        private readonly tableName: string,
+        onDriftDetected?: () => void
     ) {
         this.getDocClient = resolveDocClientGetter(docClientOrHolder);
+        this.onDriftDetected = onDriftDetected;
     }
 
     /**
@@ -366,6 +369,12 @@ export class MemoryToolBackendTagIndex {
             return pk.slice(4); // Remove 'TAG#' prefix
         }));
 
+        // Notify drift if any items were not written — tag index may be inconsistent
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Drift hint — allFailedRequests.length > 0 tested by caller-notification tests
+        if(allFailedRequests.length > 0) {
+            this.onDriftDetected?.();
+        }
+
         // Only increment counts for tags that succeeded
         const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
         await this.incrementTagCounts(succeededTags);
@@ -410,6 +419,12 @@ export class MemoryToolBackendTagIndex {
             return pk.slice(4); // Remove 'TAG#' prefix
         }));
 
+        // Notify drift if any items were not deleted — tag index may be inconsistent
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Drift hint — allFailedRequests.length > 0 tested by caller-notification tests
+        if(allFailedRequests.length > 0) {
+            this.onDriftDetected?.();
+        }
+
         // Only decrement counts for tags that succeeded
         const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
         await this.decrementTagCounts(succeededTags);
@@ -440,9 +455,18 @@ export class MemoryToolBackendTagIndex {
         const batches = this.splitIntoBatches(writeRequests, 25);
 
         // Execute all batches (no count increment)
+        let driftNotified = false;
         for(const batch of batches) {
             // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite, each batch processed in order
-            await this.batchWriteWithRetry({ [this.tableName]: batch });
+            const failedRequests = await this.batchWriteWithRetry({ [this.tableName]: batch });
+            // Notify drift once if any items were not refreshed — tag index may be inconsistent.
+            // driftNotified coalesces across batches: only the first failing batch triggers the callback.
+            // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: Drift hint — failedRequests.length > 0 tested by caller-notification tests; driftNotified coalesces per-call
+            if(failedRequests.length > 0 && !driftNotified) {
+                // Stryker disable next-line BooleanLiteral: coalescing is tested in multi-batch onDriftDetected tests; setting to true prevents re-notification on subsequent batches
+                driftNotified = true;
+                this.onDriftDetected?.();
+            }
         }
     }
 

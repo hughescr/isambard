@@ -867,4 +867,272 @@ describe('WildDuckListener', () => {
             await listener.stop();
         });
     });
+
+    // -----------------------------------------------------------------------
+    // SSE reconnect via ReconnectionLoop
+    // -----------------------------------------------------------------------
+
+    describe('SSE reconnect via ReconnectionLoop', () => {
+        // Types for the fake EventSource infrastructure
+        type EventType = 'open' | 'message' | 'error';
+        interface FakeEventSourceInstance {
+            listeners:        Map<EventType, ((evt: Event | MessageEvent) => void)[]>
+            closed:           boolean
+            close:            () => void
+            addEventListener: (type: EventType, handler: (evt: Event | MessageEvent) => void) => void
+            emit:             (type: EventType, evt?: Event | MessageEvent) => void
+        }
+
+        let fakeEventSourceInstances: FakeEventSourceInstance[];
+        let FakeEventSource: ReturnType<typeof mock>;
+
+        beforeEach(() => {
+            fakeEventSourceInstances = [];
+            FakeEventSource = mock((_url: string) => {
+                const listeners = new Map<EventType, ((evt: Event | MessageEvent) => void)[]>();
+                const instance: FakeEventSourceInstance = {
+                    listeners,
+                    closed:           false,
+                    close:            () => { instance.closed = true; },
+                    addEventListener: (type, handler) => {
+                        const list = listeners.get(type) ?? [];
+                        list.push(handler);
+                        listeners.set(type, list);
+                    },
+                    emit: (type, evt) => {
+                        const list = listeners.get(type) ?? [];
+                        for(const handler of list) {
+                            handler(evt ?? new Event(type));
+                        }
+                    },
+                };
+                fakeEventSourceInstances.push(instance);
+                return instance;
+            });
+            // Install fake EventSource on global
+            (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+        });
+
+        afterEach(() => {
+            // Remove fake EventSource — dynamic delete is the correct approach for cleaning up global state
+            delete (globalThis as unknown as Record<string, unknown>).EventSource;
+        });
+
+        test('start() creates an EventSource via the SSE reconnect loop', async () => {
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
+            await listener.start();
+
+            // An EventSource should have been constructed
+            expect(FakeEventSource).toHaveBeenCalledTimes(1);
+            expect(FakeEventSource).toHaveBeenCalledWith(
+                expect.stringContaining('/users/me/updates')
+            );
+
+            await listener.stop();
+        });
+
+        test('SSE error before open causes ReconnectionLoop to schedule a retry with delay', async () => {
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                sseReconnectDelayMs: 1000,
+            });
+            await listener.start();
+
+            // One EventSource created
+            expect(fakeEventSourceInstances).toHaveLength(1);
+
+            // Trigger error before open — ReconnectionLoop should schedule retry after 1000ms
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
+            fakeEventSourceInstances[0]!.emit('error');
+            await flushAsync();
+
+            // Timer should be pending (backoff delay)
+            expect(jest.getTimerCount()).toBeGreaterThanOrEqual(2); // poll timer + SSE retry timer
+
+            // Advance past SSE retry delay (2× to tolerate jitter) — second EventSource should be created
+            jest.advanceTimersByTime(2000);
+            await flushAsync();
+
+            expect(fakeEventSourceInstances).toHaveLength(2);
+
+            await listener.stop();
+        });
+
+        test('stop() cancels the SSE reconnect loop — no retry after stop', async () => {
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                sseReconnectDelayMs: 1000,
+            });
+            await listener.start();
+
+            // Trigger SSE error so the loop schedules a retry
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
+            fakeEventSourceInstances[0]!.emit('error');
+            await flushAsync();
+
+            // Stop the listener — should cancel the pending SSE retry timer
+            await listener.stop();
+
+            // After stop, advancing time should NOT create another EventSource
+            jest.advanceTimersByTime(5000);
+            await flushAsync();
+
+            expect(fakeEventSourceInstances).toHaveLength(1);
+        });
+
+        test('SSE error after open restarts the reconnect loop — new EventSource created immediately', async () => {
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
+            await listener.start();
+
+            expect(fakeEventSourceInstances).toHaveLength(1);
+
+            // First: open fires — connection established, loop auto-stops
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
+            fakeEventSourceInstances[0]!.emit('open');
+            await flushAsync();
+
+            // Then: error fires — stream disconnected after open
+            // This calls sseReconnectLoop.start() which immediately calls connectFn()
+            // creating a new EventSource synchronously
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; same index accessed after open
+            fakeEventSourceInstances[0]!.emit('error');
+            await flushAsync();
+
+            // A second EventSource should have been created immediately (no delay needed)
+            expect(fakeEventSourceInstances).toHaveLength(2);
+
+            await listener.stop();
+        });
+
+        test('synchronous throw inside EventSource constructor does not kill the listener', async () => {
+            // This tests that a throw inside connectSSEForLoop() is caught by the ReconnectionLoop
+            let callCount = 0;
+            const ThrowingEventSource = mock((_url: string) => {
+                callCount++;
+                if(callCount === 1) {
+                    throw new Error('EventSource constructor failed');
+                }
+                // Second call: return a proper fake
+                const instance: FakeEventSourceInstance = {
+                    listeners:        new Map(),
+                    closed:           false,
+                    close:            () => { instance.closed = true; },
+                    addEventListener: (type, handler) => {
+                        const list = instance.listeners.get(type) ?? [];
+                        list.push(handler);
+                        instance.listeners.set(type, list);
+                    },
+                    emit: (type, evt) => {
+                        const list = instance.listeners.get(type) ?? [];
+                        for(const handler of list) {
+                            handler(evt ?? new Event(type));
+                        }
+                    },
+                };
+                fakeEventSourceInstances.push(instance);
+                return instance;
+            });
+            (globalThis as unknown as { EventSource: unknown }).EventSource = ThrowingEventSource;
+
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                sseReconnectDelayMs: 1000,
+            });
+            await listener.start();
+
+            // First attempt threw — loop should have scheduled retry
+            await flushAsync();
+            expect(callCount).toBe(1);
+
+            // Advance past backoff delay (2× to tolerate jitter) — second attempt should proceed without throwing
+            jest.advanceTimersByTime(2000);
+            await flushAsync();
+
+            expect(callCount).toBe(2);
+            expect(fakeEventSourceInstances).toHaveLength(1); // second call succeeded
+
+            await listener.stop();
+        });
+
+        test('stop() during SSE backoff: no EventSource created after stop', async () => {
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                sseReconnectDelayMs: 2000,
+            });
+            await listener.start();
+
+            // Trigger error to begin backoff
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
+            fakeEventSourceInstances[0]!.emit('error');
+            await flushAsync();
+
+            // Stop before the retry fires
+            await listener.stop();
+
+            // Advance well past the retry delay
+            jest.advanceTimersByTime(10_000);
+            await flushAsync();
+
+            // Only the original EventSource — no retry after stop
+            expect(fakeEventSourceInstances).toHaveLength(1);
+            expect(listener.running).toBe(false);
+        });
+
+        test('when token or apiUrl is falsy, connectSSE resolves immediately without creating EventSource', async () => {
+            const { client } = makeWildDuckClient({
+                getAuthToken: mock(() => ''),       // falsy token
+                getApiUrl:    mock(() => 'https://wildduck.example.com'),
+            });
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
+            await listener.start();
+
+            // EventSource should NOT be constructed when token is falsy
+            expect(FakeEventSource).not.toHaveBeenCalled();
+
+            await listener.stop();
+        });
+
+        test('timer count after stop() is 0 (both poll timer and SSE loop timer cleared)', async () => {
+            const { client }    = makeWildDuckClient();
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, {
+                ...DEFAULT_CONFIG,
+                sseReconnectDelayMs: 1000,
+            });
+            await listener.start();
+
+            // Trigger SSE error to create a pending retry timer in the loop
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
+            fakeEventSourceInstances[0]!.emit('error');
+            await flushAsync();
+
+            // There should be timers pending (poll + SSE retry)
+            expect(jest.getTimerCount()).toBeGreaterThanOrEqual(2);
+
+            // stop() must clear all of them
+            await listener.stop();
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
 });

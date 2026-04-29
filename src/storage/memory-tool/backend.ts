@@ -38,7 +38,8 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
     constructor(
         docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName:         string,
-        indexer?:          MemoryIndexer
+        indexer?:          MemoryIndexer,
+        onDriftDetected?:  () => void
     ) {
         super(docClientOrHolder, tableName);
 
@@ -54,7 +55,8 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
 
         this.tagIndexOps = new MemoryToolBackendTagIndex(
             docClientOrHolder,
-            tableName
+            tableName,
+            onDriftDetected
         );
 
         this.queryOps = new MemoryToolBackendQuery(

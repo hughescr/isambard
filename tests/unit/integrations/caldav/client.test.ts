@@ -2,7 +2,7 @@ import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:t
 import { mockLogger } from '../../../setup';
 import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 import type { CalendarServerEntry } from '@/integrations/caldav/calendar-registry/types';
-import type { CalendarEvent } from '@/integrations/caldav/types';
+import type { CalendarEventsResult } from '@/integrations/caldav/types';
 import type { ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ function makeHealthRegistry(): {
 }
 
 // Module-level helper used by event extraction and recurring expansion tests
-async function extractEvents(vevents: Record<string, unknown>[]): Promise<CalendarEvent[]> {
+async function extractEvents(vevents: Record<string, unknown>[]): Promise<CalendarEventsResult> {
     mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
     mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [
         makeDAVCalendar(),
@@ -257,10 +257,10 @@ describe('CalDAVClient.getEvents', () => {
         mockLogger.warn.mockClear();
     });
 
-    test('returns empty array for empty servers list', async () => {
+    test('returns empty events and failed arrays for empty servers list', async () => {
         const client = new CalDAVClient();
         const result = await client.getEvents([], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
-        expect(result).toEqual([]);
+        expect(result).toEqual({ events: [], failed: [] });
     });
 
     test('fetches events from server and parses ICS data', async () => {
@@ -278,17 +278,18 @@ describe('CalDAVClient.getEvents', () => {
 
         const client = new CalDAVClient();
         const server = makeServer();
-        const result = await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events, failed } = await client.getEvents([server], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
-        expect(result).toHaveLength(1);
-        expect(result[0]).toMatchObject({
+        expect(events).toHaveLength(1);
+        expect(failed).toHaveLength(0);
+        expect(events[0]).toMatchObject({
             uid:           'event-uid-1',
             summary:       'Test Meeting',
             calendarLabel: 'Personal',
             isAllDay:      false,
         });
-        expect(result[0]?.start).toBeInstanceOf(Date);
-        expect(result[0]?.end).toBeInstanceOf(Date);
+        expect(events[0]?.start).toBeInstanceOf(Date);
+        expect(events[0]?.end).toBeInstanceOf(Date);
     });
 
     test('sorts events by start time', async () => {
@@ -309,11 +310,11 @@ describe('CalDAVClient.getEvents', () => {
             }));
 
         const client = new CalDAVClient();
-        const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
-        expect(result).toHaveLength(2);
-        expect(result[0]?.uid).toBe('event-1');
-        expect(result[1]?.uid).toBe('event-2');
+        expect(events).toHaveLength(2);
+        expect(events[0]?.uid).toBe('event-1');
+        expect(events[1]?.uid).toBe('event-2');
     });
 
     test('skips calendar objects with no data', async () => {
@@ -326,9 +327,9 @@ describe('CalDAVClient.getEvents', () => {
         ]);
 
         const client = new CalDAVClient();
-        const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
-        expect(result).toHaveLength(0);
+        expect(events).toHaveLength(0);
         expect(mockParseICS).not.toHaveBeenCalled();
     });
 
@@ -347,11 +348,11 @@ describe('CalDAVClient.getEvents', () => {
         }));
 
         const client = new CalDAVClient();
-        const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         // Only the VEVENT should be extracted — VTIMEZONE and VCALENDAR must be skipped
-        expect(result).toHaveLength(1);
-        expect(result[0].uid).toBe('event-uid-1');
+        expect(events).toHaveLength(1);
+        expect(events[0].uid).toBe('event-uid-1');
     });
 
     test('skips calendar paths not found in fetched calendars', async () => {
@@ -362,10 +363,10 @@ describe('CalDAVClient.getEvents', () => {
         mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
         const client = new CalDAVClient();
-        const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
         expect(mockFetchCalendarObjects).not.toHaveBeenCalled();
-        expect(result).toHaveLength(0);
+        expect(events).toHaveLength(0);
     });
 
     test('calls fetchCalendarObjects with correct timeRange', async () => {
@@ -393,7 +394,7 @@ describe('CalDAVClient.getEvents', () => {
         });
 
         const client = new CalDAVClient();
-        const events = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(events).toEqual([]);
         expect(mockLogger.warn).toHaveBeenCalledWith(
             expect.objectContaining({ serverUrl: expect.any(String) }),
@@ -407,7 +408,7 @@ describe('CalDAVClient.getEvents', () => {
         });
 
         const client = new CalDAVClient();
-        const events = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
         expect(events).toEqual([]);
     });
 
@@ -434,9 +435,9 @@ describe('CalDAVClient.getEvents', () => {
         });
 
         const client = new CalDAVClient();
-        const result = await client.getEvents([server1, server2], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        const { events } = await client.getEvents([server1, server2], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
 
-        expect(result).toHaveLength(2);
+        expect(events).toHaveLength(2);
         expect(mockCreateDAVClient).toHaveBeenCalledTimes(2);
     });
 
@@ -573,11 +574,11 @@ describe('CalDAVClient cache', () => {
         const server = makeServer();
 
         await client.getEvents([server], start, end);
-        const result2 = await client.getEvents([server], start, end);
+        const { events: events2 } = await client.getEvents([server], start, end);
 
         // fetchCalendars should only be called once (second call uses cache)
         expect(mockFetchCalendars).toHaveBeenCalledTimes(1);
-        expect(result2).toHaveLength(1);
+        expect(events2).toHaveLength(1);
     });
 
     test('expired cache re-fetches', async () => {
@@ -720,7 +721,7 @@ describe('CalDAVClient event extraction', () => {
     });
 
     test('extracts basic VEVENT fields', async () => {
-        const events = await extractEvents([makeVEvent()]);
+        const { events } = await extractEvents([makeVEvent()]);
 
         expect(events[0]).toMatchObject({
             uid:      'event-uid-1',
@@ -730,111 +731,111 @@ describe('CalDAVClient event extraction', () => {
     });
 
     test('uses (No title) when summary is missing', async () => {
-        const events = await extractEvents([makeVEvent({ summary: undefined })]);
+        const { events } = await extractEvents([makeVEvent({ summary: undefined })]);
         expect(events[0]?.summary).toBe('(No title)');
     });
 
     test('extracts summary from ParameterValue object', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ summary: { val: 'Parameterized Title', params: { LANGUAGE: 'de' } } }),
         ]);
         expect(events[0]?.summary).toBe('Parameterized Title');
     });
 
     test('extracts location field', async () => {
-        const events = await extractEvents([makeVEvent({ location: 'Conference Room A' })]);
+        const { events } = await extractEvents([makeVEvent({ location: 'Conference Room A' })]);
         expect(events[0]?.location).toBe('Conference Room A');
     });
 
     test('extracts location from ParameterValue object', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ location: { val: 'Room B', params: { ALTREP: 'cid:room-b' } } }),
         ]);
         expect(events[0]?.location).toBe('Room B');
     });
 
     test('location is undefined when not present', async () => {
-        const events = await extractEvents([makeVEvent()]);
+        const { events } = await extractEvents([makeVEvent()]);
         expect(events[0]?.location).toBeUndefined();
     });
 
     test('extracts description field', async () => {
-        const events = await extractEvents([makeVEvent({ description: 'Meeting agenda' })]);
+        const { events } = await extractEvents([makeVEvent({ description: 'Meeting agenda' })]);
         expect(events[0]?.description).toBe('Meeting agenda');
     });
 
     test('description is undefined when empty string', async () => {
-        const events = await extractEvents([makeVEvent({ description: '' })]);
+        const { events } = await extractEvents([makeVEvent({ description: '' })]);
         expect(events[0]?.description).toBeUndefined();
     });
 
     test('extracts recurrenceId', async () => {
         const recDate = new Date('2025-06-16T14:00:00.000Z');
-        const events = await extractEvents([makeVEvent({ recurrenceid: recDate })]);
+        const { events } = await extractEvents([makeVEvent({ recurrenceid: recDate })]);
         expect(events[0]?.recurrenceId).toBe(String(recDate));
     });
 
     test('recurrenceId is undefined when not present', async () => {
-        const events = await extractEvents([makeVEvent()]);
+        const { events } = await extractEvents([makeVEvent()]);
         expect(events[0]?.recurrenceId).toBeUndefined();
     });
 
     // --- isAllDay ---
 
     test('isAllDay is false for DATE-TIME events', async () => {
-        const events = await extractEvents([makeVEvent({ datetype: 'date-time' })]);
+        const { events } = await extractEvents([makeVEvent({ datetype: 'date-time' })]);
         expect(events[0]?.isAllDay).toBe(false);
     });
 
     test('isAllDay is true when datetype is date', async () => {
-        const events = await extractEvents([makeVEvent({ datetype: 'date' })]);
+        const { events } = await extractEvents([makeVEvent({ datetype: 'date' })]);
         expect(events[0]?.isAllDay).toBe(true);
     });
 
     test('isAllDay is true when start.dateOnly is true', async () => {
         const allDayStart = Object.assign(new Date('2025-06-15'), { dateOnly: true as const });
-        const events = await extractEvents([makeVEvent({ start: allDayStart, datetype: 'date-time' })]);
+        const { events } = await extractEvents([makeVEvent({ start: allDayStart, datetype: 'date-time' })]);
         expect(events[0]?.isAllDay).toBe(true);
     });
 
     // --- status normalization ---
 
     test('normalizes CONFIRMED status', async () => {
-        const events = await extractEvents([makeVEvent({ status: 'CONFIRMED' })]);
+        const { events } = await extractEvents([makeVEvent({ status: 'CONFIRMED' })]);
         expect(events[0]?.status).toBe('confirmed');
     });
 
     test('normalizes TENTATIVE status', async () => {
-        const events = await extractEvents([makeVEvent({ status: 'TENTATIVE' })]);
+        const { events } = await extractEvents([makeVEvent({ status: 'TENTATIVE' })]);
         expect(events[0]?.status).toBe('tentative');
     });
 
     test('normalizes CANCELLED status', async () => {
-        const events = await extractEvents([makeVEvent({ status: 'CANCELLED' })]);
+        const { events } = await extractEvents([makeVEvent({ status: 'CANCELLED' })]);
         expect(events[0]?.status).toBe('cancelled');
     });
 
     test('status is undefined for unknown status string', async () => {
-        const events = await extractEvents([makeVEvent({ status: 'UNKNOWN_STATUS' })]);
+        const { events } = await extractEvents([makeVEvent({ status: 'UNKNOWN_STATUS' })]);
         expect(events[0]?.status).toBeUndefined();
     });
 
     test('status is undefined when not present', async () => {
-        const events = await extractEvents([makeVEvent({ status: undefined })]);
+        const { events } = await extractEvents([makeVEvent({ status: undefined })]);
         expect(events[0]?.status).toBeUndefined();
     });
 
     // --- attendees ---
 
     test('extracts attendees as string array from string attendees', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ attendee: ['mailto:alice@example.com', 'mailto:bob@example.com'] }),
         ]);
         expect(events[0]?.attendees).toEqual(['alice@example.com', 'bob@example.com']);
     });
 
     test('extracts attendees from ParameterValue objects with CN', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({
                 attendee: [
                     { val: 'mailto:alice@example.com', params: { CN: 'Alice' } },
@@ -846,7 +847,7 @@ describe('CalDAVClient event extraction', () => {
     });
 
     test('extracts attendees from ParameterValue objects without CN using val', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({
                 attendee: [
                     { val: 'mailto:alice@example.com', params: {} },
@@ -857,19 +858,19 @@ describe('CalDAVClient event extraction', () => {
     });
 
     test('handles single attendee (not array)', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ attendee: 'mailto:alice@example.com' }),
         ]);
         expect(events[0]?.attendees).toEqual(['alice@example.com']);
     });
 
     test('attendees is undefined when no attendee field', async () => {
-        const events = await extractEvents([makeVEvent({ attendee: undefined })]);
+        const { events } = await extractEvents([makeVEvent({ attendee: undefined })]);
         expect(events[0]?.attendees).toBeUndefined();
     });
 
     test('attendees is undefined when all attendee values are empty after filtering', async () => {
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ attendee: [{ val: '', params: {} }] }),
         ]);
         expect(events[0]?.attendees).toBeUndefined();
@@ -877,7 +878,7 @@ describe('CalDAVClient event extraction', () => {
 
     test('attendee object without params key falls back to empty string and is filtered out', async () => {
         // An object that has no 'params' key — should not crash and produce no names
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ attendee: [{ val: 'mailto:alice@example.com' }] }),
         ]);
         // No CN, no params key — val extraction falls through to empty string
@@ -885,7 +886,7 @@ describe('CalDAVClient event extraction', () => {
     });
 
     test('location with empty val string resolves to undefined', async () => {
-        const events = await extractEvents([makeVEvent({ location: { val: '', params: {} } })]);
+        const { events } = await extractEvents([makeVEvent({ location: { val: '', params: {} } })]);
         expect(events[0]?.location).toBeUndefined();
     });
 
@@ -894,7 +895,7 @@ describe('CalDAVClient event extraction', () => {
     test('converts non-Date start/end to Date objects', async () => {
         const startStr = '2025-06-15T14:00:00.000Z';
         const endStr   = '2025-06-15T15:00:00.000Z';
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ start: startStr, end: endStr }),
         ]);
         expect(events[0]?.start).toBeInstanceOf(Date);
@@ -905,20 +906,20 @@ describe('CalDAVClient event extraction', () => {
 
     test('extracts timezone from start.tz for timed events', async () => {
         const startWithTz = Object.assign(new Date('2025-06-15T14:00:00.000Z'), { tz: 'America/New_York' });
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ start: startWithTz, datetype: 'date-time' }),
         ]);
         expect(events[0]?.timezone).toBe('America/New_York');
     });
 
     test('timezone is undefined when start has no tz property', async () => {
-        const events = await extractEvents([makeVEvent()]);
+        const { events } = await extractEvents([makeVEvent()]);
         expect(events[0]?.timezone).toBeUndefined();
     });
 
     test('timezone is undefined for all-day events even if start.tz is present', async () => {
         const startWithTz = Object.assign(new Date('2025-06-15'), { tz: 'America/New_York', dateOnly: true as const });
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ start: startWithTz, datetype: 'date-time' }),
         ]);
         // isAllDay is true due to dateOnly, so timezone must be suppressed
@@ -928,7 +929,7 @@ describe('CalDAVClient event extraction', () => {
 
     test('timezone is undefined for date-type all-day events', async () => {
         const startWithTz = Object.assign(new Date('2025-06-15T00:00:00.000Z'), { tz: 'America/Los_Angeles' });
-        const events = await extractEvents([
+        const { events } = await extractEvents([
             makeVEvent({ start: startWithTz, datetype: 'date' }),
         ]);
         expect(events[0]?.isAllDay).toBe(true);
@@ -1090,7 +1091,7 @@ describe('CalDAVClient timeout', () => {
         await drainMicrotasks(20);
         jest.advanceTimersByTime(50);
         const result = await resultPromise;
-        expect(result).toEqual([]);
+        expect(result).toEqual({ events: [], failed: [] });
         expect(mockLogger.warn).toHaveBeenCalled();
     });
 
@@ -1132,8 +1133,9 @@ describe('CalDAVClient recurring event expansion', () => {
 
     test('non-recurring events (no rrule) are returned unchanged', async () => {
         const vevent = makeVEvent({ uid: 'no-rrule', summary: 'One-off meeting' });
-        const events = await extractEvents([vevent]);
+        const { events, failed } = await extractEvents([vevent]);
         expect(events).toHaveLength(1);
+        expect(failed).toHaveLength(0);
         expect(events[0]?.uid).toBe('no-rrule');
         expect(events[0]?.summary).toBe('One-off meeting');
         expect(mockExpandRecurringEvent).not.toHaveBeenCalled();
@@ -1165,9 +1167,10 @@ describe('CalDAVClient recurring event expansion', () => {
             },
         ]);
 
-        const events = await extractEvents([masterEvent]);
+        const { events, failed } = await extractEvents([masterEvent]);
         expect(mockExpandRecurringEvent).toHaveBeenCalledTimes(1);
         expect(events).toHaveLength(1);
+        expect(failed).toHaveLength(0);
         expect(events[0]?.uid).toBe('recurring-uid');
         expect(events[0]?.start).toEqual(occurrenceStart);
         expect(events[0]?.end).toEqual(occurrenceEnd);
@@ -1204,7 +1207,7 @@ describe('CalDAVClient recurring event expansion', () => {
             },
         ]);
 
-        const events = await extractEvents([masterEvent]);
+        const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(2);
         expect(events[0]?.start).toEqual(instance1Start);
         expect(events[1]?.start).toEqual(instance2Start);
@@ -1262,7 +1265,7 @@ describe('CalDAVClient recurring event expansion', () => {
             },
         ]);
 
-        const events = await extractEvents([masterEvent]);
+        const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(1);
         expect(events[0]?.summary).toBe('Rescheduled Meeting');
         expect(events[0]?.location).toBe('New Room');
@@ -1290,13 +1293,17 @@ describe('CalDAVClient recurring event expansion', () => {
             },
         ]);
 
-        const events = await extractEvents([masterEvent]);
+        const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(1);
         expect(events[0]?.isAllDay).toBe(true);
         expect(events[0]?.timezone).toBeUndefined();
     });
 
-    test('error in expandRecurringEvent is caught and logged, event skipped gracefully', async () => {
+    // -----------------------------------------------------------------------
+    // Failure surfacing — the core behavior this refactor adds
+    // -----------------------------------------------------------------------
+
+    test('malformed rrule error surfaces in failed[] with uid and reason', async () => {
         const masterEvent = makeVEvent({
             uid:   'error-uid',
             rrule: { freq: 'WEEKLY', interval: 1 },
@@ -1306,7 +1313,173 @@ describe('CalDAVClient recurring event expansion', () => {
             throw new Error('Expansion failed');
         });
 
-        const events = await extractEvents([masterEvent]);
+        const { events, failed } = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(0);
+        expect(failed).toHaveLength(1);
+        expect(failed[0]).toMatchObject({ uid: 'error-uid', reason: 'Expansion failed' });
+    });
+
+    test('malformed rrule error includes rrule string when rrule is present', async () => {
+        const rruleObj = { freq: 'WEEKLY', interval: 1, toString: () => 'FREQ=WEEKLY;INTERVAL=1' };
+        const masterEvent = makeVEvent({
+            uid:   'rrule-str-uid',
+            rrule: rruleObj,
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Bad RRULE');
+        });
+
+        const { failed } = await extractEvents([masterEvent]);
+        expect(failed[0]?.rrule).toBe('FREQ=WEEKLY;INTERVAL=1');
+    });
+
+    test('malformed rrule: failed entry uid is undefined when rrule is absent (recurrences-only)', async () => {
+        const masterEvent = makeVEvent({
+            uid:         'no-rrule-fail-uid',
+            recurrences: {},
+            // no rrule field
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Expansion blew up');
+        });
+
+        const { events, failed } = await extractEvents([masterEvent]);
+        expect(events).toHaveLength(0);
+        expect(failed).toHaveLength(1);
+        expect(failed[0]?.uid).toBe('no-rrule-fail-uid');
+        expect(failed[0]?.rrule).toBeUndefined();
+    });
+
+    test('logger.warn is called with uid and rrule when expansion fails', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'warn-uid',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Bad expansion');
+        });
+
+        await extractEvents([masterEvent]);
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ error: expect.any(Error), uid: 'warn-uid' }),
+            expect.stringContaining('Failed to expand recurring event')
+        );
+    });
+
+    test('mixed: 2 successful events + 1 failed → all 3 reflected correctly', async () => {
+        const goodEvent1 = makeVEvent({ uid: 'good-1', summary: 'Good 1' });
+        const goodEvent2 = makeVEvent({ uid: 'good-2', summary: 'Good 2', rrule: { freq: 'DAILY' } });
+        const badEvent   = makeVEvent({ uid: 'bad-1', summary: 'Bad 1', rrule: { freq: 'WEEKLY' } });
+
+        mockExpandRecurringEvent
+            .mockImplementationOnce((): MockEventInstance[] => [
+                {
+                    start:       new Date('2025-06-15T10:00:00.000Z'),
+                    end:         new Date('2025-06-15T11:00:00.000Z'),
+                    summary:     'Good 2',
+                    isFullDay:   false,
+                    isRecurring: true,
+                    isOverride:  false,
+                    event:       goodEvent2,
+                },
+            ])
+            .mockImplementationOnce((): never => {
+                throw new Error('Malformed RRULE for bad-1');
+            });
+
+        const { events, failed } = await extractEvents([goodEvent1, goodEvent2, badEvent]);
+
+        // goodEvent1 is non-recurring → events array; goodEvent2 expands fine; badEvent lands in failed
+        expect(events).toHaveLength(2);
+        expect(events.find(e => e.uid === 'good-1')).toBeDefined();
+        expect(events.find(e => e.uid === 'good-2')).toBeDefined();
+        expect(failed).toHaveLength(1);
+        expect(failed[0]).toMatchObject({ uid: 'bad-1', reason: 'Malformed RRULE for bad-1' });
+    });
+
+    test('all events succeed → failed is empty', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'success-uid',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => [
+            {
+                start:       new Date('2025-06-15T14:00:00.000Z'),
+                end:         new Date('2025-06-15T15:00:00.000Z'),
+                summary:     'OK',
+                isFullDay:   false,
+                isRecurring: true,
+                isOverride:  false,
+                event:       masterEvent,
+            },
+        ]);
+
+        const { failed } = await extractEvents([masterEvent]);
+        expect(failed).toHaveLength(0);
+    });
+
+    test('non-Error thrown value surfaces as string reason in failed[]', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'non-error-uid',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw 'string-error';
+        });
+
+        const { failed } = await extractEvents([masterEvent]);
+        expect(failed[0]?.reason).toBe('string-error');
+    });
+
+    test('failed entries from multiple servers are merged into top-level failed array', async () => {
+        // Set up two servers, each returning one failing recurring event
+        mockCreateDAVClient.mockImplementation(async (): Promise<typeof mockDAVClient> => mockDAVClient);
+        mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeDAVCalendar()]);
+        mockFetchCalendarObjects.mockImplementation(async (): Promise<Record<string, unknown>[]> => [makeCalendarObject('ics')]);
+
+        const failingEvent1 = makeVEvent({ uid: 'fail-s1', rrule: { freq: 'WEEKLY' } });
+        const failingEvent2 = makeVEvent({ uid: 'fail-s2', rrule: { freq: 'DAILY' } });
+
+        mockParseICS
+            .mockImplementationOnce((): Record<string, unknown> => ({ 'fail-s1': failingEvent1 }))
+            .mockImplementationOnce((): Record<string, unknown> => ({ 'fail-s2': failingEvent2 }));
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Bad RRULE');
+        });
+
+        const server1 = makeServer({ serverUrl: 'https://server1.example.com' });
+        const server2 = makeServer({
+            serverId:  '00000000-0000-0000-0000-000000000002' as CalendarServerEntry['serverId'],
+            serverUrl: 'https://server2.example.com',
+        });
+
+        const client = new CalDAVClient({ cacheTtlMs: 0 });
+        const { events, failed } = await client.getEvents([server1, server2], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+
+        expect(events).toHaveLength(0);
+        expect(failed).toHaveLength(2);
+        expect(failed.map(f => f.uid)).toContain('fail-s1');
+        expect(failed.map(f => f.uid)).toContain('fail-s2');
+    });
+
+    test('error in expandRecurringEvent is logged, event skipped gracefully (legacy test updated)', async () => {
+        const masterEvent = makeVEvent({
+            uid:   'error-uid',
+            rrule: { freq: 'WEEKLY', interval: 1 },
+        });
+
+        mockExpandRecurringEvent.mockImplementation((): never => {
+            throw new Error('Expansion failed');
+        });
+
+        const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(0);
         expect(mockLogger.warn).toHaveBeenCalledWith(
             expect.objectContaining({ error: expect.any(Error) }),
@@ -1334,7 +1507,7 @@ describe('CalDAVClient recurring event expansion', () => {
             },
         ]);
 
-        const events = await extractEvents([masterEvent]);
+        const { events } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(1);
         expect(events[0]?.timezone).toBe('America/Chicago');
     });
@@ -1348,8 +1521,9 @@ describe('CalDAVClient recurring event expansion', () => {
 
         mockExpandRecurringEvent.mockImplementation((): MockEventInstance[] => []);
 
-        const events = await extractEvents([masterEvent]);
+        const { events, failed } = await extractEvents([masterEvent]);
         expect(events).toHaveLength(0);
+        expect(failed).toHaveLength(0);
         expect(mockLogger.debug).toHaveBeenCalledWith(
             expect.objectContaining({ uid: 'no-instances-uid' }),
             expect.stringContaining('no instances in range')
@@ -1382,9 +1556,10 @@ describe('CalDAVClient recurring event expansion', () => {
             },
         ]);
 
-        const events = await extractEvents([masterEvent]);
+        const { events, failed } = await extractEvents([masterEvent]);
         expect(mockExpandRecurringEvent).toHaveBeenCalledTimes(1);
         expect(events).toHaveLength(1);
+        expect(failed).toHaveLength(0);
         expect(events[0]?.summary).toBe('Override Instance');
     });
 });

@@ -654,6 +654,353 @@ describe('ReconciliationScheduler', () => {
         });
     });
 
+    describe('notifyDrift()', () => {
+        test('should trigger reconciliation sooner than baseline interval', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       10_000, // Long interval — won't fire naturally in this test
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // No reconciliation at 5ms (well before 10000ms interval)
+            jest.advanceTimersByTime(5);
+            await Promise.resolve();
+            expect(mockRunReconciliation).not.toHaveBeenCalled();
+
+            // Notify drift — should accelerate to 0ms delay
+            scheduler.notifyDrift();
+
+            // One microtask/tick should fire the accelerated timeout (delay=0)
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        });
+
+        test('should not trigger when scheduler has not been started', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       10_000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            // Do NOT call start()
+
+            scheduler.notifyDrift();
+
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).not.toHaveBeenCalled();
+        });
+
+        test('should not trigger when scheduler is disabled', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          false,
+                intervalMs:       10_000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start(); // start() returns early for disabled
+
+            scheduler.notifyDrift();
+
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).not.toHaveBeenCalled();
+        });
+
+        test('should coalesce multiple hints into a single cycle', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       10_000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // Call notifyDrift three times in a row
+            scheduler.notifyDrift();
+            scheduler.notifyDrift();
+            scheduler.notifyDrift();
+
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+
+            // Should have fired exactly once
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        });
+
+        test('should not accelerate when reconciliation is already running', async () => {
+            let resolveReconciliation: (() => void) | undefined;
+
+            const mockRunReconciliationWithDelay = mock(async () => {
+                await new Promise<void>((resolve) => {
+                    resolveReconciliation = resolve;
+                });
+                return {
+                    success: true,
+                    phaseA:  {
+                        phase:               'phaseA' as const,
+                        itemsScanned:        0,
+                        indexItemsCreated:   0,
+                        indexItemsRefreshed: 0,
+                        indexItemsDeleted:   0,
+                        metadataCleaned:     0,
+                        errors:              0,
+                        startTime:           new Date(),
+                        endTime:             new Date(),
+                    },
+                    phaseB: {
+                        phase:               'phaseB' as const,
+                        itemsScanned:        0,
+                        indexItemsCreated:   0,
+                        indexItemsRefreshed: 0,
+                        indexItemsDeleted:   0,
+                        metadataCleaned:     0,
+                        errors:              0,
+                        startTime:           new Date(),
+                        endTime:             new Date(),
+                    },
+                    totalDurationMs: 100,
+                } as ReconciliationResult;
+            });
+
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       50,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliationWithDelay,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // Wait for reconciliation to start
+            jest.advanceTimersByTime(75);
+            await Promise.resolve();
+
+            expect(mockRunReconciliationWithDelay).toHaveBeenCalledTimes(1);
+
+            // Notify drift while running — should be a no-op
+            scheduler.notifyDrift();
+
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+
+            // Still only 1 call — not a second trigger
+            expect(mockRunReconciliationWithDelay).toHaveBeenCalledTimes(1);
+
+            // Clean up
+            if(resolveReconciliation) {
+                resolveReconciliation();
+                await Promise.resolve();
+            }
+        });
+
+        test('should reset drift flag after cycle runs so a subsequent hint accelerates again', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       10_000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // First drift hint → fires immediately
+            scheduler.notifyDrift();
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+
+            // After the cycle, drift flag should be reset.
+            // The next interval is now scheduled at 10000ms.
+            // A second drift hint should accelerate again (not be coalesced away).
+            scheduler.notifyDrift();
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(2);
+        });
+
+        test('should reset drift flag after errored cycle so a subsequent hint accelerates again', async () => {
+            const mockRunReconciliationWithError = mock(() =>
+                Promise.reject(new Error('Reconciliation failed'))
+            );
+
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       10_000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliationWithError,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // First drift hint → fires immediately (but reconciliation will error)
+            scheduler.notifyDrift();
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+            expect(mockRunReconciliationWithError).toHaveBeenCalledTimes(1);
+
+            // After the errored cycle, drift flag should be reset.
+            // A second drift hint should accelerate again (not be coalesced away).
+            scheduler.notifyDrift();
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+            expect(mockRunReconciliationWithError).toHaveBeenCalledTimes(2);
+        });
+
+        test('should not interfere with regular periodic scheduling (regression)', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       50,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // Without calling notifyDrift, it should still fire at normal interval
+            jest.advanceTimersByTime(55);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+
+            // And reschedule for the next interval
+            jest.advanceTimersByTime(50);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(2);
+        });
+
+        test('should not interfere with testMode.triggerOnStartup behavior', async () => {
+            const config: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       10_000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          {
+                    baseDelayMs: 100,
+                    maxAttempts: 3,
+                },
+                testMode: {
+                    triggerOnStartup: true,
+                },
+            };
+
+            const deps: ReconciliationSchedulerDeps = {
+                config,
+                runReconciliation: mockRunReconciliation,
+                reconcilerDeps:    mockReconcilerDeps,
+            };
+
+            scheduler = createReconciliationScheduler(deps);
+            scheduler.start();
+
+            // In triggerOnStartup mode, notifyDrift should not cause a second trigger
+            // (since the startup trigger handles it already and drift flag is reset on completion)
+            jest.advanceTimersByTime(50);
+            await Promise.resolve();
+
+            expect(mockRunReconciliation).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('Error handling', () => {
         test('should catch and log errors from reconciliation', async () => {
             const mockRunReconciliationWithError = mock(() =>

@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import type { EmailProcessor } from '@/integrations/email/email-processor';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
-import type { ServiceHealthRegistry } from '@/services';
+import { createReconnectionLoop, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -13,7 +13,7 @@ const CONSECUTIVE_POLL_FAILURE_THRESHOLD = 3;
 export interface WildDuckListenerConfig {
     // Stryker disable next-line NumericLiteral: Poll fallback interval is configuration constant
     pollFallbackMs:       number
-    // Stryker disable next-line NumericLiteral: SSE reconnect delay is configuration constant
+    // Stryker disable next-line NumericLiteral: SSE reconnect base delay is configuration constant
     sseReconnectDelayMs?: number
     // Stryker disable next-line NumericLiteral: maxEmailsPerPoll is configuration constant
     maxEmailsPerPoll?:    number
@@ -23,6 +23,25 @@ export interface WildDuckListenerConfig {
 
 const DEFAULT_MAX_EMAILS_PER_POLL = 20;
 const DEFAULT_SSE_RECONNECT_DELAY_MS = 5000;
+
+// ---------------------------------------------------------------------------
+// No-op health registry stub (used when no registry is provided)
+// ---------------------------------------------------------------------------
+
+// Stryker disable all: no-op stub — behaviour is definitionally absent
+function noopUnsubscribe(): void { /* no-op */ }
+const NOOP_HEALTH_REGISTRY: ServiceHealthRegistry = {
+    getState:           () => 'disabled',
+    getEntry:           () => ({ state: 'disabled', epoch: 0, failureCount: 0 }),
+    getAll:             () => ({} as ReturnType<ServiceHealthRegistry['getAll']>),
+    isAvailable:        () => false,
+    isWriteAvailable:   () => false,
+    sendEvent:          () => undefined,
+    subscribe:          () => noopUnsubscribe,
+    buildStatusSummary: () => undefined,
+    stop:               () => undefined,
+};
+// Stryker restore all
 
 // ---------------------------------------------------------------------------
 // WildDuckListener class
@@ -37,6 +56,7 @@ export class WildDuckListener {
     private          _running:             boolean;
     private          sseSource:            EventSource | null;
     private          consecutivePollFails: number;
+    private readonly sseReconnectLoop:     ReconnectionLoop;
 
     constructor(wildDuckClient: WildDuckClient, processor: EmailProcessor, config: WildDuckListenerConfig) {
         this.wildDuckClient       = wildDuckClient;
@@ -49,6 +69,16 @@ export class WildDuckListener {
         this._running             = false;
         this.sseSource            = null;
         this.consecutivePollFails = 0;
+
+        const registry      = config.healthRegistry ?? NOOP_HEALTH_REGISTRY;
+        const baseDelayMs   = config.sseReconnectDelayMs ?? DEFAULT_SSE_RECONNECT_DELAY_MS;
+        this.sseReconnectLoop = createReconnectionLoop({
+            service:   'email',
+            registry,
+            connectFn: () => this.connectSSEForLoop(),
+            // Stryker disable next-line ObjectLiteral: SSE reconnect policy is configuration wiring
+            policy:    { baseDelayMs },
+        });
     }
 
     /** Whether the listener is currently active. */
@@ -71,8 +101,11 @@ export class WildDuckListener {
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-await-in-loop -- defensive: _running may be set to false by stop(); await inside while is sequential pagination
             while(this._running && await this.fetchAndProcess()) { /* drain backlog */ }
 
-            // Connect SSE for real-time new-mail notifications
-            this.connectSSE();
+            // Connect SSE for real-time new-mail notifications via reconnection loop.
+            // Only start when EventSource is available (not in all test environments).
+            if(typeof EventSource !== 'undefined') {
+                this.sseReconnectLoop.start();
+            }
 
             // Schedule fallback poll timer
             this.scheduleNextPoll();
@@ -100,6 +133,7 @@ export class WildDuckListener {
             this.sseSource.close();
             this.sseSource = null;
         }
+        this.sseReconnectLoop.stop();
     }
 
     // ---------------------------------------------------------------------------
@@ -219,65 +253,77 @@ export class WildDuckListener {
     }
 
     /**
-     * Connect to WildDuck SSE stream for real-time new-mail notifications.
+     * Connect to WildDuck SSE stream. Returns a Promise that resolves on the first
+     * 'open' event (connection established) and rejects on an 'error' event that
+     * occurs before the stream has ever opened. After the stream has been opened, a
+     * subsequent 'error' event (server disconnects) restarts the reconnect loop so
+     * the next connection attempt is made with exponential backoff.
+     *
      * Infrastructure-level — wrapped with Stryker disable for SSE plumbing.
      */
     // Stryker disable all
-    private connectSSE(): void {
-        // Guard: EventSource may not be available in all environments (e.g., test runners)
-        if(typeof EventSource === 'undefined') {
-            return;
-        }
-
-        const token  = this.wildDuckClient.getAuthToken();
-        const apiUrl = this.wildDuckClient.getApiUrl();
-        if(!token || !apiUrl) {
-            return;
-        }
-
-        const url    = `${apiUrl}/users/me/updates?accessToken=${token}`;
-        const source = new EventSource(url);
-        this.sseSource = source;
-
-        source.addEventListener('open', (_event: Event) => {
-            const { healthRegistry } = this.config;
-            if(healthRegistry !== undefined && this.consecutivePollFails >= CONSECUTIVE_POLL_FAILURE_THRESHOLD) {
-                this.consecutivePollFails = 0;
-                healthRegistry.sendEvent('email', 'CONNECT_SUCCESS');
-            }
-        });
-
-        source.addEventListener('message', (event: MessageEvent) => {
-            let data: unknown;
-            try {
-                data = JSON.parse(String(event.data)) as unknown;
-            } catch{
+    private connectSSEForLoop(): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            // Guard: EventSource may not be available in all environments (e.g., test runners)
+            if(typeof EventSource === 'undefined') {
+                resolve();
                 return;
             }
 
-            if(typeof data === 'object' && data !== null && 'command' in data && (data).command === 'EXISTS') {
-                void this.fetchAndProcess();
-            }
-        });
-
-        source.addEventListener('error', (_event: Event) => {
-            source.close();
-            if(this.sseSource === source) {
-                this.sseSource = null;
-            }
-            if(!this._running) {
+            const token  = this.wildDuckClient.getAuthToken();
+            const apiUrl = this.wildDuckClient.getApiUrl();
+            if(!token || !apiUrl) {
+                resolve();
                 return;
             }
-            // EventSource.onerror does not expose HTTP status codes, so we cannot
-            // detect 401s. On any error: close and schedule a reconnect after delay.
-            const reconnectDelay = this.config.sseReconnectDelayMs ?? DEFAULT_SSE_RECONNECT_DELAY_MS;
-            logger.warn({ msg: 'SSE connection error, scheduling reconnect' });
-            this.recordPollFailure(new Error('SSE connection error'));
-            setTimeout(() => {
-                if(this._running) {
-                    this.connectSSE();
+
+            const url    = `${apiUrl}/users/me/updates?accessToken=${token}`;
+            const source = new EventSource(url);
+            this.sseSource = source;
+
+            let opened = false;
+
+            source.addEventListener('open', (_event: Event) => {
+                opened = true;
+                resolve();
+            });
+
+            source.addEventListener('message', (event: MessageEvent) => {
+                let data: unknown;
+                try {
+                    data = JSON.parse(String(event.data)) as unknown;
+                } catch{
+                    return;
                 }
-            }, reconnectDelay);
+
+                if(typeof data === 'object' && data !== null && 'command' in data && (data).command === 'EXISTS') {
+                    void this.fetchAndProcess();
+                }
+            });
+
+            source.addEventListener('error', (_event: Event) => {
+                source.close();
+                if(this.sseSource === source) {
+                    this.sseSource = null;
+                }
+                if(!this._running) {
+                    if(!opened) {
+                        // Listener is stopped — don't reconnect, but settle the promise
+                        resolve();
+                    }
+                    return;
+                }
+                logger.warn({ msg: 'SSE connection error, scheduling reconnect' });
+                this.recordPollFailure(new Error('SSE connection error'));
+                if(opened) {
+                    // Error after open: stream was connected and then dropped.
+                    // The ReconnectionLoop already resolved, so restart it.
+                    this.sseReconnectLoop.start();
+                } else {
+                    // Error before open: let the ReconnectionLoop handle backoff by rejecting
+                    reject(new Error('SSE connection error'));
+                }
+            });
         });
     }
     // Stryker restore all

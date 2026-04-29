@@ -1,4 +1,4 @@
-export type { CalendarEvent } from './types';
+export type { CalendarEvent, CalendarEventsResult, FailedCalendarEvent } from './types';
 export { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 export { CalDAVClient } from './client';
 export { formatCalendarContext } from './formatter';
