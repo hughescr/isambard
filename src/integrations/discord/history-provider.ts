@@ -14,6 +14,17 @@ const MAX_CHANNELS = 3;
 const MAX_CONTENT_LENGTH = 200;
 
 /**
+ * Minimal typed shape of a raw Discord message from MCPMessageSearchService.
+ * All fields optional — access is guarded with `??` in conversion helpers.
+ */
+interface RawDiscordMessage {
+    id?:        string
+    timestamp?: string
+    author?:    { id?: string, displayName?: string, username?: string }
+    content?:   string
+}
+
+/**
  * Search a single channel and collect messages into the accumulator.
  * Skips messages already seen (dedup by ID). Logs a warning on error.
  */
@@ -25,14 +36,12 @@ async function searchChannelInto(
     endTime:       Date | undefined,
     limit:         number | undefined,
     seenIds:       Set<string>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- message objects are platform-specific; typed at conversion boundary
-    out:           any[]
+    out:           RawDiscordMessage[]
 ): Promise<void> {
     try {
         const result = await searchService.searchMessages({ channelId, query, startTime, endTime, limit });
-        for(const msg of result.messages) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-            const id = msg.id as string | undefined;
+        for(const msg of result.messages as RawDiscordMessage[]) {
+            const id = msg.id;
             if(id && !seenIds.has(id)) {
                 seenIds.add(id);
                 out.push(msg);
@@ -47,14 +56,10 @@ async function searchChannelInto(
 /**
  * Convert a raw message object from the search service to a HistoryEntry.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- message objects are generic platform records per MCPMessageSearchService contract
-function toHistoryEntry(msg: any, botUserId: string): HistoryEntry {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-    const timestamp  = (msg.timestamp as string | undefined) ?? new Date(0).toISOString();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-    const author     = msg.author as { id?: string, displayName?: string, username?: string } | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-    const rawContent = (msg.content as string | undefined) ?? '';
+function toHistoryEntry(msg: RawDiscordMessage, botUserId: string): HistoryEntry {
+    const timestamp  = msg.timestamp ?? new Date(0).toISOString();
+    const author     = msg.author;
+    const rawContent = msg.content ?? '';
     // Stryker disable next-line ConditionalExpression,EqualityOperator: true mutant always truncates but slice(0,200) of 200-char string is identical; >= equivalent since slice(0,N) of length-N string returns same value
     const content    = rawContent.length > MAX_CONTENT_LENGTH
         ? rawContent.slice(0, MAX_CONTENT_LENGTH)
@@ -97,8 +102,7 @@ export class DiscordHistoryProvider implements PlatformHistoryProvider {
         const { identifier, maxMessages, startTime, endTime, metadata } = params;
 
         const seenIds = new Set<string>();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- message objects are platform-specific; typed at conversion boundary
-        const allMessages: any[] = [];
+        const allMessages: RawDiscordMessage[] = [];
 
         // Step 1: search DM channel if dmTracker provided and metadata has discordUserId
         if(this.dmTracker && metadata?.discordUserId) {

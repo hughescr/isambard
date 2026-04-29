@@ -9,14 +9,23 @@ import type { PlatformType } from '@/storage';
  */
 // Stryker disable all: Enum values are static definitions
 const directionSchema = z.enum(['inbound', 'outbound', 'mutual']);
+
+/**
+ * The set of known history platforms. Adding a new platform here will
+ * cause a compile error in formatHistoryEntries until the switch is updated.
+ */
+export const knownPlatformSchema = z.enum(['discord', 'email', 'bsky']);
 // Stryker restore all
+
+/** Literal union of all known history platform identifiers. */
+export type KnownPlatform = z.infer<typeof knownPlatformSchema>;
 
 /**
  * A single history interaction entry across any platform.
  */
 // Stryker disable MethodExpression: .min(1) constraints are schema configuration, not logic under test
 export const historyEntrySchema = z.object({
-    platform:  z.string().min(1),
+    platform:  knownPlatformSchema,
     timestamp: z.iso.datetime(),
     summary:   z.string().min(1),
     direction: directionSchema,
@@ -46,8 +55,8 @@ export interface HistoryFetchParams {
  * Each platform (Discord, email, Bluesky, etc.) implements this interface.
  */
 export interface PlatformHistoryProvider {
-    /** Platform identifier string (e.g. 'discord', 'email', 'bsky') */
-    readonly platform: string
+    /** Platform identifier — must be one of the known platforms. */
+    readonly platform: KnownPlatform
     /** Fetch history for a given identifier within the specified time window. */
     fetchHistory(params: HistoryFetchParams): Promise<HistoryEntry[]>
 }

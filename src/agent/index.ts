@@ -76,5 +76,5 @@ export { type ResumeContext } from './resume-prompt-builder';
 export { createActivityLogger, type ActivityLogger } from '@/storage';
 
 // History Providers
-export type { HistoryEntry, HistoryFetchParams, PlatformHistoryProvider } from './history-providers';
+export type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from './history-providers';
 export { PersonHistoryCoordinator } from './history-providers';
