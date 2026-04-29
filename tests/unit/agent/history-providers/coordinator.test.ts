@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { PersonHistoryCoordinator, type PersonHistoryCoordinatorOptions } from '../../../../src/agent/history-providers/coordinator';
-import type { HistoryEntry, HistoryFetchParams, PlatformHistoryProvider } from '../../../../src/agent/history-providers/types';
+import type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from '../../../../src/agent/history-providers/types';
 import type { Contact, ContactId } from '../../../../src/storage/contacts';
 import { mockLogger } from '../../../setup';
 
@@ -80,7 +80,7 @@ function makeMockSearch(): MockSearchService {
     };
 }
 
-function makeProvider(platform: string, entries: HistoryEntry[] = []): PlatformHistoryProvider {
+function makeProvider(platform: KnownPlatform, entries: HistoryEntry[] = []): PlatformHistoryProvider {
     return {
         platform,
         fetchHistory: mock(async (): Promise<HistoryEntry[]> => entries),
@@ -200,11 +200,31 @@ describe.concurrent('PersonHistoryCoordinator', () => {
 
             expect(result.history).toContain('discord msg');
             expect(result.history).toContain('email msg');
+            // Each entry line must carry the platform label so readers know which channel each message came from
+            expect(result.history).toContain('[discord]');
+            expect(result.history).toContain('[email]');
 
             // discord msg is later, should appear first
             const discordPos = result.history!.indexOf('discord msg');
             const emailPos   = result.history!.indexOf('email msg');
             expect(discordPos).toBeLessThan(emailPos);
+        });
+
+        test('includes [bsky] platform label in formatted output for bsky entries', async () => {
+            const bskyEntry   = makeEntry({ platform: 'bsky', timestamp: '2025-01-01T09:00:00.000Z', summary: 'bsky msg' });
+            const bskyProvider = makeProvider('bsky', [bskyEntry]);
+
+            const contact = makeContact({
+                identifiers: [{ platform: 'bsky', value: 'craig.bsky.social' }],
+            });
+            const backend = makeMockBackend();
+            backend.fuzzyLookup.mockImplementation(async (): Promise<Contact[]> => [contact]);
+
+            const coord  = new PersonHistoryCoordinator(makeOptions({ backend, providers: [bskyProvider] }));
+            const result = await coord.getPersonHistory('craig');
+
+            expect(result.history).toContain('bsky msg');
+            expect(result.history).toContain('[bsky]');
         });
 
         test('caps results at maxTotalEntries', async () => {
@@ -563,6 +583,22 @@ describe.concurrent('PersonHistoryCoordinator', () => {
 
             expect(backend.fuzzyLookup).toHaveBeenCalledTimes(1);
             expect(backend.resolveIdentifier).not.toHaveBeenCalled();
+        });
+
+        test('formatHistoryEntries assertNever throws for unknown platform at runtime', async () => {
+            // This test documents the exhaustiveness contract: adding a new KnownPlatform
+            // without updating platformLabel's switch will produce a runtime throw.
+            // We cast through `unknown` to simulate a provider returning an unrecognised platform.
+            const unknownPlatformEntry: HistoryEntry = {
+                platform:  'rss' as unknown as KnownPlatform,
+                timestamp: '2025-01-01T10:00:00.000Z',
+                summary:   'feed item',
+                direction: 'inbound',
+            };
+            const provider = makeProvider('discord', [unknownPlatformEntry]);
+            const coord    = new PersonHistoryCoordinator(makeOptions({ providers: [provider] }));
+
+            expect(coord.getPersonHistory('craig')).rejects.toThrow('Unexpected platform: rss');
         });
     });
 

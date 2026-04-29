@@ -7,11 +7,24 @@ import {
     DEFAULT_TIME_WINDOW_MINUTES,
     type HistoryEntry,
     type HistoryFetchParams,
+    type KnownPlatform,
     type PersonHistoryOptions,
     type PlatformHistoryProvider
 } from './types';
 import { InvariantViolationError } from '@/errors';
 import type { Contact, ContactBackend, PlatformType } from '@/storage';
+
+/**
+ * Minimal shape of a raw Discord message returned by MCPMessageSearchService.
+ * Fields are optional because the service contract only guarantees pass-through
+ * from the underlying Discord search result; all access is guarded with `??`.
+ */
+interface RawDiscordMessage {
+    id?:        string
+    timestamp?: string
+    author?:    { id?: string, displayName?: string, username?: string }
+    content?:   string
+}
 
 /**
  * Options for constructing a PersonHistoryCoordinator.
@@ -57,6 +70,30 @@ function stripInternal(contact: Contact): Omit<Contact, '_internal'> {
 }
 
 /**
+ * Exhaustive helper — TypeScript will error here if a new KnownPlatform value
+ * is added without updating platformLabel's switch cases.
+ */
+function assertNever(x: never): never {
+    // Stryker disable next-line StringLiteral: unreachable runtime error — informational only
+    throw new Error(`Unexpected platform: ${String(x)}`);
+}
+
+/**
+ * Return a human-readable label for a known platform.
+ * The exhaustiveness check via assertNever ensures a compile error
+ * if a new platform is added to KnownPlatform without updating this switch.
+ */
+function platformLabel(platform: KnownPlatform): string {
+    switch(platform) {
+        case 'discord': { return 'discord'; }
+        case 'email':   { return 'email'; }
+        case 'bsky':    { return 'bsky'; }
+        // Stryker disable next-line BlockStatement: unreachable — compile-time exhaustiveness guard
+        default:        { return assertNever(platform); }
+    }
+}
+
+/**
  * Format a list of HistoryEntry items into a human-readable string block.
  * Entries are already sorted descending by timestamp when this is called.
  */
@@ -76,7 +113,7 @@ function formatHistoryEntries(displayName: string, entries: HistoryEntry[]): str
             ? `${String(ts.getUTCHours()).padStart(2, '0')}:${String(ts.getUTCMinutes()).padStart(2, '0')}`
             : ts.toISOString().slice(0, 10);
         // Stryker disable next-line StringLiteral: formatting template — cosmetic punctuation
-        return `[${entry.platform}] [${timeStr}] ${entry.summary}`;
+        return `[${platformLabel(entry.platform)}] [${timeStr}] ${entry.summary}`;
     });
     // Stryker disable next-line StringLiteral: header/footer strings are cosmetic output formatting
     return `--- Recent interactions with ${displayName} ---\n${lines.join('\n')}\n--- End of recent history ---`;
@@ -253,13 +290,12 @@ export class PersonHistoryCoordinator {
         const maxChars    = options?.maxCharacters          ?? DEFAULT_MAX_CHARACTERS;
 
         const result = await this.options.messageSearchService.getRecentMessages(channelId, maxMessages);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- search results contain platform-specific types; passed through as JSON per MCPMessageSearchService contract
-        let messages: any[] = result.messages;
+        let messages: RawDiscordMessage[] = result.messages as RawDiscordMessage[];
 
         // Stryker disable next-line ConditionalExpression: true mutant runs filter with excludeMessageId=undefined which passes all messages (m.id !== undefined is true for all valid messages) — equivalent
         if(excludeMessageId) {
             // Stryker disable next-line ConditionalExpression,EqualityOperator: filter uses identity — excluding the trigger message is a passthrough when nothing matches
-            messages = messages.filter((m: Record<string, unknown>) => m.id !== excludeMessageId);
+            messages = messages.filter(m => m.id !== excludeMessageId);
         }
 
         if(messages.length === 0) {
@@ -267,14 +303,10 @@ export class PersonHistoryCoordinator {
         }
 
         // Convert to HistoryEntry[] for uniform formatting
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- messages are generic platform records per MCPMessageSearchService contract
-        const entries: HistoryEntry[] = messages.map((m: any): HistoryEntry => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-            const ts      = (m.timestamp as string | undefined) ?? new Date(0).toISOString();
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-            const author  = m.author as { displayName?: string, username?: string } | undefined;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- message objects are passed through as-is from the search service
-            const content = (m.content as string | undefined) ?? '';
+        const entries: HistoryEntry[] = messages.map((m): HistoryEntry => {
+            const ts      = m.timestamp ?? new Date(0).toISOString();
+            const author  = m.author;
+            const content = m.content ?? '';
             const name    = author?.displayName ?? author?.username ?? 'unknown';
             return {
                 platform:  'discord',

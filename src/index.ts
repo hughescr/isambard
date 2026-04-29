@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { logger, setTimezone } from '@hughescr/logger';
-import type { SlashCommandBuilder } from 'discord.js';
+import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
@@ -348,12 +348,16 @@ export async function createApp(): Promise<App> {
         });
         // Stryker restore ObjectLiteral,StringLiteral
 
+        // Capture a stable reference for the reconnection closure — TS cannot narrow
+        // the outer mutable variable inside an async callback.
+        const stableBskyClient = bskyClient;
+
         // Create reconnection loop eagerly so post-connect drops are also handled.
         bskyReconnectionLoop = createReconnectionLoop({
             service:   'bluesky',
             registry:  healthRegistry,
             connectFn: async () => {
-                await bskyClient!.login();
+                await stableBskyClient.login();
             },
         });
 
@@ -472,8 +476,8 @@ export async function createApp(): Promise<App> {
                 }
             }
             if(item.payload.embeds && item.payload.embeds.length > 0) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- embed type varies by integration
-                await withDiscordRetry(() => channel.send({ embeds: item.payload.embeds as any[] }));
+                // Outbox schema stores embeds as unknown[]; callers always put EmbedBuilder instances in.
+                await withDiscordRetry(() => channel.send({ embeds: item.payload.embeds as EmbedBuilder[] }));
             }
         },
         logger,
@@ -604,14 +608,15 @@ export async function createApp(): Promise<App> {
     // Build sendContactApprovalRequest callback — posts approval embed to admin channel
     // Only wired when email config provides the admin channel ID
     // Stryker disable BlockStatement: Composition root — optional contact approval callback, not unit-testable
-    const sendContactApprovalRequest = config.email
+    const emailConfig = config.email;
+    const sendContactApprovalRequest = emailConfig
         ? async (action: 'create' | 'update', details: ContactChangeRequest): Promise<void> => {
             const uuid = crypto.randomUUID();
             contactApprovalHandler.storePendingRequest(uuid, details);
             const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
             // Stryker disable BlockStatement,StringLiteral: integration-only callback body
             await discordCapability.sendToChannel(
-                config.email!.adminDiscordChannelId,
+                emailConfig.adminDiscordChannelId,
                 { embeds: [embed], components: [actionRow] },
                 { priority: 'high', type: 'contact_approval' }
             );
