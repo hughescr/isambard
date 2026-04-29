@@ -8,6 +8,11 @@ export {
     type LayerName
 } from './types';
 
+// Key generator (used by semantic search for pk/sk→path resolution)
+export {
+    MemoryToolKeyGenerator
+} from './key-generator';
+
 // Backend
 export {
     MemoryToolBackend

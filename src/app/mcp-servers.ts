@@ -6,7 +6,7 @@ import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } 
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
-import type { MemoryToolBackend, MemoryPath, ContactBackend, PersonAllowlist } from '@/storage';
+import type { MemoryToolBackend, MemoryPath, ContactBackend, PersonAllowlist, EmbedderLike, VectorIndex } from '@/storage';
 
 /**
  * Options for creating MCP servers.
@@ -168,6 +168,18 @@ export interface MCPServersOptions {
      */
     browserMaxTextBytes?: number
 
+    /**
+     * Optional vector index for semantic memory search.
+     * When provided alongside `embedder`, enables the `semantic_search` MCP tool.
+     */
+    vectorIndex?: VectorIndex
+
+    /**
+     * Optional embedder for encoding semantic search queries.
+     * When provided alongside `vectorIndex`, enables the `semantic_search` MCP tool.
+     */
+    embedder?: EmbedderLike
+
 }
 
 /**
@@ -247,6 +259,8 @@ interface MCPServers {
 export function createMCPServers(options: MCPServersOptions): MCPServers {
     const memoryMcpServer = createMemoryMCPServer(options.memoryBackend, {
         recordAccess: options.recordAccess,
+        vectorIndex:  options.vectorIndex,
+        embedder:     options.embedder,
     });
 
     // Create DMTracker for username-to-DM-channel resolution

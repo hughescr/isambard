@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -783,6 +783,147 @@ describe('MemoryToolBackend', () => {
 
             // Should return updated data
             expect(result.metadata).toEqual({});
+        });
+    });
+
+    describe('indexer integration', () => {
+        let enqueueMock: ReturnType<typeof mock>;
+
+        beforeEach(() => {
+            enqueueMock = mock(() => {});
+        });
+
+        afterEach(() => {
+            mock.restore();
+        });
+
+        function makeBackendWithIndexer(): MemoryToolBackend {
+            return new MemoryToolBackend(
+                ddbMock as unknown as DynamoDBDocumentClient,
+                'TestTable',
+                { enqueue: enqueueMock as (job: unknown) => void }
+            );
+        }
+
+        describe('create', () => {
+            test('calls indexer.enqueue with upsert job after successful create', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithIndexer = makeBackendWithIndexer();
+                await backendWithIndexer.create({
+                    path:        '/identity/foo' as MemoryPath,
+                    content:     'hello world',
+                    contentType: 'text/plain',
+                });
+                expect(enqueueMock).toHaveBeenCalledTimes(1);
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; mock.calls is guaranteed non-empty after toHaveBeenCalledTimes(1)
+                const job = enqueueMock.mock.calls[0]![0] as { kind: string, path: string, content: string, layer: string };
+                expect(job.kind).toBe('upsert');
+                expect(job.path).toBe('/identity/foo');
+                expect(job.content).toBe('hello world');
+                expect(job.layer).toBeDefined();
+            });
+
+            test('does not call indexer.enqueue when no indexer is provided', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                await backend.create({
+                    path:        '/identity/foo' as MemoryPath,
+                    content:     'hello world',
+                    contentType: 'text/plain',
+                });
+                // enqueueMock was not passed to this backend instance
+                expect(enqueueMock).not.toHaveBeenCalled();
+            });
+
+            test('does not propagate indexer.enqueue error', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                enqueueMock.mockImplementation(() => {
+                    throw new Error('indexer failure');
+                });
+                const backendWithIndexer = makeBackendWithIndexer();
+                // Should not throw even though indexer throws
+                const createPromise = backendWithIndexer.create({
+                    path:        '/identity/foo' as MemoryPath,
+                    content:     'hello world',
+                    contentType: 'text/plain',
+                });
+                expect(createPromise).resolves.toBeDefined();
+            });
+        });
+
+        describe('update', () => {
+            const existingItemForUpdate: MemoryToolItem = {
+                PK:             'DIR#/identity',
+                SK:             'FILE#foo',
+                GSI1PK:         'LAYER#identity',
+                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+                path:           '/identity/foo' as MemoryPath,
+                content:        'old content',
+                contentType:    'text/plain',
+                metadata:       {},
+                contentPreview: 'old content',
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+            };
+
+            test('calls indexer.enqueue with upsert job after successful content update', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItemForUpdate });
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithIndexer = makeBackendWithIndexer();
+                await backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
+                expect(enqueueMock).toHaveBeenCalledTimes(1);
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; mock.calls is guaranteed non-empty after toHaveBeenCalledTimes(1)
+                const job = enqueueMock.mock.calls[0]![0] as { kind: string, content: string };
+                expect(job.kind).toBe('upsert');
+                expect(job.content).toBe('new content');
+            });
+
+            test('does not propagate indexer.enqueue error on update', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItemForUpdate });
+                ddbMock.on(PutCommand).resolves({});
+                enqueueMock.mockImplementation(() => {
+                    throw new Error('indexer failure');
+                });
+                const backendWithIndexer = makeBackendWithIndexer();
+                const updatePromise = backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
+                expect(updatePromise).resolves.toBeDefined();
+            });
+        });
+
+        describe('delete', () => {
+            const existingItemForDelete: MemoryToolItem = {
+                PK:             'DIR#/identity',
+                SK:             'FILE#foo',
+                GSI1PK:         'LAYER#identity',
+                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+                path:           '/identity/foo' as MemoryPath,
+                content:        'some content',
+                contentType:    'text/plain',
+                metadata:       {},
+                contentPreview: 'some content',
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+            };
+
+            test('calls indexer.enqueue with delete job after successful delete', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItemForDelete });
+                ddbMock.on(DeleteCommand).resolves({});
+                const backendWithIndexer = makeBackendWithIndexer();
+                await backendWithIndexer.delete('/identity/foo' as MemoryPath);
+                expect(enqueueMock).toHaveBeenCalledTimes(1);
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; mock.calls is guaranteed non-empty after toHaveBeenCalledTimes(1)
+                const job = enqueueMock.mock.calls[0]![0];
+                expect((job as { kind: string }).kind).toBe('delete');
+            });
+
+            test('does not propagate indexer.enqueue error on delete', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingItemForDelete });
+                ddbMock.on(DeleteCommand).resolves({});
+                enqueueMock.mockImplementation(() => {
+                    throw new Error('indexer failure');
+                });
+                const backendWithIndexer = makeBackendWithIndexer();
+                expect(backendWithIndexer.delete('/identity/foo' as MemoryPath)).resolves.toBeDefined();
+            });
         });
     });
 });

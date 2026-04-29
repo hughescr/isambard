@@ -14,7 +14,7 @@ import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCal
 import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, createCatchUpSignalAdapter, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
-import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe } from '@/storage';
+import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
 import { resolveTimezone, safeAsyncHandler } from '@/utils';
 
 export interface App {
@@ -73,8 +73,29 @@ export async function createApp(): Promise<App> {
 
     const dynamoDBConfig = loadDynamoDBConfig(Resource);
 
+    // Load embedder for vector indexing (if enabled)
+    // Stryker disable BlockStatement: Composition root — embedder loading is not unit-testable (requires GGUF model file on disk)
+    let embedder: EmbedderLike | undefined;
+    if(config.vectorIndex?.enabled) {
+        try {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Composition root — embedder options are configuration
+            embedder = await loadEmbedder({ slug: config.vectorIndex.modelSlug, quant: config.vectorIndex.modelQuant });
+            // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+            logger.info(`Embedder loaded: ${config.vectorIndex.modelSlug}/${config.vectorIndex.modelQuant}`);
+        } catch (err) {
+            // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({
+                error: err instanceof Error ? err.message : String(err),
+                msg:   'Embedder load failed — vector indexing disabled for this session',
+            });
+            // Stryker restore ObjectLiteral,StringLiteral
+            embedder = undefined;
+        }
+    }
+    // Stryker restore BlockStatement
+
     // Create infrastructure layers
-    const storage = createStorageLayer(dynamoDBConfig, config.reconciliation);
+    const storage = await createStorageLayer(dynamoDBConfig, config.reconciliation, config.vectorIndex, embedder);
 
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect
@@ -652,6 +673,8 @@ export async function createApp(): Promise<App> {
         browserPolicy,
         browserMaxScreenshotBytes: config.browser?.maxScreenshotBytes,
         browserMaxTextBytes:       config.browser?.maxTextBytes,
+        vectorIndex:               storage.vectorIndex,
+        embedder,
     });
     // Stryker restore ObjectLiteral,OptionalChaining
 
@@ -899,7 +922,7 @@ export async function createApp(): Promise<App> {
         // Stryker restore BlockStatement
 
         // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
-        // eslint-disable-next-line sonarjs/cognitive-complexity -- stop() is a composition-root shutdown handler; complexity is inherent from cleaning up multiple optional services
+        // eslint-disable-next-line sonarjs/cognitive-complexity, complexity -- stop() is a composition-root shutdown handler; complexity is inherent from cleaning up multiple optional services including vector index lifecycle
         stop: async () => {
             if(isStopping) {
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -980,6 +1003,20 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement
 
             await bot.stop();
+
+            // Drain and close the async indexer before closing the vector index.
+            // asyncIndexer.close() waits for all pending embedding jobs to complete,
+            // then closes the embedder — the indexer must be drained before the index
+            // is closed so in-flight upserts can still write to SQLite.
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(storage.asyncIndexer) {
+                await storage.asyncIndexer.close();
+            }
+            // Close the vector index (SQLite database) after the indexer is fully drained.
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(storage.vectorIndex) {
+                storage.vectorIndex.close();
+            }
 
             // Clear periodic DynamoDB probe interval.
             clearInterval(dynamoDBProbeInterval);

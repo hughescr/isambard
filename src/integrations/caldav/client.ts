@@ -3,14 +3,15 @@ import * as ical from 'node-ical';
 import { expandRecurringEvent } from 'node-ical';
 import { createDAVClient, type DAVCalendar, type DAVCalendarObject } from 'tsdav';
 import type { CalendarServerEntry } from './calendar-registry/types';
-import type { CalendarInfo, CalendarEvent } from './types';
+import type { CalendarInfo, CalendarEvent, CalendarEventsResult, FailedCalendarEvent } from './types';
 import { CaldavAuthError, CaldavTimeoutError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services';
 
 const CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
-interface CachedEvents {
+interface CachedResult {
     events:    CalendarEvent[]
+    failed:    FailedCalendarEvent[]
     expiresAt: number
 }
 
@@ -28,7 +29,7 @@ interface CalDAVClientOptions {
 export class CalDAVClient {
     readonly #cacheTtlMs:      number;
     readonly #timeoutMs:       number;
-    readonly #cache =          new Map<string, CachedEvents>();
+    readonly #cache =          new Map<string, CachedResult>();
     readonly #healthRegistry?: ServiceHealthRegistry;
     #consecutiveFailures =     0;
 
@@ -68,26 +69,34 @@ export class CalDAVClient {
     /**
      * Fetch events from specified server entries in a date range.
      * Groups by server to minimize connections.
+     *
+     * Returns `{ events, failed }` — `failed` is never silently dropped; each entry
+     * that could not be expanded (e.g. malformed RRULE) appears in `failed` with
+     * its uid, reason string, and the rrule string if available.
      */
-    async getEvents(servers: CalendarServerEntry[], start: Date, end: Date): Promise<CalendarEvent[]> {
-        const allEvents: CalendarEvent[] = [];
+    async getEvents(servers: CalendarServerEntry[], start: Date, end: Date): Promise<CalendarEventsResult> {
+        const allEvents: CalendarEvent[]       = [];
+        const allFailed: FailedCalendarEvent[] = [];
 
         for(const server of servers) {
             const cacheKey = this.#buildCacheKey(server, start, end);
             const cached = this.#cache.get(cacheKey);
             if(cached && cached.expiresAt > Date.now()) {
                 allEvents.push(...cached.events);
+                allFailed.push(...cached.failed);
                 continue;
             }
 
             try {
                 // eslint-disable-next-line no-await-in-loop -- must stay sequential: #consecutiveFailures shared state would be corrupted by concurrent #recordSuccess/#recordFailure calls
-                const serverEvents = await this.#fetchServerEvents(server, start, end);
+                const result = await this.#fetchServerEvents(server, start, end);
                 this.#cache.set(cacheKey, {
-                    events:    serverEvents,
+                    events:    result.events,
+                    failed:    result.failed,
                     expiresAt: Date.now() + this.#cacheTtlMs,
                 });
-                allEvents.push(...serverEvents);
+                allEvents.push(...result.events);
+                allFailed.push(...result.failed);
                 this.#recordSuccess();
             } catch (error) {
                 // Log and continue — partial results are better than total failure
@@ -96,13 +105,16 @@ export class CalDAVClient {
             }
         }
 
-        return allEvents.toSorted((a, b) => a.start.getTime() - b.start.getTime());
+        return {
+            events: allEvents.toSorted((a, b) => a.start.getTime() - b.start.getTime()),
+            failed: allFailed,
+        };
     }
 
     /**
      * Convenience: fetch events for context injection (past 24h + next 3 days).
      */
-    async getContextEvents(servers: CalendarServerEntry[], now = new Date()): Promise<CalendarEvent[]> {
+    async getContextEvents(servers: CalendarServerEntry[], now = new Date()): Promise<CalendarEventsResult> {
         const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
         const end   = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
         return this.getEvents(servers, start, end);
@@ -140,11 +152,12 @@ export class CalDAVClient {
         }
     }
 
-    async #fetchServerEvents(server: CalendarServerEntry, start: Date, end: Date): Promise<CalendarEvent[]> {
+    async #fetchServerEvents(server: CalendarServerEntry, start: Date, end: Date): Promise<CalendarEventsResult> {
         const client = await this.#createClient(server.serverUrl, server.username, server.password);
         // Stryker disable next-line StringLiteral -- operation label is informational only; appears in error message text
         const calendars = await this.#withTimeout(client.fetchCalendars(), this.#timeoutMs, 'fetchCalendars');
-        const events: CalendarEvent[] = [];
+        const events: CalendarEvent[]       = [];
+        const failed: FailedCalendarEvent[] = [];
 
         for(const calEntry of server.calendars) {
             const davCalendar = calendars.find((c: DAVCalendar) => c.url === calEntry.calendarPath);
@@ -165,12 +178,13 @@ export class CalDAVClient {
                     continue;
                 }
                 const parsed = ical.sync.parseICS(obj.data as string);
-                const extracted = this.#extractEvents(parsed, calEntry.label, start, end);
-                events.push(...extracted);
+                const result = this.#extractEvents(parsed, calEntry.label, start, end);
+                events.push(...result.events);
+                failed.push(...result.failed);
             }
         }
 
-        return events;
+        return { events, failed };
     }
 
     async #withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -213,8 +227,9 @@ export class CalDAVClient {
         }
     }
 
-    #extractEvents(parsed: ical.CalendarResponse, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEvent[] {
-        const events: CalendarEvent[] = [];
+    #extractEvents(parsed: ical.CalendarResponse, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEventsResult {
+        const events: CalendarEvent[]       = [];
+        const failed: FailedCalendarEvent[] = [];
 
         for(const [, component] of Object.entries(parsed)) {
             if(component?.type !== 'VEVENT') {
@@ -226,36 +241,50 @@ export class CalDAVClient {
 
             // Stryker disable next-line LogicalOperator -- both rrule and recurrences indicate a recurring event; either alone is sufficient
             if(vevent.rrule || vevent.recurrences) {
-                events.push(...this.#expandRecurringVEvent(vevent, calendarLabel, rangeStart, rangeEnd));
+                const result = this.#expandRecurringVEvent(vevent, calendarLabel, rangeStart, rangeEnd);
+                events.push(...result.events);
+                failed.push(...result.failed);
                 continue;
             }
 
             events.push(this.#buildCalendarEvent(vevent, vevent.start, vevent.end, this.#isAllDay(vevent), calendarLabel));
         }
 
-        return events;
+        return { events, failed };
     }
 
-    #expandRecurringVEvent(vevent: ical.VEvent, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEvent[] {
+    #expandRecurringVEvent(vevent: ical.VEvent, calendarLabel: string, rangeStart: Date, rangeEnd: Date): CalendarEventsResult {
         let instances: ical.EventInstance[];
         try {
             instances = expandRecurringEvent(vevent, { from: rangeStart, to: rangeEnd, expandOngoing: true });
         } catch (error) {
-            // Stryker disable next-line StringLiteral -- log message is informational only
-            logger.warn({ error, uid: vevent.uid }, 'Failed to expand recurring event, skipping');
-            return [];
+            // Extract the rrule string for diagnostics (may be absent for recurrences-only events)
+            const rruleRaw = vevent.rrule as unknown;
+            // Stryker disable next-line ConditionalExpression,StringLiteral -- rrule is an opaque object from node-ical; toString() is best-effort representation
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- rrule is a node-ical RRule object; toString() produces the RRULE string, best-effort for diagnostics
+            const rruleStr = rruleRaw ? String(rruleRaw) : undefined;
+            const reason   = error instanceof Error ? error.message : String(error);
+            logger.warn({ error, uid: vevent.uid, rrule: rruleStr }, 'Failed to expand recurring event; it will appear in failed[] for caller visibility');
+            return {
+                events: [],
+                // Stryker disable next-line ObjectLiteral: failed entry fields are all needed for caller diagnostics; removing any field defeats the visibility goal
+                failed: [{ uid: vevent.uid, reason, rrule: rruleStr }],
+            };
         }
 
         if(instances.length === 0) {
             // Stryker disable next-line StringLiteral -- debug message is informational only
             logger.debug({ uid: vevent.uid, summary: vevent.summary }, 'Recurring event had rrule/recurrences but produced no instances in range');
-            return [];
+            return { events: [], failed: [] };
         }
 
-        return instances.map((instance) => {
-            const instanceVEvent = instance.event;
-            return this.#buildCalendarEvent(instanceVEvent, instance.start, instance.end, instance.isFullDay, calendarLabel);
-        });
+        return {
+            events: instances.map((instance) => {
+                const instanceVEvent = instance.event;
+                return this.#buildCalendarEvent(instanceVEvent, instance.start, instance.end, instance.isFullDay, calendarLabel);
+            }),
+            failed: [],
+        };
     }
 
     #buildCalendarEvent(vevent: ical.VEvent, start: ical.DateWithTimeZone | undefined, end: ical.DateWithTimeZone | undefined, isAllDay: boolean, calendarLabel: string): CalendarEvent {

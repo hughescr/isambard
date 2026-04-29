@@ -1702,4 +1702,211 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(result).toEqual([]);
         });
     });
+
+    describe('onDriftDetected callback', () => {
+        /**
+         * Helper: create a backend with a drift callback mock
+         */
+        function makeBackendWithCallback(): { backend: MemoryToolBackendTagIndex, onDrift: ReturnType<typeof jest.fn> } {
+            const onDrift = jest.fn();
+            const backendWithCallback = new MemoryToolBackendTagIndex(
+                ddbMock as unknown as DynamoDBDocumentClient,
+                'TestTable',
+                onDrift
+            );
+            return { backend: backendWithCallback, onDrift };
+        }
+
+        describe('createTagIndexItems', () => {
+            test('should call onDriftDetected when batchWrite returns leftover items', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                // First call returns an unprocessed item that persists through all retries
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: {
+                        TestTable: [{
+                            PutRequest: {
+                                Item: { PK: 'TAG#important', SK: `PATH#${path}` },
+                            },
+                        }],
+                    },
+                });
+                ddbMock.on(UpdateCommand).resolves({});
+
+                await drainTimers();
+                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                await promise;
+
+                expect(onDrift).toHaveBeenCalledTimes(1);
+            });
+
+            test('should NOT call onDriftDetected when batchWrite succeeds with no leftovers', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                ddbMock.on(BatchWriteCommand).resolves({});
+                ddbMock.on(UpdateCommand).resolves({});
+
+                await b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+
+                expect(onDrift).not.toHaveBeenCalled();
+            });
+
+            test('should call onDriftDetected once even when multiple batches fail', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                // 26 tags → 2 batches; both fail
+                const tags = new Set(Array.from({ length: 26 }, (_, i) => `tag${i}`));
+
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: {
+                        TestTable: [{
+                            PutRequest: {
+                                Item: { PK: 'TAG#tag0', SK: `PATH#${path}` },
+                            },
+                        }],
+                    },
+                });
+                ddbMock.on(UpdateCommand).resolves({});
+
+                await drainTimers();
+                const promise = b.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                await promise;
+
+                // Both batches fail but onDrift is called exactly once — driftNotified coalesces per-call
+                expect(onDrift).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe('deleteTagIndexItems', () => {
+            test('should call onDriftDetected when batchWrite returns leftover items', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: {
+                        TestTable: [{
+                            DeleteRequest: {
+                                Key: { PK: 'TAG#important', SK: `PATH#${path}` },
+                            },
+                        }],
+                    },
+                });
+                ddbMock.on(UpdateCommand).resolves({});
+
+                await drainTimers();
+                const promise = b.deleteTagIndexItems(path, tags);
+                await drainTimers();
+                await promise;
+
+                expect(onDrift).toHaveBeenCalledTimes(1);
+            });
+
+            test('should NOT call onDriftDetected when deleteTagIndexItems succeeds', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                ddbMock.on(BatchWriteCommand).resolves({});
+                ddbMock.on(UpdateCommand).resolves({});
+
+                await b.deleteTagIndexItems(path, tags);
+
+                expect(onDrift).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('refreshTagIndexItems', () => {
+            test('should call onDriftDetected when batchWrite returns leftover items', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: {
+                        TestTable: [{
+                            PutRequest: {
+                                Item: { PK: 'TAG#important', SK: `PATH#${path}` },
+                            },
+                        }],
+                    },
+                });
+
+                await drainTimers();
+                const promise = b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                await promise;
+
+                expect(onDrift).toHaveBeenCalledTimes(1);
+            });
+
+            test('should NOT call onDriftDetected when refreshTagIndexItems succeeds', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                ddbMock.on(BatchWriteCommand).resolves({});
+
+                await b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+
+                expect(onDrift).not.toHaveBeenCalled();
+            });
+
+            test('should call onDriftDetected exactly once even when multiple batches fail', async () => {
+                const { backend: b, onDrift } = makeBackendWithCallback();
+                const path = '/identity/values.md' as MemoryPath;
+                // 26 tags → 2 batches; both fail
+                const tags = new Set(Array.from({ length: 26 }, (_, i) => `tag${i}`));
+
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: {
+                        TestTable: [{
+                            PutRequest: {
+                                Item: { PK: 'TAG#tag0', SK: `PATH#${path}` },
+                            },
+                        }],
+                    },
+                });
+
+                await drainTimers();
+                const promise = b.refreshTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                await promise;
+
+                // Both batches fail but onDrift is called exactly once — driftNotified coalesces per-call
+                expect(onDrift).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe('no callback provided', () => {
+            test('should not throw when no onDriftDetected provided and leftovers occur', async () => {
+                // backend from beforeEach has no callback
+                const path = '/identity/values.md' as MemoryPath;
+                const tags = new Set(['important']);
+
+                ddbMock.on(BatchWriteCommand).resolves({
+                    UnprocessedItems: {
+                        TestTable: [{
+                            PutRequest: {
+                                Item: { PK: 'TAG#important', SK: `PATH#${path}` },
+                            },
+                        }],
+                    },
+                });
+                ddbMock.on(UpdateCommand).resolves({});
+
+                await drainTimers();
+                const promise = backend.createTagIndexItems(path, tags, '2024-01-01T00:00:00.000Z', 'preview', 'identity');
+                await drainTimers();
+                // Should not throw
+                expect(promise).resolves.toBeUndefined();
+            });
+        });
+    });
 });

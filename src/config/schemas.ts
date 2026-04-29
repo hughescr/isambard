@@ -201,6 +201,25 @@ export const reconciliationConfigSchema = z.object({
 
 export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
 
+// Vector index config schema
+/* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration */
+export const vectorIndexConfigSchema = z.object({
+    /** Whether vector indexing is enabled */
+    enabled:    z.boolean().default(true),
+    /** Path to SQLite database file (relative to CWD) */
+    // Stryker disable next-line StringLiteral: Default path is configuration
+    dbPath:     z.string().default('memory-vec.sqlite'),
+    /** Embedding model size slug */
+    // Stryker disable next-line StringLiteral,ArrayDeclaration: Enum values and default are configuration
+    modelSlug:  z.enum(['0.6b', '4b']).default('0.6b'),
+    /** Embedding model quantization level */
+    // Stryker disable next-line StringLiteral,ArrayDeclaration: Enum values and default are configuration
+    modelQuant: z.enum(['Q8_0', 'Q4_K_M']).default('Q8_0'),
+});
+/* Stryker restore BooleanLiteral,StringLiteral */
+
+export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
+
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({
     app:                appConfigSchema,
@@ -213,6 +232,7 @@ export const configSchema = z.object({
     email:              emailConfigSchema.optional(),
     bsky:               bskyConfigSchema.optional(),
     browser:            browserConfigSchema.optional(),
+    vectorIndex:        vectorIndexConfigSchema.optional(),
 });
 
 // Type exports

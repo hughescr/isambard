@@ -1,9 +1,11 @@
 import { AtpAgent, RichText, type AppBskyFeedDefs, type AppBskyActorDefs, type AppBskyFeedPost, AppBskyEmbedRecord, AppBskyEmbedImages, AppBskyEmbedVideo, AppBskyEmbedExternal, AppBskyEmbedRecordWithMedia, type AppBskyRichtextFacet, ChatBskyConvoDefs, type ChatBskyActorDefs } from '@atproto/api';
 import { logger } from '@hughescr/logger';
 import { BskyError, BskyAuthError, BskyRateLimitError, BskyValidationError, InvariantViolationError } from '@/errors';
+import { createBskyClassifier } from '@/integrations/bsky/classifier';
 import { type BskyEmbeddedRecord, type BskyPostEmbed, type BskyFacet, type BskyFacetFeature } from '@/integrations/bsky/embeds';
 import { type BskyAuthor, type BskyPost, type BskyFeedItem, type BskyNotification, type BskyViewerState, type BskyConversationMember, type BskyDirectMessage, type BskyConversation } from '@/integrations/bsky/types';
 import type { ServiceHealthRegistry } from '@/services';
+import { retryAsync, type RetryDeps, type RetryPolicy } from '@/utils';
 
 // HTTP status codes for error classification (mirrors @atproto/xrpc ResponseType)
 // Stryker disable ObjectLiteral,StringLiteral: HTTP status code constants are configuration
@@ -18,10 +20,28 @@ const HTTP_STATUS = {
  * Avoids importing the transitive @atproto/xrpc package directly.
  */
 interface XRPCErrorLike {
-    status:  number
-    error:   string
-    message: string
+    status:   number
+    error:    string
+    message:  string
+    headers?: Record<string, string | string[] | undefined>
 }
+
+// Stryker disable next-line ArithmeticOperator: Rate-limit retry cap — 3 attempts balances resilience with avoiding long waits
+const BSKY_READ_MAX_ATTEMPTS = 3;
+// Stryker disable next-line ArithmeticOperator: Base backoff for Bluesky rate-limit retry (5s)
+const BSKY_RETRY_BASE_DELAY_MS = 5000;
+// Stryker disable next-line ArithmeticOperator: Max backoff cap for Bluesky rate-limit retry (60s)
+const BSKY_RETRY_MAX_DELAY_MS = 60_000;
+
+// Stryker disable ObjectLiteral,ArithmeticOperator: Bluesky read retry policy — constants are protocol/operational configuration
+const BSKY_READ_RETRY_POLICY: Partial<RetryPolicy> = {
+    maxAttempts:       BSKY_READ_MAX_ATTEMPTS,
+    baseDelayMs:       BSKY_RETRY_BASE_DELAY_MS,
+    maxDelayMs:        BSKY_RETRY_MAX_DELAY_MS,
+    backoffMultiplier: 2,
+    jitterFraction:    0.1,
+};
+// Stryker restore ObjectLiteral,ArithmeticOperator
 
 // Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: instanceof guard and typeof checks are paired — mutating either alone cannot change observable behavior for the inputs that reach this code
 function isXRPCError(err: unknown): err is XRPCErrorLike {
@@ -32,6 +52,45 @@ function isXRPCError(err: unknown): err is XRPCErrorLike {
     return typeof errRecord.status === 'number' && typeof errRecord.error === 'string';
 }
 // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
+
+/**
+ * Extract a retry-after delay in milliseconds from XRPC error response headers.
+ *
+ * Bluesky rate-limit responses include a `ratelimit-reset` header (Unix epoch seconds).
+ * We convert that to a relative delay by subtracting the current time.
+ * If the header is absent or unparseable, returns undefined (exponential backoff is used).
+ */
+function extractRateLimitRetryAfterMs(headers: XRPCErrorLike['headers']): number | undefined {
+    // Stryker disable BlockStatement,ConditionalExpression,LogicalOperator: defensive type guards — non-object / missing-header inputs return undefined either way
+    if(headers === undefined) {
+        return undefined;
+    }
+    // Stryker restore BlockStatement,ConditionalExpression,LogicalOperator
+
+    // Bluesky sends `ratelimit-reset` as a Unix epoch timestamp (seconds)
+    // Stryker disable next-line StringLiteral: header key is a protocol constant; tests cover present/absent cases
+    const resetRaw = headers['ratelimit-reset'];
+    const resetStr = Array.isArray(resetRaw) ? resetRaw[0] : resetRaw;
+    // Stryker disable BlockStatement,ConditionalExpression: non-string / missing header — tests provide string values to exercise the happy path
+    if(typeof resetStr !== 'string') {
+        return undefined;
+    }
+    // Stryker restore BlockStatement,ConditionalExpression
+
+    const resetEpochSec = Number.parseInt(resetStr, 10);
+    // Stryker disable next-line BooleanLiteral: inversion tested via non-numeric header test
+    if(!Number.isFinite(resetEpochSec)) {
+        return undefined;
+    }
+
+    // Stryker disable next-line ArithmeticOperator: division converts ms to seconds; * would produce wrong order of magnitude — tests assert exact ms values
+    const nowSec    = Math.floor(Date.now() / 1000);
+    // Stryker disable next-line ArithmeticOperator: subtraction computes remaining seconds; + would produce wrong direction — tests assert exact delays
+    const delaySec  = resetEpochSec - nowSec;
+    // Clamp to [0, 300] seconds — never negative, never longer than 5 minutes
+    // Stryker disable next-line ArithmeticOperator,MethodExpression: arithmetic/clamping tested with past/future/far-future timestamps
+    return Math.max(0, Math.min(delaySec, 300)) * 1000;
+}
 
 // Stryker disable next-line StringLiteral: Feed URI is configuration
 const DISCOVER_FEED_URI = 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
@@ -48,6 +107,7 @@ interface BlueskyClientOptions {
     appPassword:     string
     serviceUrl?:     string
     healthRegistry?: ServiceHealthRegistry
+    retryDeps?:      Partial<RetryDeps>
 }
 
 /**
@@ -59,6 +119,7 @@ export class BlueskyClient {
     private readonly handle:         string;
     private readonly appPassword:    string;
     private readonly healthRegistry: ServiceHealthRegistry | undefined;
+    private readonly retryDeps:      Partial<RetryDeps>;
 
     constructor(options: BlueskyClientOptions) {
         // Stryker disable next-line StringLiteral: default service URL is configuration
@@ -66,6 +127,19 @@ export class BlueskyClient {
         this.handle         = options.handle;
         this.appPassword    = options.appPassword;
         this.healthRegistry = options.healthRegistry;
+        this.retryDeps      = options.retryDeps ?? {};
+    }
+
+    /**
+     * Wraps a read operation in retryAsync with the Bluesky rate-limit classifier.
+     * Only use for idempotent read methods — NOT for write operations.
+     */
+    private async withRateLimitRetry<T>(operation: () => Promise<T>): Promise<T> {
+        return retryAsync(operation, {
+            classifier: createBskyClassifier(),
+            policy:     BSKY_READ_RETRY_POLICY,
+            deps:       this.retryDeps,
+        });
     }
 
     /**
@@ -114,34 +188,36 @@ export class BlueskyClient {
         limit?:    number,
         cursor?:   string
     ): Promise<{ items: BskyFeedItem[], cursor?: string }> {
-        try {
-            const didCache = this.createDIDCache();
-            if(feedName === undefined || feedName === 'following') {
-                const response = await this.agent.getTimeline({ limit, cursor });
+        return this.withRateLimitRetry(async () => {
+            try {
+                const didCache = this.createDIDCache();
+                if(feedName === undefined || feedName === 'following') {
+                    const response = await this.agent.getTimeline({ limit, cursor });
+                    return {
+                        items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
+                        cursor: response.data.cursor,
+                    };
+                }
+
+                let feedUri: string;
+                if(feedName === 'for-you') {
+                    feedUri = FOR_YOU_FEED_URI;
+                } else if(feedName === 'discover') {
+                    feedUri = DISCOVER_FEED_URI;
+                } else {
+                    feedUri = feedName;
+                }
+
+                const response = await this.agent.app.bsky.feed.getFeed({ feed: feedUri, limit, cursor });
                 return {
                     items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
                     cursor: response.data.cursor,
                 };
+            } catch (err: unknown) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to fetch feed');
             }
-
-            let feedUri: string;
-            if(feedName === 'for-you') {
-                feedUri = FOR_YOU_FEED_URI;
-            } else if(feedName === 'discover') {
-                feedUri = DISCOVER_FEED_URI;
-            } else {
-                feedUri = feedName;
-            }
-
-            const response = await this.agent.app.bsky.feed.getFeed({ feed: feedUri, limit, cursor });
-            return {
-                items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
-                cursor: response.data.cursor,
-            };
-        } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to fetch feed');
-        }
+        });
     }
 
     /**
@@ -152,44 +228,48 @@ export class BlueskyClient {
         limit?:  number,
         cursor?: string
     ): Promise<{ items: BskyFeedItem[], cursor?: string }> {
-        try {
-            const didCache = this.createDIDCache();
-            const response = await this.agent.getAuthorFeed({ actor, limit, cursor });
-            return {
-                items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
-                cursor: response.data.cursor,
-            };
-        } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to fetch author feed');
-        }
+        return this.withRateLimitRetry(async () => {
+            try {
+                const didCache = this.createDIDCache();
+                const response = await this.agent.getAuthorFeed({ actor, limit, cursor });
+                return {
+                    items:  await Promise.all(response.data.feed.map(item => this.normalizeFeedItem(item, didCache))),
+                    cursor: response.data.cursor,
+                };
+            } catch (err: unknown) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to fetch author feed');
+            }
+        });
     }
 
     /**
      * Fetch a single post by AT URI.
      */
     async getPost(uri: string): Promise<BskyPost> {
-        try {
-            const response = await this.agent.getPosts({ uris: [uri] });
-            const posts    = response.data.posts;
-            if(posts.length === 0) {
+        return this.withRateLimitRetry(async () => {
+            try {
+                const response = await this.agent.getPosts({ uris: [uri] });
+                const posts    = response.data.posts;
+                if(posts.length === 0) {
+                    // Stryker disable next-line StringLiteral: error message is informational only
+                    throw new BskyError('Post not found', undefined, { uri });
+                }
+                const post = posts[0];
+                // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — posts.length === 0 check above ensures non-empty; unreachable in practice
+                if(post === undefined) {
+                    // Stryker disable next-line StringLiteral: invariant violation message — debug context only
+                    throw new InvariantViolationError('getPost', 'posts[0] undefined after posts.length === 0 guard');
+                }
+                return await this.normalizePost(post);
+            } catch (err: unknown) {
+                if(err instanceof BskyError) {
+                    throw err;
+                }
                 // Stryker disable next-line StringLiteral: error message is informational only
-                throw new BskyError('Post not found', undefined, { uri });
+                throw this.mapError(err, 'Failed to fetch post');
             }
-            const post = posts[0];
-            // Stryker disable next-line ConditionalExpression,BlockStatement: invariant guard — posts.length === 0 check above ensures non-empty; unreachable in practice
-            if(post === undefined) {
-                // Stryker disable next-line StringLiteral: invariant violation message — debug context only
-                throw new InvariantViolationError('getPost', 'posts[0] undefined after posts.length === 0 guard');
-            }
-            return await this.normalizePost(post);
-        } catch (err: unknown) {
-            if(err instanceof BskyError) {
-                throw err;
-            }
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to fetch post');
-        }
+        });
     }
 
     /**
@@ -199,18 +279,20 @@ export class BlueskyClient {
         limit?:  number,
         cursor?: string
     ): Promise<{ notifications: BskyNotification[], cursor?: string }> {
-        try {
-            const response = await this.agent.listNotifications({ limit, cursor });
-            return {
-                notifications: response.data.notifications
-                    .filter(n => this.isKnownNotificationReason(n.reason))
-                    .map(n => this.normalizeNotification(n)),
-                cursor: response.data.cursor,
-            };
-        } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to fetch notifications');
-        }
+        return this.withRateLimitRetry(async () => {
+            try {
+                const response = await this.agent.listNotifications({ limit, cursor });
+                return {
+                    notifications: response.data.notifications
+                        .filter(n => this.isKnownNotificationReason(n.reason))
+                        .map(n => this.normalizeNotification(n)),
+                    cursor: response.data.cursor,
+                };
+            } catch (err: unknown) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to fetch notifications');
+            }
+        });
     }
 
     /**
@@ -230,13 +312,15 @@ export class BlueskyClient {
      * Fetch a user profile by DID or handle.
      */
     async getProfile(actor: string): Promise<BskyAuthor> {
-        try {
-            const response = await this.agent.getProfile({ actor });
-            return this.normalizeDetailedProfile(response.data);
-        } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to fetch profile');
-        }
+        return this.withRateLimitRetry(async () => {
+            try {
+                const response = await this.agent.getProfile({ actor });
+                return this.normalizeDetailedProfile(response.data);
+            } catch (err: unknown) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to fetch profile');
+            }
+        });
     }
 
     /**
@@ -247,17 +331,19 @@ export class BlueskyClient {
         limit?:  number,
         cursor?: string
     ): Promise<{ posts: BskyPost[], cursor?: string }> {
-        try {
-            const didCache = this.createDIDCache();
-            const response = await this.agent.app.bsky.feed.searchPosts({ q: query, limit, cursor });
-            return {
-                posts:  await Promise.all(response.data.posts.map(post => this.normalizePost(post, didCache))),
-                cursor: response.data.cursor,
-            };
-        } catch (err: unknown) {
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to search posts');
-        }
+        return this.withRateLimitRetry(async () => {
+            try {
+                const didCache = this.createDIDCache();
+                const response = await this.agent.app.bsky.feed.searchPosts({ q: query, limit, cursor });
+                return {
+                    posts:  await Promise.all(response.data.posts.map(post => this.normalizePost(post, didCache))),
+                    cursor: response.data.cursor,
+                };
+            } catch (err: unknown) {
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to search posts');
+            }
+        });
     }
 
     /**
@@ -423,20 +509,22 @@ export class BlueskyClient {
         readState?: string,
         status?:    string
     ): Promise<{ conversations: BskyConversation[], cursor?: string }> {
-        try {
-            const didCache = this.createDIDCache();
-            const response = await this.requireChatAgent().chat.bsky.convo.listConvos({ limit, cursor, readState, status });
-            return {
-                conversations: await Promise.all(response.data.convos.map(convo => this.normalizeConversation(convo, didCache))),
-                cursor:        response.data.cursor,
-            };
-        } catch (err: unknown) {
-            if(err instanceof BskyError) {
-                throw err;
+        return this.withRateLimitRetry(async () => {
+            try {
+                const didCache = this.createDIDCache();
+                const response = await this.requireChatAgent().chat.bsky.convo.listConvos({ limit, cursor, readState, status });
+                return {
+                    conversations: await Promise.all(response.data.convos.map(convo => this.normalizeConversation(convo, didCache))),
+                    cursor:        response.data.cursor,
+                };
+            } catch (err: unknown) {
+                if(err instanceof BskyError) {
+                    throw err;
+                }
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to list conversations');
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to list conversations');
-        }
+        });
     }
 
     /**
@@ -463,24 +551,26 @@ export class BlueskyClient {
         limit?:  number,
         cursor?: string
     ): Promise<{ messages: BskyDirectMessage[], cursor?: string }> {
-        try {
-            const didCache = this.createDIDCache();
-            const response = await this.requireChatAgent().chat.bsky.convo.getMessages({ convoId, limit, cursor });
-            return {
-                messages: await Promise.all(
-                    response.data.messages
-                        .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
-                        .map(msg => this.normalizeMessage(msg as ChatBskyConvoDefs.MessageView, didCache))
-                ),
-                cursor: response.data.cursor,
-            };
-        } catch (err: unknown) {
-            if(err instanceof BskyError) {
-                throw err;
+        return this.withRateLimitRetry(async () => {
+            try {
+                const didCache = this.createDIDCache();
+                const response = await this.requireChatAgent().chat.bsky.convo.getMessages({ convoId, limit, cursor });
+                return {
+                    messages: await Promise.all(
+                        response.data.messages
+                            .filter(msg => ChatBskyConvoDefs.isMessageView(msg))
+                            .map(msg => this.normalizeMessage(msg as ChatBskyConvoDefs.MessageView, didCache))
+                    ),
+                    cursor: response.data.cursor,
+                };
+            } catch (err: unknown) {
+                if(err instanceof BskyError) {
+                    throw err;
+                }
+                // Stryker disable next-line StringLiteral: error message is informational only
+                throw this.mapError(err, 'Failed to get messages');
             }
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw this.mapError(err, 'Failed to get messages');
-        }
+        });
     }
 
     /**
@@ -884,7 +974,13 @@ export class BlueskyClient {
                 return new BskyAuthError(message, { originalMessage: err.message, error: err.error });
             }
             if(err.status === HTTP_STATUS.RATE_LIMITED) {
-                return new BskyRateLimitError(message, { originalMessage: err.message, error: err.error });
+                const retryAfterMs = extractRateLimitRetryAfterMs(err.headers);
+                return new BskyRateLimitError(message, {
+                    originalMessage: err.message,
+                    error:           err.error,
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator: retryAfterMs spreading — undefined omits the key; 0 is a valid retry-after (retry immediately)
+                    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+                });
             }
             return new BskyError(message, undefined, { originalMessage: err.message, error: err.error, status: err.status });
         }

@@ -9,7 +9,8 @@ import {
     dynamoDBConfigSchema,
     configSchema,
     perchConfigSchema,
-    reconciliationConfigSchema
+    reconciliationConfigSchema,
+    vectorIndexConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
@@ -892,6 +893,114 @@ describe.concurrent('browserConfigSchema', () => {
     test('should accept viewportHeight at 4096 (max boundary)', () => {
         const result = browserConfigSchema.safeParse({ viewportHeight: 4096 });
         expect(result.success).toBe(true);
+    });
+});
+
+describe.concurrent('vectorIndexConfigSchema', () => {
+    test('should apply all defaults when given empty object', () => {
+        const result = vectorIndexConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.enabled).toBe(true);
+            expect(result.data.dbPath).toBe('memory-vec.sqlite');
+            expect(result.data.modelSlug).toBe('0.6b');
+            expect(result.data.modelQuant).toBe('Q8_0');
+        }
+    });
+
+    test('should ensure enabled defaults to true not false', () => {
+        const result = vectorIndexConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.enabled).toBe(true);
+            expect(result.data.enabled).not.toBe(false);
+        }
+    });
+
+    test('should accept enabled = false', () => {
+        const result = vectorIndexConfigSchema.safeParse({ enabled: false });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.enabled).toBe(false);
+        }
+    });
+
+    test('should ensure dbPath defaults to memory-vec.sqlite not empty string', () => {
+        const result = vectorIndexConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.dbPath).toBe('memory-vec.sqlite');
+            expect(result.data.dbPath.length).toBeGreaterThan(0);
+        }
+    });
+
+    test('should accept custom dbPath', () => {
+        const result = vectorIndexConfigSchema.safeParse({ dbPath: '/data/vec.sqlite' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.dbPath).toBe('/data/vec.sqlite');
+        }
+    });
+
+    test('should ensure modelSlug defaults to 0.6b not 4b', () => {
+        const result = vectorIndexConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.modelSlug).toBe('0.6b');
+            expect(result.data.modelSlug).not.toBe('4b');
+        }
+    });
+
+    test('should accept modelSlug = 4b', () => {
+        const result = vectorIndexConfigSchema.safeParse({ modelSlug: '4b' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.modelSlug).toBe('4b');
+        }
+    });
+
+    test('should reject invalid modelSlug value', () => {
+        const result = vectorIndexConfigSchema.safeParse({ modelSlug: '2b' });
+        expect(result.success).toBe(false);
+    });
+
+    test('should ensure modelQuant defaults to Q8_0 not Q4_K_M', () => {
+        const result = vectorIndexConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.modelQuant).toBe('Q8_0');
+            expect(result.data.modelQuant).not.toBe('Q4_K_M');
+        }
+    });
+
+    test('should accept modelQuant = Q4_K_M', () => {
+        const result = vectorIndexConfigSchema.safeParse({ modelQuant: 'Q4_K_M' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.modelQuant).toBe('Q4_K_M');
+        }
+    });
+
+    test('should reject invalid modelQuant value', () => {
+        const result = vectorIndexConfigSchema.safeParse({ modelQuant: 'Q2_K' });
+        expect(result.success).toBe(false);
+    });
+
+    test('should accept fully populated config', () => {
+        const config = {
+            enabled:    false,
+            dbPath:     '/custom/path/vec.sqlite',
+            modelSlug:  '4b',
+            modelQuant: 'Q4_K_M',
+        };
+        const result = vectorIndexConfigSchema.safeParse(config);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.enabled).toBe(false);
+            expect(result.data.dbPath).toBe('/custom/path/vec.sqlite');
+            expect(result.data.modelSlug).toBe('4b');
+            expect(result.data.modelQuant).toBe('Q4_K_M');
+        }
     });
 });
 

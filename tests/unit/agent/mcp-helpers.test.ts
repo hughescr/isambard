@@ -181,12 +181,13 @@ describe('mcpServiceUnavailableResult', () => {
     });
 
     test('nextRetryAt in future: waitSec uses Math.ceil', () => {
-        // 1ms in the future → Math.ceil(1/1000) = 1s
-        const nextRetryAt = new Date(Date.now() + 1);
+        // 500ms in the future → Math.ceil(500/1000) = Math.ceil(0.5) = 1s
+        // Use 500ms instead of 1ms to avoid flakiness under parallel test runs (1ms can expire during the call)
+        const nextRetryAt = new Date(Date.now() + 500);
         const entry = makeEntry({ state: 'offline', nextRetryAt });
         const result = mcpServiceUnavailableResult('email', entry);
         const text = (result.content[0] as { text: string }).text;
-        // Should show ~1s (ceil of 0.001 is 1)
+        // Should show ~1s (ceil of 0.5 is 1)
         expect(text).toContain('~1s');
     });
 });

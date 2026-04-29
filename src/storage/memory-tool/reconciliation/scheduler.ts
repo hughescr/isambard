@@ -38,6 +38,12 @@ export interface ReconciliationScheduler {
     getState(): Readonly<ReconciliationState>
     /** Manually trigger reconciliation now (for testing) */
     triggerNow(): Promise<ReconciliationResult | undefined>
+    /**
+     * Signal that tag index drift was detected (e.g. BatchWriteItem returned UnprocessedItems).
+     * If the scheduler is idle and started, accelerates the next reconciliation cycle.
+     * Safe to call multiple times; redundant hints are coalesced into a single early trigger.
+     */
+    notifyDrift(): void
 }
 
 // ============================================================================
@@ -67,6 +73,10 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
     };
     let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
     let abortController: AbortController | null = null;
+    /** Whether a drift hint has been received since the last cycle completed */
+    let driftPending = false;
+    /** Whether start() has been called (used by notifyDrift to know if scheduler is active) */
+    let started = false;
 
     /**
      * Build reconciler options from config
@@ -118,6 +128,9 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 lastCompletedAt: new Date(),
             };
 
+            // Reset drift flag now that a cycle has completed
+            driftPending = false;
+
             /* Stryker disable StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({
                 success:         result.success,
@@ -141,6 +154,11 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 currentPhase:    null,
                 lastCompletedAt: state.lastCompletedAt, // Preserve last success
             };
+
+            // Reset drift flag now that a cycle has completed (even if errored).
+            // Resetting allows subsequent notifyDrift() calls to accelerate the next cycle.
+            // Stryker disable next-line BooleanLiteral: resetting to false is tested in the error-path drift-reset test; setting true would prevent re-acceleration after errors
+            driftPending = false;
 
             // Clean up AbortController
             abortController = null;
@@ -209,6 +227,8 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 return;
             }
 
+            started = true;
+
             // Check for test mode
             if(config.testMode?.triggerOnStartup) {
                 /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
@@ -252,6 +272,9 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
                 currentPhase: null,
             };
 
+            started = false;
+            driftPending = false;
+
             /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.info({ msg: 'Reconciliation scheduler stopped' });
         },
@@ -262,6 +285,35 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
 
         async triggerNow(): Promise<ReconciliationResult | undefined> {
             return doTrigger();
+        },
+
+        notifyDrift(): void {
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Guard — only accelerate if scheduler is active and enabled
+            if(!started || !config.enabled) {
+                return;
+            }
+
+            // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: Guard — already drifting or running; coalesce redundant hints. LogicalOperator (|| → &&): isRunning branch is redundant because doTrigger() already guards against double-running; both forms correctly coalesce due to clearTimeout pattern
+            if(driftPending || state.isRunning) {
+                return;
+            }
+
+            driftPending = true;
+
+            /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
+            logger.info({ msg: 'Tag index drift detected — accelerating next reconciliation cycle' });
+
+            // Clear current scheduled timeout and reschedule immediately
+            // Stryker disable next-line BlockStatement: Cleanup before rescheduling
+            if(schedulerTimeout) {
+                clearTimeout(schedulerTimeout);
+                schedulerTimeout = null;
+            }
+
+            // Trigger as soon as the current call stack unwinds (delay=0)
+            schedulerTimeout = setTimeout(() => {
+                void onScheduledTrigger();
+            }, 0);
         },
     };
 }

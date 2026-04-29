@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator  } from '@/agent';
-import type { DynamoDBConfig, ReconciliationConfig } from '@/config';
-import { DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend  } from '@/storage';
+import type { DynamoDBConfig, ReconciliationConfig, VectorIndexConfig } from '@/config';
+import { DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend, VectorIndex, AsyncIndexer, type EmbedderLike  } from '@/storage';
 
 /**
  * Storage layer components
@@ -20,6 +20,19 @@ export interface StorageLayer {
     contactBackend:             ContactBackend
     taskPersistenceCoordinator: TaskPersistenceCoordinator
     reconciliationScheduler?:   ReconciliationScheduler
+    /**
+     * Vector index for semantic search queries.
+     * Undefined when vector indexing is disabled.
+     * @internal
+     */
+    vectorIndex?:               VectorIndex
+    /**
+     * Async indexer for background vector embedding.
+     * Undefined when vector indexing is disabled.
+     * Call `asyncIndexer.close()` on shutdown.
+     * @internal
+     */
+    asyncIndexer?:              AsyncIndexer
 }
 
 /**
@@ -27,13 +40,17 @@ export interface StorageLayer {
  *
  * @param dynamoDBConfig - DynamoDB configuration
  * @param reconciliationConfig - Optional reconciliation configuration
+ * @param vectorIndexConfig - Optional vector index configuration
+ * @param embedder - Optional embedder for vector indexing (required when vectorIndexConfig.enabled is true)
  * @returns Storage layer components
  * @throws Error if DynamoDB client creation or backend initialization fails
  */
-export function createStorageLayer(
-    dynamoDBConfig: DynamoDBConfig,
-    reconciliationConfig?: ReconciliationConfig
-): StorageLayer {
+export async function createStorageLayer(
+    dynamoDBConfig:      DynamoDBConfig,
+    reconciliationConfig?: ReconciliationConfig,
+    vectorIndexConfig?:  VectorIndexConfig,
+    embedder?:           EmbedderLike
+): Promise<StorageLayer> {
     // Create DynamoDB client
     const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
 
@@ -42,8 +59,31 @@ export function createStorageLayer(
     // without restarting any backend.
     const holder = new DynamoDBClientHolder(client, docClient);
 
-    // Create memory backend
-    const memoryBackend = new MemoryToolBackend(holder, tableName);
+    // Optionally create vector index and async indexer
+    let vectorIndex:  VectorIndex  | undefined;
+    let asyncIndexer: AsyncIndexer | undefined;
+    // Stryker disable next-line ConditionalExpression: configuration guard — false path is valid when vector indexing is disabled
+    if(vectorIndexConfig?.enabled && embedder) {
+        vectorIndex = await VectorIndex.open(vectorIndexConfig.dbPath);
+        asyncIndexer = new AsyncIndexer({
+            vectorIndex,
+            embedder,
+            logger,
+        });
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
+    }
+
+    // Declare reconciliationScheduler before memoryBackend so the drift callback closure
+    // can reference it by binding (late-binding: value is assigned below, after memoryBackend).
+    let reconciliationScheduler: ReconciliationScheduler | undefined;
+
+    // Create memory backend (with optional async indexer).
+    // The drift callback is a late-binding closure that reads reconciliationScheduler at
+    // call time — the scheduler is assigned after memoryBackend is constructed.
+    const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer, () => {
+        reconciliationScheduler?.notifyDrift();
+    });
 
     // Create contact backend
     const contactBackend = new ContactBackend(holder, tableName);
@@ -52,7 +92,6 @@ export function createStorageLayer(
     logger.info(`Memory system initialized with DynamoDB: ${tableName}`);
 
     // Create reconciliation scheduler if enabled
-    let reconciliationScheduler: ReconciliationScheduler | undefined;
     if(reconciliationConfig?.enabled) {
         reconciliationScheduler = createReconciliationScheduler({
             config:         reconciliationConfig,
@@ -93,5 +132,7 @@ export function createStorageLayer(
         contactBackend,
         taskPersistenceCoordinator,
         reconciliationScheduler,
+        vectorIndex,
+        asyncIndexer,
     };
 }

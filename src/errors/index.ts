@@ -11,6 +11,7 @@ export { ErrorCode } from './codes';
 export { IsambardError, InvariantViolationError } from './base';
 
 export {
+    StorageError,
     ItemNotFoundError,
     ValidationError,
     DynamoTimeoutError,
@@ -22,7 +23,8 @@ export {
     TextNotUniqueError,
     InvalidLineNumberError,
     ContactNotFoundError,
-    ContactLastIdentifierError
+    ContactLastIdentifierError,
+    ContactIdentifierLimitError
 } from './storage';
 
 export {

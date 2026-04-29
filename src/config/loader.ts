@@ -99,7 +99,15 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
         // Browser config: unconditionally provide an empty object so Zod fills in all defaults.
         // Feature gating is done at runtime (process.platform === 'darwin') in src/index.ts.
         // Stryker disable next-line ObjectLiteral: empty object so Zod applies schema defaults — no fields to mutate
-        browser: {},
+        browser:     {},
+        // Vector index config: provide env-var overrides or let Zod fill in all defaults.
+        // Stryker disable next-line ObjectLiteral: config object so Zod applies schema defaults — individual fields are env-var overrides
+        vectorIndex: {
+            enabled:    env.get('VECTOR_INDEX_ENABLED').default('true').asBool(),
+            dbPath:     env.get('VECTOR_INDEX_DB_PATH').asString(),
+            modelSlug:  env.get('VECTOR_INDEX_MODEL_SLUG').asString() as '0.6b' | '4b' | undefined,
+            modelQuant: env.get('VECTOR_INDEX_MODEL_QUANT').asString() as 'Q8_0' | 'Q4_K_M' | undefined,
+        },
         // Planned integrations (commented out until implemented):
         // caldav: {
         //     url:      resources.CaldavUrl.value,
