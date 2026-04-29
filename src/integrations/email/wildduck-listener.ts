@@ -292,7 +292,8 @@ export class WildDuckListener {
                 let data: unknown;
                 try {
                     data = JSON.parse(String(event.data)) as unknown;
-                } catch{
+                } catch (err) {
+                    logger.warn({ err, msg: 'Failed to parse SSE message data' });
                     return;
                 }
 

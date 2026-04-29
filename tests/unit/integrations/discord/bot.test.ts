@@ -1380,7 +1380,7 @@ describe('createDiscordBot', () => {
 
             expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
                 error: 'DynamoDB connection failed',
-                msg:   'Failed to initialize channel registry on startup',
+                msg:   'Failed to initialize channel registry on startup — messages will be dropped until registry is ready',
             }));
         });
 
@@ -1635,7 +1635,7 @@ describe('createDiscordBot', () => {
             expect(loggerErrorSpy).toHaveBeenCalledTimes(2);
 
             expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
-                msg: 'Failed to initialize channel registry on startup',
+                msg: 'Failed to initialize channel registry on startup — messages will be dropped until registry is ready',
             }));
 
             expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({

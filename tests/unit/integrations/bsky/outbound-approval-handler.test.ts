@@ -1582,6 +1582,83 @@ describe('BskyOutboundApprovalHandler', () => {
             });
         });
 
+        describe('activity logger failure handling', () => {
+            test('activityLogger rejection for bsky-dm-approve logs warn and does not throw', async () => {
+                const activityLogger = {
+                    log: mock(async () => { throw new Error('Activity log network error'); }),
+                };
+                const deps    = makeDeps({ activityLogger });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                // Should not throw even though activityLogger throws
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Activity log failed for Bluesky DM approval',
+                }));
+            });
+
+            test('activityLogger rejection for bsky-send-approve logs warn and does not throw', async () => {
+                const activityLogger = {
+                    log: mock(async () => { throw new Error('Activity log timeout'); }),
+                };
+                const deps    = makeDeps({ activityLogger });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Activity log failed for Bluesky post approval',
+                }));
+            });
+
+            test('activityLogger rejection on bsky rejection modal logs warn and does not throw', async () => {
+                const activityLogger = {
+                    log: mock(async () => { throw new Error('Activity log offline'); }),
+                };
+                const deps    = makeDeps({ activityLogger });
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeModalInteraction(
+                    `bsky-send-reject-reason:${TEST_UUID}`,
+                    'Not appropriate',
+                    { description: POST_TEXT, fields: makeEmbedFields() }
+                );
+
+                await handler.handleModalSubmit(interaction);
+
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    msg: 'Activity log failed for Bluesky rejection',
+                }));
+            });
+        });
+
+        describe('parseRecipientHandles — malformed JSON warning', () => {
+            test('should log warn when Recipients field contains malformed JSON during DM rejection', async () => {
+                const deps    = makeDeps();
+                const handler = new BskyOutboundApprovalHandler(deps);
+                const { interaction } = makeModalInteraction(
+                    `bsky-dm-reject-reason:${TEST_UUID}`,
+                    'Not appropriate',
+                    {
+                        description: DM_TEXT,
+                        fields:      [
+                            { name: 'Recipients',      value: 'not-valid-json' },
+                            { name: 'Conversation ID', value: DM_CONVO_ID },
+                        ],
+                    }
+                );
+
+                await handler.handleModalSubmit(interaction);
+
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    recipientsValue: 'not-valid-json',
+                    msg:             'Failed to parse recipient handles from embed field',
+                }));
+            });
+        });
+
         describe('bsky-dm-approveallowlist — malformed JSON and empty recipients', () => {
             test('should still create saga when Recipients field is malformed JSON (Recipients field ignored after allowlist-saga simplification)', async () => {
                 const deps    = makeDeps();

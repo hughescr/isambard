@@ -157,7 +157,9 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
         // Stryker disable next-line StringLiteral,EqualityOperator,ConditionalExpression: activity log type selection and summary text are informational only
 
-        void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch(() => undefined);
+        void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch((err) => {
+            logger.warn({ err, type: rejectionItem.type, msg: 'Activity log failed for Bluesky rejection' });
+        });
 
         // Persist succeeded — update Discord to show rejection
         const updatedEmbed = this.buildRejectedEmbed(reason);
@@ -202,7 +204,8 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         // Stryker disable BlockStatement: try-catch guards JSON.parse from malformed embed fields
         try {
             return JSON.parse(recipientsValue) as string[];
-        } catch{
+        } catch (err) {
+            logger.warn({ err, recipientsValue, msg: 'Failed to parse recipient handles from embed field' });
             // Stryker disable next-line ArrayDeclaration: empty array return in catch — malformed JSON fallback path not covered
             return [];
         }
@@ -291,7 +294,9 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
 
-        void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch(() => undefined);
+        void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch((err) => {
+            logger.warn({ err, msg: 'Activity log failed for Bluesky post approval' });
+        });
 
         const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — posting shortly');
 
@@ -363,7 +368,9 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
         // Stryker disable next-line StringLiteral: activity log summary text is informational only
 
-        void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch(() => undefined);
+        void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch((err) => {
+            logger.warn({ err, msg: 'Activity log failed for Bluesky DM approval' });
+        });
 
         const updatedEmbed = this.buildApprovedEmbed('DM Approved ✓ — sending shortly');
 

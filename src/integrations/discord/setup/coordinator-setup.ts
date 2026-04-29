@@ -203,6 +203,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
     const coordinator = new MessageCoordinator({
         debounceMs:        250,
         eventDeltaTracker: params.eventDeltaTracker,
+        registryReady:     () => params.channelRegistry.isReady(),
         onProcessingEnd:   ({ wasInterrupted, willResume }) => {
             if(wasInterrupted && !willResume) {
                 const currentMode = botStateManager.getMode();
@@ -259,8 +260,8 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                                 type: 'discord-exchange',
                                 summary,
                             });
-                        } catch{
-                            // Swallow errors — fire-and-forget
+                        } catch (err) {
+                            logger.warn({ err, channelId: discordMessage.channelId, msg: 'Activity log failed for Discord exchange' });
                         }
                     })();
                 }

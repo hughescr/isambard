@@ -1,11 +1,12 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { mockLogger } from '../../../../setup';
 import { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItemData, MemoryPath, ContentType } from '@/storage/memory-tool/types';
 
-describe.concurrent('CheckpointManager', () => {
+describe('CheckpointManager', () => {
     let mockBackend: MemoryToolBackend;
     let manager: CheckpointManager;
 
@@ -38,6 +39,11 @@ describe.concurrent('CheckpointManager', () => {
         } as unknown as MemoryToolBackend;
 
         manager = new CheckpointManager({ backend: mockBackend });
+        mockLogger.warn.mockClear();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
     });
 
     describe('load', () => {
@@ -71,6 +77,56 @@ describe.concurrent('CheckpointManager', () => {
             const result = await manager.load(channelId);
             expect(result).toBeUndefined();
             expect(mockBackend.get).toHaveBeenCalledTimes(1);
+        });
+
+        test('should return undefined when checkpoint does not exist (no warn logged)', async () => {
+            mockBackend.get = mock(async () => undefined);
+
+            const result = await manager.load(channelId);
+            expect(result).toBeUndefined();
+            // "missing" must NOT produce a warn — only "corrupt" does
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('should return undefined and log warn when JSON parsing fails (corrupt)', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     'invalid json',
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            const result = await manager.load(channelId);
+            expect(result).toBeUndefined();
+            // Corrupt data must produce a warn with the JSON-parse-specific message
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    msg: 'Checkpoint data is corrupt: failed to parse JSON',
+                })
+            );
+        });
+
+        test('should return undefined and log warn when schema validation fails (corrupt)', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                // Valid JSON but fails schema: lastSeenAt must be ISO datetime string
+                content:     JSON.stringify({ service: 'discord', channelId, guildId, lastSeenAt: 12_345, updatedAt: now }),
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            const result = await manager.load(channelId);
+            expect(result).toBeUndefined();
+            // Corrupt data must produce a warn distinguishing it from missing
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    msg: expect.stringContaining('corrupt'),
+                })
+            );
         });
 
         test('should return undefined when JSON parsing fails', async () => {

@@ -383,14 +383,37 @@ describe('cleanupSession', () => {
             expect.objectContaining({
                 sessionId,
                 agentFile: 'agent-malformed.jsonl',
-                msg:       expect.stringContaining('sub-agent'),
+                msg:       expect.stringContaining('Failed to parse'),
+            })
+        );
+    });
+
+    test('should warn and skip agent file with invalid schema (non-string parentUuid)', async () => {
+        const sessionId = 'schema-invalid';
+        const agentFiles = ['agent-bad-schema.jsonl'];
+
+        mockReaddir.mockImplementation(() => Promise.resolve(agentFiles));
+        // Valid JSON but parentUuid is a number, not a string — fails Zod schema
+        mockReadFile.mockImplementation(() => Promise.resolve('{"parentUuid":42}\n'));
+
+        await cleanupSession(sessionId);
+
+        // Should not delete the file
+        const unlinkCalls = mockUnlink.mock.calls.map(call => call[0]);
+        expect(unlinkCalls.some((p: string) => p.includes('agent-bad-schema.jsonl'))).toBe(false);
+
+        // Should log a warn about schema failure
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId,
+                agentFile: 'agent-bad-schema.jsonl',
+                msg:       expect.stringContaining('Invalid'),
             })
         );
     });
 
     test.each([
         ['no parentUuid field', 'agent-no-parent.jsonl', '{"isSidechain":true}\n'],
-        ['non-string parentUuid', 'agent-non-string.jsonl', '{"parentUuid":123}\n'],
         ['different parentUuid', 'agent-different.jsonl', '{"parentUuid":"different-session"}\n'],
         ['empty file content', 'agent-empty.jsonl', ''],
         ['only newline characters', 'agent-newlines.jsonl', '\n\n\n'],

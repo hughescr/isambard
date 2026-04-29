@@ -50,6 +50,12 @@ export interface MessageCoordinatorConfig {
     eventDeltaTracker?: EventDeltaTracker
     /** Optional callback invoked when processing ends, with info about whether it was interrupted and whether it will resume */
     onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void
+    /**
+     * Optional synchronous callback that returns true when the channel registry is ready.
+     * When provided and returns false, incoming messages are dropped with a warn log.
+     * If not provided, messages are always processed (backward-compatible).
+     */
+    registryReady?:     () => boolean
 }
 
 /** Discord channel interface for typing indicator */
@@ -111,6 +117,7 @@ export class MessageCoordinator {
     private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
     private readonly eventDeltaTracker?: EventDeltaTracker;
     private readonly onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void;
+    private readonly registryReady?:     () => boolean;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
     private processor:                   MessageProcessor | null = null;
 
@@ -119,6 +126,7 @@ export class MessageCoordinator {
         this.onResponse = config?.onResponse;
         this.eventDeltaTracker = config?.eventDeltaTracker;
         this.onProcessingEnd = config?.onProcessingEnd;
+        this.registryReady = config?.registryReady;
     }
 
     /**
@@ -158,11 +166,13 @@ export class MessageCoordinator {
 
         // Send initial typing indicator
         // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
+        // eslint-disable-next-line no-restricted-syntax -- sendTyping is best-effort; Discord rate limits or offline state should not crash message processing
         void state.typingChannel.sendTyping().catch(() => undefined);
 
         // Set up refresh interval (Discord typing lasts ~10 seconds, refresh every 8s)
         state.typingInterval = setInterval(() => {
             // Stryker disable next-line ArrowFunction: Equivalent mutant - () => undefined and () => undefined both return undefined, suppressing the caught error
+            // eslint-disable-next-line no-restricted-syntax -- sendTyping is best-effort; Discord rate limits or offline state should not crash message processing
             state.typingChannel?.sendTyping().catch(() => undefined);
         }, 8000);
     }
@@ -261,6 +271,7 @@ export class MessageCoordinator {
                 const willResume = state.pendingMessages.length > 0 || state.debounceTimer !== undefined;
                 this.onProcessingEnd?.({ wasInterrupted, willResume });
             }
+        // eslint-disable-next-line no-restricted-syntax -- IIFE safety net: internal errors are handled by the try/catch above; outer .catch prevents unhandled rejection in case of internal logic errors
         })().catch(() => undefined);
 
         // Store in state
@@ -363,6 +374,7 @@ export class MessageCoordinator {
                 const willResume = state.pendingMessages.length > 0 || state.debounceTimer !== undefined;
                 this.onProcessingEnd?.({ wasInterrupted, willResume });
             }
+        // eslint-disable-next-line no-restricted-syntax -- IIFE safety net: internal errors are handled by the try/catch above; outer .catch prevents unhandled rejection in case of internal logic errors
         })().catch(() => undefined);
 
         // Store in state
@@ -381,6 +393,19 @@ export class MessageCoordinator {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Redundant with checks in startProcessing (line 126) and processWithResume (line 180)
         if(!this.processor) {
             throw new Error('Processor not set. Call setProcessor() before handling messages.');
+        }
+
+        // Registry-ready gate: drop messages while the channel registry is hydrating.
+        // Inbox checkpoint covers messages missed during this window.
+        if(this.registryReady !== undefined && !this.registryReady()) {
+            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+            logger.warn({
+                channelId: context.channelId,
+                messageId: context.messageId,
+                // Stryker disable next-line StringLiteral: log message is informational only
+                msg:       'MessageCoordinator: dropping message — channel registry not ready',
+            });
+            return;
         }
 
         const state = this.getOrCreateState(context.channelId);

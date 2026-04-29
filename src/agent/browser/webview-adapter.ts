@@ -324,6 +324,7 @@ export function createWebViewAdapter(
             // Chain onto the mutex tail so concurrent calls queue and don't collide
             const result = evaluateTail.then(() => v.evaluate(expression)) as Promise<T>;
             // Update the tail: even if result rejects, the next call must still proceed
+            // eslint-disable-next-line no-restricted-syntax -- mutex tail update: result rejection is already propagated to the caller; the tail must advance regardless
             evaluateTail = result.catch(() => undefined);
             return result;
         },

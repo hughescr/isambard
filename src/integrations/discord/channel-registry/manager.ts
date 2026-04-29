@@ -50,6 +50,13 @@ export class ChannelRegistryManager {
     private readonly client:      Client;
     private cacheWarmed           = false;
 
+    /**
+     * Promise that resolves when the registry is ready (warmCache completed successfully).
+     * Stays pending (never rejects) if warmCache throws — callers should use isReady() to detect failure.
+     */
+    readonly ready:        Promise<void>;
+    private resolveReady!: () => void;
+
     constructor(config: ChannelRegistryManagerConfig) {
         this.backend = config.backend;
         this.homeGuildId = config.homeGuildId;
@@ -58,6 +65,20 @@ export class ChannelRegistryManager {
         // Initialize caches
         this.channelCache = new Map();
         this.wellKnownCache = new Map();
+
+        // Initialize ready promise — resolves on successful warmCache, stays pending on failure.
+        // Use isReady() to distinguish "not yet hydrated" from "hydration failed".
+        this.ready = new Promise<void>((resolve) => {
+            this.resolveReady = resolve;
+        });
+    }
+
+    /**
+     * Returns true if the registry has been successfully hydrated via warmCache().
+     * Returns false before hydration or if hydration failed.
+     */
+    isReady(): boolean {
+        return this.cacheWarmed;
     }
 
     /**
@@ -93,7 +114,10 @@ export class ChannelRegistryManager {
         // Stryker disable next-line ObjectLiteral,StringLiteral: Logging for observability
         logger.info({ channelCount: allRecords.length, msg: 'Channel cache warmed' });
 
+        // Mark ready only on successful completion — if anything above throws, ready stays pending
+        // and isReady() returns false, so the gate in MessageCoordinator continues to drop messages.
         this.cacheWarmed = true;
+        this.resolveReady();
     }
 
     /**

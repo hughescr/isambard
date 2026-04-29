@@ -1,31 +1,32 @@
+import { z } from 'zod';
 import type { VideoMetadata, SubtitleTrack, SpawnRunner } from './types';
 
-interface FfprobeStream {
-    codec_type:      string
-    codec_name?:     string
-    width?:          number
-    height?:         number
-    bit_rate?:       string
-    r_frame_rate?:   string
-    avg_frame_rate?: string
-    channels?:       number
-    sample_rate?:    string
-    index?:          number
-    tags?: {
-        language?: string
-        title?:    string
-    }
-}
+const ffprobeStreamSchema = z.object({
+    codec_type:     z.string(),
+    codec_name:     z.string().optional(),
+    width:          z.number().optional(),
+    height:         z.number().optional(),
+    bit_rate:       z.string().optional(),
+    r_frame_rate:   z.string().optional(),
+    avg_frame_rate: z.string().optional(),
+    channels:       z.number().optional(),
+    sample_rate:    z.string().optional(),
+    index:          z.number().optional(),
+    tags:           z.object({
+        language: z.string().optional(),
+        title:    z.string().optional(),
+    }).optional(),
+});
 
-interface FfprobeFormat {
-    duration?: string
-    bit_rate?: string
-}
+const ffprobeFormatSchema = z.object({
+    duration: z.string().optional(),
+    bit_rate: z.string().optional(),
+});
 
-interface FfprobeOutput {
-    streams?: FfprobeStream[]
-    format?:  FfprobeFormat
-}
+const ffprobeOutputSchema = z.object({
+    streams: z.array(ffprobeStreamSchema).optional(),
+    format:  ffprobeFormatSchema.optional(),
+});
 
 function parseFrameRate(rateStr: string | undefined): number {
     if(rateStr === undefined) {
@@ -56,12 +57,18 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
         throw new Error(`ffprobe failed with exit code ${result.exitCode}: ${result.stderr}`);
     }
 
-    let parsed: FfprobeOutput;
+    let rawParsed: unknown;
     try {
-        parsed = JSON.parse(result.stdout) as FfprobeOutput;
+        rawParsed = JSON.parse(result.stdout);
     } catch{
         throw new Error(`Failed to parse ffprobe output: ${result.stdout}`);
     }
+
+    const schemaResult = ffprobeOutputSchema.safeParse(rawParsed);
+    if(!schemaResult.success) {
+        throw new Error(`Invalid ffprobe output schema: ${JSON.stringify(schemaResult.error.issues)}`);
+    }
+    const parsed = schemaResult.data;
 
     const streams = parsed.streams ?? [];
     const format  = parsed.format ?? {};
