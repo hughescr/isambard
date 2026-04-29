@@ -250,6 +250,24 @@ describe('EmailClassifier', () => {
             expect(result.verdict).toBe('uncertain');
             expect(result.confidence).toBe(0);
         });
+
+        test('logs warn with extracted snippet when embedded JSON fails to parse', async () => {
+            // Outer JSON.parse fails (not pure JSON); regex finds a {…} match;
+            // inner JSON.parse also fails — exercises the logger.warn in the inner catch block
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(
+                'Analysis: {not: valid, json: here}'
+            );
+
+            mockLogger.warn.mockClear();
+
+            const classifier = new EmailClassifier();
+            await classifier.classify(makeEmail());
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg:       'Failed to parse extracted JSON from classifier response',
+                extracted: expect.stringContaining('{not: valid, json: here}'),
+            }));
+        });
     });
 
     describe('API error handling', () => {

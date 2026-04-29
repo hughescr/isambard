@@ -161,6 +161,12 @@ describe('extractMetadata', () => {
         expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
     });
 
+    it('throws on valid JSON with invalid schema (streams is not an array)', async () => {
+        // Valid JSON but wrong structure — streams must be array if present
+        const runner = makeRunner(JSON.stringify({ streams: 'not-an-array', format: { duration: '10.0' } }));
+        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
+    });
+
     it('throws when no video stream found', async () => {
         const outputWithNoVideo = JSON.stringify({
             streams: [{ codec_type: 'audio', codec_name: 'aac', channels: 2, sample_rate: '44100', index: 0 }],

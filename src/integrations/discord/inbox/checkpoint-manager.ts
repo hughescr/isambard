@@ -1,3 +1,4 @@
+import { logger } from '@hughescr/logger';
 import { type DiscordChannelCheckpoint, discordChannelCheckpointSchema  } from './types';
 import type { ChannelId, GuildId } from '@/integrations/discord/types';
 import { type MemoryToolBackend, type MemoryPath, createMemoryPath  } from '@/storage';
@@ -77,17 +78,36 @@ export class CheckpointManager {
             return undefined;
         }
 
-        // Stryker disable BlockStatement: Error handling for corrupted/invalid data - tested with invalid JSON test case
+        // Parse and validate stored checkpoint data, logging distinctly for corrupt vs missing
+        let rawParsed: unknown;
+        // Stryker disable BlockStatement: catch block is equivalent to empty — both paths return undefined via schema failure, differing only in which warn message fires
         try {
-            // Parse stored JSON content and validate with Zod
-            const parsed: unknown = JSON.parse(item.content);
-            return discordChannelCheckpointSchema.parse(parsed);
-        } catch{
-            // If JSON parsing or validation fails, return undefined rather than throwing
-            // This handles corrupted checkpoint data gracefully
+            rawParsed = JSON.parse(item.content);
+        } catch (error) {
+            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+            logger.warn({
+                channelId,
+                err: error,
+                // Stryker disable next-line StringLiteral: log message is informational only
+                msg: 'Checkpoint data is corrupt: failed to parse JSON',
+            });
             return undefined;
         }
         // Stryker restore BlockStatement
+
+        const parseResult = discordChannelCheckpointSchema.safeParse(rawParsed);
+        if(!parseResult.success) {
+            // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+            logger.warn({
+                channelId,
+                issues: parseResult.error.issues,
+                // Stryker disable next-line StringLiteral: log message is informational only
+                msg:    'Checkpoint data is corrupt: schema validation failed',
+            });
+            return undefined;
+        }
+
+        return parseResult.data;
     }
 
     /**

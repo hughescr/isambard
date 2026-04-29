@@ -647,6 +647,48 @@ describe('processTaskDirectory', () => {
             );
         });
 
+        test('should handle schema validation failure on one task and continue with others', async () => {
+            const previousSessionId = sessionId('old-session');
+            const newSessionId = sessionId('new-session');
+
+            const task1 = createTask({
+                id:       '1',
+                status:   'completed',
+                metadata: { completedAt: TWO_DAYS_AGO },
+            });
+
+            // Setup mocks - task2.json is valid JSON but missing required fields (id, status, etc.)
+            mockReaddir.mockResolvedValue(['1.json', '2.json']);
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
+                    return JSON.stringify(task1);
+                }
+                if(filePath.includes('2.json')) {
+                    // Valid JSON but wrong schema: status has invalid value
+                    return JSON.stringify({ id: '2', status: 'invalid_status', subject: 'x', description: 'y', blocks: [], blockedBy: [] });
+                }
+                throw new Error('Unexpected file');
+            });
+            mockMkdir.mockResolvedValue(undefined);
+
+            const processor = createTaskCleanupProcessor({
+                logger: mockLogger as unknown as typeof logger,
+                deps:   createTestDeps(() => NOW),
+            });
+
+            const result = await processor.processTaskDirectory(previousSessionId, newSessionId);
+
+            // Task 1 processed, task 2 error logged (schema failure)
+            expect(result.deleted).toBe(1);
+            expect(result.errors).toBe(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    taskFile: '2.json',
+                    msg:      expect.stringContaining('Invalid task schema'),
+                })
+            );
+        });
+
         test('should handle empty directory', async () => {
             const previousSessionId = sessionId('old-session');
             const newSessionId = sessionId('new-session');
@@ -905,6 +947,43 @@ describe('processTaskDirectory', () => {
                 expect.objectContaining({
                     taskId: '1',
                     msg:    expect.stringContaining('Failed to write task'),
+                })
+            );
+        });
+
+        test('should handle readFile throwing an unexpected error and count it as an error', async () => {
+            const previousSessionId = sessionId('old-session');
+            const newSessionId = sessionId('new-session');
+
+            const task1 = createTask({
+                id:       '1',
+                status:   'completed',
+                metadata: { completedAt: TWO_DAYS_AGO },
+            });
+
+            mockReaddir.mockResolvedValue(['1.json', '2.json']);
+            mockReadFile.mockImplementation(async (filePath: string) => {
+                if(filePath.includes('1.json')) {
+                    return JSON.stringify(task1);
+                }
+                // Simulate an unexpected I/O error (not a parse error) — triggers catch block
+                throw new Error('ENOENT: no such file or directory');
+            });
+            mockMkdir.mockResolvedValue(undefined);
+
+            const processor = createTaskCleanupProcessor({
+                logger: mockLogger as unknown as typeof logger,
+                deps:   createTestDeps(() => NOW),
+            });
+
+            const result = await processor.processTaskDirectory(previousSessionId, newSessionId);
+
+            // Task 1 deleted (old completed), task 2 failed with I/O error
+            expect(result.errors).toBe(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    taskFile: '2.json',
+                    msg:      'Failed to process task file',
                 })
             );
         });

@@ -117,7 +117,9 @@ export class EmailClassifier {
             if(match) {
                 try {
                     return JSON.parse(match[0]);
-                } catch{
+                } catch (err) {
+                    // Stryker disable next-line MethodExpression: slice(0,200) is a defensive truncation guard for large LLM responses; equivalent without it on short strings
+                    logger.warn({ err, extracted: match[0].slice(0, 200), msg: 'Failed to parse extracted JSON from classifier response' });
                     return null;
                 }
             }

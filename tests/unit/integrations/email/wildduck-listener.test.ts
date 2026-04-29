@@ -671,6 +671,99 @@ describe('WildDuckListener', () => {
     });
 
     // -----------------------------------------------------------------------
+    // SSE message handling
+    // -----------------------------------------------------------------------
+
+    describe('SSE message handling', () => {
+        // EventSource is not available in Bun — mock it via globalThis so connectSSE() actually runs
+        let RealEventSource: typeof EventSource | undefined;
+
+        beforeEach(() => {
+            // Save and override EventSource on globalThis
+            RealEventSource = (globalThis as unknown as { EventSource?: typeof EventSource }).EventSource;
+            (globalThis as unknown as Record<string, unknown>).EventSource = class MockEventSource extends EventTarget {
+                static readonly CONNECTING = 0;
+                static readonly OPEN       = 1;
+                static readonly CLOSED     = 2;
+                readonly CONNECTING = 0;
+                readonly OPEN       = 1;
+                readonly CLOSED     = 2;
+                readonly url: string;
+                readonly withCredentials = false;
+                readyState = 1;
+                onopen:       ((event: Event) => void) | null = null;
+                onmessage:    ((event: MessageEvent) => void) | null = null;
+                onerror:      ((event: Event) => void) | null = null;
+
+                constructor(url: string) {
+                    super();
+                    this.url = url;
+                }
+
+                close() { this.readyState = 2; }
+            };
+        });
+
+        afterEach(() => {
+            // Restore the original EventSource (undefined in Bun)
+            (globalThis as unknown as Record<string, unknown>).EventSource = RealEventSource;
+        });
+
+        test('malformed SSE message data logs warn and returns without processing', async () => {
+            const { client } = makeWildDuckClient();
+            const { processor, processEmail } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
+            await listener.start();
+
+            // connectSSE() now runs because MockEventSource is installed;
+            // get the EventTarget that was created and dispatch a bad-JSON message
+            const sseSource = (listener as unknown as { sseSource: EventTarget | null }).sseSource;
+            expect(sseSource).not.toBeNull();
+
+            const event = new MessageEvent('message', { data: '{not valid json}' });
+            sseSource!.dispatchEvent(event);
+
+            await flushAsync();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'Failed to parse SSE message data',
+            }));
+            // processEmail should not have been called for this SSE message
+            expect(processEmail).not.toHaveBeenCalled();
+
+            await listener.stop();
+        });
+
+        test('valid SSE EXISTS command triggers fetchAndProcess', async () => {
+            const { client, listMessages } = makeWildDuckClient({
+                listMessages: mock(async () => []),
+            });
+            const { processor } = makeProcessor();
+
+            const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
+            await listener.start();
+
+            // Startup call
+            expect(listMessages).toHaveBeenCalledTimes(1);
+
+            // connectSSE() now runs; dispatch a valid EXISTS command
+            const sseSource = (listener as unknown as { sseSource: EventTarget | null }).sseSource;
+            expect(sseSource).not.toBeNull();
+
+            const event = new MessageEvent('message', { data: JSON.stringify({ command: 'EXISTS' }) });
+            sseSource!.dispatchEvent(event);
+
+            await flushAsync();
+
+            // Should trigger another fetch
+            expect(listMessages).toHaveBeenCalledTimes(2);
+
+            await listener.stop();
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // Health registry events
     // -----------------------------------------------------------------------
 

@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
+import { mockLogger } from '../../../setup';
 import type { EventDeltaTracker } from '@/agent/event-delta-tracker';
 import type { ResumeContext } from '@/agent/resume-prompt-builder';
 import { StreamTracker } from '@/agent/stream-tracker';
@@ -81,6 +82,90 @@ describe('MessageCoordinator', () => {
 
         it('should throw error when handleMessage called without processor set', () => {
             expect(() => coordinator.handleMessage(mockContext, mockMessage)).toThrow();
+        });
+    });
+
+    describe('Registry-ready gate', () => {
+        beforeEach(() => {
+            mockLogger.warn.mockClear();
+        });
+
+        it('should drop message with warn log when registry is not ready', () => {
+            const registryReady = mock((): boolean => false);
+            coordinator = new MessageCoordinator({ registryReady });
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+
+            expect(processorMock).not.toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+            const warnArg = mockLogger.warn.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+            expect(warnArg?.channelId).toBe(mockContext.channelId);
+            expect(warnArg?.messageId).toBe(mockContext.messageId);
+        });
+
+        it('should process message normally when registry is ready', async () => {
+            const registryReady = mock((): boolean => true);
+            coordinator = new MessageCoordinator({ registryReady });
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(processorMock).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        it('should process message normally when no registryReady callback provided', async () => {
+            coordinator = new MessageCoordinator();
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(processorMock).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        it('should continue dropping messages after registry hydration fails (registryReady stays false)', () => {
+            const registryReady = mock((): boolean => false);
+            coordinator = new MessageCoordinator({ registryReady });
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+            coordinator.handleMessage(mockContext, mockMessage);
+
+            expect(processorMock).not.toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+        });
+
+        it('should process messages once registry becomes ready', async () => {
+            let isReady = false;
+            const registryReady = mock((): boolean => isReady);
+            coordinator = new MessageCoordinator({ registryReady });
+            coordinator.setProcessor(processorMock);
+
+            // First message dropped — not ready yet
+            coordinator.handleMessage(mockContext, mockMessage);
+            expect(processorMock).not.toHaveBeenCalled();
+
+            // Registry becomes ready
+            isReady = true;
+
+            // Next message should be processed
+            coordinator.handleMessage(mockContext, mockMessage);
+
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(processorMock).toHaveBeenCalledTimes(1);
         });
     });
 

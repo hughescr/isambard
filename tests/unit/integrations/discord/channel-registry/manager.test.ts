@@ -209,6 +209,59 @@ describe('ChannelRegistryManager', () => {
         });
     });
 
+    describe('readiness gate (isReady / ready)', () => {
+        it('should return false from isReady() before warmCache is called', () => {
+            expect(manager.isReady()).toBe(false);
+        });
+
+        it('should return true from isReady() after warmCache succeeds', async () => {
+            backend.getChannelsByGuild = mock(() => Promise.resolve([]));
+            await manager.warmCache();
+            expect(manager.isReady()).toBe(true);
+        });
+
+        it('should resolve the ready promise after warmCache succeeds', async () => {
+            backend.getChannelsByGuild = mock(() => Promise.resolve([]));
+            await manager.warmCache();
+            // After successful warmCache, ready should be resolved — direct await won't hang
+            let resolved = false;
+            // eslint-disable-next-line promise/always-return -- callback is a side-effect setter, no return needed
+            void manager.ready.then(() => {
+                resolved = true;
+            });
+            // Flush microtasks so the .then() callback runs
+            await Promise.resolve();
+            expect(resolved).toBe(true);
+        });
+
+        it('should leave the ready promise pending when warmCache throws', async () => {
+            // When warmCache fails, ready stays pending (never rejects) — callers use isReady() to detect failure.
+            backend.getChannelsByGuild = mock(async () => {
+                throw new Error('DynamoDB timeout');
+            });
+            await manager.warmCache().catch(() => undefined); // swallow rethrow
+            // ready is still pending — race against an immediate resolve to verify
+            const result = await Promise.race([manager.ready.then(() => 'resolved'), Promise.resolve('timeout')]);
+            expect(result).toBe('timeout');
+        });
+
+        it('should return false from isReady() when warmCache throws', async () => {
+            backend.getChannelsByGuild = mock(async () => {
+                throw new Error('DynamoDB timeout');
+            });
+            await manager.warmCache().catch(() => undefined);
+            expect(manager.isReady()).toBe(false);
+        });
+
+        it('should return false from isReady() after clearCache', async () => {
+            backend.getChannelsByGuild = mock(() => Promise.resolve([]));
+            await manager.warmCache();
+            expect(manager.isReady()).toBe(true);
+            manager.clearCache();
+            expect(manager.isReady()).toBe(false);
+        });
+    });
+
     describe('invalidateCache', () => {
         it('should remove single channel from cache', async () => {
             const channel = createMockChannel();

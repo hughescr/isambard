@@ -32,7 +32,13 @@ import { unlink, access, rm, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { logger } from '@hughescr/logger';
+import { z } from 'zod';
 import type { SystemEvent } from './types';
+
+/** Minimal schema for the first-line JSON of a Claude agent JSONL session file. */
+const agentSessionFirstLineSchema = z.object({
+    parentUuid: z.string().optional(),
+});
 
 /**
  * Project path for session files.
@@ -177,7 +183,33 @@ const cleanupSubAgentSessions = async (sessionId: string, projectPath: string): 
                 }
 
                 // Parse the JSON to extract parentUuid
-                const data = JSON.parse(firstLine) as { parentUuid?: string };
+                let parsed: unknown;
+                try {
+                    parsed = JSON.parse(firstLine);
+                } catch (error) {
+                    logger.warn({
+                        sessionId,
+                        agentFile,
+                        err: error,
+                        // Stryker disable next-line StringLiteral: log message is informational only
+                        msg: `Failed to parse agent session JSON: ${agentFile}`,
+                    });
+                    continue;
+                }
+
+                const parseResult = agentSessionFirstLineSchema.safeParse(parsed);
+                if(!parseResult.success) {
+                    logger.warn({
+                        sessionId,
+                        agentFile,
+                        issues: parseResult.error.issues,
+                        // Stryker disable next-line StringLiteral: log message is informational only
+                        msg:    `Invalid agent session JSON schema: ${agentFile}`,
+                    });
+                    continue;
+                }
+
+                const data = parseResult.data;
 
                 if(data.parentUuid === sessionId) {
                     // This is a sub-agent of our session, delete it

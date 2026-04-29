@@ -14,6 +14,7 @@
 import { readdir, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '@hughescr/logger';
+import { z } from 'zod';
 import { getTaskDirectoryPath as getTaskDirectoryPathImpl } from './task-directory-copier';
 import type { SessionId } from '@/storage';
 
@@ -62,6 +63,66 @@ interface Task {
         completedAt?:  string
         [key: string]: unknown
     }
+}
+
+/** Zod schema matching the Task interface above. */
+const taskSchema = z.object({
+    id:          z.string(),
+    subject:     z.string(),
+    description: z.string(),
+    status:      z.enum(['pending', 'in_progress', 'completed']),
+    blocks:      z.array(z.string()),
+    blockedBy:   z.array(z.string()),
+    metadata:    z.record(z.string(), z.unknown()).optional(),
+});
+
+type ParseTaskResult = { ok: true, task: Task } | { ok: false, kind: 'json', message: string } | { ok: false, kind: 'schema', issues: unknown[] };
+
+type ParseTaskFail = Extract<ParseTaskResult, { ok: false }>;
+
+/** Logs a warn for a failed task parse result. */
+function logParseTaskFailure(logger: Logger, file: string, result: ParseTaskFail): void {
+    if(result.kind === 'schema') {
+        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+        logger.warn({
+            taskFile: file,
+            issues:   result.issues,
+            // Stryker disable next-line StringLiteral: Log message for observability only
+            msg:      'Invalid task schema',
+        });
+    } else {
+        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+        logger.warn({
+            taskFile: file,
+            error:    result.message,
+            // Stryker disable next-line StringLiteral: Log message for observability only
+            msg:      'Failed to process task file',
+        });
+    }
+}
+
+/**
+ * Parses and validates a task JSON string.
+ * Returns a discriminated result instead of throwing so callers remain low-complexity.
+ */
+function parseTaskContent(content: string): ParseTaskResult {
+    let raw: unknown;
+    try {
+        raw = JSON.parse(content);
+    } catch (error) {
+        return {
+            ok:      false,
+            kind:    'json',
+            message: error instanceof Error ? error.message : String(error),
+        };
+    }
+
+    const result = taskSchema.safeParse(raw);
+    if(!result.success) {
+        return { ok: false, kind: 'schema', issues: result.error.issues };
+    }
+
+    return { ok: true, task: result.data };
 }
 
 /**
@@ -267,7 +328,15 @@ export function createTaskCleanupProcessor(options: TaskCleanupProcessorOptions)
                 try {
                     // eslint-disable-next-line no-await-in-loop -- sequential: per-file read with conditional stat
                     const content = await readFileFn(filePath, 'utf8');
-                    const task = JSON.parse(content) as Task;
+
+                    const parsed = parseTaskContent(content);
+                    if(!parsed.ok) {
+                        logParseTaskFailure(logger, file, parsed);
+                        errors++;
+                        continue;
+                    }
+
+                    const { task } = parsed;
 
                     // If completed task lacks metadata.completedAt, mark it and add timestamp from file mtime
                     if(task.status === 'completed' && !task.metadata?.completedAt) {

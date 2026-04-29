@@ -98,9 +98,8 @@ export async function initializeChannelRegistry(
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error({
             error: errorMsg,
-            msg:   'Failed to initialize channel registry on startup',
+            msg:   'Failed to initialize channel registry on startup — messages will be dropped until registry is ready',
         });
-        // Continue anyway - handlers will work but channel data may be incomplete (fail-open)
 
         // Send urgent notification to owner via fallback channel
         if(rateLimiter) {

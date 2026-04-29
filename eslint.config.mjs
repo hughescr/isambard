@@ -85,6 +85,21 @@ const eslintConfig = [
             // specifically is a stricter convention enforced by code review, not lint.
             // Tests are exempt (see base config test overrides which keep this off for test files).
             '@typescript-eslint/only-throw-error': 'error',
+
+            // Ban empty catch blocks in production code — every caught error must be logged
+            // or explicitly re-thrown. Add eslint-disable-next-line with a reason when a
+            // truly comment-only catch is legitimately intentional (e.g. best-effort shutdown).
+            'no-empty': ['error', { allowEmptyCatch: false }],
+
+            // Ban `.catch(() => undefined)` — silent promise error swallowing.
+            // Use `.catch((err) => { logger.warn({ err }, '...'); })` instead.
+            'no-restricted-syntax': [
+                'error',
+                {
+                    selector: "CallExpression[callee.property.name='catch'] > ArrowFunctionExpression > Identifier.body[name='undefined']",
+                    message:  "Silent .catch(() => undefined) swallows errors. Use .catch((err) => { logger.warn({ err }, '...'); }) instead.",
+                },
+            ],
         }
     },
     {

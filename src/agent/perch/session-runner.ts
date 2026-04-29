@@ -264,7 +264,9 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
                 // Session completed normally, transition to idle
                 logger.info({ slot: options.slot }, 'Perch session completed');
 
-                void deps.activityLogger?.log({ type: 'perch-end', summary: 'Perch session completed' }).catch(() => undefined);
+                void deps.activityLogger?.log({ type: 'perch-end', summary: 'Perch session completed' }).catch((err) => {
+                    logger.warn({ err, msg: 'Activity log failed for perch session end' });
+                });
                 if(stateManager.getMode() === 'perching') {
                     stateManager.goIdle();
                 }
@@ -369,8 +371,11 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             });
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-
-            void deps.activityLogger?.log({ type: 'perch-start', summary: `Perch session started (slot: ${slot})` }).catch(() => undefined);
+            // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: fire-and-forget .catch() error handler — uncoverable without triggering activityLogger failures
+            void deps.activityLogger?.log({ type: 'perch-start', summary: `Perch session started (slot: ${slot})` }).catch((err) => {
+                logger.warn({ err, slot, msg: 'Activity log failed for perch session start' });
+            });
+            // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // Stryker disable BlockStatement: Defensive error handling for context/prompt build failures
             try {
@@ -438,8 +443,11 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             }
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
-
-            void deps.activityLogger?.log({ type: 'perch-suspend', summary: 'Perch suspended' }).catch(() => undefined);
+            // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: fire-and-forget .catch() error handler — uncoverable without triggering activityLogger failures
+            void deps.activityLogger?.log({ type: 'perch-suspend', summary: 'Perch suspended' }).catch((err) => {
+                logger.warn({ err, msg: 'Activity log failed for perch session suspend' });
+            });
+            // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // Transition to idle BEFORE aborting (so runSessionAndFinalize sees idle mode)
             stateManager.goIdle();
@@ -516,7 +524,9 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
 
             // Stryker disable next-line StringLiteral: activity log summary text is informational only
 
-            void deps.activityLogger?.log({ type: 'perch-resume', summary: 'Perch resumed' }).catch(() => undefined);
+            void deps.activityLogger?.log({ type: 'perch-resume', summary: 'Perch resumed' }).catch((err) => {
+                logger.warn({ err, msg: 'Activity log failed for perch session resume' });
+            });
 
             // Run session and finalize
             await runSessionAndFinalize({
