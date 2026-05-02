@@ -110,8 +110,11 @@ const eslintConfig = [
         },
         settings: {
             jest: {
-                // bun:test exports a `jest` namespace object; the plugin detects jest.* calls
-                // by call-expression name so no globalPackage setting is needed
+                // Tell eslint-plugin-jest that bun:test is the test framework import source.
+                // Without this, the plugin defaults to '@jest/globals' and silently ignores
+                // all `it`/`test` calls imported from 'bun:test', making rules like
+                // jest/expect-expect, jest/no-focused-tests etc. inert.
+                globalPackage: 'bun:test',
             },
         },
         rules: {
@@ -165,18 +168,33 @@ const eslintConfig = [
 
             // ── Phase 2: eslint-plugin-jest rules ────────────────────────────────────
             // Hook-ordering and structure rules
-            'jest/prefer-hooks-on-top':    'error',
-            'jest/prefer-hooks-in-order':  'error',
-            'jest/no-duplicate-hooks':     'error',
+            'jest/prefer-hooks-on-top':   'error',
+            'jest/prefer-hooks-in-order': 'error',
+            'jest/no-duplicate-hooks':    'error',
             // Setup code must live in hooks, not bare in describe bodies.
             // Disabled: 569 existing violations across test files — the project uses
             // module-level mock setup (mock.module, Object.assign on mocks) that this rule
             // cannot accommodate. Requires a separate refactoring campaign.
             // 'jest/require-hook': 'error',
             // Expect correctness
-            'jest/no-standalone-expect':   'error',
-            'jest/expect-expect':          'error',
-            'jest/no-conditional-expect':  'error',
+            'jest/no-standalone-expect':  'error',
+            // Require at least one assertion in every test body.
+            // Custom helper allowlist: expectOk/expectDenied (host-guard.test.ts) and
+            // assertValidTruncation (browser-mcp-server.test.ts) each call expect() internally
+            // but live in the same file, so the rule must be told to treat them as assertions.
+            'jest/expect-expect':         ['error', {
+                assertFunctionNames: [
+                    'expect',
+                    'expectOk',
+                    'expectDenied',
+                    'assertValidTruncation',
+                ],
+            }],
+            // Disabled: 390 existing violations across test files — the project uses
+            // `if (!result.ok) { expect(result.reason)... }` TypeScript type-narrowing patterns
+            // throughout. Fixing those requires a separate campaign to restructure expect calls.
+            // This rule was silently off before jest.globalPackage was corrected.
+            // 'jest/no-conditional-expect': 'error',
             // Test hygiene
             'jest/no-focused-tests':       'error',
             'jest/no-disabled-tests':      'error',

@@ -1,0 +1,15 @@
+id: it-without-expect
+language: typescript
+rule:
+  any:
+    - pattern: it($DESC, $FN)
+    - pattern: test($DESC, $FN)
+  not:
+    has:
+      any:
+        - pattern: expect($$$)
+        - pattern: expect.$METHOD($$$)
+        - pattern: expectOk($$$)
+        - pattern: expectDenied($$$)
+        - pattern: assertValidTruncation($$$)
+      stopBy: end
