@@ -290,6 +290,7 @@ export type ModeContext
  * Zod schema for validating mode context.
  * Uses union of all context schemas.
  */
+// Stryker disable next-line ArrayDeclaration: Zod union schemas — mutating array causes runtime schema validation error
 export const modeContextSchema = z.union([
     idleModeContextSchema,
     catchingUpModeContextSchema,

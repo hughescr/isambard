@@ -50,6 +50,9 @@ export async function getBundledLlamaCppVersion(): Promise<{ build: number, rele
         try {
             parsed = JSON.parse(content) as unknown;
         } catch{
+            // Silent: malformed JSON in the version info file — treat as unknown version.
+            // The caller (assertLlamaCppCompatible) will throw IncompatibleLlamaCppError
+            // with build=null, surfacing the issue at startup.
             return null;
         }
         // Stryker restore BlockStatement
@@ -81,6 +84,9 @@ export async function getBundledLlamaCppVersion(): Promise<{ build: number, rele
 
         return { build, releaseTag: tag };
     } catch{
+        // Silent: file not found (ENOENT), permission error, or any unexpected I/O failure.
+        // All of these mean "unknown version" — return null so assertLlamaCppCompatible
+        // throws IncompatibleLlamaCppError and surfaces the problem at startup.
         return null;
     }
 }

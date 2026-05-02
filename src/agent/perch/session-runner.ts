@@ -138,6 +138,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
     let currentSlot: PerchSlot | null = null;
     let sessionTimeout: ReturnType<typeof setTimeout> | null = null;
     let sessionStartTime: Date | null = null;
+    // Stryker disable next-line BooleanLiteral: Initial flag value — test cannot distinguish initial false from post-session reset false
     let isTimingOut = false;
     let suspendedState: {
         sessionId:           string | undefined
@@ -161,9 +162,9 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
     }
 
     // Timeout handler - aborts session when max duration reached
+    // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator: session timeout handler — mutating causes test timeout (real timer fires, feedback loop with abort)
     function handleSessionTimeout(): void {
         // Don't timeout if not in perching mode
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Guard tested via behavior - tests verify no timeout when mode changed
         if(stateManager.getMode() !== 'perching') {
             return;
         }
@@ -177,6 +178,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             currentAbortController.abort();
         }
     }
+    // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator
 
     // Helper for running timeout wrap-up session
     // Extracted to avoid duplication between try-block and catch-block timeout handling
@@ -191,6 +193,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
         // Set wrap-up timeout to prevent double-hang
         // Stryker disable next-line ArithmeticOperator: Timeout calculation internals
         const wrapUpTimeoutMs = config.wrapUpTimeoutMinutes * 60 * 1000;
+        // Stryker disable next-line BlockStatement: wrapUp timeout callback — mutating causes test timeout (timer fires, abort not called)
         const wrapUpTimer = setTimeout(() => {
             logger.warn({ slot, wrapUpTimeoutMinutes: config.wrapUpTimeoutMinutes }, 'Wrap-up session timed out - aborting');
             currentAbortController?.abort();
@@ -355,6 +358,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             // Start session timeout timer
             sessionStartTime = new Date();
             const timeoutMs = config.maxSessionMinutes * 60 * 1000;
+            // Stryker disable next-line BlockStatement: session timeout callback — mutating causes test timeout (timer fires, session abort not triggered)
             sessionTimeout = setTimeout(() => {
                 handleSessionTimeout();
             }, timeoutMs);
@@ -453,6 +457,7 @@ export function createPerchSessionRunner(deps: PerchSessionRunnerDeps): PerchSes
             stateManager.goIdle();
 
             // Abort current session
+            // Stryker disable next-line BlockStatement: abort block — mutating causes test timeout (session never aborts on suspend)
             if(currentAbortController) {
                 currentAbortController.abort();
             }

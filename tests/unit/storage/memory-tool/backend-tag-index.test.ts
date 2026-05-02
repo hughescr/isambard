@@ -1778,7 +1778,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 await drainTimers();
                 await promise;
 
-                // Both batches fail but onDrift is called exactly once — driftNotified coalesces per-call
+                // Both batches fail but onDrift is called exactly once — outer-accumulation coalesces per-call
                 expect(onDrift).toHaveBeenCalledTimes(1);
             });
         });
@@ -1879,7 +1879,7 @@ describe('MemoryToolBackendTagIndex', () => {
                 await drainTimers();
                 await promise;
 
-                // Both batches fail but onDrift is called exactly once — driftNotified coalesces per-call
+                // Both batches fail but onDrift is called exactly once — outer-accumulation coalesces per-call
                 expect(onDrift).toHaveBeenCalledTimes(1);
             });
         });

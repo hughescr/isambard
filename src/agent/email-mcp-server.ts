@@ -166,6 +166,9 @@ async function saveEmailAttachments(
                 await access(filePath);
                 fileExists = true;
             } catch{
+                // Silent: access() throws ENOENT when the file doesn't exist yet — that is
+                // the expected path on first download. fileExists = false causes the fetch+write
+                // below to run. No logging needed for a normal cache-miss path.
                 fileExists = false;
             }
             if(!fileExists) {

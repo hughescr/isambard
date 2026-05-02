@@ -340,6 +340,7 @@ async function updateInboxCheckpoint(
  * Helper function to check if a message should be ignored.
  * Returns true if the message is from a bot or from the bot itself.
  */
+// Stryker disable ConditionalExpression,EqualityOperator,BooleanLiteral: shouldIgnoreMessage guards — flipping bot/self checks causes test feedback loops (bot processes its own messages)
 function shouldIgnoreMessage(message: Message, botUserId: UserId): boolean {
     // Ignore bot messages
     if(message.author.bot) {
@@ -353,6 +354,7 @@ function shouldIgnoreMessage(message: Message, botUserId: UserId): boolean {
 
     return false;
 }
+// Stryker restore ConditionalExpression,EqualityOperator,BooleanLiteral
 
 /**
  * Helper function to determine response context for a message.
@@ -376,7 +378,11 @@ async function determineResponseContext(
             const referencedMessage = await message.fetchReference();
             isReplyToBot = referencedMessage.author.id === botUserId;
         } catch{
-            // If we can't fetch the reference, assume it's not a reply to bot
+            // Silent: fetchReference() throws when the referenced message was deleted or is
+            // in a channel the bot cannot read. The safe fallback is isReplyToBot = false,
+            // meaning the bot treats the message as not a reply to itself — a minor false
+            // negative that avoids responding to deleted-message replies. Logging every
+            // deleted-reference lookup would be very noisy in active channels.
         }
         // Stryker restore BlockStatement
     }

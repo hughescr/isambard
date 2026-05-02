@@ -481,6 +481,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Stryker restore BlockStatement,ObjectLiteral,StringLiteral
 
             // Abort current session
+            // Stryker disable next-line BlockStatement: abort block — mutating causes test timeout (session never aborts on suspend)
             if(currentAbortController) {
                 currentAbortController.abort();
             }

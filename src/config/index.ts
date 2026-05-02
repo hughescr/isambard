@@ -1,5 +1,6 @@
 export {
     reconciliationConfigSchema,
+    contactReconciliationConfigSchema,
     guildIdSchema,
     PresenceConfigSchema,
     inboxConfigSchema,
@@ -12,6 +13,7 @@ export {
     type PresenceConfig,
     type InboxConfig,
     type ReconciliationConfig,
+    type ContactReconciliationConfig,
     type VectorIndexConfig
 } from './schemas';
 

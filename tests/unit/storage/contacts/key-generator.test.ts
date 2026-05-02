@@ -27,11 +27,13 @@ describe.concurrent('ContactKeyGenerator', () => {
     });
 
     describe('createLookupKeys', () => {
-        test('creates correct PK and SK for email', () => {
+        test('creates correct PK, SK, GSI2PK, and GSI2SK for email', () => {
             const keys = ContactKeyGenerator.createLookupKeys('email', 'alice@example.com', PERSON_ID);
             expect(keys).toEqual({
-                PK: 'CONTACT_LOOKUP#email#alice@example.com',
-                SK: 'CONTACT#craig-hughes',
+                PK:     'CONTACT_LOOKUP#email#alice@example.com',
+                SK:     'CONTACT#craig-hughes',
+                GSI2PK: 'CONTACT_LOOKUPS',
+                GSI2SK: 'CONTACT#craig-hughes#email#alice@example.com',
             });
         });
 

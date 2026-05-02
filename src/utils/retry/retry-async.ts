@@ -72,8 +72,11 @@ export async function retryAsync<T>(
                 throw error;
             }
 
-            // Calculate delay for next retry
-            const delayMs = retryAfterMs ?? calculateDelay(attempt, policy);
+            // Calculate delay for next retry.
+            // Take the larger of the server's retry-after hint and the exponential backoff so that:
+            // - A zero-valued server hint (clock skew / just-rolled-over window) does not bypass backoff.
+            // - A large server hint (long rate-limit window) is respected even when backoff is smaller.
+            const delayMs = Math.max(retryAfterMs ?? 0, calculateDelay(attempt, policy));
 
             logger.warn({
                 // Stryker disable next-line StringLiteral: log message string is observability-only configuration

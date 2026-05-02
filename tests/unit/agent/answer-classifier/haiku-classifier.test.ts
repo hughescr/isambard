@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { mockGenerateText, originalGenerateText } from '../../../setup';
+import { mockGenerateText, originalGenerateText, mockLogger } from '../../../setup';
 import { classifyWithHaiku } from '@/agent/answer-classifier/haiku-classifier';
 import type { MessageToClassify } from '@/agent/answer-classifier/types';
 import type { PendingQuestion } from '@/agent/question-registry/types';
@@ -26,11 +26,13 @@ describe('classifyWithHaiku', () => {
 
     beforeEach(() => {
         mockGenerateText.mockClear();
+        mockLogger.warn.mockClear();
     });
 
     afterEach(() => {
         mockGenerateText.mockReset();
         mockGenerateText.mockImplementation(originalGenerateText);
+        mockLogger.warn.mockReset();
     });
 
     it('should call text generator with classification prompt', async () => {
@@ -128,6 +130,21 @@ describe('classifyWithHaiku', () => {
         const result = await classifyWithHaiku(baseQuestion, baseMessage);
 
         expect(result).toBe('interruption');
+    });
+
+    it('should warn via logger when text generator throws', async () => {
+        const apiError = new Error('API error');
+        mockGenerateText.mockRejectedValue(apiError);
+
+        await classifyWithHaiku(baseQuestion, baseMessage);
+
+        expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        const warnCall = mockLogger.warn.mock.calls[0];
+        expect(warnCall[0]).toMatchObject({
+            err:       apiError,
+            channelId: 'channel-123',
+            msg:       'Haiku classification failed; defaulting to interruption',
+        });
     });
 
     it('should include thread context if present', async () => {

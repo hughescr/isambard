@@ -34,6 +34,7 @@ function makeLoop(): ReconnectionLoop {
     return {
         triggerNow: mock(async () => true),
         start:      mock(() => undefined),
+        restart:    mock(() => undefined),
         stop:       mock(() => undefined),
         isRunning:  mock(() => false),
     };

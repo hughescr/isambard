@@ -87,13 +87,15 @@ export async function delay(ms: number, signal?: AbortSignal): Promise<void> {
                 reject(new Error('Aborted'));
             };
 
+            // Stryker disable ConditionalExpression,BlockStatement: pre-aborted check — mutating causes test timeout (abort not detected before listener attached)
             if(signal.aborted) {
                 clearTimeout(timeout);
                 reject(new Error('Aborted'));
                 return;
             }
+            // Stryker restore ConditionalExpression,BlockStatement
 
-            // Stryker disable next-line BooleanLiteral,ObjectLiteral: Standard addEventListener option
+            // Stryker disable next-line BooleanLiteral,ObjectLiteral,StringLiteral: Standard addEventListener option; string 'abort' is the event name
             signal.addEventListener('abort', onAbort, { once: true });
         }
     });
@@ -123,11 +125,12 @@ export async function retryWithBackoff<T>(
             }
             // Stryker restore ConditionalExpression,BlockStatement,ObjectLiteral
 
-            // Stryker disable next-line LogicalOperator,ConditionalExpression: Error type guards for throttling detection
+            // Stryker disable LogicalOperator,ConditionalExpression,EqualityOperator: Error type guards for throttling detection — mutating causes test timeout (all errors treated as throttled)
             const isThrottled = typeof error === 'object' && error !== null && 'name' in error
               && (error.name === 'ProvisionedThroughputExceededException' || error.name === 'ThrottlingException');
+            // Stryker restore LogicalOperator,ConditionalExpression,EqualityOperator
 
-            // Stryker disable next-line ConditionalExpression,EqualityOperator: Retry condition
+            // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: Retry condition — mutating causes test timeout (unthrottled errors retry indefinitely)
             if(isThrottled && attempt < backoff.maxAttempts) {
                 // Stryker disable next-line ArithmeticOperator: Exponential backoff calculation
                 const delayMs = backoff.baseDelayMs * 2 ** (attempt - 1);

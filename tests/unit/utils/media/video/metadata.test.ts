@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'bun:test';
-import { extractMetadata } from '@/utils/media/video/metadata';
+import { describe, it, expect, afterEach, jest } from 'bun:test';
+import { mockLogger } from '../../../../setup';
+import { extractMetadata, parseFfprobeOutput } from '@/utils/media/video/metadata';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
 function makeRunner(stdout: string, exitCode = 0): SpawnRunner {
@@ -87,6 +88,11 @@ const WITH_SUBTITLES_OUTPUT = JSON.stringify({
 });
 
 describe('extractMetadata', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+        mockLogger.warn.mockClear();
+    });
+
     it('parses full metadata with video and audio streams', async () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(FULL_FFPROBE_OUTPUT));
         expect(metadata.duration).toBe(154.3);
@@ -161,10 +167,40 @@ describe('extractMetadata', () => {
         expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
     });
 
+    it('wraps parse error as cause in the thrown Error', async () => {
+        const runner = makeRunner('not json');
+        let caught: unknown;
+        try {
+            await extractMetadata('/test/video.mp4', runner);
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        expect((caught as Error & { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
+    });
+
+    it('logs warn before throwing on malformed JSON output', async () => {
+        const runner = makeRunner('not json');
+        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
+        await Promise.resolve();
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ msg: 'Failed to parse ffprobe output', stdout: 'not json' })
+        );
+    });
+
     it('throws on valid JSON with invalid schema (streams is not an array)', async () => {
         // Valid JSON but wrong structure — streams must be array if present
         const runner = makeRunner(JSON.stringify({ streams: 'not-an-array', format: { duration: '10.0' } }));
         expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
+    });
+
+    it('logs warn before throwing on invalid schema', async () => {
+        const runner = makeRunner(JSON.stringify({ streams: 'not-an-array', format: { duration: '10.0' } }));
+        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Invalid ffprobe output schema');
+        await Promise.resolve();
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ msg: 'Invalid ffprobe output schema', issues: expect.arrayContaining([expect.anything()]) })
+        );
     });
 
     it('throws when no video stream found', async () => {
@@ -183,5 +219,50 @@ describe('extractMetadata', () => {
         });
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(output));
         expect(metadata.videoBitrate).toBe(2_000_000);
+    });
+});
+
+describe('parseFfprobeOutput', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+        mockLogger.warn.mockClear();
+    });
+
+    it('parses valid JSON with streams and format', () => {
+        const input = JSON.stringify({
+            streams: [{ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, avg_frame_rate: '30/1', index: 0 }],
+            format:  { duration: '10.0', bit_rate: '4000000' },
+        });
+        const result = parseFfprobeOutput(input);
+        expect(result.streams).toHaveLength(1);
+        expect(result.format?.duration).toBe('10.0');
+    });
+
+    it('returns empty streams and format when JSON has no streams/format fields', () => {
+        const input = JSON.stringify({});
+        const result = parseFfprobeOutput(input);
+        expect(result.streams).toBeUndefined();
+        expect(result.format).toBeUndefined();
+    });
+
+    it('throws on invalid JSON', () => {
+        expect(() => parseFfprobeOutput('not json')).toThrow('Failed to parse ffprobe output');
+    });
+
+    it('throws on valid JSON with invalid schema', () => {
+        expect(() => parseFfprobeOutput(JSON.stringify({ streams: 'not-an-array' }))).toThrow('Invalid ffprobe output schema');
+    });
+
+    it('parses optional stream fields correctly', () => {
+        const input = JSON.stringify({
+            streams: [{ codec_type: 'video' }], // minimal stream, no optional fields
+            format:  {},
+        });
+        const result = parseFfprobeOutput(input);
+        expect(result.streams).toHaveLength(1);
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length asserted above
+        expect(result.streams![0]!.codec_name).toBeUndefined();
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length asserted above
+        expect(result.streams![0]!.width).toBeUndefined();
     });
 });

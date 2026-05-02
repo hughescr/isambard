@@ -2923,6 +2923,32 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             expect(result.messages).toEqual([]);
             expect(mockGetMessages).toHaveBeenCalledTimes(2);
         });
+
+        test('resolveMentionDid retries on 429 during DID resolution and eventually succeeds', async () => {
+            // Post with a mention facet — triggers resolveMentionDid → getProfile
+            const POST_WITH_MENTION = {
+                ...POST_VIEW,
+                record: {
+                    ...POST_RECORD,
+                    facets: [
+                        {
+                            index:    { byteStart: 0, byteEnd: 20 },
+                            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:retry429' }],
+                        },
+                    ],
+                },
+            };
+            // First getProfile call returns 429, second succeeds
+            mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetProfile.mockResolvedValueOnce({ data: { did: 'did:plc:retry429', handle: 'resolved.bsky.social' } });
+            mockGetPosts.mockResolvedValueOnce({ data: { posts: [POST_WITH_MENTION] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            const post   = await client.getPost(POST_VIEW.uri);
+            // getProfile must have been called twice (retry after 429)
+            expect(mockGetProfile).toHaveBeenCalledTimes(2);
+            // The resolved handle is used, not the raw DID
+            expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'resolved.bsky.social' });
+        });
     });
 
     describe('Write methods do NOT retry on 429 (exactly one call)', () => {

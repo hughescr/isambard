@@ -256,7 +256,7 @@ describe('retryAsyncGenerator', () => {
     });
 
     describe('Rate limiting', () => {
-        it('should respect retryAfterMs from rate limit response', async () => {
+        it('should respect retryAfterMs when it exceeds exponential backoff', async () => {
             let callCount = 0;
 
             async function* generator() {
@@ -269,6 +269,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
+            // retryAfterMs=5000 > backoff for attempt 1 (base 1000ms), so server hint wins
             const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'Rate limited',
@@ -281,7 +282,73 @@ describe('retryAsyncGenerator', () => {
             }
 
             expect(results).toEqual([1, 2]);
-            expect(sleepMock).toHaveBeenCalledWith(5000);
+            expect(sleepMock).toHaveBeenCalledWith(5000); // Server hint (5000) > backoff (~1000) → use server hint
+        });
+
+        it('should use exponential backoff when retryAfterMs is less than computed backoff', async () => {
+            let callCount = 0;
+
+            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (retryAfterMs<backoff), identical generator structure intentional for test isolation
+            async function* generator() {
+                callCount++;
+                if(callCount === 1) {
+                    throw new Error('Rate limited');
+                }
+                yield 1;
+                yield 2;
+            }
+
+            const generatorFactory = mock(generator);
+            // retryAfterMs=10ms < backoff for attempt 1 (base 1000ms), so backoff wins
+            const classifier = mock<ErrorClassifier>(() => ({
+                category:     'rate_limited',
+                message:      'Rate limited',
+                retryAfterMs: 10,
+            }));
+
+            const results: number[] = [];
+            for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
+                results.push(value);
+            }
+
+            expect(results).toEqual([1, 2]);
+            // Must use the exponential backoff (~1000ms), not the server hint (10ms)
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900); // Exponential backoff floor with jitter
+            expect(sleepDuration).toBeLessThanOrEqual(1100); // Exponential backoff ceiling with jitter
+        });
+
+        it('should use exponential backoff when retryAfterMs is zero (clock-skew / rolled-over window)', async () => {
+            let callCount = 0;
+
+            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (retryAfterMs=0/zero-hint), identical generator structure intentional for test isolation
+            async function* generator() {
+                callCount++;
+                if(callCount === 1) {
+                    throw new Error('Rate limited');
+                }
+                yield 1;
+                yield 2;
+            }
+
+            const generatorFactory = mock(generator);
+            // retryAfterMs=0 — server hint is useless; backoff must take over
+            const classifier = mock<ErrorClassifier>(() => ({
+                category:     'rate_limited',
+                message:      'Rate limited',
+                retryAfterMs: 0,
+            }));
+
+            const results: number[] = [];
+            for await (const value of retryAsyncGenerator(generatorFactory, { policy: defaultPolicy, classifier, deps })) {
+                results.push(value);
+            }
+
+            expect(results).toEqual([1, 2]);
+            // With max(0, backoff), the sleep must be the exponential value, not 0
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900);
+            expect(sleepDuration).toBeLessThanOrEqual(1100);
         });
     });
 
@@ -601,21 +668,23 @@ describe('retryAsyncGenerator', () => {
             expect(sleepMock).toHaveBeenCalledTimes(1);
         });
 
-        it('should use zero retryAfterMs when provided', async () => {
+        it('should use exponential backoff when retryAfterMs is zero (not bypass backoff)', async () => {
             let callCount = 0;
 
             async function* generator() {
                 callCount++;
                 if(callCount === 1) {
-                    throw new Error('No delay retry');
+                    throw new Error('Zero hint');
                 }
                 yield 1;
             }
 
             const generatorFactory = mock(generator);
+            // retryAfterMs=0 means the server hint is useless (clock-skew / just-rolled-over window);
+            // backoff must take over via Math.max(0, backoff)
             const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
-                message:      'No delay retry',
+                message:      'Zero hint',
                 retryAfterMs: 0,
             }));
 
@@ -625,11 +694,14 @@ describe('retryAsyncGenerator', () => {
             }
 
             expect(results).toEqual([1]);
-            expect(sleepMock).toHaveBeenCalledWith(0);
             expect(sleepMock).toHaveBeenCalledTimes(1);
+            // With max(0, backoff), must use the exponential backoff value, not 0
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900);
+            expect(sleepDuration).toBeLessThanOrEqual(1100);
         });
 
-        it('should use alternating retryAfterMs values across multiple retries', async () => {
+        it('should use retryAfterMs when it dominates computed backoff across multiple retries', async () => {
             let callCount = 0;
 
             async function* generator() {
@@ -641,19 +713,21 @@ describe('retryAsyncGenerator', () => {
             }
 
             const generatorFactory = mock(generator);
+            // retryAfterMs=5000 for retry 1 and 7000 for retry 2 both exceed backoff (~1000ms and ~2000ms),
+            // so the server hint wins for both via Math.max(retryAfterMs, backoff)
             const classifier = mock<ErrorClassifier>((error: unknown) => {
                 const err = error as Error;
                 if(err.message === 'Retry 1') {
                     return {
                         category:     'rate_limited',
                         message:      'Retry 1',
-                        retryAfterMs: 1000,
+                        retryAfterMs: 5000,
                     };
                 }
                 return {
                     category:     'rate_limited',
                     message:      'Retry 2',
-                    retryAfterMs: 3000,
+                    retryAfterMs: 7000,
                 };
             });
 
@@ -664,8 +738,9 @@ describe('retryAsyncGenerator', () => {
 
             expect(results).toEqual([1]);
             expect(sleepMock).toHaveBeenCalledTimes(2);
-            expect(sleepMock.mock.calls[0][0]).toBe(1000);
-            expect(sleepMock.mock.calls[1][0]).toBe(3000);
+            // Server hints (5000 and 7000) exceed backoff (~1000ms and ~2000ms), so they win
+            expect(sleepMock.mock.calls[0][0]).toBe(5000);
+            expect(sleepMock.mock.calls[1][0]).toBe(7000);
         });
 
         it('should fall back to calculated delay when retryAfterMs is undefined', async () => {

@@ -419,6 +419,80 @@ describe('createRetryableQuery', () => {
             expect(sleepMock).toHaveBeenCalledWith(3000);
             expect(messages.length).toBeGreaterThan(0);
         });
+
+        it('should use exponential backoff when retryAfterMs is less than computed backoff', async () => {
+            let callCount = 0;
+
+            async function* mockQueryGenerator() {
+                callCount++;
+                if(callCount === 1) {
+                    // retryAfter=10ms < backoff for attempt 1 (base 1000ms), so backoff wins
+                    const error: { status: number, message: string, retryAfter?: number } = {
+                        status:     429,
+                        message:    'Too Many Requests',
+                        retryAfter: 10,
+                    };
+                    throw error;
+                }
+                yield { type: 'message', content: 'success' };
+            }
+
+            mockQueryFn.mockImplementation(() => mockQueryGenerator());
+
+            const retryableQuery = createRetryableQuery(mockQueryFn, {
+                policy: { maxAttempts: 2, baseDelayMs: 1000, maxDelayMs: 30_000, backoffMultiplier: 2, jitterFraction: 0.1 },
+                deps,
+            });
+            const result = retryableQuery({ prompt: 'test', options: {} });
+
+            const messages: unknown[] = [];
+            for await (const msg of result) {
+                messages.push(msg);
+            }
+
+            expect(messages).toHaveLength(1);
+            // Must use the exponential backoff (~1000ms), not the server hint (10ms)
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900);
+            expect(sleepDuration).toBeLessThanOrEqual(1100);
+        });
+
+        it('should use exponential backoff when retryAfterMs is zero', async () => {
+            let callCount = 0;
+
+            async function* mockQueryGenerator() {
+                callCount++;
+                if(callCount === 1) {
+                    // retryAfter=0 — clock-skew / rolled-over window; backoff must take over
+                    const error: { status: number, message: string, retryAfter?: number } = {
+                        status:     429,
+                        message:    'Too Many Requests',
+                        retryAfter: 0,
+                    };
+                    throw error;
+                }
+                yield { type: 'message', content: 'success' };
+            }
+
+            mockQueryFn.mockImplementation(() => mockQueryGenerator());
+
+            const retryableQuery = createRetryableQuery(mockQueryFn, {
+                policy: { maxAttempts: 2, baseDelayMs: 1000, maxDelayMs: 30_000, backoffMultiplier: 2, jitterFraction: 0.1 },
+                deps,
+            });
+            const result = retryableQuery({ prompt: 'test', options: {} });
+
+            const messages: unknown[] = [];
+            for await (const msg of result) {
+                messages.push(msg);
+            }
+
+            expect(messages).toHaveLength(1);
+            // With max(0, backoff), the sleep must be the exponential value, not 0
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900);
+            expect(sleepDuration).toBeLessThanOrEqual(1100);
+        });
     });
 
     describe('Max attempts exhausted', () => {

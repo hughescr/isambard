@@ -603,6 +603,171 @@ describe('createReconnectionLoop', () => {
     });
 
     // -------------------------------------------------------------------------
+    // restart() — re-engage without resetting attemptCount
+    // -------------------------------------------------------------------------
+
+    describe('restart()', () => {
+        test('restart() does not reset attemptCount — next delay uses existing counter', async () => {
+            // Policy with multiplier=4: delay(1)=100ms, delay(2)=400ms, delay(3)=1600ms.
+            // After 2 failures, attemptCount=2. restart() should produce delay(3)=1600ms,
+            // whereas start() would reset and produce delay(1)=100ms.
+            const bigBackoffPolicy = { baseDelayMs: 100, maxDelayMs: 10_000, backoffMultiplier: 4, jitterFraction: 0 };
+
+            let callCount = 0;
+            const connectFn = mock(async () => {
+                callCount += 1;
+                throw new Error(`fail ${callCount}`);
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: bigBackoffPolicy });
+
+            // Fail twice to build up attemptCount to 2
+            loop.start();
+            await Promise.resolve();
+            expect(callCount).toBe(1); // first failure
+
+            jest.advanceTimersByTime(100); // fires retry at delay(1)=100ms
+            expect(callCount).toBe(2); // second failure
+
+            await Promise.resolve();
+            await Promise.resolve();
+            // Second failure has set a pending timer for delay(2)=400ms
+            // Simulate SSE-after-open scenario: cancel that timer and restart without resetting counter
+            loop.restart();
+            await Promise.resolve();
+            expect(callCount).toBe(3); // third call fired immediately by restart()
+
+            await Promise.resolve();
+            await Promise.resolve();
+            // Third failure: attemptCount=3 → delay(3)=1600ms (NOT 100ms if counter were reset)
+            // Advance 399ms — should NOT fire (would fire at 100ms if counter were reset)
+            jest.advanceTimersByTime(399);
+            expect(callCount).toBe(3);
+
+            // Advance to 1600ms total — should fire
+            jest.advanceTimersByTime(1201);
+            expect(callCount).toBe(4);
+
+            loop.stop();
+        });
+
+        test('restart() cancels any pending timer before triggering', async () => {
+            let callCount = 0;
+            const connectFn = mock(async () => {
+                callCount += 1;
+                if(callCount <= 3) {
+                    throw new Error(`fail ${callCount}`);
+                }
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+            // A pending timer is now registered for the retry
+            expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+
+            // restart() must cancel that timer and fire immediately
+            loop.restart();
+
+            // There should be no timer from the cancelled one anymore
+            // (a new one may be created after the new attempt fails, but connectFn is still in-flight now)
+            // Verify by counting calls: restart() immediately invokes connectFn again
+            expect(callCount).toBe(2);
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            loop.stop();
+        });
+
+        test('restart() sends RECONNECT_ATTEMPT event', async () => {
+            const connectFn = mock(async () => {
+                throw new Error('fail');
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
+            sendEventMock.mockClear();
+
+            loop.restart();
+
+            const attempts = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
+            expect(attempts.length).toBe(1);
+
+            loop.stop();
+        });
+
+        test('restart() after stop() is a no-op — no connectFn call, no timer', async () => {
+            let callCount = 0;
+            const connectFn = mock(async () => {
+                callCount += 1;
+                throw new Error('fail');
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+            loop.stop();
+
+            const callsBefore = callCount;
+            const timersBefore = jest.getTimerCount();
+
+            loop.restart();
+
+            expect(callCount).toBe(callsBefore);
+            expect(jest.getTimerCount()).toBe(timersBefore);
+        });
+
+        test('restart() while connect is in-flight is a no-op — no parallel connectFn call', async () => {
+            let resolveConnect!: () => void;
+            let callCount = 0;
+            const connectFn = mock(async () => {
+                callCount += 1;
+                await new Promise<void>((resolve) => {
+                    resolveConnect = resolve;
+                });
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+
+            loop.start(); // attempt in-flight
+            expect(callCount).toBe(1);
+
+            const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
+            const eventsBefore = sendEventMock.mock.calls.length;
+
+            // Call restart() while connect is in-flight
+            loop.restart();
+
+            // Should not have started a parallel connectFn
+            expect(callCount).toBe(1);
+            // Should not have emitted a RECONNECT_ATTEMPT event (restart is a full no-op when in-flight)
+            expect(sendEventMock.mock.calls.length).toBe(eventsBefore);
+
+            resolveConnect();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        test('restart() before start() is a no-op — loop is not running', () => {
+            let callCount = 0;
+            const connectFn = mock(async () => {
+                callCount += 1;
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+
+            loop.restart();
+
+            expect(callCount).toBe(0);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
+    // -------------------------------------------------------------------------
     // nextRetryAt calculation
     // -------------------------------------------------------------------------
 

@@ -43,6 +43,8 @@ async function pathExists(filePath: string): Promise<boolean> {
         await access(filePath);
         return true;
     } catch{
+        // Silent: ENOENT or EACCES means the path does not exist or is inaccessible.
+        // The function contract is "returns false when the path can't be accessed."
         return false;
     }
 }
@@ -57,6 +59,8 @@ async function isDirectory(dirPath: string): Promise<boolean> {
         const stats = await stat(dirPath);
         return stats.isDirectory();
     } catch{
+        // Silent: stat() throws if the path doesn't exist or is inaccessible.
+        // The function contract is "returns false when the path is not a directory."
         // Stryker disable next-line BooleanLiteral: Error path tested indirectly through callers
         return false;
     }

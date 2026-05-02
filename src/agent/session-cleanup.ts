@@ -284,7 +284,8 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
         );
         cleanedCount += unlinkResults.filter(r => r.status === 'fulfilled').length;
     } catch{
-        // Directory doesn't exist - nothing to clean
+        // Silent: ENOENT from access() means the projects dir hasn't been created yet
+        // (fresh install or first run). Nothing to clean, not an error.
     }
 
     // Clean up session-env directories for this project
@@ -297,7 +298,8 @@ export const cleanupAllStaleSessions = async (): Promise<void> => {
         );
         cleanedCount += rmResults.filter(r => r.status === 'fulfilled').length;
     } catch{
-        // Directory doesn't exist
+        // Silent: ENOENT from access() means the session-env dir hasn't been created yet.
+        // Nothing to clean, not an error.
     }
 
     if(cleanedCount > 0) {

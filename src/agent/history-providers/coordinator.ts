@@ -13,6 +13,7 @@ import {
 } from './types';
 import { InvariantViolationError } from '@/errors';
 import type { Contact, ContactBackend, PlatformType } from '@/storage';
+import { assertNever } from '@/utils';
 
 /**
  * Minimal shape of a raw Discord message returned by MCPMessageSearchService.
@@ -70,15 +71,6 @@ function stripInternal(contact: Contact): Omit<Contact, '_internal'> {
 }
 
 /**
- * Exhaustive helper — TypeScript will error here if a new KnownPlatform value
- * is added without updating platformLabel's switch cases.
- */
-function assertNever(x: never): never {
-    // Stryker disable next-line StringLiteral: unreachable runtime error — informational only
-    throw new Error(`Unexpected platform: ${String(x)}`);
-}
-
-/**
  * Return a human-readable label for a known platform.
  * The exhaustiveness check via assertNever ensures a compile error
  * if a new platform is added to KnownPlatform without updating this switch.
@@ -89,7 +81,7 @@ function platformLabel(platform: KnownPlatform): string {
         case 'email':   { return 'email'; }
         case 'bsky':    { return 'bsky'; }
         // Stryker disable next-line BlockStatement: unreachable — compile-time exhaustiveness guard
-        default:        { return assertNever(platform); }
+        default:        { return assertNever(platform, `Unexpected platform: ${String(platform)}`); }
     }
 }
 

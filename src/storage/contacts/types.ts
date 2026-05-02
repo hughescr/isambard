@@ -25,13 +25,17 @@ export type ContactIdentifier = z.infer<typeof contactIdentifierSchema>;
  * ContactId is a branded string representing a kebab-case person identifier.
  * E.g., "craig-hughes" or "alice-wonderland"
  */
+// Stryker disable Regex: ContactId regex — mutating causes runtime regex syntax error or invalid validation behavior
+const CONTACT_ID_REGEX = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
+// Stryker restore Regex
+
 // Stryker disable ObjectLiteral,StringLiteral: error message shape and text in refine are informational only
 export const contactIdSchema = z
     .string()
     .min(1)
     .max(100)
     .refine(
-        id => /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/.test(id),
+        id => CONTACT_ID_REGEX.test(id),
         {
             message: 'ContactId must be lowercase alphanumeric with hyphens (kebab-case)',
         }

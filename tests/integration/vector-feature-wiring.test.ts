@@ -244,6 +244,7 @@ describe('Vector feature wiring', () => {
             const storage = await storageLayerModule.createStorageLayer(
                 { tableName: 'TestTable' },
                 undefined,
+                undefined,
                 { enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0' },
                 fakeEmbedder
             );

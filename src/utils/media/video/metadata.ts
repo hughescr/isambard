@@ -1,3 +1,4 @@
+import { logger } from '@hughescr/logger';
 import { z } from 'zod';
 import type { VideoMetadata, SubtitleTrack, SpawnRunner } from './types';
 
@@ -41,6 +42,38 @@ function parseFrameRate(rateStr: string | undefined): number {
     return Number(rateStr) || 0;
 }
 
+/** Parse and validate raw ffprobe JSON stdout. Throws on parse or schema errors.
+ * @internal
+ */
+export function parseFfprobeOutput(stdout: string): z.infer<typeof ffprobeOutputSchema> {
+    let rawParsed: unknown;
+    try {
+        rawParsed = JSON.parse(stdout);
+    } catch (err) {
+        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+        logger.warn({
+            err,
+            stdout,
+            // Stryker disable next-line StringLiteral: log message is informational only
+            msg: 'Failed to parse ffprobe output',
+        });
+        // Stryker disable next-line ObjectLiteral: cause property is for error chain — the new Error message is the observable artifact; `.cause` is purely informational
+        throw new Error(`Failed to parse ffprobe output: ${stdout}`, { cause: err });
+    }
+
+    const schemaResult = ffprobeOutputSchema.safeParse(rawParsed);
+    if(!schemaResult.success) {
+        // Stryker disable next-line ObjectLiteral: Logger warn object for observability
+        logger.warn({
+            issues: schemaResult.error.issues,
+            // Stryker disable next-line StringLiteral: log message is informational only
+            msg:    'Invalid ffprobe output schema',
+        });
+        throw new Error(`Invalid ffprobe output schema: ${JSON.stringify(schemaResult.error.issues)}`);
+    }
+    return schemaResult.data;
+}
+
 export async function extractMetadata(videoPath: string, run: SpawnRunner): Promise<VideoMetadata> {
     // Stryker disable StringLiteral: ffprobe command arguments are configuration
     const result = await run([
@@ -57,18 +90,7 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
         throw new Error(`ffprobe failed with exit code ${result.exitCode}: ${result.stderr}`);
     }
 
-    let rawParsed: unknown;
-    try {
-        rawParsed = JSON.parse(result.stdout);
-    } catch{
-        throw new Error(`Failed to parse ffprobe output: ${result.stdout}`);
-    }
-
-    const schemaResult = ffprobeOutputSchema.safeParse(rawParsed);
-    if(!schemaResult.success) {
-        throw new Error(`Invalid ffprobe output schema: ${JSON.stringify(schemaResult.error.issues)}`);
-    }
-    const parsed = schemaResult.data;
+    const parsed = parseFfprobeOutput(result.stdout);
 
     const streams = parsed.streams ?? [];
     const format  = parsed.format ?? {};

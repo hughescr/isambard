@@ -35,6 +35,7 @@ async function retryWithBackoff<T>(
             if(attempt < MAX_RETRIES) {
                 // Stryker disable next-line ArithmeticOperator: Backoff formula tested via timer verification; * vs / indistinguishable at attempt 1 (2^0=1)
                 const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
+                // Stryker disable next-line BlockStatement: sleep block — removing causes test timeout (no delay between retries → tight loop)
                 // eslint-disable-next-line no-await-in-loop -- sequential: retry backoff delay between attempts
                 await new Promise((resolve) => {
                     setTimeout(resolve, delay);
@@ -454,19 +455,18 @@ export class MemoryToolBackendTagIndex {
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
         const batches = this.splitIntoBatches(writeRequests, 25);
 
-        // Execute all batches (no count increment)
-        let driftNotified = false;
+        // Execute all batches and collect failed requests (no count increment)
+        const allFailedRequests: BatchWriteRequest[] = [];
         for(const batch of batches) {
             // eslint-disable-next-line no-await-in-loop -- sequential: DynamoDB BatchWrite, each batch processed in order
             const failedRequests = await this.batchWriteWithRetry({ [this.tableName]: batch });
-            // Notify drift once if any items were not refreshed — tag index may be inconsistent.
-            // driftNotified coalesces across batches: only the first failing batch triggers the callback.
-            // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: Drift hint — failedRequests.length > 0 tested by caller-notification tests; driftNotified coalesces per-call
-            if(failedRequests.length > 0 && !driftNotified) {
-                // Stryker disable next-line BooleanLiteral: coalescing is tested in multi-batch onDriftDetected tests; setting to true prevents re-notification on subsequent batches
-                driftNotified = true;
-                this.onDriftDetected?.();
-            }
+            allFailedRequests.push(...failedRequests);
+        }
+
+        // Notify drift if any items were not refreshed — tag index may be inconsistent
+        // Stryker disable next-line ConditionalExpression,BlockStatement: Drift hint — allFailedRequests.length > 0 tested by caller-notification tests
+        if(allFailedRequests.length > 0) {
+            this.onDriftDetected?.();
         }
     }
 

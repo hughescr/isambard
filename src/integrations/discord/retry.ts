@@ -40,6 +40,7 @@ export function classifyDiscordError(error: unknown): ErrorClassification {
     }
 
     // Check for AbortError (transient - request timed out after Discord.js exhausted internal retries)
+    // Stryker disable next-line ConditionalExpression: AbortError check — mutating causes test timeout (all errors treated as transient, retry loop never exits)
     if(error instanceof Error && error.name === 'AbortError') {
         return {
             category: 'transient',

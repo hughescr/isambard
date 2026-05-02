@@ -16,7 +16,32 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import type { BotStateManager } from '../state';
 import { createUserId, createChannelId, createGuildId, type ChannelId } from '../types';
 import { type AnswerClassifier, type QuestionRegistry, type PerchSessionRunner  } from '@/agent';
+import { createReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import { safeAsyncHandler } from '@/utils';
+
+// ResponseRouter treats unknown ChannelIds as fallback candidates;
+// SYNTHETIC_FALLBACK_CHANNEL_ID is a sentinel that exploits this contract
+// to route operator notifications through the fallback channel.
+const SYNTHETIC_FALLBACK_CHANNEL_ID = 'synthetic-channel' as ChannelId;
+
+// ---------------------------------------------------------------------------
+// No-op health registry stub (used when no registry is provided)
+// ---------------------------------------------------------------------------
+
+// Stryker disable all: no-op stub — behaviour is definitionally absent
+function noopUnsubscribe(): void { /* no-op */ }
+const NOOP_HEALTH_REGISTRY: ServiceHealthRegistry = {
+    getState:           () => 'disabled',
+    getEntry:           () => ({ state: 'disabled', epoch: 0, failureCount: 0 }),
+    getAll:             () => ({} as ReturnType<ServiceHealthRegistry['getAll']>),
+    isAvailable:        () => false,
+    isWriteAvailable:   () => false,
+    sendEvent:          () => undefined,
+    subscribe:          () => noopUnsubscribe,
+    buildStatusSummary: () => undefined,
+    stop:               () => undefined,
+};
+// Stryker restore all
 
 /**
  * Sends an urgent error notification to the owner via the fallback channel.
@@ -28,13 +53,14 @@ async function sendRegistryErrorNotification(
     errorMsg: string
 ): Promise<void> {
     try {
+        // Notification content must include the error message so the operator can diagnose the failure.
         const notificationContent = `⚠️ **Channel Registry Error**: Failed to load channel mute settings. I'm currently responding to ALL channels until this is resolved. Error: ${errorMsg}`;
 
         // Route to fallback channel for startup errors
         const routing = await responseRouter.routeResponse(
             'processing_message', // Use processing_message as the session type
             notificationContent,
-            'synthetic-channel' as ChannelId // Will trigger fallback routing
+            SYNTHETIC_FALLBACK_CHANNEL_ID // Will trigger fallback routing
         );
 
         // Stryker disable next-line all: Defensive guard - routing always has shouldSend=true and targetChannelId set for error notifications
@@ -63,49 +89,100 @@ async function sendRegistryErrorNotification(
 }
 
 /**
- * Initializes the channel registry by warming cache, discovering channels, and setting up event handlers.
+ * Initializes the channel registry by starting self-healing hydration via a ReconnectionLoop,
+ * then (once the registry is ready) discovering channels and setting up event handlers.
  *
  * @param client - Discord client (must be ready)
  * @param channelRegistry - Channel registry manager
  * @param responseRouter - Response router for sending notifications
- * @param rateLimiter - Rate limiter for Discord API calls (optional, created after this function)
- * @returns Promise that resolves when initialization is complete
+ * @param rateLimiter - Rate limiter for Discord API calls (optional)
+ * @param healthRegistry - Service health registry for tracking connectivity (optional)
  */
-export async function initializeChannelRegistry(
+/** Number of consecutive warmCache() failures before a one-time operator notification is sent. */
+const HYDRATION_NOTIFY_THRESHOLD = 3;
+
+export function initializeChannelRegistry(
     client: Client,
     channelRegistry: ChannelRegistryManager,
     responseRouter: ResponseRouter,
-    rateLimiter?: DiscordRateLimiter
-): Promise<void> {
-    try {
-        // Warm cache from DynamoDB
-        await channelRegistry.warmCache();
+    rateLimiter?: DiscordRateLimiter,
+    healthRegistry?: ServiceHealthRegistry
+): void {
+    const registry = healthRegistry ?? NOOP_HEALTH_REGISTRY;
 
-        // Discover all channels the bot can see
-        const discoveryResult = await discoverAllChannels(client, channelRegistry);
-        // Stryker disable all: Logging for observability
-        logger.info({
-            discovered: discoveryResult.discovered,
-            updated:    discoveryResult.updated,
-            errors:     discoveryResult.errors.length,
-            msg:        `Channel discovery completed: ${discoveryResult.discovered} new, ${discoveryResult.updated} updated`,
-        });
-        // Stryker restore all
+    // Register the channel-registry service with the health registry so it
+    // appears in status summaries and transitions correctly through the state machine.
+    registry.sendEvent('discord-channel-registry', 'CONFIGURE');
 
-        // Set up event handlers for channel changes
-        setupChannelEventHandlers(client, channelRegistry);
-    } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error({
-            error: errorMsg,
-            msg:   'Failed to initialize channel registry on startup — messages will be dropped until registry is ready',
-        });
-
-        // Send urgent notification to owner via fallback channel
-        if(rateLimiter) {
-            await sendRegistryErrorNotification(client, responseRouter, rateLimiter, errorMsg);
-        }
+    // Warn at startup if no rateLimiter is provided — hydration failures won't surface to operators.
+    if(!rateLimiter) {
+        logger.warn({ msg: 'Channel registry hydration failures will not surface to operator — no rate limiter configured' });
     }
+
+    // Count consecutive warmCache() failures so we can notify the operator after
+    // HYDRATION_NOTIFY_THRESHOLD failures without spamming on every retry.
+    //
+    // NOTE: These closure variables are scoped to this loop's lifetime and assume
+    // initializeChannelRegistry() is called exactly once per process. A second call
+    // would create an independent closure with fresh counters — no cross-loop sharing.
+    let consecutiveFailureCount = 0;
+    let notificationSent        = false;
+
+    const loop = createReconnectionLoop({
+        service:   'discord-channel-registry',
+        registry,
+        connectFn: async () => {
+            try {
+                await channelRegistry.warmCache();
+                consecutiveFailureCount = 0; // Reset on success
+                notificationSent = false;    // Allow re-notification if failures resume later
+            } catch (err: unknown) {
+                consecutiveFailureCount += 1;
+
+                if(consecutiveFailureCount >= HYDRATION_NOTIFY_THRESHOLD && !notificationSent && rateLimiter) {
+                    notificationSent = true;
+                    const errorMsg = err instanceof Error ? err.message : String(err);
+                    void sendRegistryErrorNotification(client, responseRouter, rateLimiter, errorMsg);
+                }
+
+                throw err;
+            }
+        },
+    });
+
+    channelRegistry.startHydration(loop);
+
+    // After the registry is ready (and on every subsequent stop/restart cycle),
+    // discover channels and wire up event handlers.
+    // onReady() re-attaches this callback each time a new ready promise is created
+    // so that a stop() → startHydration() cycle correctly re-fires discovery.
+    channelRegistry.onReady(async () => {
+        try {
+            const discoveryResult = await discoverAllChannels(client, channelRegistry);
+            // Stryker disable all: Logging for observability
+            logger.info({
+                discovered: discoveryResult.discovered,
+                updated:    discoveryResult.updated,
+                errors:     discoveryResult.errors.length,
+                msg:        `Channel discovery completed: ${discoveryResult.discovered} new, ${discoveryResult.updated} updated`,
+            });
+            // Stryker restore all
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            logger.error({
+                error: errorMsg,
+                msg:   'Channel discovery failed after registry hydration',
+            });
+
+            // Send urgent notification to owner via fallback channel
+            if(rateLimiter) {
+                await sendRegistryErrorNotification(client, responseRouter, rateLimiter, errorMsg);
+            }
+        }
+
+        // Set up event handlers for channel changes regardless of discovery outcome
+        setupChannelEventHandlers(client, channelRegistry);
+    });
 }
 
 /**

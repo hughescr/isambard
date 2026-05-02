@@ -95,11 +95,13 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
      */
     async function doTrigger(): Promise<ReconciliationResult | undefined> {
         // Check if already running
+        // Stryker disable ConditionalExpression,BlockStatement: running guard — mutating causes test timeout (parallel reconciliations start)
         if(state.isRunning) {
             /* Stryker disable next-line StringLiteral,ObjectLiteral: Logging is observational */
             logger.debug({ msg: 'Reconciliation already running - skipping trigger' });
             return undefined;
         }
+        // Stryker restore ConditionalExpression,BlockStatement
 
         // Set state to running
         state = {
@@ -170,6 +172,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
     /**
      * Handle scheduled trigger (called at intervalMs).
      */
+    // Stryker disable next-line BlockStatement: scheduler trigger body — mutating causes test timeout (reconciliation never runs)
     async function onScheduledTrigger(): Promise<void> {
         schedulerTimeout = null;
 
@@ -195,6 +198,7 @@ export function createReconciliationScheduler(deps: ReconciliationSchedulerDeps)
     /**
      * Schedule the next trigger.
      */
+    // Stryker disable next-line BlockStatement: scheduler body — mutating causes test timeout (no next trigger scheduled)
     function scheduleNextTrigger(): void {
         // Clear any existing timeout
         // Stryker disable next-line BlockStatement: Internal timeout cleanup

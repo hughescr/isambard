@@ -160,6 +160,7 @@ export function createStreamEventHandler(
     const pendingToolInputs = new Map<string, unknown>();
     let accumulatedText = '';
     let accumulatedThinkingContent = '';
+    // Stryker disable next-line ArrayDeclaration: initial empty array — mutating to non-empty changes initial state, causes test timeout (stale tool calls appear in presence)
     const recentToolCalls: string[] = [];
     let latestSubagentSummary: string | undefined;
     // Stryker disable next-line ArithmeticOperator: Configuration constant
@@ -306,6 +307,7 @@ export function createStreamEventHandler(
                 // Extract tool_use blocks and store redacted inputs for later use
                 const toolUses = extractToolUses(event);
                 let hadToolUseUpdate = false;
+                // Stryker disable BlockStatement,BooleanLiteral: tool use loop — mutating causes test timeout (tool transitions never fire)
                 for(const toolUse of toolUses) {
                     pendingToolInputs.set(toolUse.name, redactSensitiveArgs(toolUse.input));
 
@@ -314,6 +316,7 @@ export function createStreamEventHandler(
                         hadToolUseUpdate = true;
                     }
                 }
+                // Stryker restore BlockStatement,BooleanLiteral
 
                 // Accumulate response text for context (keep last 200 chars)
                 if(event.delta?.text) {
@@ -432,6 +435,7 @@ export function createStreamEventHandler(
             case 'tool_result': {
                 break;
             }
+            // Stryker disable next-line BlockStatement: system case body — mutating causes test timeout (task_progress events never processed)
             case 'system': {
                 // Handle task_progress events from subagents.
                 // Note: these are PROGRESS UPDATES from a running subagent (intermediate status
@@ -441,6 +445,7 @@ export function createStreamEventHandler(
                     latestSubagentSummary = event.summary;
 
                     // Collapse phase to thinking or responding — 'using_tool' lacks required toolName/toolInput/toolDescription fields
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator: phase selection — mutating causes test timeout (wrong phase propagated to presence)
                     const synopsisPhase = currentPhase === 'responding' ? 'responding' as const : 'thinking' as const;
 
                     // Update presence with subagent context

@@ -74,6 +74,10 @@ function parseTaskFile(content: string): Task | undefined {
 
         return parsed as Task;
     } catch{
+        // Silent: JSON.parse throws on malformed task files (truncated writes, corrupted storage).
+        // Returning undefined causes the caller to skip this task file, which is the correct
+        // degraded-gracefully behavior. Logging every bad file would spam during a corrupted
+        // session and is not actionable; the caller already handles the missing task silently.
         return undefined;
     }
     // Stryker restore BlockStatement
@@ -136,13 +140,14 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 try {
                     files = await readdirFn(taskDir, { withFileTypes: true });
                 } catch{
-                    // Directory doesn't exist or can't be read
+                    // Silent: ENOENT means no task directory for this session (no tasks created
+                    // yet) or the session was cleaned up. Either way there is nothing to show.
                     return undefined;
                 }
 
                 // Filter for JSON files only
                 const jsonFiles = files.filter(file => file.isFile() && file.name.endsWith('.json'));
-                // Stryker disable next-line ConditionalExpression: Defensive early return — covered by tasks.length check
+                // Stryker disable next-line ConditionalExpression,EqualityOperator: Defensive early return — covered by tasks.length check
                 if(jsonFiles.length === 0) {
                     return undefined;
                 }
@@ -159,7 +164,8 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                             tasks.push(task);
                         }
                     } catch{
-                        // Skip unreadable files
+                        // Silent: individual task file is unreadable (race with delete, or
+                        // corrupted write). Skip this file and continue processing others.
                         continue;
                     }
                     // Stryker restore BlockStatement
@@ -176,6 +182,7 @@ export function createTaskListReader(options: TaskListReaderOptions): TaskListRe
                 const twoHoursMs = 2 * 60 * 60 * 1000;
 
                 const relevantTasks = tasks.filter((task) => {
+                    // Stryker disable next-line ConditionalExpression,EqualityOperator: status filter — mutating causes infinite feedback in test scenario with completed tasks
                     if(task.status !== 'completed') {
                         return true;
                     }

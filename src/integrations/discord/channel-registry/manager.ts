@@ -4,6 +4,7 @@ import { createGuildId, type ChannelId, type GuildId  } from '../types';
 import type { ChannelRegistryBackend } from './backend';
 import type { ChannelMetadata, WellKnownChannel, ChannelStorageRecord } from './types';
 import { InvariantViolationError } from '@/errors';
+import type { ReconnectionLoop } from '@/services';
 
 /** Type guard: check if a Channel has a 'recipient' property (DMChannel). */
 // Stryker disable ConditionalExpression: Equivalent — guard result irrelevant; callers always pair with secondary truthiness check (e.g. && discordChannel.recipient)
@@ -49,13 +50,21 @@ export class ChannelRegistryManager {
     private readonly homeGuildId: GuildId;
     private readonly client:      Client;
     private cacheWarmed           = false;
+    private hydrationLoop:        ReconnectionLoop | undefined;
 
     /**
      * Promise that resolves when the registry is ready (warmCache completed successfully).
      * Stays pending (never rejects) if warmCache throws — callers should use isReady() to detect failure.
+     * Reset to a fresh pending Promise by stop() so that a subsequent startHydration() re-arms the gate.
      */
-    readonly ready:        Promise<void>;
-    private resolveReady!: () => void;
+    ready:                           Promise<void>;
+    private resolveReady!:           () => void;
+    /**
+     * Registered callbacks that fire each time the ready promise resolves (including after a stop/restart cycle).
+     * Each entry carries a `cancelled` flag that offReady() sets to prevent the callback from firing
+     * even after a `.then()` handler has already been attached to the current ready promise.
+     */
+    private readonly readyCallbacks: { fn: () => void | Promise<void>, cancelled: boolean }[] = [];
 
     constructor(config: ChannelRegistryManagerConfig) {
         this.backend = config.backend;
@@ -68,10 +77,88 @@ export class ChannelRegistryManager {
 
         // Initialize ready promise — resolves on successful warmCache, stays pending on failure.
         // Use isReady() to distinguish "not yet hydrated" from "hydration failed".
-        this.ready = new Promise<void>((resolve) => {
+        // eslint-disable-next-line sonarjs/no-async-constructor -- initReadyPromise is synchronous (returns new Promise); no async work is started in the constructor
+        this.ready = this.initReadyPromise();
+    }
+
+    /**
+     * Creates a fresh pending ready Promise and wires up the resolver.
+     * Attaches all registered onReady callbacks to the new promise so they
+     * fire again on the next successful warmCache() call.
+     * Called from the constructor and from stop() to re-arm the gate.
+     */
+    private initReadyPromise(): Promise<void> {
+        const promise = new Promise<void>((resolve) => {
             this.resolveReady = resolve;
         });
+        // Re-attach all registered callbacks so they fire on the next hydration cycle.
+        // Stryker disable BlockStatement,ArrowFunction,ConditionalExpression: re-attach loop — only exercised in stop()→startHydration() cycle with pre-registered callbacks
+        for(const entry of this.readyCallbacks) {
+            void promise.then(() => {
+                if(entry.cancelled) {
+                    return;
+                }
+                return entry.fn();
+            }).catch((err: unknown) => {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: logger call — observational
+                logger.error({ err, msg: 'onReady callback rejected' });
+            });
+        }
+        // Stryker restore BlockStatement,ArrowFunction,ConditionalExpression
+        return promise;
     }
+
+    /**
+     * Register a callback to fire each time the registry becomes ready.
+     * This includes the current cycle (if hydration has not yet completed) and
+     * every subsequent stop() → startHydration() cycle.
+     *
+     * Unlike `registry.ready.then(cb)`, which only fires once for the current
+     * promise instance, `onReady(cb)` re-attaches the callback to the new
+     * `ready` promise created by stop() so it fires on every successful warmCache().
+     *
+     * @param callback - Called (without arguments) each time hydration succeeds
+     */
+    // Stryker disable BlockStatement,ArrowFunction: onReady registration — tested via bot.test.ts and event-handler-setup.test.ts which call the callback; body is always exercised but ArrowFunction/BlockStatement mutants are not distinguishable by test assertions
+    onReady(callback: () => void | Promise<void>): void {
+        const entry = { fn: callback, cancelled: false };
+        this.readyCallbacks.push(entry);
+        // Attach to the current pending (or already-resolved) ready promise.
+        // The `cancelled` flag allows offReady() to prevent this handler from firing
+        // even after the .then() has already been queued.
+        void this.ready.then(() => {
+            if(entry.cancelled) {
+                return;
+            }
+            return entry.fn();
+        }).catch((err: unknown) => {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: logger call — observational
+            logger.error({ err, msg: 'onReady callback rejected' });
+        });
+    }
+    // Stryker restore BlockStatement,ArrowFunction
+
+    /**
+     * Unregister a previously registered onReady callback.
+     * Removes the first occurrence of `callback` from the registered list and marks
+     * it cancelled so that any already-queued `.then()` handler will not invoke it.
+     * After unregistration, the callback will not fire on future hydration cycles.
+     * Has no effect if `callback` was never registered.
+     *
+     * @param callback - The callback function to remove
+     */
+    // Stryker disable BlockStatement,ConditionalExpression,UnaryOperator: offReady removal — tested by 'offReady removes a registered callback'
+    offReady(callback: () => void | Promise<void>): void {
+        const idx = this.readyCallbacks.findIndex(e => e.fn === callback);
+        if(idx !== -1) {
+            const entry = this.readyCallbacks[idx];
+            if(entry !== undefined) {
+                entry.cancelled = true;
+            }
+            this.readyCallbacks.splice(idx, 1);
+        }
+    }
+    // Stryker restore BlockStatement,ConditionalExpression,UnaryOperator
 
     /**
      * Returns true if the registry has been successfully hydrated via warmCache().
@@ -79,6 +166,40 @@ export class ChannelRegistryManager {
      */
     isReady(): boolean {
         return this.cacheWarmed;
+    }
+
+    /**
+     * Starts self-healing hydration using a ReconnectionLoop.
+     *
+     * The loop must be created with `() => this.warmCache()` (or equivalent) as its
+     * connectFn. On success the loop auto-stops and the `ready` promise resolves.
+     * On failure the loop schedules retries with exponential backoff.
+     *
+     * Call `stop()` to cancel the loop (e.g., on shutdown).
+     *
+     * @throws If a hydration loop is already running (guards against double-start).
+     */
+    startHydration(loop: ReconnectionLoop): void {
+        if(this.hydrationLoop !== undefined) {
+            // Stryker disable next-line StringLiteral: error message is informational only
+            throw new Error('ChannelRegistryManager: hydration loop already started — call stop() first');
+        }
+        this.hydrationLoop = loop;
+        loop.start();
+    }
+
+    /**
+     * Stops the hydration reconnection loop and resets the ready gate so that a
+     * subsequent startHydration() call can re-arm it for the next hydration cycle.
+     * Safe to call even if startHydration() was never called.
+     */
+    stop(): void {
+        this.hydrationLoop?.stop();
+        this.hydrationLoop = undefined;
+        // Reset ready to a fresh pending Promise so isReady() returns false and
+        // the gate in MessageCoordinator blocks traffic until the next warmCache succeeds.
+        this.cacheWarmed = false;
+        this.ready = this.initReadyPromise();
     }
 
     /**

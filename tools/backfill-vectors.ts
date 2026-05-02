@@ -1,3 +1,4 @@
+// Stryker disable all: CLI tool with external dependencies (DynamoDB, SST, file system, vector store); not unit-testable in isolation
 /**
  * Backfill CLI for the vector index.
  *

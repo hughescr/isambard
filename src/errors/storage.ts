@@ -237,26 +237,19 @@ export class ContactLastIdentifierError extends StorageError {
 }
 
 /**
- * Error thrown when a contact has too many identifiers to fit in a single DynamoDB TransactWriteItems call.
- * DynamoDB's hard limit is 25 items per transaction; the contact profile record occupies one slot,
- * leaving 24 slots for identifier lookup items.
- * @param personId - The contact's person ID
- * @param displayName - The contact's display name for human-readable error messages
- * @param count - The number of identifiers on the contact
- * @param limit - The maximum number of identifiers allowed
+ * Error thrown when attempting to put a contact with no identifiers.
+ * A contact must have at least one identifier to be reachable via resolveIdentifier.
  */
-export class ContactIdentifierLimitError extends StorageError {
-    declare public readonly context: { personId: string, displayName: string, count: number, limit: number };
+export class ContactNoIdentifiersError extends StorageError {
+    declare public readonly context: { personId: string };
 
-    constructor(personId: string, displayName: string, count: number, limit: number) {
+    constructor(personId: string) {
         super(
-            // Stryker disable next-line StringLiteral: message content is tested in ContactIdentifierLimitError unit tests
-            `Contact "${displayName}" (${personId}) has ${count} identifiers, exceeding the limit of ${limit} per contact`,
-            ErrorCode.CONTACT_IDENTIFIER_LIMIT,
-            { personId, displayName, count, limit }
+            `Contact "${personId}" must have at least one identifier`,
+            ErrorCode.CONTACT_NO_IDENTIFIERS,
+            { personId }
         );
-        // Stryker disable next-line StringLiteral: error class name is tested in ContactIdentifierLimitError unit tests
-        this.name = 'ContactIdentifierLimitError';
+        this.name = 'ContactNoIdentifiersError';
     }
 }
 

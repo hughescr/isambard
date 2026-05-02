@@ -143,7 +143,7 @@ export class BskyRejectionBackend extends BaseRepository<BskyRejectionItem> {
                     unprocessed = [];
                     break;
                 }
-                unprocessed = leftover.flatMap(req => req.DeleteRequest ? [req.DeleteRequest.Key as { PK: string, SK: string }] : []);
+                unprocessed = leftover.flatMap(req => (req.DeleteRequest ? [req.DeleteRequest.Key as { PK: string, SK: string }] : []));
                 // Stryker disable next-line UpdateOperator: attempt counter increment is retry loop bookkeeping
                 attempt++;
 

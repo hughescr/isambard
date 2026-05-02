@@ -145,7 +145,7 @@ describe('retryAsync', () => {
     });
 
     describe('Rate limiting', () => {
-        it('should respect retryAfterMs from rate limit response', async () => {
+        it('should respect retryAfterMs when it exceeds exponential backoff', async () => {
             let callCount = 0;
             const operation = mock(() => {
                 callCount++;
@@ -155,6 +155,7 @@ describe('retryAsync', () => {
                 return Promise.resolve('success');
             });
 
+            // retryAfterMs=5000 > backoff for attempt 1 (base 1000ms * 1 = ~1000ms), so server hint wins
             const classifier = mock<ErrorClassifier>(() => ({
                 category:     'rate_limited',
                 message:      'Rate limited',
@@ -164,11 +165,11 @@ describe('retryAsync', () => {
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
             expect(result).toBe('success');
-            expect(sleepMock).toHaveBeenCalledWith(5000); // Should use retryAfterMs
+            expect(sleepMock).toHaveBeenCalledWith(5000); // Server hint (5000) > backoff (~1000) → use server hint
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
         });
 
-        it('should use exponential backoff when rate limit has no retryAfterMs', async () => {
+        it('should use exponential backoff when retryAfterMs is absent', async () => {
             let callCount = 0;
             const operation = mock(() => {
                 callCount++;
@@ -191,6 +192,58 @@ describe('retryAsync', () => {
             const sleepDuration = sleepMock.mock.calls[0][0];
             expect(sleepDuration).toBeGreaterThanOrEqual(900); // Min with jitter
             expect(sleepDuration).toBeLessThanOrEqual(1100); // Max with jitter
+        });
+
+        it('should use exponential backoff when retryAfterMs is less than computed backoff', async () => {
+            let callCount = 0;
+            const operation = mock(() => {
+                callCount++;
+                if(callCount === 1) {
+                    return Promise.reject(new Error('Rate limited'));
+                }
+                return Promise.resolve('success');
+            });
+
+            // retryAfterMs=10ms < backoff for attempt 1 (base 1000ms), so backoff wins
+            const classifier = mock<ErrorClassifier>(() => ({
+                category:     'rate_limited',
+                message:      'Rate limited',
+                retryAfterMs: 10,
+            }));
+
+            const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
+
+            expect(result).toBe('success');
+            // Must use the exponential backoff (~1000ms), not the server hint (10ms)
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900); // Exponential backoff floor with jitter
+            expect(sleepDuration).toBeLessThanOrEqual(1100); // Exponential backoff ceiling with jitter
+        });
+
+        it('should use exponential backoff when retryAfterMs is zero (clock-skew / rolled-over window)', async () => {
+            let callCount = 0;
+            const operation = mock(() => {
+                callCount++;
+                if(callCount === 1) {
+                    return Promise.reject(new Error('Rate limited'));
+                }
+                return Promise.resolve('success');
+            });
+
+            // retryAfterMs=0 — server hint is useless; backoff must take over
+            const classifier = mock<ErrorClassifier>(() => ({
+                category:     'rate_limited',
+                message:      'Rate limited',
+                retryAfterMs: 0,
+            }));
+
+            const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
+
+            expect(result).toBe('success');
+            // With max(0, backoff), the sleep must be the exponential value, not 0
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900);
+            expect(sleepDuration).toBeLessThanOrEqual(1100);
         });
     });
 
@@ -360,7 +413,7 @@ describe('retryAsync', () => {
             expect(sleepMock).not.toHaveBeenCalled(); // No retries
         });
 
-        it('should handle zero retryAfterMs', async () => {
+        it('should use exponential backoff when retryAfterMs is zero (backoff wins over zero-delay hint)', async () => {
             let callCount = 0;
             const operation = mock(() => {
                 callCount++;
@@ -379,7 +432,10 @@ describe('retryAsync', () => {
             const result = await retryAsync(operation, { policy: defaultPolicy, classifier, deps });
 
             expect(result).toBe('success');
-            expect(sleepMock).toHaveBeenCalledWith(0);
+            // max(0, backoff) = backoff — zero server hint must not short-circuit the exponential delay
+            const sleepDuration = sleepMock.mock.calls[0][0];
+            expect(sleepDuration).toBeGreaterThanOrEqual(900);
+            expect(sleepDuration).toBeLessThanOrEqual(1100);
         });
 
         it('should call now() to track elapsed time', async () => {

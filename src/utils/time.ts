@@ -156,6 +156,9 @@ export function resolveTimezone(userTimezone?: string): string {
     try {
         return DateTime.local().zoneName;
     } catch{
+        // Silent: DateTime.local().zoneName throws only on extreme misconfiguration where the system timezone
+        // is unresolvable. Falling back to 'UTC' is the correct safe default; logging every
+        // occurrence would not be actionable and the fallback value is the observable signal.
         return 'UTC';
     }
 }

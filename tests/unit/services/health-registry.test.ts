@@ -32,6 +32,7 @@ describe('ServiceHealthRegistryImpl', () => {
     describe('getState()', () => {
         test('should return disabled for all services initially', () => {
             expect(registry.getState('discord')).toBe('disabled');
+            expect(registry.getState('discord-channel-registry')).toBe('disabled');
             expect(registry.getState('email')).toBe('disabled');
             expect(registry.getState('bluesky')).toBe('disabled');
             expect(registry.getState('caldav')).toBe('disabled');
@@ -106,14 +107,15 @@ describe('ServiceHealthRegistryImpl', () => {
     });
 
     describe('getAll()', () => {
-        test('should return all 5 services', () => {
+        test('should return all 6 services', () => {
             const all = registry.getAll();
             expect(Object.keys(all)).toContain('discord');
+            expect(Object.keys(all)).toContain('discord-channel-registry');
             expect(Object.keys(all)).toContain('email');
             expect(Object.keys(all)).toContain('bluesky');
             expect(Object.keys(all)).toContain('caldav');
             expect(Object.keys(all)).toContain('dynamodb');
-            expect(Object.keys(all)).toHaveLength(5);
+            expect(Object.keys(all)).toHaveLength(6);
         });
 
         test('should return all services initially in disabled state', () => {

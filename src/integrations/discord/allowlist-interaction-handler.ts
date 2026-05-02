@@ -295,7 +295,10 @@ export class AllowlistInteractionHandler implements AllowlistSagaStarter {
                 .setColor(RED);
             await interaction.editReply({ embeds: [embed], components: [] });
         } catch{
-            /* best effort */
+            // Silent: editReply can throw if the interaction already expired (15-minute Discord
+            // limit) or if the bot lost message permission between processing and rendering.
+            // The primary error has already been logged by the caller; failing to show the
+            // error embed is a cosmetic degradation, not an additional error worth logging.
         }
         // Stryker restore BlockStatement
     }

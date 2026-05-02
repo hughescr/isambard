@@ -120,7 +120,9 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             const parentPost = await bskyClient.getPost(parentUri);
             parentText = parentPost.text;
         } catch{
-            // ignore — parent text is optional in the embed
+            // Silent: fetching the parent post preview is purely cosmetic enrichment for
+            // the approval embed. If the post is deleted, rate-limited, or otherwise
+            // unavailable, the embed renders without a preview — still fully functional.
         }
 
         const { embed, actionRow } = buildBskyApprovalEmbed({

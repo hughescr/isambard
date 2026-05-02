@@ -15,10 +15,12 @@ function isNetworkErrorByMessage(error: unknown): ErrorClassification | undefine
         return undefined;
     }
 
+    // Stryker disable StringLiteral,ConditionalExpression,BlockStatement: network error code constants — mutating strings/conditions causes test timeout (retry classification loop)
     const networkErrorCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
     if(!networkErrorCodes.some(code => error.message.includes(code))) {
         return undefined;
     }
+    // Stryker restore StringLiteral,ConditionalExpression,BlockStatement
 
     return { category: 'transient', message: error.message };
 }

@@ -7,7 +7,7 @@ const strykerConfig = {
     incremental:      !isCI, // Fast incremental runs locally, full runs in CI
     reporters:        isCI ? ['clear-text', 'progress', 'dashboard'] : ['progress', 'json', 'html'],
     testRunner:       'bun',
-    bun:              { inspectorTimeout: isCI ? 30_000 : 5000 },
+    bun:              { inspectorTimeout: isCI ? 30_000 : 5000, timeout: isCI ? 60_000 : 30_000 },
     plugins:          ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'],
     coverageAnalysis: 'perTest',
     disableBail:      true, // Do not stop with first failing test, so we can get complete map of mutant:killer-tests

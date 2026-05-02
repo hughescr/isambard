@@ -206,7 +206,7 @@ DynamoDB-backed channel registry with in-memory caching and well-known channel s
 - `src/integrations/discord/channel-registry/types.ts` - `ChannelStorageRecord`, `ChannelMetadata`, `WellKnownChannel` types (`general`, `catch-up`, `perch-time`, `fallback`)
 - `src/integrations/discord/channel-registry/key-generator.ts` - `ChannelRegistryKeyGenerator` for DynamoDB PK/SK/GSI1/GSI2 key construction and parsing
 - `src/integrations/discord/channel-registry/backend.ts` - `ChannelRegistryBackend` DynamoDB CRUD with mute, well-known designation, and GSI2 lookup
-- `src/integrations/discord/channel-registry/manager.ts` - `ChannelRegistryManager` with write-through cache, Discord API merging, and `shouldProcess` filtering logic
+- `src/integrations/discord/channel-registry/manager.ts` - `ChannelRegistryManager` with write-through cache, Discord API merging, `shouldProcess` filtering logic, and `onReady(cb)`/`offReady(cb)` for deferred initialization callbacks
 - `src/integrations/discord/channel-registry/discovery.ts` - Discovers all guild channels from Discord API and populates registry; sets up channelCreate/Update/Delete handlers
 - `src/integrations/discord/channel-registry/dm-tracker.ts` - `DMTracker` class for on-demand DM channel creation and tracking by user ID or username
 - `src/integrations/discord/channel-registry/resolve.ts` - Resolves `#channel-name` or numeric ID strings to typed `ChannelId`
@@ -336,16 +336,20 @@ DynamoDB integration and data access layer:
 ### Contacts Storage
 Cross-platform address book with identity resolution:
 - `src/storage/contacts/types.ts` - Contact types and Zod schemas (ContactRecord, ContactIdentifier, PlatformType)
-- `src/storage/contacts/key-generator.ts` - DynamoDB key construction for contacts (PK/SK, CONTACT_LOOKUP GSI)
+- `src/storage/contacts/key-generator.ts` - DynamoDB key construction for contacts (PK/SK, CONTACT_LOOKUP GSI); lookup rows carry GSI2 keys (`GSI2PK='CONTACT_LOOKUPS'`) for reverse-index queries
 - `src/storage/contacts/backend.ts` - DynamoDB CRUD for contacts with cross-platform identifier lookup
 - `src/storage/contacts/utils.ts` - Contact utility functions
 - `src/storage/contacts/find-or-create.ts` - Find-or-create contact resolution logic
+- `src/storage/contacts/reconciliation/` - Two-phase reconciler (orphan/stray detection + missing-lookup repair) with interval scheduler; all types defined inline in `reconciler.ts`
+  - `reconciler.ts` - Two-phase reconciler: phase A orphan cleanup, phase B missing-lookup repair; defines all reconciliation types inline
+  - `scheduler.ts` - Interval-based scheduler with abort support
+  - `index.ts` - Public exports
 - `src/storage/contacts/index.ts` - Public exports
 - `src/storage/person-allowlist.ts` - Person-ID-based allowlist with DynamoDB backend, reverse-map identifier resolution, and in-memory cache
 
 ### Application Composition Root
 Factory functions that wire together all subsystem components:
-- `src/app/storage-layer.ts` - `createStorageLayer` factory creating DynamoDB client, memory backend, task persistence coordinator, and optional reconciliation scheduler
+- `src/app/storage-layer.ts` - `createStorageLayer` factory creating DynamoDB client, memory backend, task persistence coordinator, and optional reconciliation scheduler (tag-index) and optional contact reconciliation scheduler
 - `src/app/discord-infrastructure.ts` - `createDiscordInfrastructure` factory creating Discord client, channel registry, message history chain, inbox system, and bot state manager
 - `src/app/context-layer.ts` - `createContextLayer` factory creating context builder and event delta tracker for memory-aware agent operation
 - `src/app/mcp-servers.ts` - `createMCPServers` factory creating memory, Discord, and inbox MCP server configurations
@@ -401,6 +405,7 @@ Zod-validated configuration loading with env-var for type-safe environment varia
 - `src/utils/path-validator.ts` - `validateFilePath`/`validateFilePaths` security checks (CWD containment, no symlinks, file-only)
 - `src/utils/text.ts` - `truncateToWordBoundary` for status length limiting; `HARD_MAX_STATUS_LENGTH` constant
 - `src/utils/safe-async-handler.ts` - `safeAsyncHandler` wrapper converting async event handlers to void-returning functions with error logging
+- `src/utils/assert-never.ts` - `assertNever(x, message?)` exhaustiveness helper for discriminated union switch statements; throws `InvariantViolationError` at runtime when a value slips through
 - `src/utils/index.ts` - Public exports
 - `src/utils/strip-dynamo-keys.ts` - Strip DynamoDB internal keys from response items
 - `src/utils/retry/` - Retry utilities with exponential backoff
@@ -450,6 +455,7 @@ Video and audio analysis utilities:
 - **@internal JSDoc Tags** for marking implementation-only exports
 - **Per-Tag Atomic Counters** replacing centralized tag registry for race-condition-free tag counting
 - **Sigmoid Memory Scoring** — `sigmoidScore()` combines access frequency with recency decay for state memory prioritization in `getAutoLoadItems`
+- **Single DynamoDB Table** — PK/SK + GSI1 (layer/time) + GSI2 (shared partition space): known GSI2 partitions are channel registry items (by guild), tag index items (`TAG#<name>`), and contact lookup rows (`CONTACT_LOOKUPS`)
 - **Tags as StringSet** — DynamoDB StringSet (SS) type with `Set<string>` in TypeScript throughout; MCP boundary converts JSON arrays to Sets
 - **Type Guards and Factory Functions** for branded types — `createLayerName()`, `createContentType()`, `isLayerName()`, `isContentType()` replace unsafe `as` casts with runtime-validated factories
 - **Class-Based Components** — `EventDeltaTracker`, `AnswerClassifier`, `StreamTracker`, `QuestionRegistry`, `DiscordRateLimiter`, `PresenceManager`, `MessageCoordinator`, `BotStateManagerImpl` use proper TypeScript classes with private fields instead of closure-based factories
@@ -475,4 +481,5 @@ bun test             # Run tests
 bun run mutate       # Mutation testing
 bun run lint         # Check linting
 bun run typecheck    # TypeScript validation
+bun run backfill:contact-lookup-gsi2  # Backfill GSI2 keys on existing CONTACT_LOOKUP rows
 ```

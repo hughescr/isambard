@@ -59,7 +59,11 @@ export function createCompactionHooks(botStateManager: CompactionStateManager): 
                         try {
                             botStateManager.stashAndSetCompacting(preInput.trigger);
                         } catch{
-                            // Non-fatal — presence update failure should not block compaction
+                            // Silent: stashAndSetCompacting updates in-memory presence state only.
+                            // Failure here means the bot status may briefly show a stale phase
+                            // but compaction must continue — stalling compaction to surface a
+                            // cosmetic presence error would be worse than the silent degradation.
+                            // Persistent presence failures surface via the health registry.
                         }
                         // Stryker restore BlockStatement
                         return { 'continue': true };
@@ -91,7 +95,11 @@ export function createCompactionHooks(botStateManager: CompactionStateManager): 
                         try {
                             botStateManager.restoreFromCompacting();
                         } catch{
-                            // Non-fatal — presence update failure should not block operation
+                            // Silent: restoreFromCompacting updates in-memory presence state only.
+                            // Failure here means the bot may remain stuck showing 'compacting'
+                            // status but the agent session must continue — a stale cosmetic phase
+                            // is preferable to blocking post-compaction processing. Persistent
+                            // presence failures surface via the health registry.
                         }
                         // Stryker restore BlockStatement
                         return { 'continue': true };

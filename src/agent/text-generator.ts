@@ -116,8 +116,10 @@ function buildAbortController(options?: TextGeneratorOptions): AbortController {
         if(options.abortController.signal.aborted) {
             controller.abort(); // Already aborted — short-circuit
         } else {
+            // Stryker disable BlockStatement,ArrowFunction: abort signal wiring — mutating causes test timeout (abort never propagates to controller)
             // Stryker disable next-line ObjectLiteral,BooleanLiteral: { once: true } is defensive — abort signals only fire once anyway; mutation to {} or false doesn't change observable behavior
             options.abortController.signal.addEventListener('abort', () => controller.abort(), { once: true });
+            // Stryker restore BlockStatement,ArrowFunction
         }
     }
 

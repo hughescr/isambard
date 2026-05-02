@@ -18,7 +18,7 @@ import {
     ReconciliationThrottledError,
     ContactNotFoundError,
     ContactLastIdentifierError,
-    ContactIdentifierLimitError,
+    ContactNoIdentifiersError
 } from '@/errors/storage';
 
 describe.concurrent('StorageError', () => {
@@ -447,38 +447,33 @@ describe.concurrent('ContactLastIdentifierError', () => {
     });
 });
 
-describe.concurrent('ContactIdentifierLimitError', () => {
+describe.concurrent('ContactNoIdentifiersError', () => {
     test('should have correct inheritance chain', () => {
-        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
-        expect(error).toBeInstanceOf(ContactIdentifierLimitError);
+        const error = new ContactNoIdentifiersError('alice-smith');
+        expect(error).toBeInstanceOf(ContactNoIdentifiersError);
         expect(error).toBeInstanceOf(StorageError);
         expect(error).toBeInstanceOf(IsambardError);
         expect(error).toBeInstanceOf(Error);
     });
 
     test('should have correct name', () => {
-        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
-        expect(error.name).toBe('ContactIdentifierLimitError');
+        const error = new ContactNoIdentifiersError('alice-smith');
+        expect(error.name).toBe('ContactNoIdentifiersError');
     });
 
-    test('should include personId, displayName, count, and limit in message', () => {
-        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
-        expect(error.message).toBe(
-            'Contact "Alice Smith" (alice-smith) has 25 identifiers, exceeding the limit of 24 per contact'
-        );
+    test('should include personId in message', () => {
+        const error = new ContactNoIdentifiersError('alice-smith');
+        expect(error.message).toContain('alice-smith');
     });
 
-    test('should store all fields in context', () => {
-        const error = new ContactIdentifierLimitError('bob-jones', 'Bob Jones', 30, 24);
-        expect(error.context.personId).toBe('bob-jones');
-        expect(error.context.displayName).toBe('Bob Jones');
-        expect(error.context.count).toBe(30);
-        expect(error.context.limit).toBe(24);
+    test('should store personId in context', () => {
+        const error = new ContactNoIdentifiersError('alice-smith');
+        expect(error.context.personId).toBe('alice-smith');
     });
 
     test('should have correct code', () => {
-        const error = new ContactIdentifierLimitError('alice-smith', 'Alice Smith', 25, 24);
-        expect(error.code).toBe(ErrorCode.CONTACT_IDENTIFIER_LIMIT);
+        const error = new ContactNoIdentifiersError('alice-smith');
+        expect(error.code).toBe(ErrorCode.CONTACT_NO_IDENTIFIERS);
     });
 });
 

@@ -97,7 +97,7 @@ export class WildDuckListener {
 
             // Fetch and process any messages that arrived before this session
             // Re-fetch immediately while there are more messages (batch cap was hit)
-            // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+            // Stryker disable next-line ConditionalExpression,LogicalOperator: re-poll loop drains backlog — LogicalOperator mutation (&&→||) causes infinite loop in tests
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-await-in-loop -- defensive: _running may be set to false by stop(); await inside while is sequential pagination
             while(this._running && await this.fetchAndProcess()) { /* drain backlog */ }
 
@@ -150,7 +150,7 @@ export class WildDuckListener {
         // Stryker disable BlockStatement: try-catch wraps poll cycle — error handling
         try {
             // Re-fetch immediately while there are more messages (batch cap was hit)
-            // Stryker disable next-line ConditionalExpression: re-poll loop drains backlog — always correct
+            // Stryker disable next-line ConditionalExpression,LogicalOperator: re-poll loop drains backlog — LogicalOperator mutation (&&→||) causes infinite loop in tests
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop drains backlog one batch at a time
             while(await this.fetchAndProcess() && this._running) { /* drain backlog */ }
             this.recordPollSuccess();
@@ -318,8 +318,9 @@ export class WildDuckListener {
                 this.recordPollFailure(new Error('SSE connection error'));
                 if(opened) {
                     // Error after open: stream was connected and then dropped.
-                    // The ReconnectionLoop already resolved, so restart it.
-                    this.sseReconnectLoop.start();
+                    // Use restart() (not start()) to preserve attemptCount so backoff grows
+                    // on repeated drops rather than resetting to base delay every time.
+                    this.sseReconnectLoop.restart();
                 } else {
                     // Error before open: let the ReconnectionLoop handle backoff by rejecting
                     reject(new Error('SSE connection error'));

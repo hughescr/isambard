@@ -859,8 +859,10 @@ export class BlueskyClient {
         // same DID share a single in-flight request.  The .catch ensures the promise never
         // rejects (failed lookups fall back to the raw DID), which means the cached promise is
         // safe to reuse even when the profile lookup fails — no thundering-herd retry.
-        const promise = this.agent.getProfile({ actor: did })
-            .then(r => r.data.handle)
+        // Using this.getProfile() (the public wrapper) instead of this.agent.getProfile() directly
+        // so that 429 responses are retried via withRateLimitRetry before the catch fallback fires.
+        const promise = this.getProfile(did)
+            .then(author => author.handle)
             .catch((error: unknown) => {
                 // Intentionally swallow — profile lookup failure falls back to DID as handle
                 // Stryker disable next-line StringLiteral: error message is informational only

@@ -374,7 +374,9 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                         const guild = client.guilds.cache.get(channel.guildId);
                         guildName = guild?.name;
                     } catch{
-                        // Guild not in cache, skip guild name
+                        // Silent: guilds.cache.get() can throw on edge cases (stale cache entry,
+                        // guild object corruption). Guild name is cosmetic disambiguation only —
+                        // the channel list still renders without it.
                     }
                 }
 

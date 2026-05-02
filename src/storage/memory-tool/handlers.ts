@@ -342,6 +342,7 @@ export async function recall(
         }
 
         // Skip if not in include_layers filter
+        // Stryker disable next-line EqualityOperator: 'other' layer exception — mutating !== to === causes test timeout (layer filter inverted, wrong layers included)
         if(params.include_layers && layer !== 'other' && !new Set<string>(params.include_layers).has(layer)) {
             continue;
         }

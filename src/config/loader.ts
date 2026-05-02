@@ -96,6 +96,18 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 appPassword: resources.BskyAppPassword.value,
             }
             : undefined,
+        // Stryker disable ObjectLiteral,BooleanLiteral,StringLiteral,ArithmeticOperator: contactReconciliation config defaults — env-var driven, not testable in unit tests
+        contactReconciliation: env.get('CONTACT_RECONCILIATION_ENABLED').default('false').asBool()
+            ? {
+                enabled:                   true,
+                intervalMs:                env.get('CONTACT_RECONCILIATION_INTERVAL_MS').default(String(24 * 60 * 60 * 1000)).asIntPositive(),
+                // operationDelayMs allows 0 (no delay) — asInt() with non-negative validation via Zod schema
+                operationDelayMs:          env.get('CONTACT_RECONCILIATION_OPERATION_DELAY_MS').default('1000').asInt(),
+                scanPageSize:              env.get('CONTACT_RECONCILIATION_SCAN_PAGE_SIZE').default('25').asIntPositive(),
+                strayLookupAgeThresholdMs: env.get('CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS').default('300000').asInt(),
+            }
+            : undefined,
+        // Stryker restore ObjectLiteral,BooleanLiteral,StringLiteral,ArithmeticOperator
         // Browser config: unconditionally provide an empty object so Zod fills in all defaults.
         // Feature gating is done at runtime (process.platform === 'darwin') in src/index.ts.
         // Stryker disable next-line ObjectLiteral: empty object so Zod applies schema defaults — no fields to mutate

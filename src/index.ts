@@ -95,7 +95,7 @@ export async function createApp(): Promise<App> {
     // Stryker restore BlockStatement
 
     // Create infrastructure layers
-    const storage = await createStorageLayer(dynamoDBConfig, config.reconciliation, config.vectorIndex, embedder);
+    const storage = await createStorageLayer(dynamoDBConfig, config.reconciliation, config.contactReconciliation, config.vectorIndex, embedder);
 
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect
@@ -446,7 +446,10 @@ export async function createApp(): Promise<App> {
         service:   'discord',
         registry:  healthRegistry,
         connectFn: async () => {
-            await discordReconnectFn!();
+            if(discordReconnectFn === undefined) {
+                throw new Error('discordReconnectFn not yet wired — reconnection loop fired before bot was constructed');
+            }
+            await discordReconnectFn();
         },
     });
 
@@ -833,6 +836,7 @@ export async function createApp(): Promise<App> {
 
     return {
         // Stryker disable BlockStatement: Composition root — startup/shutdown branching is not unit-testable
+        // eslint-disable-next-line sonarjs/cognitive-complexity -- composition root start(); complexity from optional service conditionals
         start: async () => {
             isStopping = false;
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -918,6 +922,13 @@ export async function createApp(): Promise<App> {
                 logger.info('Tag index reconciliation scheduler started');
             }
 
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
+            if(storage.contactReconciliationScheduler) {
+                storage.contactReconciliationScheduler.start();
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Contact reconciliation scheduler started');
+            }
+
             // Start saga executor polling loop
             sagaExecutor.start();
 
@@ -972,6 +983,13 @@ export async function createApp(): Promise<App> {
                 storage.reconciliationScheduler.stop();
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Tag index reconciliation scheduler stopped');
+            }
+
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(storage.contactReconciliationScheduler) {
+                storage.contactReconciliationScheduler.stop();
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Contact reconciliation scheduler stopped');
             }
 
             // Close browser adapter if running
@@ -1065,7 +1083,10 @@ function resolveRepoRoot(apparentRoot: string): string {
             return path.resolve(path.dirname(gitPath), match[1].trimEnd(), '..', '..', '..');
         }
     } catch{
-        // .git is a directory (normal repo), not a file (worktree)
+        // Silent: readFileSync throws when .git is a directory rather than a file,
+        // which is the standard (non-worktree) case. The expected EISDIR/ENOENT is
+        // not an error — it just means we are not in a worktree, so apparentRoot is
+        // already correct. Logging this would fire on every normal startup.
     }
     return apparentRoot;
 }

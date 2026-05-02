@@ -598,5 +598,43 @@ describe('discovery', () => {
                 expect(mockManager.deleteChannel).not.toHaveBeenCalled();
             });
         });
+
+        describe('Fix 2: idempotency — calling twice registers handlers only once', () => {
+            it('calling setupChannelEventHandlers twice with the same client does not double-register handlers', () => {
+                // Create a fresh client so the WeakSet state does not bleed from other tests
+                const freshClient = {
+                    guilds: { cache: new Map() },
+                    on:     mock(noop),
+                } as unknown as Client;
+
+                setupChannelEventHandlers(freshClient, mockManager);
+                setupChannelEventHandlers(freshClient, mockManager); // second call — must be no-op
+
+                // client.on must have been called exactly 3 times (channelCreate, channelUpdate, channelDelete)
+                // NOT 6 (which would happen if both calls registered handlers)
+                expect(freshClient.on).toHaveBeenCalledTimes(3);
+                expect(freshClient.on).toHaveBeenCalledWith('channelCreate', expect.any(Function));
+                expect(freshClient.on).toHaveBeenCalledWith('channelUpdate', expect.any(Function));
+                expect(freshClient.on).toHaveBeenCalledWith('channelDelete', expect.any(Function));
+            });
+
+            it('calling setupChannelEventHandlers with two different clients registers handlers on both', () => {
+                const client1 = {
+                    guilds: { cache: new Map() },
+                    on:     mock(noop),
+                } as unknown as Client;
+                const client2 = {
+                    guilds: { cache: new Map() },
+                    on:     mock(noop),
+                } as unknown as Client;
+
+                setupChannelEventHandlers(client1, mockManager);
+                setupChannelEventHandlers(client2, mockManager);
+
+                // Each client gets 3 handlers
+                expect(client1.on).toHaveBeenCalledTimes(3);
+                expect(client2.on).toHaveBeenCalledTimes(3);
+            });
+        });
     });
 });

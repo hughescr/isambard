@@ -17,16 +17,21 @@ interface ContactProfileKeys {
  */
 interface ContactLookupKeys {
     /** Primary Key: CONTACT_LOOKUP#{platform}#{normalizedValue} */
-    PK: string
+    PK:     string
     /** Sort Key: CONTACT#{personId} */
-    SK: string
+    SK:     string
+    /** GSI2 Partition Key: CONTACT_LOOKUPS — enables efficient Phase A orphan scan */
+    GSI2PK: string
+    /** GSI2 Sort Key: CONTACT#{personId}#{platform}#{normalizedValue} — unique within the partition */
+    GSI2SK: string
 }
 
 // Stryker disable StringLiteral: PK/SK key constants are configuration values
-const PREFIX_CONTACT        = 'CONTACT';
-const PREFIX_CONTACT_LOOKUP = 'CONTACT_LOOKUP';
-const SK_PROFILE            = 'PROFILE';
-const GSI2PK_CONTACTS       = 'CONTACTS';
+const PREFIX_CONTACT         = 'CONTACT';
+const PREFIX_CONTACT_LOOKUP  = 'CONTACT_LOOKUP';
+const SK_PROFILE             = 'PROFILE';
+const GSI2PK_CONTACTS        = 'CONTACTS';
+const GSI2PK_CONTACT_LOOKUPS = 'CONTACT_LOOKUPS';
 // Stryker restore StringLiteral
 
 /**
@@ -58,6 +63,11 @@ export const ContactKeyGenerator = {
      * Creates a DynamoDB lookup key for resolving an identifier to a contact.
      * The value is normalized to lowercase+trimmed for case-insensitive lookup.
      *
+     * Also sets GSI2PK='CONTACT_LOOKUPS' so that Phase A reconciliation can
+     * query all lookup rows efficiently via the GSI2 index.
+     * GSI2SK encodes both the personId and the platform+value so it is unique
+     * within the CONTACT_LOOKUPS partition.
+     *
      * @param platform - The platform type
      * @param value    - The identifier value (will be normalized)
      * @param personId - The contact's personId
@@ -66,16 +76,20 @@ export const ContactKeyGenerator = {
      * @example
      * ```ts
      * ContactKeyGenerator.createLookupKeys('email', 'Alice@Example.com', 'alice-smith' as ContactId)
-     * // { PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' }
+     * // { PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith', GSI2PK: 'CONTACT_LOOKUPS', GSI2SK: 'CONTACT#alice-smith#email#alice@example.com' }
      * ```
      */
     createLookupKeys(platform: PlatformType, value: string, personId: ContactId): ContactLookupKeys {
         const normalizedValue = value.toLowerCase().trim();
         return {
             // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
-            PK: createPrefixedKey(PREFIX_CONTACT_LOOKUP, platform, normalizedValue),
+            PK:     createPrefixedKey(PREFIX_CONTACT_LOOKUP, platform, normalizedValue),
             // Stryker disable next-line StringLiteral: PK/SK key constants are configuration values
-            SK: createPrefixedKey(PREFIX_CONTACT, personId),
+            SK:     createPrefixedKey(PREFIX_CONTACT, personId),
+            // Stryker disable next-line StringLiteral: GSI2PK key constant is a configuration value
+            GSI2PK: GSI2PK_CONTACT_LOOKUPS,
+            // Stryker disable next-line StringLiteral: GSI2SK key constant is a configuration value
+            GSI2SK: createPrefixedKey(PREFIX_CONTACT, personId, platform, normalizedValue),
         };
     },
 

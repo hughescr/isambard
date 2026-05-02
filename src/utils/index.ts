@@ -1,3 +1,5 @@
+export { assertNever } from './assert-never';
+
 export {
     getTimeOfDay,
     formatShortRelativeTime,

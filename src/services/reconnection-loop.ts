@@ -12,6 +12,7 @@ interface ReconnectionLoopOptions {
 
 export interface ReconnectionLoop {
     start():         void
+    restart():       void
     stop():          void
     triggerNow():    Promise<boolean>
     isRunning():     boolean
@@ -34,6 +35,8 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
     );
 
     let running = false;
+    // Stryker disable next-line BooleanLiteral: stopped starts true to represent "never started"; cleared by start()
+    let stopped = true;
     // Stryker disable next-line BooleanLiteral: connecting is only checked conjunctively with currentAttemptPromise !== undefined; initial value is unobservable
     let connecting = false;
     let pendingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -92,13 +95,36 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
                 clearTimeout(pendingTimer);
                 pendingTimer = undefined;
             }
+            stopped = false;
             running = true;
             attemptCount = 0;
             registry.sendEvent(service, 'RECONNECT_ATTEMPT');
             void attemptConnect();
         },
 
+        restart(): void {
+            // No-op when the loop has been explicitly stopped (via stop()) or never started.
+            // No-op when a connect attempt is already in-flight (no parallel attempt needed).
+            // The `stopped` flag distinguishes "explicitly stopped / never started" from
+            // "auto-stopped after a successful connect" — the latter is the primary use case
+            // for restart(): SSE connection resolved then dropped.
+            // Stryker disable next-line ConditionalExpression,LogicalOperator: `connecting` and `currentAttemptPromise` are always set/cleared atomically; mutations that swap the inner operand alone produce equivalent behaviour
+            if(stopped || (connecting && currentAttemptPromise !== undefined)) {
+                return;
+            }
+            // Re-engage the loop, preserving attemptCount so backoff continues to grow.
+            running = true;
+            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
+            if(pendingTimer !== undefined) {
+                clearTimeout(pendingTimer);
+                pendingTimer = undefined;
+            }
+            registry.sendEvent(service, 'RECONNECT_ATTEMPT');
+            void attemptConnect();
+        },
+
         stop(): void {
+            stopped = true;
             running = false;
             // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
             if(pendingTimer !== undefined) {

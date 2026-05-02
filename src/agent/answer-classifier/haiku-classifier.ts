@@ -1,3 +1,4 @@
+import { logger } from '@hughescr/logger';
 import { type ClassificationResult, type MessageToClassify, classificationResultSchema  } from './types';
 import type { PendingQuestion } from '@/agent/question-registry';
 import { generateText } from '@/agent/text-generator';
@@ -13,8 +14,9 @@ export async function classifyWithHaiku(
         const prompt = buildClassificationPrompt(question, message);
         const response = await generateText(prompt);
         return parseClassificationResponse(response);
-    } catch{
-        // If LLM call fails, default to interruption (safer)
+    } catch (err) {
+        // Stryker disable next-line StringLiteral: log message is informational only
+        logger.warn({ err, channelId: message.channelId, msg: 'Haiku classification failed; defaulting to interruption' });
         return 'interruption';
     }
 }

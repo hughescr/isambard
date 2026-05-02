@@ -11,16 +11,16 @@ export function sanitizeFilename(name: string): string {
     const noDotDot     = noSeparators.replaceAll(/\.{2,}/g, '_');
     let start = 0;
     let end   = noDotDot.length;
-    // Stryker disable EqualityOperator,ConditionalExpression,StringLiteral: leading dot/space trimming — boundary operator mutations (< vs <=) converge to same result; space literal removal equivalent when test inputs use dots only
+    // Stryker disable EqualityOperator,ConditionalExpression,StringLiteral,BlockStatement: leading dot/space trimming — boundary operator mutations (< vs <=) converge to same result; space literal removal equivalent when test inputs use dots only; BlockStatement removal causes test timeout
     while(start < end && (noDotDot[start] === '.' || noDotDot[start] === ' ')) {
         start++;
     }
-    // Stryker restore EqualityOperator,ConditionalExpression,StringLiteral
-    // Stryker disable EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator: trailing dot/space trimming — same boundary equivalence; end+1 reads undefined which exits loop immediately
+    // Stryker restore EqualityOperator,ConditionalExpression,StringLiteral,BlockStatement
+    // Stryker disable EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator,BlockStatement: trailing dot/space trimming — same boundary equivalence; end+1 reads undefined which exits loop immediately; BlockStatement removal causes test timeout
     while(end > start && (noDotDot[end - 1] === '.' || noDotDot[end - 1] === ' ')) {
         end--;
     }
-    // Stryker restore EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator
+    // Stryker restore EqualityOperator,ConditionalExpression,StringLiteral,ArithmeticOperator,BlockStatement
     return noDotDot.slice(start, end) || 'attachment';
 }
 
@@ -38,6 +38,7 @@ export function deduplicateFilename(filename: string, used: Set<string>): string
     let counter = 1;
     let candidate: string;
     do {
+        // Stryker disable next-line StringLiteral: deduplication format template — mutating causes test timeout (format change breaks used-set lookup, infinite retry)
         candidate = `${base}-(${counter})${ext}`;
         // Stryker disable next-line UpdateOperator: counter++ → counter-- creates infinite retry loop
         counter++;

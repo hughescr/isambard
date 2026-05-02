@@ -1,7 +1,30 @@
 import { logger } from '@hughescr/logger';
 import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator  } from '@/agent';
-import type { DynamoDBConfig, ReconciliationConfig, VectorIndexConfig } from '@/config';
-import { DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend, VectorIndex, AsyncIndexer, type EmbedderLike  } from '@/storage';
+import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig, VectorIndexConfig } from '@/config';
+import { DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike  } from '@/storage';
+
+/**
+ * Wrap an abort reason in a proper AbortError-shaped DOMException.
+ * Always produces a DOMException with name='AbortError', copying the
+ * message from the original Error (if present) for diagnostic fidelity.
+ * @internal
+ */
+// Stryker disable all: helper used only inside the untestable sleep I/O function
+function makeAbortError(reason: unknown): DOMException {
+    if(reason instanceof DOMException && reason.name === 'AbortError') {
+        return reason;
+    }
+    let message: string;
+    if(reason instanceof Error) {
+        message = reason.message;
+    } else if(typeof reason === 'string') {
+        message = reason;
+    } else {
+        message = 'Aborted';
+    }
+    return new DOMException(message, 'AbortError');
+}
+// Stryker restore all
 
 /**
  * Storage layer components
@@ -14,42 +37,45 @@ export interface StorageLayer {
      *
      * @internal
      */
-    holder:                     DynamoDBClientHolder
-    tableName:                  string
-    memoryBackend:              MemoryToolBackend
-    contactBackend:             ContactBackend
-    taskPersistenceCoordinator: TaskPersistenceCoordinator
-    reconciliationScheduler?:   ReconciliationScheduler
+    holder:                          DynamoDBClientHolder
+    tableName:                       string
+    memoryBackend:                   MemoryToolBackend
+    contactBackend:                  ContactBackend
+    taskPersistenceCoordinator:      TaskPersistenceCoordinator
+    reconciliationScheduler?:        ReconciliationScheduler
+    contactReconciliationScheduler?: ContactReconciliationScheduler
     /**
      * Vector index for semantic search queries.
      * Undefined when vector indexing is disabled.
      * @internal
      */
-    vectorIndex?:               VectorIndex
+    vectorIndex?:                    VectorIndex
     /**
      * Async indexer for background vector embedding.
      * Undefined when vector indexing is disabled.
      * Call `asyncIndexer.close()` on shutdown.
      * @internal
      */
-    asyncIndexer?:              AsyncIndexer
+    asyncIndexer?:                   AsyncIndexer
 }
 
 /**
  * Creates the storage layer with DynamoDB client, memory backend, task persistence, and optional reconciliation.
  *
  * @param dynamoDBConfig - DynamoDB configuration
- * @param reconciliationConfig - Optional reconciliation configuration
+ * @param reconciliationConfig - Optional tag-index reconciliation configuration
+ * @param contactReconciliationConfig - Optional contact reconciliation configuration
  * @param vectorIndexConfig - Optional vector index configuration
  * @param embedder - Optional embedder for vector indexing (required when vectorIndexConfig.enabled is true)
  * @returns Storage layer components
  * @throws Error if DynamoDB client creation or backend initialization fails
  */
 export async function createStorageLayer(
-    dynamoDBConfig:      DynamoDBConfig,
-    reconciliationConfig?: ReconciliationConfig,
-    vectorIndexConfig?:  VectorIndexConfig,
-    embedder?:           EmbedderLike
+    dynamoDBConfig:               DynamoDBConfig,
+    reconciliationConfig?:        ReconciliationConfig,
+    contactReconciliationConfig?: ContactReconciliationConfig,
+    vectorIndexConfig?:           VectorIndexConfig,
+    embedder?:                    EmbedderLike
 ): Promise<StorageLayer> {
     // Create DynamoDB client
     const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
@@ -109,6 +135,45 @@ export async function createStorageLayer(
         logger.info('Tag index reconciliation scheduler configured');
     }
 
+    // Create contact reconciliation scheduler if enabled
+    let contactReconciliationScheduler: ContactReconciliationScheduler | undefined;
+    if(contactReconciliationConfig?.enabled) {
+        contactReconciliationScheduler = createContactReconciliationScheduler({
+            config:            contactReconciliationConfig,
+            runReconciliation: runContactReconciliation,
+            reconcilerDeps:    {
+                docClient: holder,
+                tableName,
+                // Stryker disable all: Default sleep is untestable I/O
+                sleep:     (ms: number, signal?: AbortSignal): Promise<void> => {
+                    if(signal?.aborted) {
+                        return Promise.reject(makeAbortError(signal.reason));
+                    }
+                    return new Promise((resolve, reject) => {
+                        // Fix 5: remove the abort listener in the normal-completion (resolve) path
+                        // so long-lived signals don't accumulate listeners from completed sleeps.
+                        // eslint-disable-next-line prefer-const -- timer is assigned below; let is needed for forward-reference in onAbort closure
+                        let timer: ReturnType<typeof setTimeout>;
+                        const onAbort = (): void => {
+                            clearTimeout(timer);
+
+                            reject(makeAbortError(signal!.reason));
+                        };
+
+                        timer = setTimeout(() => {
+                            signal?.removeEventListener('abort', onAbort);
+                            resolve();
+                        }, ms);
+                        signal?.addEventListener('abort', onAbort, { once: true });
+                    });
+                },
+                // Stryker restore all
+            },
+        });
+        // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+        logger.info('Contact reconciliation scheduler configured');
+    }
+
     // Create task persistence system
     const taskSessionBackend = new TaskSessionBackend(holder, tableName);
     const taskCleanupProcessor = createTaskCleanupProcessor({ logger });
@@ -132,6 +197,7 @@ export async function createStorageLayer(
         contactBackend,
         taskPersistenceCoordinator,
         reconciliationScheduler,
+        contactReconciliationScheduler,
         vectorIndex,
         asyncIndexer,
     };

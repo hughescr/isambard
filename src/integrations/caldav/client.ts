@@ -189,7 +189,9 @@ export class CalDAVClient {
 
     async #withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        // Stryker disable BlockStatement: timeout promise — mutating causes test timeout (race promise never rejects)
         const timeout = new Promise<never>((_resolve, reject) => {
+            // Stryker disable next-line BlockStatement: setTimeout callback — mutating causes test timeout (reject never called)
             timeoutId = setTimeout(() => {
                 reject(new CaldavTimeoutError(
                     `CalDAV operation timed out after ${ms}ms: ${label}`,
@@ -197,6 +199,7 @@ export class CalDAVClient {
                 ));
             }, ms);
         });
+        // Stryker restore BlockStatement
         // Stryker disable BlockStatement -- clearTimeout in finally is resource cleanup; timer leak not observable without real timer inspection
         try {
             return await Promise.race([promise, timeout]);

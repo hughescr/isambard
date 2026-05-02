@@ -43,9 +43,10 @@ import type { VectorIndexEntry, VectorQueryResult } from './types.js';
 // ---------------------------------------------------------------------------
 
 /** True once setCustomSQLite has been called for this process. */
+// Stryker disable next-line BooleanLiteral -- module-level idempotency state for macOS-specific SQLite setup; initial value false is correct — cannot be unit-tested in Bun where tests/setup.ts pre-configures the path before any VectorIndex is opened
 let customSqliteConfigured = false;
 
-// Stryker disable StringLiteral: macOS library paths are platform-specific constants — cannot be unit-tested in Bun test environment
+// Stryker disable StringLiteral -- macOS library paths are platform-specific constants — cannot be unit-tested in Bun test environment
 /** Homebrew sqlite3 library path on Apple Silicon Macs. */
 const HOMEBREW_ARM_PATH = '/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib';
 
@@ -71,12 +72,12 @@ const HOMEBREW_INTEL_PATH = '/usr/local/opt/sqlite3/lib/libsqlite3.dylib';
 // Stryker disable all -- macOS SQLite setup: platform-specific code cannot be unit-tested in Bun; tests/setup.ts pre-configures the custom SQLite path before any test runs
 function configureCustomSQLite(): void {
     // Idempotency guard — only configure once per process
-    // Stryker disable next-line ConditionalExpression,BlockStatement: idempotency guard — calling setCustomSQLite twice would throw; removing this guard is not safe
+    // Stryker disable next-line ConditionalExpression,BlockStatement -- idempotency guard — calling setCustomSQLite twice would throw; removing this guard is not safe
     if(customSqliteConfigured) {
         return;
     }
 
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: platform guard — skipping on Linux is correct; always calling setCustomSQLite on Linux would break non-mac CIs
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement -- platform guard — skipping on Linux is correct; always calling setCustomSQLite on Linux would break non-mac CIs
     if(process.platform !== 'darwin') {
         customSqliteConfigured = true;
         return;
@@ -84,40 +85,49 @@ function configureCustomSQLite(): void {
 
     // Allow callers to override via environment variable for non-standard installs
     const envPath = process.env.SQLITE_VEC_LIB_PATH;
-    // Stryker disable next-line ConditionalExpression,BlockStatement: env override — tested by integration path; skipping when undefined falls through to probing
+    // Stryker disable next-line ConditionalExpression,BlockStatement -- env override — tested by integration path; skipping when undefined falls through to probing
     if(envPath) {
-        // Stryker disable next-line BlockStatement: "SQLite already loaded" means tests/setup.ts already configured it — mark as done
+        // Stryker disable next-line BlockStatement -- "SQLite already loaded" means tests/setup.ts already configured it — mark as done
         try {
             Database.setCustomSQLite(envPath);
         } catch{
-            // "SQLite already loaded" — already configured (e.g., by tests/setup.ts)
+            // Silent: Bun's SQLite throws "SQLite already loaded" when setCustomSQLite is
+            // called a second time in the same process (e.g., tests/setup.ts already
+            // configured it). Idempotency is the correct behavior; the library is already
+            // pointing at the right binary, so the error is not an error.
         }
         customSqliteConfigured = true;
         return;
     }
 
     // Probe Apple Silicon Homebrew path first, then Intel fallback
-    // Stryker disable next-line ConditionalExpression,BlockStatement: ARM path probe — tested via existsSync; alternative is Intel fallback
+    // Stryker disable next-line ConditionalExpression,BlockStatement -- ARM path probe — tested via existsSync; alternative is Intel fallback
     // eslint-disable-next-line n/no-sync -- sync probe required at startup before any Database is opened; async FS would require restructuring the entire init chain
     if(existsSync(HOMEBREW_ARM_PATH)) {
-        // Stryker disable next-line BlockStatement: "SQLite already loaded" means tests/setup.ts already configured it — mark as done
+        // Stryker disable next-line BlockStatement -- "SQLite already loaded" means tests/setup.ts already configured it — mark as done
         try {
             Database.setCustomSQLite(HOMEBREW_ARM_PATH);
         } catch{
-            // "SQLite already loaded" — already configured (e.g., by tests/setup.ts)
+            // Silent: Bun's SQLite throws "SQLite already loaded" when setCustomSQLite is
+            // called a second time in the same process (e.g., tests/setup.ts already
+            // configured it). Idempotency is the correct behavior; the library is already
+            // pointing at the right binary, so the error is not an error.
         }
         customSqliteConfigured = true;
         return;
     }
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: Intel path probe — tested via existsSync; alternative is the unavailable error below
+    // Stryker disable next-line ConditionalExpression,BlockStatement -- Intel path probe — tested via existsSync; alternative is the unavailable error below
     // eslint-disable-next-line n/no-sync -- sync probe required at startup before any Database is opened; async FS would require restructuring the entire init chain
     if(existsSync(HOMEBREW_INTEL_PATH)) {
-        // Stryker disable next-line BlockStatement: "SQLite already loaded" means tests/setup.ts already configured it — mark as done
+        // Stryker disable next-line BlockStatement -- "SQLite already loaded" means tests/setup.ts already configured it — mark as done
         try {
             Database.setCustomSQLite(HOMEBREW_INTEL_PATH);
         } catch{
-            // "SQLite already loaded" — already configured (e.g., by tests/setup.ts)
+            // Silent: Bun's SQLite throws "SQLite already loaded" when setCustomSQLite is
+            // called a second time in the same process (e.g., tests/setup.ts already
+            // configured it). Idempotency is the correct behavior; the library is already
+            // pointing at the right binary, so the error is not an error.
         }
         customSqliteConfigured = true;
         return;
@@ -182,7 +192,7 @@ export class VectorIndex {
      * @throws {VectorIndexUnavailableError} If the sqlite-vec extension cannot
      *   be loaded, if the database cannot be opened, or if schema migration fails.
      */
-    // Stryker disable all: I/O method — actual file access cannot be tested without real filesystem
+    // Stryker disable all -- I/O method — actual file access cannot be tested without real filesystem
     static async open(dbPath: string): Promise<VectorIndex> {
         try {
             configureCustomSQLite();
@@ -268,7 +278,7 @@ export class VectorIndex {
             throw new VectorIndexError(
                 `Embedding must be ${VectorIndex.EXPECTED_BYTES} bytes; got ${entry.vector.length}`,
                 undefined,
-                // Stryker disable next-line ObjectLiteral: context bag is debug-only metadata — mutation to {} doesn't affect throw behavior or message
+                // Stryker disable next-line ObjectLiteral -- context bag is debug-only metadata — mutation to {} doesn't affect throw behavior or message
                 { length: entry.vector.length }
             );
         }
@@ -323,14 +333,14 @@ export class VectorIndex {
                 )
                 .get(pk, sk);
 
-            // Stryker disable next-line ConditionalExpression,BlockStatement: early-return no-op guard — no row to delete is a valid outcome
+            // Stryker disable next-line ConditionalExpression,BlockStatement -- early-return no-op guard — no row to delete is a valid outcome
             if(rowIdRow === null) {
                 return; // No-op: entry does not exist
             }
 
             // Delete from metadata first, then from embedding index using the rowid we looked up above
             this.#db.run('DELETE FROM memory_vectors WHERE pk = ? AND sk = ?', [pk, sk]);
-            // Stryker disable next-line ArrayDeclaration: binding array holds the rowid for targeted DELETE — mutation to [] leaves rowid unbound (static-coverage NoCoverage)
+            // Stryker disable next-line ArrayDeclaration -- binding array holds the rowid for targeted DELETE — mutation to [] leaves rowid unbound (static-coverage NoCoverage)
             this.#db.run('DELETE FROM vec_memory WHERE rowid = ?', [rowIdRow.rowid]);
         });
 
@@ -358,12 +368,12 @@ export class VectorIndex {
             throw new VectorIndexError(
                 `Embedding must be ${VectorIndex.EXPECTED_BYTES} bytes; got ${queryVector.length}`,
                 undefined,
-                // Stryker disable next-line ObjectLiteral: context bag is debug-only metadata — mutation to {} doesn't affect throw behavior or message
+                // Stryker disable next-line ObjectLiteral -- context bag is debug-only metadata — mutation to {} doesn't affect throw behavior or message
                 { length: queryVector.length }
             );
         }
 
-        // Stryker disable next-line ConditionalExpression: branch selects the correct SQL variant (with/without layer filter)
+        // Stryker disable next-line ConditionalExpression -- branch selects the correct SQL variant (with/without layer filter)
         return layer === undefined
             ? this.#db
                 .query<KnnRow, [Uint8Array, number]>(
@@ -391,7 +401,7 @@ export class VectorIndex {
      * Idempotent — safe to call multiple times.
      */
     close(): void {
-        // Stryker disable next-line ConditionalExpression,BlockStatement: bun:sqlite db.close() is idempotent (no-op on already-closed DB) — removing this guard has no observable effect
+        // Stryker disable next-line ConditionalExpression,BlockStatement -- bun:sqlite db.close() is idempotent (no-op on already-closed DB) — removing this guard has no observable effect
         if(this.#closed) {
             return;
         }

@@ -51,9 +51,10 @@ export const serviceLifecycleMachine = setup({
         }),
     },
 }).createMachine({
-    // Stryker disable next-line StringLiteral: machine id is an xstate identity constant
+    // Stryker disable StringLiteral: machine id and initial state are xstate identity constants — mutating causes XState runtime error
     id:      'serviceLifecycle',
     initial: 'disabled',
+    // Stryker restore StringLiteral
     context: {
         epoch:         0,
         failureCount:  0,

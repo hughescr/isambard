@@ -254,8 +254,10 @@ export class CheckpointManager {
                     const checkpoint = discordChannelCheckpointSchema.parse(parsed);
                     checkpoints.push(checkpoint);
                 } catch{
-                    // Skip items that fail to parse or validate
-                    // This handles corrupted data gracefully
+                    // Silent: malformed or schema-invalid checkpoint data (truncated write,
+                    // format migration). Skipping the item and continuing means the inbox
+                    // will re-scan that channel from scratch rather than crashing startup.
+                    // The channel will catch up normally on the next session.
                     continue;
                 }
                 // Stryker restore BlockStatement

@@ -35,7 +35,10 @@ async function copyDirectory(sourceDir: string, destDir: string): Promise<void> 
             try {
                 await copyFile(sourcePath, destPath, constants.COPYFILE_FICLONE); // eslint-disable-line no-await-in-loop -- sequential: per-file copy
             } catch{
-                // Fallback to read/write for environments without copyFile support (like tests)
+                // Silent: COPYFILE_FICLONE (reflink/CoW copy) is unsupported on HFS+, Linux
+                // without btrfs, and in Bun's test sandbox. Falling back to read+write
+                // produces the same result (data copied correctly); FICLONE is only a hint
+                // for performance. The fallback error is not actionable by the operator.
                 const content = await readFile(sourcePath); // eslint-disable-line no-await-in-loop -- sequential: read then write fallback
                 await writeFile(destPath, content); // eslint-disable-line no-await-in-loop -- sequential: write depends on prior read result
             }

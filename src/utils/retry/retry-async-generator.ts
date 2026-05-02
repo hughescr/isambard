@@ -34,12 +34,8 @@ export async function* retryAsyncGenerator<T>(
     const { logger, sleep, now } = deps;
 
     const startTime = now();
-    let attempt = 0;
 
-    // Stryker disable next-line EqualityOperator,BlockStatement: EqualityOperator is undetected due to async/sync assertion race in tests; BlockStatement causes infinite loop
-    while(attempt < maxAttempts) {
-        // Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop
-        attempt++;
+    for(let attempt = 1; attempt <= maxAttempts; /* Stryker disable next-line UpdateOperator: Decrement creates infinite retry loop */ attempt++) {
         const generator = generatorFactory();
 
         try {
@@ -83,8 +79,11 @@ export async function* retryAsyncGenerator<T>(
                 throw error;
             }
 
-            // Calculate delay for next retry
-            const delayMs = retryAfterMs ?? calculateDelay(attempt, policy);
+            // Calculate delay for next retry.
+            // Take the larger of the server's retry-after hint and the exponential backoff so that:
+            // - A zero-valued server hint (clock skew / just-rolled-over window) does not bypass backoff.
+            // - A large server hint (long rate-limit window) is respected even when backoff is smaller.
+            const delayMs = Math.max(retryAfterMs ?? 0, calculateDelay(attempt, policy));
 
             // Log retry attempt
             logger.warn({

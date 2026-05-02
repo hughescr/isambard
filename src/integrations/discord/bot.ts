@@ -489,7 +489,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     });
                 }
             } catch{
-                // Interaction may have expired — nothing we can do
+                // Silent: interaction.reply() throws if the interaction expired (3-second
+                // acknowledgement window) or the bot already replied. The outer catch above
+                // already logged the original error; failing to send the fallback ephemeral
+                // reply is not a new error worth logging separately.
             }
             // Stryker restore BlockStatement
         }
@@ -603,9 +606,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             // Stryker restore BlockStatement
 
-            // Initialize channel registry BEFORE setting up message handlers
-            // Pass rateLimiter for error notification (may be undefined if not created yet)
-            await initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter);
+            // Initialize channel registry BEFORE setting up message handlers.
+            // startHydration() fires the reconnection loop asynchronously — do not await.
+            // The registry-ready gate in MessageCoordinator drops messages until hydration completes.
+            initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter, healthRegistry);
 
             // Mute admin email channel so Craig's messages there don't reach Izzy
             if(emailSetup?.adminChannelId) {
@@ -738,6 +742,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             // Stop rate limiter
             rateLimiter.stop();
+            // Stop channel registry hydration loop (safe to call if startHydration was never called)
+            channelRegistry.stop();
             // Remove all listeners before destroy to prevent memory leaks
             client.removeAllListeners();
             // destroy() is sufficient for cleanup (as per user decision)

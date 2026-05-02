@@ -201,6 +201,30 @@ export const reconciliationConfigSchema = z.object({
 
 export type ReconciliationConfig = z.infer<typeof reconciliationConfigSchema>;
 
+/**
+ * Configuration for contact reconciliation job
+ */
+/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
+export const contactReconciliationConfigSchema = z.object({
+    /** Whether contact reconciliation job is enabled */
+    enabled:                   z.boolean().default(false),
+    /** Interval between runs in milliseconds (default: 24 hours) */
+    intervalMs:                z.number().int().positive().default(24 * 60 * 60 * 1000),
+    /** Delay between DynamoDB operations in milliseconds (default: 1000ms) */
+    operationDelayMs:          z.number().int().nonnegative().default(1000),
+    /** DynamoDB page size for scans (default: 25) */
+    scanPageSize:              z.number().int().positive().default(25),
+    /**
+     * Minimum age in ms a stray lookup must be before Phase A deletes it.
+     * Protects in-flight putContact writes (write lookup → write profile gap).
+     * Default: 300_000 (5 minutes).
+     */
+    strayLookupAgeThresholdMs: z.number().int().nonnegative().default(300_000),
+});
+/* Stryker restore BooleanLiteral,ArithmeticOperator */
+
+export type ContactReconciliationConfig = z.infer<typeof contactReconciliationConfigSchema>;
+
 // Vector index config schema
 /* Stryker disable BooleanLiteral,StringLiteral: Default values are configuration */
 export const vectorIndexConfigSchema = z.object({
@@ -222,17 +246,18 @@ export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
 
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({
-    app:                appConfigSchema,
-    agent:              agentConfigSchema,
-    discord:            discordConfigSchema,
-    perch:              perchConfigSchema,
-    reconciliation:     reconciliationConfigSchema.optional(),
-    adminDiscordUserId: z.string().min(1),
+    app:                   appConfigSchema,
+    agent:                 agentConfigSchema,
+    discord:               discordConfigSchema,
+    perch:                 perchConfigSchema,
+    reconciliation:        reconciliationConfigSchema.optional(),
+    contactReconciliation: contactReconciliationConfigSchema.optional(),
+    adminDiscordUserId:    z.string().min(1),
     // Planned integrations (optional until implemented):
-    email:              emailConfigSchema.optional(),
-    bsky:               bskyConfigSchema.optional(),
-    browser:            browserConfigSchema.optional(),
-    vectorIndex:        vectorIndexConfigSchema.optional(),
+    email:                 emailConfigSchema.optional(),
+    bsky:                  bskyConfigSchema.optional(),
+    browser:               browserConfigSchema.optional(),
+    vectorIndex:           vectorIndexConfigSchema.optional(),
 });
 
 // Type exports

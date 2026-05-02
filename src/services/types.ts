@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Stryker disable all: Enum/schema values are static definitions
 
-export const serviceNameSchema = z.enum(['discord', 'email', 'bluesky', 'caldav', 'dynamodb']);
+export const serviceNameSchema = z.enum(['discord', 'discord-channel-registry', 'email', 'bluesky', 'caldav', 'dynamodb']);
 export type ServiceName = z.infer<typeof serviceNameSchema>;
 // Stryker restore all
 

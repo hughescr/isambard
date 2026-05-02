@@ -6,6 +6,20 @@ import type { ChannelMetadata } from './types';
 
 // Note: We only discover channels, not threads. Threads inherit mute state from their parent channel.
 
+/**
+ * Tracks which Discord clients have already had channel event handlers registered.
+ * Used by setupChannelEventHandlers() to guarantee idempotency — calling the
+ * function a second time with the same client is a no-op.
+ *
+ * NOTE: Module-level singleton. Assumes one Client instance per process lifetime.
+ * If the Client is ever reconstructed (e.g., token refresh), setupChannelEventHandlers
+ * on the new client will correctly register; setup on the OLD client (now GC'd) will
+ * not silently no-op because WeakSet entries are GC'd with the client. The risk is only
+ * if a *different* Client object is reused for the same logical role — currently unsupported.
+ */
+// Stryker disable next-line ObjectLiteral: WeakSet construction is a module-level singleton — no testable variation
+const registeredClients = new WeakSet<Client>();
+
 /** Type guard: check if a channel has a 'guild' property (GuildChannel-like). */
 function hasGuild(channel: unknown): channel is GuildChannel {
     return typeof channel === 'object' && channel !== null && 'guild' in channel;
@@ -164,12 +178,19 @@ function createChannelMetadata(channel: GuildChannel, guild: Guild): ChannelMeta
 
 /**
  * Sets up event handlers for channel create/update/delete.
- * Call this once on bot startup to keep registry in sync.
+ * Idempotent: subsequent calls with the same client instance are no-ops.
+ * Safe to call from onReady callbacks that fire on reconnect.
  */
 export function setupChannelEventHandlers(
     client: Client,
     manager: ChannelRegistryManager
 ): void {
+    // Stryker disable next-line ConditionalExpression,BlockStatement: idempotency guard — second call must not re-register handlers; tested by 'calling twice registers handlers only once'
+    if(registeredClients.has(client)) {
+        return;
+    }
+    registeredClients.add(client);
+
     // Channel created
     client.on('channelCreate', (channel) => {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: channel.guild typed non-nullable but DM/unknown channels may lack guild at runtime

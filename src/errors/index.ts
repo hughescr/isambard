@@ -24,7 +24,7 @@ export {
     InvalidLineNumberError,
     ContactNotFoundError,
     ContactLastIdentifierError,
-    ContactIdentifierLimitError
+    ContactNoIdentifiersError
 } from './storage';
 
 export {

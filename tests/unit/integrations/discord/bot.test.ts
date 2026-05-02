@@ -31,6 +31,13 @@ describe('createDiscordBot', () => {
         shouldProcess:      mock(() => true),
         getChannel:         mock(() => Promise.resolve(null)),
         warmCache:          mock(() => Promise.resolve()),
+        startHydration:     mock(() => undefined),
+        stop:               mock(() => undefined),
+        // ready resolves immediately so the post-hydration callback fires (discovery is spied on in each test)
+        ready:              Promise.resolve(),
+        // onReady mirrors the real implementation: attach callback to the current ready promise
+        // eslint-disable-next-line promise/no-callback-in-promise -- intentional: cb is a registered lifecycle callback, not a Node-style errback
+        onReady:            mock((cb: () => void | Promise<void>) => { void Promise.resolve().then(() => cb()); }),
         getUnmutedChannels: mock(() => Promise.resolve([])),
         upsertChannel:      mock(() => Promise.resolve()),
         getAllChannels:     mock(() => []),
@@ -1321,11 +1328,29 @@ describe('createDiscordBot', () => {
         });
     });
 
-    describe('Channel Registry Fail-Open Error Handling', () => {
-        test('should log at ERROR level when channel registry initialization fails', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
+    describe('Channel Registry Hydration Lifecycle', () => {
+        // Builds a minimal channel registry mock where startHydration is a spy and
+        // `ready` resolves/rejects based on the provided promise.
+        function makeHydrationRegistry(readyPromise: Promise<void>): ChannelRegistryManager {
+            return {
+                shouldProcess:  mock(() => true),
+                getChannel:     mock(() => Promise.resolve(null)),
+                warmCache:      mock(() => Promise.resolve()),
+                startHydration: mock(() => undefined),
+                stop:           mock(() => undefined),
+                ready:          readyPromise,
+                // onReady mirrors the real implementation: attach callback to the current ready promise
+                // eslint-disable-next-line promise/no-callback-in-promise -- intentional: cb is a registered lifecycle callback, not a Node-style errback
+                onReady:        mock((cb: () => void | Promise<void>) => { void readyPromise.then(() => cb()); }),
+                getAllChannels: mock(() => []),
+                muteChannel:    mock(async (): Promise<void> => undefined),
+            } as unknown as ChannelRegistryManager;
+        }
+
+        function makeMinimalClient(): Client {
+            const c = {
+                on:                 mock(() => c),
+                once:               mock(() => c),
                 login:              mock(async () => 'mock-token'),
                 destroy:            mock(async () => undefined),
                 removeAllListeners: mock(() => undefined),
@@ -1336,237 +1361,130 @@ describe('createDiscordBot', () => {
                         send: mock(async () => ({})),
                     })),
                 },
-            } as unknown as Client;
+            };
+            return c as unknown as Client;
+        }
+
+        test('startHydration is called during clientReady (not warmCache directly)', async () => {
+            const pendingReady = new Promise<void>((_resolve) => { /* intentionally pending — never resolves */ });
+            const registry = makeHydrationRegistry(pendingReady);
+            const mockClient = makeMinimalClient();
+
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({ discovered: 0, updated: 0, errors: [] }),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
+
+            createDiscordBot({ config: mockConfig, channelRegistry: registry });
+
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandler = calls.find(([event]) => event === 'clientReady')?.[1];
+            if(readyHandler) {
+                await Promise.resolve(readyHandler(mockClient));
+            }
+
+            // startHydration should have been called; warmCache should NOT have been called directly
+            expect((registry.startHydration as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((registry.warmCache as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+        });
+
+        test('channelRegistry.stop() is called during bot shutdown', async () => {
+            const pendingReady = new Promise<void>((_resolve) => { /* intentionally pending */ });
+            const registry = makeHydrationRegistry(pendingReady);
+            const mockClient = makeMinimalClient();
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            // Mock channel registry to throw error during warmCache
-            const failingChannelRegistry = {
-                shouldProcess:      mock(() => true),
-                getChannel:         mock(() => Promise.resolve(null)),
-                warmCache:          mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
-                getUnmutedChannels: mock(() => Promise.resolve([])),
-                upsertChannel:      mock(() => Promise.resolve()),
-            } as unknown as ChannelRegistryManager;
+            const bot = createDiscordBot({ config: mockConfig, channelRegistry: registry });
 
-            // Mock discoverAllChannels to avoid execution
-            spies.push(spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                discovered: 0,
-                updated:    0,
+            await bot.stop();
+
+            expect((registry.stop as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+        });
+
+        test('discovery runs and logs info after hydration succeeds', async () => {
+            // ready resolves immediately = hydration succeeded
+            const registry = makeHydrationRegistry(Promise.resolve());
+            const mockClient = makeMinimalClient();
+
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+            const discoverSpy = spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
+                discovered: 3,
+                updated:    1,
                 errors:     [],
-            }));
-
-            // Spy on logger.error to verify it's called
-            const loggerErrorSpy = spyOn(loggerModule.logger, 'error');
-            spies.push(loggerErrorSpy);
-
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: failingChannelRegistry,
             });
+            spies.push(
+                discoverSpy,
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+            );
 
-            // Trigger clientReady event
+            createDiscordBot({ config: mockConfig, channelRegistry: registry });
 
             const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const clientReadyHandler = readyHandler?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
+            const readyHandler = calls.find(([event]) => event === 'clientReady')?.[1];
+            if(readyHandler) {
+                await Promise.resolve(readyHandler(mockClient));
             }
+            // Flush the .then() microtask so post-ready branch executes
+            await Promise.resolve();
+            await Promise.resolve();
 
-            // Verify logger.error was called with the error
-            expect(loggerErrorSpy).toHaveBeenCalled();
+            expect(discoverSpy).toHaveBeenCalled();
+        });
+
+        test('discovery failure logs error after hydration succeeds', async () => {
+            const registry = makeHydrationRegistry(Promise.resolve());
+            const mockClient = makeMinimalClient();
+
+            const loggerErrorSpy = spyOn(loggerModule.logger, 'error');
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('Discord API unavailable')),
+                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined),
+                loggerErrorSpy
+            );
+
+            createDiscordBot({ config: mockConfig, channelRegistry: registry });
+
+            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
+            const readyHandler = calls.find(([event]) => event === 'clientReady')?.[1];
+            if(readyHandler) {
+                await Promise.resolve(readyHandler(mockClient));
+            }
+            // Flush microtasks so .then() branch and catch block complete
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
 
             expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
-                error: 'DynamoDB connection failed',
-                msg:   'Failed to initialize channel registry on startup — messages will be dropped until registry is ready',
+                error: 'Discord API unavailable',
+                msg:   'Channel discovery failed after registry hydration',
             }));
         });
 
-        test('should send urgent notification to fallback channel when registry init fails', async () => {
-            const mockSendToChannel = mock(async () => ({}));
-            const mockChannel = {
-                send: mockSendToChannel,
-            };
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-                channels:           {
-                    fetch: mock(async () => mockChannel),
-                },
-            } as unknown as Client;
+        test('bot continues running even when hydration is pending (fail-open)', async () => {
+            const pendingReady = new Promise<void>((_resolve) => { /* intentionally pending */ });
+            const registry = makeHydrationRegistry(pendingReady);
+            const mockClient = makeMinimalClient();
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock channel registry to throw error during warmCache
-            const fallbackChannelId = createChannelId('123456789');
-            const failingChannelRegistry = {
-                shouldProcess:         mock(() => true),
-                getChannel:            mock(() => Promise.resolve(null)),
-                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
-                getUnmutedChannels:    mock(() => Promise.resolve([])),
-                upsertChannel:         mock(() => Promise.resolve()),
-                getFallbackChannelId:  mock(() => fallbackChannelId),
-                shouldRouteToFallback: mock(() => true),
-            } as unknown as ChannelRegistryManager;
-
-            // Mock discoverAllChannels to avoid execution
             spies.push(
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({ discovered: 0, updated: 0, errors: [] }),
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: failingChannelRegistry,
-            });
-
-            // Trigger clientReady event
+            const bot = createDiscordBot({ config: mockConfig, channelRegistry: registry });
 
             const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const clientReadyHandler = readyHandler?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
+            const readyHandler = calls.find(([event]) => event === 'clientReady')?.[1];
+            if(readyHandler) {
+                await Promise.resolve(readyHandler(mockClient));
             }
 
-            // Verify notification was sent
-            expect(mockSendToChannel).toHaveBeenCalled();
-
-            const sentMessage = (mockSendToChannel as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0] as string;
-            expect(sentMessage).toContain('⚠️ **Channel Registry Error**');
-            expect(sentMessage).toContain('DynamoDB connection failed');
-        });
-
-        test('should not send notification when channel does not have send method', async () => {
-            const mockSendToChannel = mock(async () => ({}));
-            const mockChannelWithoutSend = {
-                // No 'send' method
-                id: 'channel-123',
-            };
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-                channels:           {
-                    fetch: mock(async () => mockChannelWithoutSend),
-                },
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock channel registry to throw error during warmCache
-            const fallbackChannelId = createChannelId('123456789');
-            const failingChannelRegistry = {
-                shouldProcess:         mock(() => true),
-                getChannel:            mock(() => Promise.resolve(null)),
-                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
-                getUnmutedChannels:    mock(() => Promise.resolve([])),
-                upsertChannel:         mock(() => Promise.resolve()),
-                getFallbackChannelId:  mock(() => fallbackChannelId),
-                shouldRouteToFallback: mock(() => true),
-            } as unknown as ChannelRegistryManager;
-
-            spies.push(
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: failingChannelRegistry,
-            });
-
-            // Trigger clientReady event
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const clientReadyHandler = readyHandler?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            // Verify notification was NOT sent (channel lacks send method)
-            expect(mockSendToChannel).not.toHaveBeenCalled();
-        });
-
-        test('should continue running (fail-open) even when registry init fails', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-                channels:           {
-                    fetch: mock(async () => ({
-                        send: mock(async () => ({})),
-                    })),
-                },
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock channel registry to throw error during warmCache
-            const failingChannelRegistry = {
-                shouldProcess:         mock(() => true),
-                getChannel:            mock(() => Promise.resolve(null)),
-                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
-                getUnmutedChannels:    mock(() => Promise.resolve([])),
-                upsertChannel:         mock(() => Promise.resolve()),
-                getFallbackChannelId:  mock(() => null), // No fallback available
-                shouldRouteToFallback: mock(() => false),
-            } as unknown as ChannelRegistryManager;
-
-            // Mock discoverAllChannels to avoid execution
-            spies.push(
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            const bot = createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: failingChannelRegistry,
-            });
-
-            // Trigger clientReady event
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const clientReadyHandler = readyHandler?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            // Bot should still be running - verify it can be stopped without error
+            // Bot should still be stoppable without error
             await bot.stop();
-            expect(true).toBe(true); // If we get here without throwing, the test passes
+            expect(true).toBe(true);
         });
 
         test('should handle notification send failure gracefully', async () => {
@@ -1587,55 +1505,39 @@ describe('createDiscordBot', () => {
 
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
 
-            // Mock channel registry to throw error during warmCache
-            const fallbackChannelId = createChannelId('123456789');
-            const failingChannelRegistry = {
-                shouldProcess:         mock(() => true),
-                getChannel:            mock(() => Promise.resolve(null)),
-                warmCache:             mock(() => Promise.reject(new Error('DynamoDB connection failed'))),
-                getUnmutedChannels:    mock(() => Promise.resolve([])),
-                upsertChannel:         mock(() => Promise.resolve()),
-                getFallbackChannelId:  mock(() => fallbackChannelId),
-                shouldRouteToFallback: mock(() => true),
-            } as unknown as ChannelRegistryManager;
+            // ready resolves immediately so discovery runs and can fail
+            const registry = makeHydrationRegistry(Promise.resolve());
 
-            // Mock discoverAllChannels to avoid execution
             spies.push(
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
+                spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('DynamoDB connection failed')),
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Spy on logger.error to verify notification failure is logged
             const loggerErrorSpy = spyOn(loggerModule.logger, 'error');
             spies.push(loggerErrorSpy);
 
             const bot = createDiscordBot({
                 config: mockConfig,
 
-                channelRegistry: failingChannelRegistry,
+                channelRegistry: registry,
             });
 
-            // Clear any previous logger calls before triggering the test scenario
             loggerErrorSpy.mockClear();
 
-            // Trigger clientReady event
-
             const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const clientReadyHandler = readyHandler?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
+            const readyHandler = calls.find(([event]) => event === 'clientReady')?.[1];
+            if(readyHandler) {
+                await Promise.resolve(readyHandler(mockClient));
             }
+            // Flush microtasks so .then() branch and catch complete
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
 
-            // Verify logger.error was called for both registry init failure and notification failure
-            expect(loggerErrorSpy).toHaveBeenCalledTimes(2);
-
+            // Verify discovery failure was logged and notification send failure was logged
             expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
-                msg: 'Failed to initialize channel registry on startup — messages will be dropped until registry is ready',
+                msg: 'Channel discovery failed after registry hydration',
             }));
 
             expect(loggerErrorSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -1644,7 +1546,7 @@ describe('createDiscordBot', () => {
 
             // Bot should still be running
             await bot.stop();
-            expect(true).toBe(true); // If we get here without throwing, the test passes
+            expect(true).toBe(true);
         });
     });
 

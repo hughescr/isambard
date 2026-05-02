@@ -11,6 +11,7 @@
     "url": "https://github.com/hughescr/isambard.git"
   },
   "scripts": {
+    "backfill:contact-lookup-gsi2": "sst shell -- bun tools/backfill-contact-lookup-gsi2.ts",
     "clones": "jscpd src/",
     "dead-code": "knip",
     "dead-code:fix": "knip --fix",
