@@ -273,4 +273,76 @@ describe('MemoryToolBackendQuery - list', () => {
 
         warnSpy.mockRestore();
     });
+
+    test('should warn and skip ExclusiveStartKey when cursor decodes to null', async () => {
+        const warnSpy = spyOn(logger, 'warn');
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+        const nullCursor = Buffer.from(JSON.stringify(null)).toString('base64');
+        await queryOps.list('/state', { cursor: nullCursor });
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ cursor: nullCursor }),
+            expect.stringContaining('Invalid cursor shape')
+        );
+
+        warnSpy.mockRestore();
+    });
+
+    test('should warn and skip ExclusiveStartKey when cursor decodes to a string', async () => {
+        const warnSpy = spyOn(logger, 'warn');
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+        const stringCursor = Buffer.from(JSON.stringify('hello')).toString('base64');
+        await queryOps.list('/state', { cursor: stringCursor });
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ cursor: stringCursor }),
+            expect.stringContaining('Invalid cursor shape')
+        );
+
+        warnSpy.mockRestore();
+    });
+
+    test('should warn and skip ExclusiveStartKey when cursor decodes to an array', async () => {
+        const warnSpy = spyOn(logger, 'warn');
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+        const arrayCursor = Buffer.from(JSON.stringify([1, 2, 3])).toString('base64');
+        await queryOps.list('/state', { cursor: arrayCursor });
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ cursor: arrayCursor }),
+            expect.stringContaining('Invalid cursor shape')
+        );
+
+        warnSpy.mockRestore();
+    });
+
+    test('should warn and skip ExclusiveStartKey when cursor decodes to a number', async () => {
+        const warnSpy = spyOn(logger, 'warn');
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+        const numberCursor = Buffer.from(JSON.stringify(42)).toString('base64');
+        await queryOps.list('/state', { cursor: numberCursor });
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ cursor: numberCursor }),
+            expect.stringContaining('Invalid cursor shape')
+        );
+
+        warnSpy.mockRestore();
+    });
 });

@@ -1,5 +1,6 @@
 import { type DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { z } from 'zod';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import { type MemoryToolBackendTagIndex } from './backend-tag-index';
 import { sigmoidScore } from './sigmoid';
@@ -73,14 +74,24 @@ export class MemoryToolBackendQuery {
         }
 
         if(options?.cursor) {
+            let parsed: unknown;
             try {
-                queryParams.ExclusiveStartKey = JSON.parse(
+                parsed = JSON.parse(
                     Buffer.from(options.cursor, 'base64').toString('utf8')
                 );
             } catch (err) {
                 // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + skip is the correct graceful fallback for a malformed cursor
                 logger.warn({ err, cursor: options.cursor }, 'Malformed pagination cursor — skipping ExclusiveStartKey; query will restart from the beginning');
+                return;
             }
+            const cursorSchema = z.record(z.string(), z.unknown());
+            const cursorResult = cursorSchema.safeParse(parsed);
+            if(!cursorResult.success) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + skip is the correct graceful fallback for a wrong-shape cursor
+                logger.warn({ err: cursorResult.error.issues, cursor: options.cursor }, 'Invalid cursor shape — skipping ExclusiveStartKey; query will restart from the beginning');
+                return;
+            }
+            queryParams.ExclusiveStartKey = cursorResult.data;
         }
     }
 

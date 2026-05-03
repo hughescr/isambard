@@ -1,5 +1,6 @@
 import { type DynamoDBDocumentClient, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
+import { z } from 'zod';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
@@ -502,16 +503,25 @@ export class MemoryToolBackendTagIndex {
 
     /**
      * Decodes a base64-encoded pagination cursor to a DynamoDB ExclusiveStartKey.
-     * Returns undefined and logs a warning if the cursor is malformed.
+     * Returns undefined and logs a warning if the cursor is malformed or has an unexpected shape.
      */
     private parseCursor(cursor: string): Record<string, unknown> | undefined {
+        let parsed: unknown;
         try {
-            return JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as Record<string, unknown>;
+            parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
         } catch (err) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + return undefined is the correct graceful fallback for a malformed cursor
             logger.warn({ err, cursor }, 'Malformed pagination cursor — skipping ExclusiveStartKey; query will restart from the beginning');
             return undefined;
         }
+        const cursorSchema = z.record(z.string(), z.unknown());
+        const cursorResult = cursorSchema.safeParse(parsed);
+        if(!cursorResult.success) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + return undefined is the correct graceful fallback for a wrong-shape cursor
+            logger.warn({ err: cursorResult.error.issues, cursor }, 'Invalid cursor shape — skipping ExclusiveStartKey; query will restart from the beginning');
+            return undefined;
+        }
+        return cursorResult.data;
     }
 
     /**
@@ -569,7 +579,7 @@ export class MemoryToolBackendTagIndex {
         }
         // Stryker disable next-line OptionalChaining: options may be undefined; parseCursor handles malformed JSON gracefully
         if(options?.cursor) {
-            // parseCursor returns undefined for malformed JSON (after logging a warning) — skip ExclusiveStartKey in that case
+            // parseCursor returns undefined for malformed/wrong-shape JSON (after logging a warning) — skip ExclusiveStartKey in that case
             const parsedKey = this.parseCursor(options.cursor);
             // Stryker disable next-line ConditionalExpression: setting ExclusiveStartKey=undefined is indistinguishable from not setting it in the mock; guard is required to avoid polluting queryParams with undefined when cursor is malformed
             if(parsedKey !== undefined) {
