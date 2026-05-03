@@ -14,7 +14,7 @@
  */
 import { logger } from '@hughescr/logger';
 import type { BrowserAdapter, ClickOptions, ConsoleLogEntry } from './types';
-import { BrowserNavigateTimeoutError } from '@/errors';
+import { BrowserError, BrowserNavigateTimeoutError } from '@/errors';
 
 // ============================================================================
 // Config
@@ -147,7 +147,7 @@ export function createWebViewAdapter(
         // Platform precheck
         if(config.backend === 'webkit' && process.platform !== 'darwin') {
             // Stryker disable StringLiteral: error messages are informational only
-            throw new Error(
+            throw new BrowserError(
                 'Bun.WebView requires macOS when using the WebKit backend. '
                 + "On other platforms, set backend: 'chrome'."
             );
@@ -406,7 +406,7 @@ export function createWebViewAdapter(
             }
             // Stryker restore BlockStatement
             // Stryker disable next-line StringLiteral: error message is informational only
-            throw new Error(`waitForSelector: element '${selector}' not found within timeout`);
+            throw new BrowserError(`waitForSelector: element '${selector}' not found within timeout`);
         },
 
         getConsoleLogs(limit?: number): ConsoleLogEntry[] {

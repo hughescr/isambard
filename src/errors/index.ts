@@ -9,6 +9,7 @@
 
 export { ErrorCode } from './codes';
 export { IsambardError, InvariantViolationError } from './base';
+export { ConfigValidationError } from './config';
 
 export {
     StorageError,
@@ -29,6 +30,7 @@ export {
 } from './storage';
 
 export {
+    ChannelNotFoundByIdError,
     ChannelNotAccessibleError,
     ChannelNotFoundByNameError,
     MessageFetchError,

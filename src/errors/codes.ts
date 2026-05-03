@@ -89,6 +89,9 @@ export enum ErrorCode {
     VECTOR_INDEX_CLOSED = 'VECTOR_INDEX_CLOSED',
     VECTOR_INDEX_UNAVAILABLE = 'VECTOR_INDEX_UNAVAILABLE',
 
+    // Config errors
+    CONFIG_VALIDATION_ERROR = 'CONFIG_VALIDATION_ERROR',
+
     // Invariant violations (logic errors — should never be reached in correct code)
     INVARIANT_VIOLATION = 'INVARIANT_VIOLATION'
 

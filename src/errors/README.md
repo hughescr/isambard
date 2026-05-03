@@ -7,6 +7,7 @@ Centralized error classes for all Isambard operations. All errors extend `Isamba
 ```mermaid
 classDiagram
     Error <|-- IsambardError
+    IsambardError <|-- ConfigValidationError
     IsambardError <|-- StorageError
     IsambardError <|-- DiscordError
     IsambardError <|-- PathSecurityError

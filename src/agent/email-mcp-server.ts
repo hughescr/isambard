@@ -7,6 +7,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
+import { EmailProcessingError } from '@/errors';
 import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
@@ -121,7 +122,7 @@ async function buildAttachments(filePaths: string[]): Promise<WildDuckAttachment
             // eslint-disable-next-line no-await-in-loop -- sequential: filesystem I/O, stop on first error
             data = await readFile(filePath);
         } catch{
-            throw new Error(`Attachment file not found: ${filePath}`);
+            throw new EmailProcessingError(`Attachment file not found: ${filePath}`, { filePath });
         }
         const filename    = path.basename(filePath);
         const ext         = path.extname(filePath).toLowerCase().slice(1);

@@ -1,6 +1,7 @@
 import env from 'env-var';
 import { Resource, type Resource as SstResource  } from 'sst';
 import { configSchema, dynamoDBConfigSchema, type Config, type DynamoDBConfig } from './schemas';
+import { ConfigValidationError } from '@/errors';
 import { resolveTimezone } from '@/utils';
 
 /**
@@ -145,7 +146,8 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 message: isSensitive ? '[REDACTED]' : issue.message,
             };
         });
-        throw new Error(`Config validation failed: ${JSON.stringify(safeErrors)}`);
+        // Stryker disable next-line StringLiteral: error prefix is informational only
+        throw new ConfigValidationError('Config validation failed', safeErrors);
     }
 
     return result.data;
@@ -159,7 +161,8 @@ export function loadDynamoDBConfig(resources: DynamoDBResourceProvider): DynamoD
     const result = dynamoDBConfigSchema.safeParse(rawConfig);
 
     if(!result.success) {
-        throw new Error(`DynamoDB config validation failed: ${JSON.stringify(result.error.issues)}`);
+        // Stryker disable next-line StringLiteral: error prefix is informational only
+        throw new ConfigValidationError('DynamoDB config validation failed', result.error.issues.map(issue => ({ path: issue.path.join('.'), message: issue.message })));
     }
 
     return result.data;

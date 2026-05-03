@@ -64,7 +64,7 @@ export const boundariesConfig = {
                 { from: { type: 'utils', internalPath: 'media/**' }, allow: { to: { type: ['errors'] } } },
                 { from: { type: 'utils', internalPath: 'assert-never.ts' }, allow: { to: { type: ['errors'] } } },
                 { from: { type: 'errors' },  allow: { to: { type: ['utils'] } } },
-                { from: { type: 'config' },  allow: { to: { type: ['utils'] } } },
+                { from: { type: 'config' },  allow: { to: { type: ['utils', 'errors'] } } },
                 { from: { type: 'storage' },  allow: { to: { type: ['utils', 'errors', 'config'] } } },
                 { from: { type: 'services' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
                 { from: { type: 'agent' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'email', 'bsky', 'caldav'] } } },

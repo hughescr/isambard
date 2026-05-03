@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, EmbedBuilder  } from 'discord.js';
+import { EmailProcessingError } from '@/errors';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { AllowlistSagaStarter } from '@/services';
@@ -157,8 +158,9 @@ export class ReviewHandler {
         // Fetch email to get sender address for allowlist
         const email = await this.wildDuckClient.getFullMessage(sourceFolder, uid);
         if(!email) {
-            // Stryker disable next-line StringLiteral: Error message is not behavior-affecting
-            throw new Error(`Message UID ${uid} not found in ${sourceFolder}`);
+            // Stryker disable StringLiteral,ObjectLiteral: Error message and context are debug-only metadata
+            throw new EmailProcessingError(`Message UID ${uid} not found in ${sourceFolder}`, { uid, sourceFolder });
+            // Stryker restore StringLiteral,ObjectLiteral
         }
 
         await this.wildDuckClient.moveMessage(sourceFolder, uid, EmailFolder.CleanInbox);

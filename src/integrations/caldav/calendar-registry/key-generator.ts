@@ -1,3 +1,4 @@
+import { InvariantViolationError } from '@/errors';
 import { createPrefixedKey, parsePrefixedKey } from '@/storage';
 
 /**
@@ -58,7 +59,8 @@ export const CalendarRegistryKeyGenerator = {
      */
     parseUserId(pk: string): string {
         if(!pk.startsWith('CALCAL#')) {
-            throw new Error(`Invalid PK format: expected CALCAL#..., got ${pk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('CalendarRegistryKeyGenerator.parseUserId', `Invalid PK format: expected CALCAL#..., got ${pk}`);
         }
         return parsePrefixedKey(PREFIX_CALCAL, pk);
     },

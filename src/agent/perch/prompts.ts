@@ -13,6 +13,7 @@ import { getSlotConfig } from './schedule';
 import { type PerchSlot } from './types';
 import { PROMPT_SECTION_SEPARATOR, formatBanner, formatOptionalSection } from '@/agent/prompts/helpers';
 import type { StreamProgress } from '@/agent/stream-tracker';
+import { InvariantViolationError } from '@/errors';
 import { formatTimeHeader } from '@/utils';
 
 /**
@@ -163,7 +164,7 @@ function formatSlotName(slot: PerchSlot): string {
 
     // Stryker disable next-line all: Unreachable exhaustiveness check
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Unreachable exhaustiveness check
-    throw new Error(`Unknown slot: ${slot}`);
+    throw new InvariantViolationError('getSlotDescription', `Unknown slot: ${slot}`);
 }
 
 /**
@@ -196,7 +197,7 @@ export function getSuggestionLevelDescription(slot: PerchSlot): string {
 
     // Stryker disable next-line all: Unreachable exhaustiveness check
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Unreachable exhaustiveness check
-    throw new Error(`Unknown suggestion level: ${config.level}`);
+    throw new InvariantViolationError('getSuggestionLevelDescription', `Unknown suggestion level: ${config.level}`);
 }
 
 /**
