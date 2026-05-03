@@ -21,18 +21,23 @@ describe('delay', () => {
         // Promise resolved — fake timer correctly fired the setTimeout callback
     });
 
-    test('should reject if signal already aborted', async () => {
+    test('should reject with DOMException AbortError if signal already aborted', async () => {
         const controller = new AbortController();
         controller.abort();
-        expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        const rejected = delay(100, controller.signal);
+        rejected.catch(() => { /* suppress unhandled rejection */ });
+        expect(rejected).rejects.toBeInstanceOf(DOMException);
+        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
-    test('should reject if signal aborted mid-delay', async () => {
+    test('should reject with DOMException AbortError if signal aborted mid-delay', async () => {
         const controller = new AbortController();
         const delayPromise = delay(100, controller.signal);
         // Advance time to fire the abort timeout (simulated as immediate abort)
         controller.abort();
-        expect(delayPromise).rejects.toThrow('Aborted');
+        delayPromise.catch(() => { /* suppress unhandled rejection */ });
+        expect(delayPromise).rejects.toBeInstanceOf(DOMException);
+        expect(delayPromise).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should return immediately for zero or negative delays', async () => {
@@ -106,16 +111,17 @@ describe('retryWithBackoff', () => {
         expect(op).toHaveBeenCalledTimes(3);
     });
 
-    test('should throw Aborted if signal aborted', async () => {
+    test('should throw DOMException AbortError if signal aborted', async () => {
         const controller = new AbortController();
         const op = mock(() => {
             controller.abort();
             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Testing DynamoDB error object
             return Promise.reject({ name: 'ThrottlingException' });
         });
-        expect(
-            retryWithBackoff(op, { baseDelayMs: 50, maxAttempts: 3 }, 'test', controller.signal)
-        ).rejects.toThrow('Aborted');
+        const rejected = retryWithBackoff(op, { baseDelayMs: 50, maxAttempts: 3 }, 'test', controller.signal);
+        rejected.catch(() => { /* suppress unhandled rejection */ });
+        expect(rejected).rejects.toBeInstanceOf(DOMException);
+        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should use exponential backoff (delays increase between retries)', async () => {
@@ -917,9 +923,10 @@ describe('runReconciliation', () => {
             // Abort immediately
             controller.abort();
 
-            expect(
-                runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow('Aborted');
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            rejected.catch(() => { /* suppress unhandled rejection */ });
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
         test('should respect abort signal during layer iteration in Phase A', async () => {
@@ -937,9 +944,10 @@ describe('runReconciliation', () => {
                 return Promise.resolve({ Items: [] });
             });
 
-            expect(
-                runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow('Aborted');
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            rejected.catch(() => { /* suppress unhandled rejection */ });
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
         test('should respect abort signal in scanLayer pagination loop', async () => {
@@ -958,9 +966,10 @@ describe('runReconciliation', () => {
                     return Promise.resolve({ Items: [] });
                 });
 
-            expect(
-                runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow('Aborted');
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            rejected.catch(() => { /* suppress unhandled rejection */ });
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
         test('should count progress correctly (itemsScanned, indexItemsCreated, indexItemsRefreshed, metadataCleaned)', async () => {
@@ -1761,9 +1770,10 @@ describe('runReconciliation', () => {
             // Abort before Phase B
             controller.abort();
 
-            expect(
-                runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow('Aborted');
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            rejected.catch(() => { /* suppress unhandled rejection */ });
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
         test('should respect abort signal during Phase B processing (verified by pre-aborting)', async () => {
@@ -1776,9 +1786,10 @@ describe('runReconciliation', () => {
             // Abort before Phase B starts - the abort check at the start of the for loop will catch it
             controller.abort();
 
-            expect(
-                runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow('Aborted');
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            rejected.catch(() => { /* suppress unhandled rejection */ });
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
         test('should count progress correctly (itemsScanned, indexItemsDeleted)', async () => {
@@ -2084,9 +2095,64 @@ describe('runReconciliation', () => {
             // We abort synchronously before runReconciliation starts
             controller.abort();
 
-            expect(
-                runReconciliation(deps, { ...options, signal: controller.signal })
-            ).rejects.toThrow('Aborted');
+            const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+            rejected.catch(() => { /* suppress unhandled rejection */ });
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+        });
+
+        test('abort during rate-limit delay is treated as cancellation, not an operational error', async () => {
+            // This test verifies the core bug fix: when an abort signal fires while delay() is
+            // sleeping (simulating a rate-limit sleep between DynamoDB operations), the thrown
+            // DOMException AbortError must NOT be counted as an operational error — it should
+            // propagate up and cause runReconciliation to reject cleanly.
+            //
+            // We use operationDelayMs: 1 (non-zero) so that delay() enters the Promise path and
+            // checks signal.aborted. The abort fires during the DynamoDB query just before the
+            // delay, so signal.aborted is already true when delay(1, signal) is called — it
+            // immediately clears the timer and rejects with DOMException AbortError.
+            const controller = new AbortController();
+
+            // Phase A: one item with a tag, so delay() is called after processing the tag
+            const memoryItem = {
+                PK:             'DIR#/identity',
+                SK:             'FILE#test.md',
+                GSI1PK:         'LAYER#identity',
+                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+                path:           '/identity/test.md',
+                tags:           new Set(['important']),
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                contentPreview: 'content',
+                layer:          'identity',
+            };
+
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI1',
+                ExpressionAttributeValues: { ':gsi1pk': 'LAYER#identity' },
+            }).resolves({ Items: [memoryItem] });
+
+            // Other layers empty
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            // The tag index query — abort as soon as it resolves (signal.aborted=true before delay())
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#important', ':sk': 'PATH#/identity/test.md' },
+            }).callsFake(() => {
+                controller.abort();
+                return Promise.resolve({ Items: [{ PK: 'TAG#important', SK: 'PATH#/identity/test.md' }] });
+            });
+
+            // Phase B/C empty
+            mockEmptyPhaseB();
+
+            // Use operationDelayMs: 1 so delay() enters the Promise path where it checks signal.aborted
+            const rejected = runReconciliation(deps, { ...options, operationDelayMs: 1, signal: controller.signal });
+
+            // Must reject as DOMException AbortError — not resolve with errors > 0
+            expect(rejected).rejects.toBeInstanceOf(DOMException);
+            expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
         });
 
         test('should verify count query uses correct DynamoDB parameters', async () => {

@@ -20,14 +20,17 @@ describe('delay', () => {
         const controller = new AbortController();
         controller.abort();
 
-        expect(delay(100, controller.signal)).rejects.toThrow('Aborted');
+        const rejected = delay(100, controller.signal);
+        expect(rejected).rejects.toBeInstanceOf(DOMException);
+        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should reject if signal aborted mid-delay', async () => {
         const controller = new AbortController();
         const delayPromise = delay(100, controller.signal);
         controller.abort();
-        expect(delayPromise).rejects.toThrow('Aborted');
+        expect(delayPromise).rejects.toBeInstanceOf(DOMException);
+        expect(delayPromise).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should return immediately when ms <= 0', async () => {
@@ -128,7 +131,7 @@ describe('retryWithBackoff', () => {
         expect(operation).toHaveBeenCalledTimes(3);
     });
 
-    test('should throw Aborted error if signal is aborted during error handling', async () => {
+    test('should throw DOMException AbortError if signal is aborted during error handling', async () => {
         const controller = new AbortController();
         const operation = mock(() => {
             controller.abort();
@@ -136,14 +139,14 @@ describe('retryWithBackoff', () => {
             return Promise.reject({ name: 'ProvisionedThroughputExceededException' });
         });
 
-        expect(
-            retryWithBackoff(
-                operation,
-                { baseDelayMs: 50, maxAttempts: 3 },
-                'test-context',
-                controller.signal
-            )
-        ).rejects.toThrow('Aborted');
+        const rejected = retryWithBackoff(
+            operation,
+            { baseDelayMs: 50, maxAttempts: 3 },
+            'test-context',
+            controller.signal
+        );
+        expect(rejected).rejects.toBeInstanceOf(DOMException);
+        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should use exponential backoff delays', async () => {

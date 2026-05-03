@@ -197,9 +197,9 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Abort after Phase B
         controller.abort();
 
-        expect(
-            runReconciliation(deps, { ...options, signal: controller.signal })
-        ).rejects.toThrow('Aborted');
+        const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+        expect(rejected).rejects.toBeInstanceOf(DOMException);
+        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should respect abort signal during tag count for-loop check in Phase C', async () => {
@@ -231,9 +231,9 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
         // Abort after first tag is processed (the abort check at start of for-loop next iteration will catch it)
         controller.abort();
 
-        expect(
-            runReconciliation(deps, { ...options, signal: controller.signal })
-        ).rejects.toThrow('Aborted');
+        const rejected = runReconciliation(deps, { ...options, signal: controller.signal });
+        expect(rejected).rejects.toBeInstanceOf(DOMException);
+        expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     test('should handle abort gracefully when getActualTagCount cannot complete count', async () => {
