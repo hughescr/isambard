@@ -11,6 +11,7 @@ import * as loggerModule from '@hughescr/logger';
 import type { Client, Message } from 'discord.js';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
+import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { initializeChannelRegistry, setupChannelCleanupHandlers } from '@/integrations/discord/setup/event-handler-setup';
@@ -60,10 +61,11 @@ describe('initializeChannelRegistry', () => {
 
     function makeResponseRouter(): Parameters<typeof initializeChannelRegistry>[2] {
         return {
-            routeResponse: mock(() => Promise.resolve({
+            routeToFallback: mock(() => Promise.resolve({
                 shouldSend:      true,
                 targetChannelId: 'fallback-ch',
                 content:         'error message',
+                isFallback:      true,
             })),
         } as unknown as Parameters<typeof initializeChannelRegistry>[2];
     }
@@ -221,10 +223,10 @@ describe('initializeChannelRegistry', () => {
             await Promise.resolve();
         }
 
-        // routeResponse is called with content that includes the error message text
-        const routeResponseMock = responseRouter.routeResponse as ReturnType<typeof mock>;
-        expect(routeResponseMock).toHaveBeenCalledTimes(1);
-        const calledContent: string = routeResponseMock.mock.calls[0]?.[1] ?? '';
+        // routeToFallback is called with content that includes the error message text
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
+        const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
         expect(calledContent).toContain('dns failure');
         expect(calledContent).toContain('Channel Registry Error');
     });
@@ -367,9 +369,9 @@ describe('initializeChannelRegistry', () => {
         }
 
         // Notification must have been sent exactly once (not once per failure)
-        const routeResponseMock = responseRouter.routeResponse as ReturnType<typeof mock>;
-        expect(routeResponseMock).toHaveBeenCalledTimes(1);
-        const calledContent: string = routeResponseMock.mock.calls[0]?.[1] ?? '';
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
+        const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
         expect(calledContent).toContain('Channel Registry Error');
 
         // Clean up
@@ -427,8 +429,8 @@ describe('initializeChannelRegistry', () => {
         }
 
         // No notification — hydration succeeded before hitting 3 consecutive failures
-        const routeResponseMock = responseRouter.routeResponse as ReturnType<typeof mock>;
-        expect(routeResponseMock).not.toHaveBeenCalled();
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        expect(routeToFallbackMock).not.toHaveBeenCalled();
     });
 
     // ---------------------------------------------------------------------------
@@ -483,8 +485,8 @@ describe('initializeChannelRegistry', () => {
             await Promise.resolve();
         }
 
-        const routeResponseMock = responseRouter.routeResponse as ReturnType<typeof mock>;
-        expect(routeResponseMock).toHaveBeenCalledTimes(1);
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
 
         // Success — resets notificationSent and consecutiveFailureCount (loop auto-stops)
         jest.advanceTimersByTime(8000);
@@ -517,7 +519,7 @@ describe('initializeChannelRegistry', () => {
         }
 
         // Must fire a second notification since notificationSent was reset on success after wave 1
-        expect(routeResponseMock).toHaveBeenCalledTimes(2);
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(2);
 
         (receivedLoop.stop as () => void)();
     });
@@ -574,10 +576,10 @@ describe('initializeChannelRegistry', () => {
     });
 
     // ---------------------------------------------------------------------------
-    // Fix 4: SYNTHETIC_FALLBACK_CHANNEL_ID is used in routeResponse call
+    // Fix 4: routeToFallback is called for error routing (no sentinel hack)
     // ---------------------------------------------------------------------------
 
-    test('Fix 4: routeResponse is called with synthetic-channel sentinel ChannelId for error routing', async () => {
+    test('Fix 4: routeToFallback is called (not routeResponse) for error routing', async () => {
         const registry       = makeRegistry(Promise.resolve());
         const client         = makeClient();
         const responseRouter = makeResponseRouter();
@@ -596,11 +598,61 @@ describe('initializeChannelRegistry', () => {
             await Promise.resolve();
         }
 
-        const routeResponseMock = responseRouter.routeResponse as ReturnType<typeof mock>;
-        expect(routeResponseMock).toHaveBeenCalledTimes(1);
-        // Third argument must be the synthetic sentinel channel id string
-        const calledChannelId = routeResponseMock.mock.calls[0]?.[2] as string;
-        expect(calledChannelId).toBe('synthetic-channel');
+        // routeToFallback must be called with the notification content
+        const routeToFallbackMock = responseRouter.routeToFallback as ReturnType<typeof mock>;
+        expect(routeToFallbackMock).toHaveBeenCalledTimes(1);
+        const calledContent: string = routeToFallbackMock.mock.calls[0]?.[0] ?? '';
+        expect(calledContent).toContain('boom');
+        expect(calledContent).toContain('Channel Registry Error');
+
+        // The channel fetch must use the real fallback-ch ID returned by routeToFallback — NOT 'synthetic-channel'
+        const fetchMock = (client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch;
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('fallback-ch');
+    });
+
+    test('Fix 4 (real routing): sendRegistryErrorNotification delivers to fallback channel without mocking routeToFallback', async () => {
+        // This test exercises the REAL routing path through ResponseRouter.routeToFallback
+        // using a stubbed ChannelRegistryManager, verifying the notification is delivered.
+        const fallbackChannelId = 'real-fallback-ch-id';
+        const mockManager = {
+            getWellKnownChannel: mock(async (type: string) => {
+                if(type === 'fallback') {
+                    return { channelId: fallbackChannelId, channelName: 'fallback' };
+                }
+                return null;
+            }),
+        };
+
+        const realRouter = new ResponseRouter({ manager: mockManager as never });
+        const registry   = makeRegistry(Promise.resolve());
+        const client     = makeClient();
+
+        spies.push(
+            spyOn(channelRegistryModule, 'discoverAllChannels').mockRejectedValue(new Error('real routing test')),
+            spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
+        );
+
+        const mockSendToChannel = mock(async () => ({} as Message));
+        const rateLimiter = { sendToChannel: mockSendToChannel } as unknown as DiscordRateLimiter;
+
+        initializeChannelRegistry(client, registry, realRouter, rateLimiter);
+
+        // Flush through the error path: ready → discovery catch → sendRegistryErrorNotification → routeToFallback → channels.fetch → sendToChannel
+        for(let i = 0; i < 12; i++) {
+            // eslint-disable-next-line no-await-in-loop -- sequential microtask draining
+            await Promise.resolve();
+        }
+
+        // The real fallback channel ID must be fetched — not 'synthetic-channel'
+        const fetchMock = (client.channels as unknown as { fetch: ReturnType<typeof mock> }).fetch;
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe(fallbackChannelId);
+
+        // The notification must have been sent via the rate limiter
+        expect(mockSendToChannel).toHaveBeenCalledTimes(1);
+        const sentContent: unknown = (mockSendToChannel.mock.calls as unknown as [unknown, string][])[0]?.[1];
+        expect(typeof sentContent === 'string' && sentContent.includes('Channel Registry Error')).toBe(true);
     });
 });
 

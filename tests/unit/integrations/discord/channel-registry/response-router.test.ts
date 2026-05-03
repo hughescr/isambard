@@ -433,4 +433,45 @@ describe('ResponseRouter', () => {
             });
         });
     });
+
+    describe('routeToFallback', () => {
+        const FALLBACK_META: ChannelMetadata = {
+            channelId:    FALLBACK_CHANNEL,
+            guildId:      createGuildId('guild-123'),
+            channelName:  'fallback',
+            isMuted:      false,
+            isWellKnown:  'fallback',
+            discoveredAt: new Date().toISOString(),
+            lastSeenAt:   new Date().toISOString(),
+            updatedAt:    new Date().toISOString(),
+        };
+
+        it('should route to the fallback channel and set isFallback=true', async () => {
+            mockManager.getWellKnownChannel = mock(() => Promise.resolve(FALLBACK_META));
+
+            const result = await router.routeToFallback('Operator notification');
+
+            expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('fallback');
+            expect(result.targetChannelId).toBe(FALLBACK_CHANNEL);
+            expect(result.shouldSend).toBe(true);
+            expect(result.content).toBe('Operator notification');
+            expect(result.isFallback).toBe(true);
+        });
+
+        it('should process sentinel in content', async () => {
+            mockManager.getWellKnownChannel = mock(() => Promise.resolve(FALLBACK_META));
+
+            const result = await router.routeToFallback(`${NO_RESPONSE_SENTINEL} Silent`);
+
+            expect(result.shouldSend).toBe(false);
+            expect(result.content).toBe('Silent');
+            expect(result.isFallback).toBe(true);
+        });
+
+        it('should throw WellKnownChannelNotFoundError when no fallback channel is configured', () => {
+            mockManager.getWellKnownChannel = mock(() => Promise.resolve(null));
+
+            expect(router.routeToFallback('Notification')).rejects.toThrow(WellKnownChannelNotFoundError);
+        });
+    });
 });

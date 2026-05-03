@@ -19,10 +19,9 @@ import { type AnswerClassifier, type QuestionRegistry, type PerchSessionRunner  
 import { createReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import { safeAsyncHandler } from '@/utils';
 
-// ResponseRouter treats unknown ChannelIds as fallback candidates;
-// SYNTHETIC_FALLBACK_CHANNEL_ID is a sentinel that exploits this contract
-// to route operator notifications through the fallback channel.
-const SYNTHETIC_FALLBACK_CHANNEL_ID = createChannelId('synthetic-channel');
+// Operator notifications for registry errors have no associated origin channel.
+// We call responseRouter.routeToFallback() directly so the notification is
+// delivered to the configured fallback channel without needing a real ChannelId.
 
 // ---------------------------------------------------------------------------
 // No-op health registry stub (used when no registry is provided)
@@ -56,12 +55,8 @@ async function sendRegistryErrorNotification(
         // Notification content must include the error message so the operator can diagnose the failure.
         const notificationContent = `⚠️ **Channel Registry Error**: Failed to load channel mute settings. I'm currently responding to ALL channels until this is resolved. Error: ${errorMsg}`;
 
-        // Route to fallback channel for startup errors
-        const routing = await responseRouter.routeResponse(
-            'processing_message', // Use processing_message as the session type
-            notificationContent,
-            SYNTHETIC_FALLBACK_CHANNEL_ID // Will trigger fallback routing
-        );
+        // Route to fallback channel for startup errors — no origin channel exists here.
+        const routing = await responseRouter.routeToFallback(notificationContent);
 
         // Stryker disable next-line all: Defensive guard - routing always has shouldSend=true and targetChannelId set for error notifications
         if(routing.shouldSend && routing.targetChannelId) {

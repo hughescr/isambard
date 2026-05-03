@@ -111,6 +111,30 @@ export class ResponseRouter {
     }
 
     /**
+     * Routes an operator notification directly to the configured fallback channel.
+     * Use this for startup or registry errors that have no associated origin channel.
+     *
+     * @param content - The notification content to send
+     * @returns Routing result targeting the fallback channel, or throws WellKnownChannelNotFoundError
+     *          if no fallback channel is configured.
+     */
+    async routeToFallback(content: string): Promise<RoutingResult> {
+        const { shouldSend, content: processedContent } = processResponse(content);
+
+        const fallbackChannel = await this.config.manager.getWellKnownChannel('fallback');
+        if(!fallbackChannel) {
+            throw new WellKnownChannelNotFoundError('fallback');
+        }
+
+        return {
+            targetChannelId: fallbackChannel.channelId,
+            shouldSend,
+            content:         processedContent,
+            isFallback:      true,
+        };
+    }
+
+    /**
      * Gets the target channel for a session type without processing a response.
      * Useful for logging or preview.
      */
