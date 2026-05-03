@@ -1,0 +1,20 @@
+id: no-unwrapped-json-parse
+language: typescript
+severity: error
+message: |
+  JSON.parse() throws SyntaxError on malformed input. Wrap in a try/catch block (or use a
+  safe-parse helper) and handle the failure mode gracefully — log a warning and return a
+  sensible fallback rather than crashing the process.
+
+  Pattern: try { parsed = JSON.parse(s); } catch (err) { logger.warn({ err }, '...'); /* fallback */ }
+
+files:
+  - 'src/**/*.ts'
+  - 'src/**/*.tsx'
+
+rule:
+  pattern: JSON.parse($X)
+  not:
+    inside:
+      kind: try_statement
+      stopBy: end

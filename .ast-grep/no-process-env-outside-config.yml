@@ -1,0 +1,39 @@
+id: no-process-env-outside-config
+language: typescript
+severity: error
+message: |
+  Environment variable reads must be centralized in src/config/loader.ts.
+  The loader validates and exposes env vars as a typed Config object; reads scattered
+  across the codebase bypass that validation layer and make env dependencies hard to audit.
+
+  Move the read to src/config/schemas.ts (add to the appropriate schema) and
+  src/config/loader.ts (add to the appropriate rawConfig section), then consume
+  the typed config field at the call site.
+
+  Allowlisted exceptions (see ignores below):
+  - src/config/**         — canonical home for env reads
+  - src/index.ts          — bootstrap WRITE (process.env.CLAUDE_CODE_OAUTH_TOKEN = ...)
+                            required to pass the OAuth token into the Claude Agent SDK child
+                            process; this is a write, not a read, and happens after loadConfig
+  - src/storage/memory-vec/paths.ts — reads XDG_CACHE_HOME (Linux XDG standard)
+                            inside a Linux-only branch already under // Stryker disable;
+                            threading through config would require propagating an optional field
+                            through cacheDir() → ggufPath() → loadEmbedder() without benefit
+  - src/storage/memory-vec-store/backend.ts — reads SQLITE_VEC_LIB_PATH inside
+                            configureCustomSQLite() which is fully under // Stryker disable all;
+                            the path is a macOS platform-specific override that callers set before
+                            opening any Database; threading through VectorIndex.open() signature
+                            would break the static factory pattern without meaningful safety gain
+
+files:
+  - 'src/**/*.ts'
+  - 'src/**/*.tsx'
+
+ignores:
+  - 'src/config/**'
+  - 'src/index.ts'
+  - 'src/storage/memory-vec/paths.ts'
+  - 'src/storage/memory-vec-store/backend.ts'
+
+rule:
+  pattern: process.env.$KEY

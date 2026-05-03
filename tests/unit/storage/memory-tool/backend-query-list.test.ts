@@ -1,5 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendQuery } from '@/storage/memory-tool/backend-query';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
@@ -252,5 +253,24 @@ describe('MemoryToolBackendQuery - list', () => {
         const queryInput = calls[0].args[0].input;
         expect(queryInput.Limit).toBe(10);
         expect(queryInput.ExclusiveStartKey).toBeDefined();
+    });
+
+    test('should warn and skip ExclusiveStartKey when cursor contains malformed JSON', async () => {
+        const warnSpy = spyOn(logger, 'warn');
+        ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+        // 'not-valid-json' base64-encoded: btoa('not-valid-json') = 'bm90LXZhbGlkLWpzb24='
+        const malformedCursor = Buffer.from('not-valid-json').toString('base64');
+        await queryOps.list('/state', { cursor: malformedCursor });
+
+        const calls = ddbMock.commandCalls(QueryCommand);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ cursor: malformedCursor }),
+            expect.stringContaining('Malformed pagination cursor')
+        );
+
+        warnSpy.mockRestore();
     });
 });

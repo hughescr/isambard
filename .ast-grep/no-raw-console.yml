@@ -1,0 +1,24 @@
+id: no-raw-console
+language: typescript
+severity: error
+message: |
+  Production code must route through the structured logger (@hughescr/logger) rather than
+  raw console methods. Raw console output bypasses log levels, structured fields, and
+  transport routing (e.g. log aggregation, alerts).
+
+  Replace: console.warn('...')
+  With:    logger.warn({ ...context }, 'message')
+
+  Import logger from '@hughescr/logger'.
+
+files:
+  - 'src/**/*.ts'
+  - 'src/**/*.tsx'
+
+rule:
+  any:
+    - pattern: console.log($$$)
+    - pattern: console.warn($$$)
+    - pattern: console.error($$$)
+    - pattern: console.debug($$$)
+    - pattern: console.info($$$)

@@ -1,4 +1,5 @@
 import { describe, it, expect, spyOn } from 'bun:test';
+import { logger } from '@hughescr/logger';
 import { detectScenes } from '@/utils/media/video/scene-detector';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
@@ -69,10 +70,13 @@ describe('detectScenes', () => {
     });
 
     it('logs a warning and falls back when ffmpeg exits non-zero with no scdet output', async () => {
-        const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+        const warnSpy = spyOn(logger, 'warn');
         const scenes = await detectScenes('/test/video.mp4', 40, makeRunner('', 1));
         expect(scenes).toHaveLength(4);
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ffmpeg exited with code 1'));
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ exitCode: 1 }),
+            expect.stringContaining('ffmpeg exited with non-zero code')
+        );
         warnSpy.mockRestore();
     });
 

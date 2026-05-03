@@ -1,3 +1,4 @@
+import { logger } from '@hughescr/logger';
 import type { SceneInfo, SpawnRunner } from './types';
 
 // Stryker disable next-line ArithmeticOperator: threshold value is configuration
@@ -78,8 +79,8 @@ export async function detectScenes(
     // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: defensive check — both branches produce same fallback result for genuine failures
     if(result.exitCode !== 0 && changeTimestamps.length === 0) {
         // Could be a real failure (not just the null mux exit) — fall through to fallback below
-        // eslint-disable-next-line no-console -- intentional diagnostic warning for ffmpeg failures
-        console.warn(`[scene-detector] ffmpeg exited with code ${result.exitCode} and produced no scdet output`);
+        // Stryker disable next-line ObjectLiteral,StringLiteral: log message and object are observability only — not behavior
+        logger.warn({ exitCode: result.exitCode }, '[scene-detector] ffmpeg exited with non-zero code and produced no scdet output');
     }
 
     const scenes = buildScenes(changeTimestamps, duration);

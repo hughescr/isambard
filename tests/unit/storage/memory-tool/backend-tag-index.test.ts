@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
-import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, spyOn } from 'bun:test';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { logger } from '@hughescr/logger';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import type { MemoryPath, TagIndexItem } from '@/storage/memory-tool/types';
@@ -972,6 +973,23 @@ describe('MemoryToolBackendTagIndex', () => {
 
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(exclusiveStartKey);
+        });
+
+        test('should warn and skip ExclusiveStartKey when cursor contains malformed JSON', async () => {
+            const warnSpy = spyOn(logger, 'warn');
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const malformedCursor = Buffer.from('not-valid-json').toString('base64');
+            await backend.queryByTag('important', undefined, { cursor: malformedCursor });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ cursor: malformedCursor }),
+                expect.stringContaining('Malformed pagination cursor')
+            );
+
+            warnSpy.mockRestore();
         });
 
         test('should support limit', async () => {

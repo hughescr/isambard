@@ -501,9 +501,24 @@ export class MemoryToolBackendTagIndex {
     }
 
     /**
+     * Decodes a base64-encoded pagination cursor to a DynamoDB ExclusiveStartKey.
+     * Returns undefined and logs a warning if the cursor is malformed.
+     */
+    private parseCursor(cursor: string): Record<string, unknown> | undefined {
+        try {
+            return JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as Record<string, unknown>;
+        } catch (err) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: logger call is observability only — warn + return undefined is the correct graceful fallback for a malformed cursor
+            logger.warn({ err, cursor }, 'Malformed pagination cursor — skipping ExclusiveStartKey; query will restart from the beginning');
+            return undefined;
+        }
+    }
+
+    /**
      * Queries tag index by a single tag.
      */
 
+    // eslint-disable-next-line complexity -- query-building function: each option branch (layer filter, date range, limit, cursor) is independently required; extracting further would obscure the DynamoDB query structure
     async queryByTag(
         tag: string,
         layer?: string,
@@ -552,10 +567,14 @@ export class MemoryToolBackendTagIndex {
         if(options?.limit) {
             queryParams.Limit = options.limit;
         }
+        // Stryker disable next-line OptionalChaining: options may be undefined; parseCursor handles malformed JSON gracefully
         if(options?.cursor) {
-            queryParams.ExclusiveStartKey = JSON.parse(
-                Buffer.from(options.cursor, 'base64').toString('utf8')
-            );
+            // parseCursor returns undefined for malformed JSON (after logging a warning) — skip ExclusiveStartKey in that case
+            const parsedKey = this.parseCursor(options.cursor);
+            // Stryker disable next-line ConditionalExpression: setting ExclusiveStartKey=undefined is indistinguishable from not setting it in the mock; guard is required to avoid polluting queryParams with undefined when cursor is malformed
+            if(parsedKey !== undefined) {
+                queryParams.ExclusiveStartKey = parsedKey;
+            }
         }
 
         const result = await this.getDocClient().send(new QueryCommand({
