@@ -10,6 +10,7 @@
 
 import { getModeEmoji } from './transitions';
 import type { BotState, BotStateManager, CatchingUpModeContext } from './types';
+import { InvariantViolationError } from '@/errors';
 
 // ============================================================================
 // Types
@@ -219,7 +220,7 @@ function buildPromptContext(
 
     // Stryker disable StringLiteral: Error message for invalid state
     if(activityPhase === null) {
-        throw new Error('Cannot build prompt context without activityPhase');
+        throw new InvariantViolationError('buildStatusPromptContext', 'Cannot build prompt context without activityPhase');
     }
     // Stryker restore StringLiteral
 

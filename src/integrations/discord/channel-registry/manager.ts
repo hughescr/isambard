@@ -181,8 +181,8 @@ export class ChannelRegistryManager {
      */
     startHydration(loop: ReconnectionLoop): void {
         if(this.hydrationLoop !== undefined) {
-            // Stryker disable next-line StringLiteral: error message is informational only
-            throw new Error('ChannelRegistryManager: hydration loop already started — call stop() first');
+            // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
+            throw new InvariantViolationError('startHydration', 'ChannelRegistryManager: hydration loop already started — call stop() first');
         }
         this.hydrationLoop = loop;
         loop.start();

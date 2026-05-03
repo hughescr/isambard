@@ -23,6 +23,7 @@ import {
 } from './types';
 // eslint-disable-next-line boundaries/dependencies -- manager.ts imports CompactionStateManager for getCompactionStateManager(); direct import avoids circular dep through agent index
 import type { CompactionStateManager } from '@/agent/hooks/compaction';
+import { InvariantViolationError } from '@/errors';
 
 /** Type guard: check if a ModeContext is a CatchingUpModeContext (has unreadCount). */
 // Stryker disable ConditionalExpression,StringLiteral: Equivalent — markChannelViewed creates new Set via spread, never mutates in place
@@ -91,7 +92,8 @@ export class BotStateManagerImpl implements BotStateManager {
      */
     private assertNotStopped(): void {
         if(this.isStopped) {
-            throw new Error('BotStateManager has been stopped');
+            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
+            throw new InvariantViolationError('assertNotStopped', 'BotStateManager has been stopped');
         }
     }
 

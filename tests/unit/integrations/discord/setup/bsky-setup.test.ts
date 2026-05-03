@@ -11,6 +11,7 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
+import { ChannelNotAccessibleError } from '@/errors';
 import type { BlueskyClient } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupBsky, type BskySetupOptions } from '@/integrations/discord/setup/bsky-setup';
@@ -56,7 +57,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
         };
     });
 
-    it('throws "not a sendable text channel" when channel.fetch returns a non-object (string)', async () => {
+    it('throws ChannelNotAccessibleError when channel.fetch returns a non-object (string)', async () => {
         // channels.fetch returns a truthy non-object — isSendableChannel returns false
         options.client = {
             channels: {
@@ -69,10 +70,10 @@ describe('setupBsky — isSendableChannel type guard', () => {
         // Call sendApprovalRequest — it will call isSendableChannel with the string
         expect(
             result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123')
-        ).rejects.toThrow('not a sendable text channel');
+        ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
 
-    it('throws "not a sendable text channel" when channel.fetch returns null', async () => {
+    it('throws ChannelNotAccessibleError when channel.fetch returns null', async () => {
         options.client = {
             channels: {
                 fetch: mock(async () => null),
@@ -83,7 +84,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
 
         expect(
             result.sendApprovalRequest('hello', '@user.bsky.social', 'at://uri', 'cid123')
-        ).rejects.toThrow('not a sendable text channel');
+        ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
     });
 
     it('sends message when channel.fetch returns a sendable channel (object with send method)', async () => {

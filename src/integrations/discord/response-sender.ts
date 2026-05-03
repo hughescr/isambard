@@ -7,7 +7,7 @@ import type { DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
 import type { BotStateManager, SessionType } from './state';
 import { createChannelId } from './types';
-import { InvariantViolationError } from '@/errors';
+import { ChannelNotAccessibleError, InvariantViolationError } from '@/errors';
 
 /** Type guard: check if a routing/response result is a RoutingResult (has shouldSend). */
 function isRoutingResult(result: unknown): result is RoutingResult {
@@ -177,7 +177,7 @@ async function sendChunksToChannel(
 ): Promise<void> {
     const targetChannel = await client.channels.fetch(targetChannelId);
     if(!targetChannel?.isTextBased()) {
-        throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
+        throw new ChannelNotAccessibleError(targetChannelId);
     }
 
     // Stryker disable next-line UpdateOperator: i-- would cause infinite loop — untestable without real Discord API
@@ -395,7 +395,7 @@ async function sendChunksToWellKnownChannel(
     // Stryker disable next-line ConditionalExpression: targetChannel is only needed for non-capability path
     const targetChannel = discordCapability ? undefined : await client.channels.fetch(targetChannelId) as TextChannel | undefined;
     if(!discordCapability && !targetChannel?.isTextBased()) {
-        throw new Error(`Target channel ${targetChannelId} not found or not a text channel`);
+        throw new ChannelNotAccessibleError(targetChannelId);
     }
     let anyQueued = false;
     // Stryker disable next-line UpdateOperator: i-- would cause infinite loop — untestable without real Discord API

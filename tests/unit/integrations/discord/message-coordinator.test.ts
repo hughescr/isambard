@@ -1782,7 +1782,7 @@ describe('MessageCoordinator', () => {
             } catch (error) {
                 errorMessage = (error as Error).message;
             }
-            expect(errorMessage).toBe('Processor not set. Call setProcessor() before handling messages.');
+            expect(errorMessage).toContain('Processor not set. Call setProcessor() before handling messages.');
         });
     });
 
@@ -2095,7 +2095,7 @@ describe('MessageCoordinator', () => {
                 errorMessage = (error as Error).message;
             }
             expect(errorWasThrown).toBe(true);
-            expect(errorMessage).toBe('Processor not set. Call setProcessor() before handling messages.');
+            expect(errorMessage).toContain('Processor not set. Call setProcessor() before handling messages.');
 
             // Now set the processor and call handleMessage again
             // This proves that the first call threw before processing (processor is never called)
@@ -2135,7 +2135,7 @@ describe('MessageCoordinator', () => {
 
             // Verify the error was actually thrown
             expect(didThrow).toBe(true);
-            expect(errorMessage).toBe('Processor not set. Call setProcessor() before handling messages.');
+            expect(errorMessage).toContain('Processor not set. Call setProcessor() before handling messages.');
 
             // Verify that no processing state was created (no channel state)
             // We can indirectly verify this by setting processor and calling handleMessage

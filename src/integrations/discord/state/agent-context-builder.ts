@@ -1,4 +1,5 @@
 import { type BotStateManager, type CatchingUpModeContext } from './types';
+import { InvariantViolationError } from '@/errors';
 
 /**
  * MCP server configuration
@@ -185,7 +186,7 @@ export function createAgentContextBuilder(deps: AgentContextBuilderDeps): AgentC
                     // Stryker disable StringLiteral: Error message for unreachable code path
                     const _exhaustive: never = state.mode;
                     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- never type used for exhaustiveness check
-                    throw new Error(`Unknown mode: ${_exhaustive}`);
+                    throw new InvariantViolationError('buildAgentContext', `Unknown mode: ${_exhaustive}`);
                     // Stryker restore StringLiteral
                 }
             }

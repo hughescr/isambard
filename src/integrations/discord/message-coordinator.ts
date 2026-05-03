@@ -23,6 +23,7 @@ import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
 import type { DiscordMessageContext, ChannelId } from './types';
 import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
+import { InvariantViolationError } from '@/errors';
 
 const MAX_PENDING_MESSAGES = 50;
 
@@ -225,7 +226,7 @@ export class MessageCoordinator {
     ): void {
         // Stryker disable all: Unreachable - handleMessage checks processor first
         if(!this.processor) {
-            throw new Error('Processor not set. Call setProcessor() before handling messages.');
+            throw new InvariantViolationError('startProcessing', 'Processor not set. Call setProcessor() before handling messages.');
         }
         // Stryker restore all
 
@@ -289,7 +290,7 @@ export class MessageCoordinator {
     private processWithResume(channelId: ChannelId): void {
         // Stryker disable all: Unreachable - handleMessage checks processor first
         if(!this.processor) {
-            throw new Error('Processor not set. Call setProcessor() before handling messages.');
+            throw new InvariantViolationError('processWithResume', 'Processor not set. Call setProcessor() before handling messages.');
         }
         // Stryker restore all
 
@@ -392,7 +393,8 @@ export class MessageCoordinator {
     handleMessage(context: DiscordMessageContext, discordMessage: Message, channel?: TypingChannel): void {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Redundant with checks in startProcessing (line 126) and processWithResume (line 180)
         if(!this.processor) {
-            throw new Error('Processor not set. Call setProcessor() before handling messages.');
+            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
+            throw new InvariantViolationError('handleMessage', 'Processor not set. Call setProcessor() before handling messages.');
         }
 
         // Registry-ready gate: drop messages while the channel registry is hydrating.

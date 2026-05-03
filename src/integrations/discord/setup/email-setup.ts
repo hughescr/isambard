@@ -5,6 +5,7 @@ import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder,
 import { BLUE } from '../colors';
 import { createEmailMCPServer, type ActivityLogger } from '@/agent';
 import type { EmailConfig } from '@/config';
+import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { type ChannelId, createChannelId } from '@/integrations/discord/types';
@@ -239,7 +240,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
-                    throw new Error(`Admin channel ${emailConfig.adminDiscordChannelId} is not a sendable text channel`);
+                    throw new ChannelNotAccessibleError(emailConfig.adminDiscordChannelId);
                 }
             }, { policy: { maxAttempts: 3 }, ...retryDeps }));
     };

@@ -3,7 +3,7 @@ import type { ChannelId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import { processResponse } from './sentinel';
 import type { WellKnownChannel } from './types';
-import { WellKnownChannelNotFoundError } from '@/errors';
+import { InvariantViolationError, WellKnownChannelNotFoundError } from '@/errors';
 
 export interface RoutingResult {
     /** The channel to send the response to */
@@ -53,7 +53,8 @@ export class ResponseRouter {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for dm/processing_message — without this guard, would fall through to wellKnown lookup which returns same result when originChannelId is defined
         if(sessionType === 'dm' || sessionType === 'processing_message') {
             if(!originChannelId) {
-                throw new Error(`originChannelId is required for session type: ${sessionType}`);
+                // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
+                throw new InvariantViolationError('routeResponse', `originChannelId is required for session type: ${sessionType}`);
             }
             return {
                 targetChannelId: originChannelId,
@@ -68,7 +69,8 @@ export class ResponseRouter {
         if(!wellKnownType) {
             // Shouldn't happen, but fallback to origin
             if(!originChannelId) {
-                throw new Error(`originChannelId is required for fallback routing with session type: ${sessionType}`);
+                // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
+                throw new InvariantViolationError('routeResponse', `originChannelId is required for fallback routing with session type: ${sessionType}`);
             }
             return {
                 targetChannelId: originChannelId,
@@ -116,7 +118,8 @@ export class ResponseRouter {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Early return for dm/processing_message — without this guard, would fall through to wellKnown lookup which returns same result when originChannelId is defined
         if(sessionType === 'dm' || sessionType === 'processing_message') {
             if(!originChannelId) {
-                throw new Error(`originChannelId is required for session type: ${sessionType}`);
+                // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
+                throw new InvariantViolationError('getTargetChannel', `originChannelId is required for session type: ${sessionType}`);
             }
             return originChannelId;
         }
@@ -124,7 +127,8 @@ export class ResponseRouter {
         const wellKnownType = SESSION_TO_CHANNEL[sessionType];
         if(!wellKnownType) {
             if(!originChannelId) {
-                throw new Error(`originChannelId is required for fallback routing with session type: ${sessionType}`);
+                // Stryker disable next-line StringLiteral: invariant detail string is debug-only metadata
+                throw new InvariantViolationError('getTargetChannel', `originChannelId is required for fallback routing with session type: ${sessionType}`);
             }
             return originChannelId;
         }

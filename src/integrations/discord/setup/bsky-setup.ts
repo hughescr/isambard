@@ -2,6 +2,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import type { ActivityLogger } from '@/agent';
+import { ChannelNotAccessibleError } from '@/errors';
 import {
     BskyOutboundApprovalHandler,
     BskyRejectionBackend,
@@ -148,7 +149,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
                 if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
-                    throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
+                    throw new ChannelNotAccessibleError(adminDiscordChannelId);
                 }
             }, { policy: { maxAttempts: 3 }, ...retryDeps }));
     };
@@ -182,7 +183,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
                 if(isSendableChannel(channel)) {
                     await channel.send({ embeds: [embed], components: [actionRow] });
                 } else {
-                    throw new Error(`Admin channel ${adminDiscordChannelId} is not a sendable text channel`);
+                    throw new ChannelNotAccessibleError(adminDiscordChannelId);
                 }
             }, { policy: { maxAttempts: 3 }, ...retryDeps }));
     };

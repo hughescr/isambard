@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import { ActionRowBuilder, ApplicationIntegrationType, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, type ButtonInteraction, type ChatInputCommandInteraction } from 'discord.js';
 import { z } from 'zod';
 import { GREEN, RED, AMBER } from './colors';
-import { ContactNotFoundError } from '@/errors';
+import { ContactNotFoundError, InvariantViolationError } from '@/errors';
 import { contactIdentifierSchema, type Contact, type ContactBackend, type ContactIdentifier, type PersonAllowlist, createContactId, generatePersonId, findAvailablePersonId } from '@/storage';
 
 /**
@@ -819,7 +819,8 @@ export class ContactApprovalHandler {
 
     private async applyContactUpdate(request: ContactApprovalRequest, now: string): Promise<void> {
         if(!request.personId) {
-            throw new Error('Contact update request is missing personId');
+            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
+            throw new InvariantViolationError('applyContactUpdate', 'Contact update request is missing personId');
         }
         const personId = createContactId(request.personId);
         for(const identifier of request.addIdentifiers ?? []) {

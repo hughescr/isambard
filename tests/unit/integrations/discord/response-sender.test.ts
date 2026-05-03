@@ -15,7 +15,7 @@
 /* eslint-disable no-restricted-syntax -- sendResponseToWellKnownChannel is re-imported per test to avoid module-level spy contamination; these imports are lightweight (same module, cached by bun) and necessary because the function is a module-level export that needs fresh resolution after mock setup */
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type { Message, TextChannel, Client, DMChannel } from 'discord.js';
-import { WellKnownChannelNotFoundError } from '@/errors/discord';
+import { ChannelNotAccessibleError, WellKnownChannelNotFoundError } from '@/errors/discord';
 import type { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { sendResponse } from '@/integrations/discord/response-sender';
@@ -452,7 +452,7 @@ describe('sendResponse', () => {
             });
 
             expect(result.sent).toBe(false);
-            expect(result.error?.message).toContain('not found');
+            expect(result.error).toBeInstanceOf(ChannelNotAccessibleError);
         });
     });
 
@@ -761,7 +761,7 @@ describe('sendResponse', () => {
             });
 
             expect(result.sent).toBe(false);
-            expect(result.error?.message).toContain('not found');
+            expect(result.error).toBeInstanceOf(ChannelNotAccessibleError);
         });
     });
 });

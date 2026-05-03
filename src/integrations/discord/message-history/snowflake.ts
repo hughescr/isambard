@@ -1,6 +1,6 @@
 import { DiscordSnowflake } from '@sapphire/snowflake';
 import { z } from 'zod';
-import { InvalidSnowflakeError } from '@/errors';
+import { InvalidSnowflakeError, InvariantViolationError } from '@/errors';
 
 // Re-export error class for backward compatibility
 
@@ -58,7 +58,7 @@ export function snowflakeToTimestamp(snowflake: string): Date {
  *
  * @param date - The Date to convert to a snowflake
  * @returns A Discord snowflake ID string representing the given timestamp
- * @throws {Error} If the date is before the Discord epoch (January 1, 2015)
+ * @throws {InvariantViolationError} If the date is before the Discord epoch (January 1, 2015)
  *
  * @example
  * ```typescript
@@ -74,7 +74,7 @@ export function timestampToSnowflake(date: Date): string {
 
     if(timestampOffset < 0n) {
         // Stryker disable next-line StringLiteral: Error message text is not behavior
-        throw new Error('Date is before Discord epoch (January 1, 2015)');
+        throw new InvariantViolationError('timestampToSnowflake', 'Date is before Discord epoch (January 1, 2015)');
     }
 
     // Generate snowflake with all lower bits set to 0 for backward compatibility

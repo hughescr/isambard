@@ -1,3 +1,4 @@
+import { InvariantViolationError } from '@/errors';
 import { createPrefixedKey, parsePrefixedKey } from '@/storage';
 
 /**
@@ -90,7 +91,7 @@ export const ChannelRegistryKeyGenerator = {
      *
      * @param pk - Primary Key (CHANNEL#{channelId})
      * @returns The channel ID
-     * @throws Error if PK is not in expected format
+     * @throws {InvariantViolationError} If PK is not in expected format
      *
      * @example
      * ```ts
@@ -100,7 +101,8 @@ export const ChannelRegistryKeyGenerator = {
      */
     parseChannelId(pk: string): string {
         if(!pk.startsWith('CHANNEL#')) {
-            throw new Error(`Invalid PK format: expected CHANNEL#..., got ${pk}`);
+            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
+            throw new InvariantViolationError('parseChannelId', `Invalid PK format: expected CHANNEL#..., got ${pk}`);
         }
         return parsePrefixedKey(PREFIX_CHANNEL, pk);
     },
@@ -111,7 +113,7 @@ export const ChannelRegistryKeyGenerator = {
      * @param gsi1pk - GSI1 Primary Key (GUILD#{guildId})
      * @param gsi1sk - GSI1 Sort Key (CHANNEL#{channelId})
      * @returns Object containing guildId and channelId
-     * @throws Error if keys are not in expected format
+     * @throws {InvariantViolationError} If keys are not in expected format
      *
      * @example
      * ```ts
@@ -124,10 +126,12 @@ export const ChannelRegistryKeyGenerator = {
      */
     parseGuildKeys(gsi1pk: string, gsi1sk: string): { guildId: string, channelId: string } {
         if(!gsi1pk.startsWith('GUILD#')) {
-            throw new Error(`Invalid GSI1PK format: expected GUILD#..., got ${gsi1pk}`);
+            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
+            throw new InvariantViolationError('parseGuildKeys', `Invalid GSI1PK format: expected GUILD#..., got ${gsi1pk}`);
         }
         if(!gsi1sk.startsWith('CHANNEL#')) {
-            throw new Error(`Invalid GSI1SK format: expected CHANNEL#..., got ${gsi1sk}`);
+            // Stryker disable next-line StringLiteral: invariant location and detail strings are debug-only metadata
+            throw new InvariantViolationError('parseGuildKeys', `Invalid GSI1SK format: expected CHANNEL#..., got ${gsi1sk}`);
         }
 
         return {
