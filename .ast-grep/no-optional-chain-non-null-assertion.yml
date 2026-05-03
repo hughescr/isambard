@@ -1,0 +1,15 @@
+id: no-optional-chain-non-null-assertion
+language: typescript
+severity: error
+message: |
+  Optional chain followed by non-null assertion is contradictory — the optional chain
+  (?.) admits that the left-hand side may be undefined/null, but the non-null assertion
+  (!) asserts the result is never nullish. This covers all three forms: $X?.$Y! (member
+  access), $X?.[$Y]! (subscript/computed access), and $X?.()! (optional call). Remove
+  one operator: either drop ?. (if you know the LHS is never null) or drop ! (and
+  handle the possibly-undefined result properly).
+rule:
+  any:
+    - pattern: $X?.$Y!
+    - pattern: $X?.[$Y]!
+    - pattern: $X?.()!
