@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { SpawnRunner } from './types';
+import { MediaProcessingError } from '@/errors';
 
 // Stryker disable next-line ArithmeticOperator: 5-minute download timeout is configuration
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -34,7 +35,11 @@ export async function downloadVideo(
         // Stryker restore StringLiteral,ObjectLiteral
 
         if(result.exitCode !== 0) {
-            throw new Error(`HLS download failed with exit code ${result.exitCode}: ${result.stderr}`);
+            throw new MediaProcessingError(
+                `HLS download failed with exit code ${result.exitCode}: ${result.stderr}`,
+                'ffmpeg-hls',
+                result.stderr
+            );
         }
 
         return outputPath;
@@ -47,7 +52,11 @@ export async function downloadVideo(
     });
 
     if(!response.ok) {
-        throw new Error(`HTTP download failed: ${response.status} ${response.statusText}`);
+        throw new MediaProcessingError(
+            `HTTP download failed: ${response.status} ${response.statusText}`,
+            'http-download',
+            `${response.status} ${response.statusText}`
+        );
     }
 
     // Stream response body directly to disk without buffering in memory

@@ -1,4 +1,5 @@
 import type { VideoMetadata, TranscriptionResult, TranscriptionSegment, SpawnRunner } from './types';
+import { MediaProcessingError } from '@/errors';
 
 /** Parse an HH:MM:SS.mmm timestamp string to seconds. */
 function parseTimestamp(ts: string): number {
@@ -66,7 +67,11 @@ export async function extractEmbeddedSubtitles(
     // Stryker restore StringLiteral,ArrayDeclaration
 
     if(result.exitCode !== 0) {
-        throw new Error(`Subtitle extraction failed with exit code ${result.exitCode}: ${result.stderr}`);
+        throw new MediaProcessingError(
+            `Subtitle extraction failed with exit code ${result.exitCode}: ${result.stderr}`,
+            'ffmpeg-subtitle',
+            result.stderr
+        );
     }
 
     return result.stdout;

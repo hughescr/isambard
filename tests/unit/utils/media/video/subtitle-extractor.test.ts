@@ -4,6 +4,7 @@ import {
     transcribeWithWhisperKit,
     getSubtitlesOrTranscription
 } from '@/utils/media/video/subtitle-extractor';
+import { MediaProcessingError } from '@/errors';
 import type { VideoMetadata, SpawnRunner } from '@/utils/media/video/types';
 
 function makeTextRunner(stdout: string, exitCode = 0): SpawnRunner {
@@ -56,10 +57,16 @@ describe('extractEmbeddedSubtitles', () => {
         expect(result).toBe(SAMPLE_SRT);
     });
 
-    it('throws when ffmpeg exits with non-zero code', async () => {
-        expect(
-            extractEmbeddedSubtitles('/test/video.mp4', 0, makeFailRunner('no subtitle track'))
-        ).rejects.toThrow('Subtitle extraction failed');
+    it('throws MediaProcessingError when ffmpeg exits with non-zero code', async () => {
+        let caught: unknown;
+        try {
+            await extractEmbeddedSubtitles('/test/video.mp4', 0, makeFailRunner('no subtitle track'));
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).message).toContain('Subtitle extraction failed');
+        expect((caught as MediaProcessingError).context.operation).toBe('ffmpeg-subtitle');
     });
 });
 

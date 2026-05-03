@@ -20,3 +20,26 @@ export class PathSecurityError extends IsambardError {
         this.name = 'PathSecurityError';
     }
 }
+
+/**
+ * Error thrown when a media processing operation fails.
+ * Covers HEIC/image conversion, ffprobe metadata extraction,
+ * ffmpeg spectrogram generation, video download, and subtitle extraction.
+ */
+export class MediaProcessingError extends IsambardError {
+    declare public readonly context: { operation: string, detail?: string };
+
+    constructor(message: string, operation: string, detail?: string, cause?: unknown) {
+        super(
+            message,
+            ErrorCode.MEDIA_PROCESSING_ERROR,
+            { operation, ...(detail === undefined ? {} : { detail }) }
+        );
+        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
+        this.name = 'MediaProcessingError';
+        // Stryker disable next-line ConditionalExpression: setting cause=undefined vs not setting are observationally equivalent
+        if(cause !== undefined) {
+            this.cause = cause;
+        }
+    }
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../../setup';
 import { extractMetadata, parseFfprobeOutput } from '@/utils/media/video/metadata';
+import { MediaProcessingError } from '@/errors';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
 function makeRunner(stdout: string, exitCode = 0): SpawnRunner {
@@ -157,9 +158,17 @@ describe('extractMetadata', () => {
         expect(metadata.subtitleTracks[1]?.title).toBeUndefined();
     });
 
-    it('throws when ffprobe exits with non-zero code', async () => {
+    it('throws MediaProcessingError when ffprobe exits with non-zero code', async () => {
         const runner = makeFailingRunner('file not found', 1);
-        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('ffprobe failed');
+        let caught: unknown;
+        try {
+            await extractMetadata('/test/video.mp4', runner);
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).message).toContain('ffprobe failed');
+        expect((caught as MediaProcessingError).context.operation).toBe('ffprobe');
     });
 
     it('throws on malformed JSON output', async () => {
@@ -167,7 +176,7 @@ describe('extractMetadata', () => {
         expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('Failed to parse ffprobe output');
     });
 
-    it('wraps parse error as cause in the thrown Error', async () => {
+    it('throws MediaProcessingError with cause on malformed JSON', async () => {
         const runner = makeRunner('not json');
         let caught: unknown;
         try {
@@ -175,8 +184,9 @@ describe('extractMetadata', () => {
         } catch (e) {
             caught = e;
         }
-        expect(caught).toBeInstanceOf(Error);
-        expect((caught as Error & { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).context.operation).toBe('ffprobe');
+        expect((caught as MediaProcessingError).cause).toBeInstanceOf(SyntaxError);
     });
 
     it('logs warn before throwing on malformed JSON output', async () => {
@@ -203,13 +213,21 @@ describe('extractMetadata', () => {
         );
     });
 
-    it('throws when no video stream found', async () => {
+    it('throws MediaProcessingError when no video stream found', async () => {
         const outputWithNoVideo = JSON.stringify({
             streams: [{ codec_type: 'audio', codec_name: 'aac', channels: 2, sample_rate: '44100', index: 0 }],
             format:  { duration: '10.0' },
         });
         const runner = makeRunner(outputWithNoVideo);
-        expect(extractMetadata('/test/video.mp4', runner)).rejects.toThrow('No video stream found');
+        let caught: unknown;
+        try {
+            await extractMetadata('/test/video.mp4', runner);
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).message).toContain('No video stream found');
+        expect((caught as MediaProcessingError).context.operation).toBe('ffprobe');
     });
 
     it('uses format bit_rate when video stream has no bit_rate', async () => {
@@ -245,12 +263,26 @@ describe('parseFfprobeOutput', () => {
         expect(result.format).toBeUndefined();
     });
 
-    it('throws on invalid JSON', () => {
-        expect(() => parseFfprobeOutput('not json')).toThrow('Failed to parse ffprobe output');
+    it('throws MediaProcessingError on invalid JSON', () => {
+        let caught: unknown;
+        try {
+            parseFfprobeOutput('not json');
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).context.operation).toBe('ffprobe');
     });
 
-    it('throws on valid JSON with invalid schema', () => {
-        expect(() => parseFfprobeOutput(JSON.stringify({ streams: 'not-an-array' }))).toThrow('Invalid ffprobe output schema');
+    it('throws MediaProcessingError on valid JSON with invalid schema', () => {
+        let caught: unknown;
+        try {
+            parseFfprobeOutput(JSON.stringify({ streams: 'not-an-array' }));
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).context.operation).toBe('ffprobe');
     });
 
     it('parses optional stream fields correctly', () => {

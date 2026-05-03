@@ -1,6 +1,7 @@
 import { describe, it, expect, mock, afterEach } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
+import { MediaProcessingError } from '@/errors';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
 const originalFetch = globalThis.fetch;
@@ -59,10 +60,16 @@ describe('downloadVideo', () => {
         expect(resultPath).toContain('video-original.mp4');
     });
 
-    it('throws when HLS download fails', async () => {
-        expect(
-            downloadVideo('https://example.com/stream.m3u8', `${TEST_DIR}/hls-fail`, makeFailingRunner('HLS error'))
-        ).rejects.toThrow('HLS download failed');
+    it('throws MediaProcessingError when HLS download fails', async () => {
+        let caught: unknown;
+        try {
+            await downloadVideo('https://example.com/stream.m3u8', `${TEST_DIR}/hls-fail`, makeFailingRunner('HLS error'));
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).message).toContain('HLS download failed');
+        expect((caught as MediaProcessingError).context.operation).toBe('ffmpeg-hls');
     });
 
     it('fetches directly for non-HLS URLs and writes to disk', async () => {
@@ -77,11 +84,18 @@ describe('downloadVideo', () => {
         expect(resultPath).toContain('video-original.mp4');
     });
 
-    it('throws on HTTP error during direct download', async () => {
+    it('throws MediaProcessingError on HTTP error during direct download', async () => {
         globalThis.fetch = mock(async (): Promise<Response> => new Response(null, { status: 404, statusText: 'Not Found' })) as unknown as typeof fetch;
 
-        expect(
-            downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/direct-fail`, makeSuccessRunner())
-        ).rejects.toThrow('HTTP download failed: 404');
+        let caught: unknown;
+        try {
+            await downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/direct-fail`, makeSuccessRunner());
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).message).toBe('HTTP download failed: 404 Not Found');
+        expect((caught as MediaProcessingError).context.operation).toBe('http-download');
+        expect((caught as MediaProcessingError).context.detail).toBe('404 Not Found');
     });
 });

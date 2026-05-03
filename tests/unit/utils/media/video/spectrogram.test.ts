@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { generateSpectrogram } from '@/utils/media/video/spectrogram';
+import { MediaProcessingError } from '@/errors';
 import type { BinarySpawnRunner } from '@/utils/media/video/types';
 
 const FAKE_PNG = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
@@ -29,10 +30,16 @@ describe('generateSpectrogram', () => {
         expect(result.originalSize).toBe(FAKE_PNG.length);
     });
 
-    it('throws when ffmpeg fails', async () => {
-        expect(
-            generateSpectrogram('/test/video.mp4', makeFailRunner())
-        ).rejects.toThrow('Spectrogram generation failed');
+    it('throws MediaProcessingError when ffmpeg fails', async () => {
+        let caught: unknown;
+        try {
+            await generateSpectrogram('/test/video.mp4', makeFailRunner());
+        } catch (e) {
+            caught = e;
+        }
+        expect(caught).toBeInstanceOf(MediaProcessingError);
+        expect((caught as MediaProcessingError).message).toContain('Spectrogram generation failed');
+        expect((caught as MediaProcessingError).context.operation).toBe('ffmpeg-spectrogram');
     });
 
     it('throws when ffmpeg exits zero but stdout is empty', async () => {

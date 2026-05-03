@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { z } from 'zod';
 import type { VideoMetadata, SubtitleTrack, SpawnRunner } from './types';
+import { MediaProcessingError } from '@/errors';
 
 const ffprobeStreamSchema = z.object({
     codec_type:     z.string(),
@@ -57,8 +58,12 @@ export function parseFfprobeOutput(stdout: string): z.infer<typeof ffprobeOutput
             // Stryker disable next-line StringLiteral: log message is informational only
             msg: 'Failed to parse ffprobe output',
         });
-        // Stryker disable next-line ObjectLiteral: cause property is for error chain — the new Error message is the observable artifact; `.cause` is purely informational
-        throw new Error(`Failed to parse ffprobe output: ${stdout}`, { cause: err });
+        throw new MediaProcessingError(
+            `Failed to parse ffprobe output: ${stdout}`,
+            'ffprobe',
+            stdout,
+            err
+        );
     }
 
     const schemaResult = ffprobeOutputSchema.safeParse(rawParsed);
@@ -69,7 +74,11 @@ export function parseFfprobeOutput(stdout: string): z.infer<typeof ffprobeOutput
             // Stryker disable next-line StringLiteral: log message is informational only
             msg:    'Invalid ffprobe output schema',
         });
-        throw new Error(`Invalid ffprobe output schema: ${JSON.stringify(schemaResult.error.issues)}`);
+        throw new MediaProcessingError(
+            `Invalid ffprobe output schema: ${JSON.stringify(schemaResult.error.issues)}`,
+            'ffprobe',
+            JSON.stringify(schemaResult.error.issues)
+        );
     }
     return schemaResult.data;
 }
@@ -87,7 +96,11 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
     // Stryker restore StringLiteral
 
     if(result.exitCode !== 0) {
-        throw new Error(`ffprobe failed with exit code ${result.exitCode}: ${result.stderr}`);
+        throw new MediaProcessingError(
+            `ffprobe failed with exit code ${result.exitCode}: ${result.stderr}`,
+            'ffprobe',
+            result.stderr
+        );
     }
 
     const parsed = parseFfprobeOutput(result.stdout);
@@ -106,7 +119,11 @@ export async function extractMetadata(videoPath: string, run: SpawnRunner): Prom
         }));
 
     if(videoStream === undefined) {
-        throw new Error('No video stream found in ffprobe output');
+        throw new MediaProcessingError(
+            'No video stream found in ffprobe output',
+            'ffprobe',
+            videoPath
+        );
     }
 
     const duration    = Number(format.duration ?? 0);

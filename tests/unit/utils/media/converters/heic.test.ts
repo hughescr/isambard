@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { mockHeicConvert, resetHeicConvertImpl } from '../../../../setup';
 import { needsConversion, convert } from '@/utils/media/converters/heic';
+import { MediaProcessingError } from '@/errors';
 
 describe('HEIC Image Converter', () => {
     afterEach(() => {
@@ -59,12 +60,19 @@ describe('HEIC Image Converter', () => {
             expect(result.mediaType).toBe('image/png');
         });
 
-        test('throws error for unsupported image types', async () => {
+        test('throws MediaProcessingError for unsupported image types', async () => {
             const inputBuffer = Buffer.from('fake-jpeg-data');
 
-            expect(convert(inputBuffer, 'image/jpeg')).rejects.toThrow(
-                'Unsupported content type for conversion: image/jpeg'
-            );
+            let caughtError: unknown;
+            try {
+                await convert(inputBuffer, 'image/jpeg');
+            } catch (err) {
+                caughtError = err;
+            }
+
+            expect(caughtError).toBeInstanceOf(MediaProcessingError);
+            expect((caughtError as MediaProcessingError).message).toBe('Unsupported content type for conversion: image/jpeg');
+            expect((caughtError as MediaProcessingError).context.operation).toBe('heic-convert');
         });
 
         test('throws error for non-image types', async () => {
@@ -75,14 +83,21 @@ describe('HEIC Image Converter', () => {
             );
         });
 
-        test('wraps heicConvert errors with context', async () => {
+        test('throws MediaProcessingError and wraps heicConvert errors with context', async () => {
             mockHeicConvert.mockRejectedValueOnce(new Error('Invalid HEIC data'));
 
             const inputBuffer = Buffer.from('corrupt-heic-data');
 
-            expect(convert(inputBuffer, 'image/heic')).rejects.toThrow(
-                'HEIC conversion failed: Invalid HEIC data'
-            );
+            let caughtError: unknown;
+            try {
+                await convert(inputBuffer, 'image/heic');
+            } catch (err) {
+                caughtError = err;
+            }
+
+            expect(caughtError).toBeInstanceOf(MediaProcessingError);
+            expect((caughtError as MediaProcessingError).message).toBe('HEIC conversion failed: Invalid HEIC data');
+            expect((caughtError as MediaProcessingError).context.operation).toBe('heic-convert');
         });
 
         test('preserves original error as cause on heicConvert failure', async () => {

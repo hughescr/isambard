@@ -1,5 +1,6 @@
 import heicConvert from 'heic-convert';
 import { isConvertibleImageType } from '../types';
+import { MediaProcessingError } from '@/errors';
 
 interface ConversionResult {
     buffer:    Buffer
@@ -12,7 +13,11 @@ export function needsConversion(contentType: string): boolean {
 
 export async function convert(buffer: Buffer, contentType: string): Promise<ConversionResult> {
     if(!isConvertibleImageType(contentType)) {
-        throw new Error(`Unsupported content type for conversion: ${contentType}`);
+        throw new MediaProcessingError(
+            `Unsupported content type for conversion: ${contentType}`,
+            'heic-convert',
+            contentType
+        );
     }
 
     try {
@@ -32,6 +37,11 @@ export async function convert(buffer: Buffer, contentType: string): Promise<Conv
         };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`HEIC conversion failed: ${message}`, { cause: error });
+        throw new MediaProcessingError(
+            `HEIC conversion failed: ${message}`,
+            'heic-convert',
+            message,
+            error
+        );
     }
 }

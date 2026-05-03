@@ -38,7 +38,7 @@ export {
     TransitionError
 } from './discord';
 
-export { PathSecurityError } from './utils';
+export { PathSecurityError, MediaProcessingError } from './utils';
 
 export { BrowserError, BrowserNavigateTimeoutError } from './browser';
 

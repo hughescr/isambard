@@ -46,6 +46,7 @@ export enum ErrorCode {
 
     // Utility errors
     PATH_SECURITY_ERROR = 'PATH_SECURITY_ERROR',
+    MEDIA_PROCESSING_ERROR = 'MEDIA_PROCESSING_ERROR',
 
     // Email errors
     EMAIL_ERROR = 'EMAIL_ERROR',

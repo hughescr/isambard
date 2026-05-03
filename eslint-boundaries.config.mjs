@@ -9,8 +9,8 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
- *    Note: utils/path-validator.ts, utils/media/video/frame-extractor.ts, and
- *    utils/assert-never.ts are allowed to import from errors (throw typed invariant errors).
+ *    Note: utils/path-validator.ts, utils/media/**, and
+ *    utils/assert-never.ts are allowed to import from errors (throw typed errors).
  *    This is scoped via internalPath.
  * 2. errors     - Error types, minimal dependencies
  * 3. config     - Configuration loading, minimal dependencies
@@ -61,7 +61,7 @@ export const boundariesConfig = {
             'default': 'disallow',
             rules:     [
                 { from: { type: 'utils', internalPath: 'path-validator.ts' }, allow: { to: { type: ['errors'] } } },
-                { from: { type: 'utils', internalPath: 'media/video/frame-extractor.ts' }, allow: { to: { type: ['errors'] } } },
+                { from: { type: 'utils', internalPath: 'media/**' }, allow: { to: { type: ['errors'] } } },
                 { from: { type: 'utils', internalPath: 'assert-never.ts' }, allow: { to: { type: ['errors'] } } },
                 { from: { type: 'errors' },  allow: { to: { type: ['utils'] } } },
                 { from: { type: 'config' },  allow: { to: { type: ['utils'] } } },

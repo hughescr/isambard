@@ -1,0 +1,29 @@
+id: no-throw-new-error
+language: typescript
+severity: warning
+message: |
+  Production code must throw typed IsambardError subclasses from src/errors/ so callers can
+  pattern-match on .code for programmatic handling, telemetry, and recovery.
+
+  Each subsystem has its own error file:
+    - src/errors/utils.ts      — path security, media processing
+    - src/errors/storage.ts    — storage, memory tool, reconciliation
+    - src/errors/discord.ts    — Discord integration
+    - src/errors/email.ts      — email / WildDuck
+    - src/errors/bsky.ts       — Bluesky
+    - src/errors/caldav.ts     — CalDAV calendar
+    - src/errors/browser.ts    — browser automation
+
+  Reserved for logic errors only:
+    - InvariantViolationError (src/errors/base.ts) — unreachable invariant checks (noUncheckedIndexedAccess guards, exhaustiveness fallbacks)
+    - assertNever() (src/utils/assert-never.ts) — exhaustiveness fallbacks in switch defaults over discriminated unions
+
+  Replace: throw new Error('message')
+  With:    throw new SomeTypedError('message', ...contextArgs)
+
+files:
+  - 'src/**/*.ts'
+  - 'src/**/*.tsx'
+
+rule:
+  pattern: throw new Error($$$)

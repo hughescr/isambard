@@ -1,5 +1,6 @@
 import type { FetchedImage } from '../types';
 import type { BinarySpawnRunner } from './types';
+import { MediaProcessingError } from '@/errors';
 
 /**
  * Generate an audio spectrogram image from a video file.
@@ -24,7 +25,11 @@ export async function generateSpectrogram(
 
     // Stryker disable next-line ConditionalExpression,EqualityOperator: empty stdout check — exitCode 0 with empty stdout is a degenerate failure case
     if(result.exitCode !== 0 || result.stdout.length === 0) {
-        throw new Error(`Spectrogram generation failed with exit code ${result.exitCode}: ${result.stderr}`);
+        throw new MediaProcessingError(
+            `Spectrogram generation failed with exit code ${result.exitCode}: ${result.stderr}`,
+            'ffmpeg-spectrogram',
+            result.stderr
+        );
     }
 
     return {
