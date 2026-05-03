@@ -1,6 +1,6 @@
 id: no-throw-new-error
 language: typescript
-severity: warning
+severity: error
 message: |
   Production code must throw typed IsambardError subclasses from src/errors/ so callers can
   pattern-match on .code for programmatic handling, telemetry, and recovery.
