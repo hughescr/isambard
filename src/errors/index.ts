@@ -16,6 +16,7 @@ export {
     ItemNotFoundError,
     ValidationError,
     DynamoTimeoutError,
+    MemoryToolError,
     PathNotFoundError,
     PathAlreadyExistsError,
     InvalidPathError,
@@ -23,6 +24,7 @@ export {
     ContentTooLargeError,
     TextNotUniqueError,
     InvalidLineNumberError,
+    ReconciliationError,
     ContactNotFoundError,
     ContactLastIdentifierError,
     ContactNoIdentifiersError,
@@ -30,9 +32,12 @@ export {
 } from './storage';
 
 export {
+    DiscordError,
     ChannelNotFoundByIdError,
     ChannelNotAccessibleError,
+    ChannelRegistryError,
     ChannelNotFoundByNameError,
+    AmbiguousChannelError,
     MessageFetchError,
     InvalidSnowflakeError,
     WellKnownChannelNotFoundError,
