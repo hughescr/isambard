@@ -18,7 +18,8 @@ import {
     ReconciliationThrottledError,
     ContactNotFoundError,
     ContactLastIdentifierError,
-    ContactNoIdentifiersError
+    ContactNoIdentifiersError,
+    BatchWriteExhaustedError
 } from '@/errors/storage';
 
 describe.concurrent('StorageError', () => {
@@ -474,6 +475,68 @@ describe.concurrent('ContactNoIdentifiersError', () => {
     test('should have correct code', () => {
         const error = new ContactNoIdentifiersError('alice-smith');
         expect(error.code).toBe(ErrorCode.CONTACT_NO_IDENTIFIERS);
+    });
+});
+
+describe.concurrent('BatchWriteExhaustedError', () => {
+    test('should have correct inheritance chain', () => {
+        const error = new BatchWriteExhaustedError('batchWriteItem', 3, 5);
+        expect(error).toBeInstanceOf(BatchWriteExhaustedError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error).toBeInstanceOf(Error);
+    });
+
+    test('should have correct name', () => {
+        const error = new BatchWriteExhaustedError('batchWriteItem', 3, 5);
+        expect(error.name).toBe('BatchWriteExhaustedError');
+    });
+
+    test('should have correct code', () => {
+        const error = new BatchWriteExhaustedError('batchWriteItem', 3, 5);
+        expect(error.code).toBe(ErrorCode.BATCH_WRITE_EXHAUSTED);
+    });
+
+    test('should include operation in message', () => {
+        const error = new BatchWriteExhaustedError('myOperation', 7, 10);
+        expect(error.message).toContain('myOperation');
+    });
+
+    test('should include remainingCount in message', () => {
+        const error = new BatchWriteExhaustedError('myOperation', 7, 10);
+        expect(error.message).toContain('7');
+    });
+
+    test('should include maxRetries in message', () => {
+        const error = new BatchWriteExhaustedError('myOperation', 7, 10);
+        expect(error.message).toContain('10');
+    });
+
+    test('should have correct message format', () => {
+        const error = new BatchWriteExhaustedError('putTagIndex', 4, 8);
+        expect(error.message).toBe('putTagIndex: 4 items remain unprocessed after 8 attempts');
+    });
+
+    test('should store operation in context', () => {
+        const error = new BatchWriteExhaustedError('deleteTagIndex', 2, 5);
+        expect(error.context.operation).toBe('deleteTagIndex');
+    });
+
+    test('should store remainingCount in context', () => {
+        const error = new BatchWriteExhaustedError('putTagIndex', 11, 5);
+        expect(error.context.remainingCount).toBe(11);
+    });
+
+    test('should store maxRetries in context', () => {
+        const error = new BatchWriteExhaustedError('putTagIndex', 2, 13);
+        expect(error.context.maxRetries).toBe(13);
+    });
+
+    test('should store all context fields with distinct values', () => {
+        const error = new BatchWriteExhaustedError('distinctOperation', 17, 23);
+        expect(error.context.operation).toBe('distinctOperation');
+        expect(error.context.remainingCount).toBe(17);
+        expect(error.context.maxRetries).toBe(23);
     });
 });
 

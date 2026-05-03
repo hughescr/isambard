@@ -262,13 +262,10 @@ export class BatchWriteExhaustedError extends StorageError {
 
     constructor(operation: string, remainingCount: number, maxRetries: number) {
         super(
-            // Stryker disable next-line StringLiteral: error message is informational — the throw itself is tested
             `${operation}: ${remainingCount} items remain unprocessed after ${maxRetries} attempts`,
             ErrorCode.BATCH_WRITE_EXHAUSTED,
-            // Stryker disable next-line ObjectLiteral: context bag is debug-only — mutation to {} doesn't affect throw behavior
             { remainingCount, maxRetries, operation }
         );
-        // Stryker disable next-line StringLiteral: error class name is debug-only metadata
         this.name = 'BatchWriteExhaustedError';
     }
 }
