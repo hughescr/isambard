@@ -75,6 +75,7 @@ export class MemoryToolBackendCore {
             ...keys,
         };
 
+        // boundary cast: constructor-injected putItem requires Record<string,unknown> but MemoryToolItem carries branded MemoryPath/ContentType; runtime shapes are compatible
         await this.putItem(item as unknown as Record<string, unknown>);
 
         return data;
@@ -128,6 +129,7 @@ export class MemoryToolBackendCore {
         const updated = result.data;
         const item = this.buildUpdatedItem(updated);
 
+        // boundary cast: constructor-injected putItem requires Record<string,unknown> but MemoryToolItem carries branded MemoryPath/ContentType; runtime shapes are compatible
         await this.putItem(item as unknown as Record<string, unknown>);
 
         return updated;

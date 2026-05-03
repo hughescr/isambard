@@ -1,0 +1,69 @@
+id: require-comment-on-double-cast
+language: typescript
+severity: error
+message: |
+  Double casts (`x as unknown as T`) bypass TypeScript's type system at adapter boundaries.
+  Every site in src/ must carry a `// boundary cast: <reason>` comment on the line directly
+  above the containing statement. This documents why the cast is necessary and makes it
+  auditable.
+
+  BYPASS: Place `// boundary cast: <concrete reason>` on the **line directly above** the
+  containing statement (const/let declaration, expression statement, or return statement
+  inside an if block). The comment must be the immediate predecessor of that statement — if
+  a Stryker or other comment also precedes the statement, the boundary cast comment must come
+  LAST (i.e., closest to the statement). A comment anywhere else (e.g., further up the block,
+  or on the same line) does NOT satisfy the rule.
+
+  Example (correct):
+    // Stryker disable next-line ObjectLiteral: ...
+    // boundary cast: aws-sdk lib-dynamodb requires Record<string,unknown>; branded types are runtime-compatible
+    await this.putItem(item as unknown as Record<string, unknown>);
+
+  Example (incorrect — Stryker comment is last, boundary cast is not the immediate predecessor):
+    // boundary cast: reason
+    // Stryker disable next-line ...
+    await this.putItem(item as unknown as Record<string, unknown>);
+
+  ast-grep 0.42.1 note: The `follows: kind: comment regex: 'boundary cast:'` relational checks
+  the IMMEDIATELY preceding sibling comment node. It does NOT search further up the block.
+  This means the bypass requires exact placement of the boundary cast comment as the immediate
+  predecessor. For return_statements inside if blocks, the comment goes INSIDE the block,
+  directly above the return.
+
+files:
+  - 'src/**/*.ts'
+  - 'src/**/*.tsx'
+
+rule:
+  any:
+    - all:
+        - kind: lexical_declaration
+          has:
+            pattern: $A as unknown as $B
+            stopBy: end
+        - not:
+            follows:
+              kind: comment
+              regex: 'boundary cast:'
+    - all:
+        - kind: expression_statement
+          has:
+            pattern: $A as unknown as $B
+            stopBy: end
+        - not:
+            follows:
+              kind: comment
+              regex: 'boundary cast:'
+    - all:
+        - kind: return_statement
+          has:
+            pattern: $A as unknown as $B
+            stopBy: end
+        - not:
+            has:
+              kind: arrow_function
+              stopBy: end
+        - not:
+            follows:
+              kind: comment
+              regex: 'boundary cast:'

@@ -250,6 +250,7 @@ export class ContactBackend extends BaseRepository<Contact> {
             ...collectionKeys,
         };
         // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite put request structure
+        // boundary cast: aws-sdk lib-dynamodb BatchWriteCommand requires Record<string,AttributeValue> but ContactProfileItem carries branded types (ContactId, MemoryPath); runtime shapes are compatible
         await this.batchWriteWithRetry([{ PutRequest: { Item: profileItem as unknown as Record<string, unknown> } }], deps);
 
         // ── Step 3: Delete removed lookup rows ────────────────────────────────────
@@ -291,6 +292,7 @@ export class ContactBackend extends BaseRepository<Contact> {
         // a contact with phantom-deleted identifiers
         const profileKeys = ContactKeyGenerator.createProfileKeys(personId);
         // Stryker disable next-line ObjectLiteral: DynamoDB BatchWrite delete request structure
+        // boundary cast: aws-sdk lib-dynamodb BatchWriteCommand requires Record<string,AttributeValue> but ContactProfileItem keys carry branded types; runtime shapes are compatible
         await this.batchWriteWithRetry([{ DeleteRequest: { Key: profileKeys as unknown as Record<string, unknown> } }], deps);
 
         // Delete all lookup items in batches

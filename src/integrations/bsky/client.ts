@@ -48,6 +48,7 @@ function isXRPCError(err: unknown): err is XRPCErrorLike {
     if(!(err instanceof Error)) {
         return false;
     }
+    // boundary cast: @atproto/xrpc is a transitive dep not directly importable; XRPC error envelope attaches `.status`/`.error` to Error instances at runtime; widening to Record allows safe drilling
     const errRecord = err as unknown as Record<string, unknown>;
     return typeof errRecord.status === 'number' && typeof errRecord.error === 'string';
 }
@@ -828,18 +829,23 @@ export class BlueskyClient {
         const e = embed as Record<string, unknown>;
         // Stryker disable BlockStatement,ConditionalExpression: AT Protocol type guard chain — each isView() check is a distinct type discriminant; order matters for correctness
         if(AppBskyEmbedImages.isView(e)) {
+            // boundary cast: AppBskyEmbedImages.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeImageEmbed(e as unknown as AppBskyEmbedImages.View);
         }
         if(AppBskyEmbedVideo.isView(e)) {
+            // boundary cast: AppBskyEmbedVideo.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeVideoEmbed(e as unknown as AppBskyEmbedVideo.View);
         }
         if(AppBskyEmbedExternal.isView(e)) {
+            // boundary cast: AppBskyEmbedExternal.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeExternalEmbed(e as unknown as AppBskyEmbedExternal.View);
         }
         if(AppBskyEmbedRecordWithMedia.isView(e)) {
+            // boundary cast: AppBskyEmbedRecordWithMedia.isView() is a runtime type discriminant; cast to declared type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return this.normalizeRecordWithMediaEmbed(e as unknown as AppBskyEmbedRecordWithMedia.View);
         }
         if(AppBskyEmbedRecord.isView(e) && AppBskyEmbedRecord.isViewRecord(e.record)) {
+            // boundary cast: AppBskyEmbedRecord.isView() + isViewRecord() are runtime discriminants; cast to declared ViewRecord type after guard to satisfy TypeScript's narrowing from Record<string,unknown>
             return { type: 'record', record: this.normalizeEmbeddedRecord(e.record as unknown as AppBskyEmbedRecord.ViewRecord) };
         }
         // Stryker restore BlockStatement,ConditionalExpression

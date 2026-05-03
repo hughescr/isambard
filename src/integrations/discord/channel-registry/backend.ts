@@ -61,6 +61,7 @@ export class ChannelRegistryBackend extends BaseRepository<ChannelStorageRecord>
             };
         }
 
+        // boundary cast: BaseRepository.putItem requires Record<string,unknown> but ChannelStorageItem carries branded ChannelId/GuildId; runtime shapes are compatible
         await this.putItem(item as unknown as Record<string, unknown>, 'ChannelRegistry.upsertChannel');
     }
 

@@ -20,6 +20,7 @@ export async function convert(buffer: Buffer, contentType: string): Promise<Conv
         // The heic-decode library internally calls .slice() on the buffer, which requires
         // an actual typed array, not just an ArrayBuffer.
         // TypeScript types say ArrayBufferLike, but runtime requires Buffer/Uint8Array.
+        // boundary cast: heic-convert declares `buffer: ArrayBufferLike` but heic-decode internally calls .slice(); Uint8Array satisfies the runtime contract, ArrayBufferLike is the declared type
         const outputBuffer = await heicConvert({
             buffer: new Uint8Array(buffer) as unknown as ArrayBufferLike,
             format: 'PNG',

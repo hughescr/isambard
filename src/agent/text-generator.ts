@@ -181,6 +181,7 @@ async function executePrompt(
                 }
                 // Capture canonical result text as fallback in case no assistant events were streamed
                 // Stryker disable next-line AssignmentOperator,ConditionalExpression: successResult fallback — only used when resultText is empty (e.g. haiku returns via result.result instead of streaming)
+                // boundary cast: Claude Agent SDK ResultEvent lacks a `.result` property in its published .d.ts; accessed at runtime to capture haiku's non-streaming response
                 successResult = (event as unknown as { result?: string }).result;
                 break; // Success — return accumulated text below
             }

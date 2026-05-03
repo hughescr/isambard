@@ -54,6 +54,7 @@ export class CalDAVClient {
         // Stryker disable next-line StringLiteral -- operation label is informational only; appears in error message text
         const calendars = await this.#withTimeout(client.fetchCalendars(), this.#timeoutMs, 'fetchCalendars');
         return calendars.map((cal) => {
+            // boundary cast: tsdav DAVCalendar omits calendarColor/calendarDescription from its .d.ts; these properties exist at runtime per CalDAV RFC 4791
             const calRecord = cal as unknown as Record<string, unknown>;
             const rawDisplayName = cal.displayName;
             const displayName = typeof rawDisplayName === 'string' ? rawDisplayName : cal.url;
@@ -291,6 +292,7 @@ export class CalDAVClient {
     }
 
     #buildCalendarEvent(vevent: ical.VEvent, start: ical.DateWithTimeZone | undefined, end: ical.DateWithTimeZone | undefined, isAllDay: boolean, calendarLabel: string): CalendarEvent {
+        // boundary cast: node-ical DateWithTimeZone lacks a `.tz` property in its .d.ts; the property exists at runtime and contains the TZID string
         const startTz = (start as unknown as Record<string, unknown> | undefined)?.tz as string | undefined;
         return {
             uid:          vevent.uid,
@@ -352,6 +354,7 @@ export class CalDAVClient {
         if(vevent.datetype === 'date') {
             return true;
         }
+        // boundary cast: node-ical VEvent.start is typed as Date but carries a `.dateOnly` boolean at runtime for all-day events
         const start = vevent.start as unknown as Record<string, unknown>;
         return start.dateOnly === true;
     }

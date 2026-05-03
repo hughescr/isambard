@@ -101,6 +101,7 @@ export function createWebViewAdapter(
     // (wider than Bun.WebView.Backend), but only valid Backend values are ever passed.
     // Cast result to unknown first: Bun.WebView extends EventTarget which RawWebView does not,
     // so TS cannot verify the structural overlap via a direct single cast.
+    // boundary cast: Bun.WebView extends EventTarget which RawWebView does not; structural overlap cannot be verified by TS without going through unknown first
     const bunWebView = (opts: WebViewOptions): RawWebView =>
         new Bun.WebView(opts as Bun.WebView.ConstructorOptions) as unknown as RawWebView;
     const factory: WebViewFactory = webViewFactory ?? bunWebView;
