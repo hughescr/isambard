@@ -10,6 +10,7 @@ import {
     type TagIndexItem,
     createLayerName
 } from './types';
+import { InvariantViolationError } from '@/errors';
 
 export interface ListOptions {
     limit?:     number
@@ -136,7 +137,8 @@ export class MemoryToolBackendQuery {
         options?: ListOptions
     ): Promise<ListResult<TagIndexItem>> {
         if(!this.tagIndex) {
-            throw new Error('Tag index not configured');
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('MemoryToolBackendQuery.searchByTags', 'Tag index not configured');
         }
         // queryByTags still takes string[], so spread the Set
         return this.tagIndex.queryByTags([...tags], layer, options);

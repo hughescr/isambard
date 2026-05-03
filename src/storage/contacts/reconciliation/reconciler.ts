@@ -17,6 +17,7 @@ import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
 import { ContactKeyGenerator } from '../key-generator';
 import { contactSchema, type ContactId, type PlatformType } from '../types';
+import { BatchWriteExhaustedError } from '@/errors';
 
 // ============================================================================
 // Batch Write Retry
@@ -75,8 +76,9 @@ async function batchWriteWithRetry(
         pending = result.UnprocessedItems;
     }
 
-    // Stryker disable next-line StringLiteral: error message is informational
-    throw new Error(`ContactReconciler.batchWriteWithRetry: items remain unprocessed after ${RECONCILER_BATCH_WRITE_MAX_RETRIES} attempts`);
+    const remainingCount = Object.values(pending as Record<string, unknown[]>).flat().length;
+    // Stryker disable next-line StringLiteral: operation name string is debug-only metadata — the throw itself is tested
+    throw new BatchWriteExhaustedError('ContactReconciler.batchWriteWithRetry', remainingCount, RECONCILER_BATCH_WRITE_MAX_RETRIES);
 }
 
 // ============================================================================

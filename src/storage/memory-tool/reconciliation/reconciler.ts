@@ -119,11 +119,11 @@ export async function retryWithBackoff<T>(
             // eslint-disable-next-line no-await-in-loop -- sequential: retry loop, each attempt depends on prior failure
             return await operation();
         } catch (error) {
-            // Stryker disable ConditionalExpression,BlockStatement,ObjectLiteral: Abort signal check — cause property is informational
+            // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Abort signal check — abort propagation uses DOMException per standard AbortError convention; string args are convention-mandated constants
             if(signal?.aborted) {
-                throw new Error('Aborted', { cause: error });
+                throw new DOMException('Aborted', 'AbortError');
             }
-            // Stryker restore ConditionalExpression,BlockStatement,ObjectLiteral
+            // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
             // Stryker disable LogicalOperator,ConditionalExpression,EqualityOperator: Error type guards for throttling detection — mutating causes test timeout (all errors treated as throttled)
             const isThrottled = typeof error === 'object' && error !== null && 'name' in error
@@ -483,8 +483,7 @@ async function scanLayer(
     // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         if(ctx.options.signal?.aborted) {
-            // Stryker disable next-line StringLiteral: Abort message not exercised in tests
-            throw new Error('Aborted');
+            throw new DOMException('Aborted', 'AbortError');
         }
 
         const currentKey = lastEvaluatedKey;
@@ -561,8 +560,7 @@ async function runPhaseA(
 
     for(const layer of layers) {
         if(options.signal?.aborted) {
-            /* Stryker disable next-line StringLiteral: Abort message is observational */
-            throw new Error('Aborted');
+            throw new DOMException('Aborted', 'AbortError');
         }
 
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB scan per layer
@@ -642,8 +640,7 @@ async function scanTagItems(
     // Stryker disable ConditionalExpression,BlockStatement: Intentional infinite loop with break
     do {
         if(ctx.options.signal?.aborted) {
-            // Stryker disable next-line StringLiteral: Abort message not exercised in tests
-            throw new Error('Aborted');
+            throw new DOMException('Aborted', 'AbortError');
         }
 
         const currentKey = lastEvaluatedKey;
@@ -725,8 +722,8 @@ async function runPhaseB(
     for(const tag of allTags) {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Abort check in tight loop
         if(options.signal?.aborted) {
-            // Stryker disable next-line StringLiteral: Abort message not exercised in tests
-            throw new Error('Aborted');
+            // Stryker disable next-line StringLiteral: DOMException args are convention-mandated AbortError constants — not exercised in tests
+            throw new DOMException('Aborted', 'AbortError');
         }
 
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB scan per tag
@@ -942,8 +939,7 @@ async function runPhaseC(
         for(const { tag, count } of tagCounts) {
             // Stryker disable next-line ConditionalExpression: Abort check in tight loop - tested in reconciler-phase-c.test.ts
             if(options.signal?.aborted) {
-                // Stryker disable next-line StringLiteral,BlockStatement: Abort message not exercised in tests
-                throw new Error('Aborted');
+                throw new DOMException('Aborted', 'AbortError');
             }
 
             // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB op per tag count

@@ -1,3 +1,5 @@
+import { InvariantViolationError } from '@/errors';
+
 /**
  * Generic DynamoDB prefixed-key helpers.
  *
@@ -49,12 +51,13 @@ export function createPrefixedKey(prefix: string, ...parts: string[]): string {
  * @param prefix - The expected prefix (e.g. `'CONTACT'`)
  * @param key    - The full key string to parse
  * @returns      The remainder after stripping `PREFIX#`
- * @throws Error if `key` does not start with `${prefix}#`
+ * @throws InvariantViolationError if `key` does not start with `${prefix}#`
  */
 export function parsePrefixedKey(prefix: string, key: string): string {
     const expectedStart = `${prefix}#`;
     if(!key.startsWith(expectedStart)) {
-        throw new Error(`Invalid key format: expected ${prefix}#..., got ${key}`);
+        // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+        throw new InvariantViolationError('parsePrefixedKey', `Invalid key format: expected ${prefix}#..., got ${key}`);
     }
     return key.slice(expectedStart.length);
 }

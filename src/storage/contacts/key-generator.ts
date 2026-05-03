@@ -1,5 +1,6 @@
 import { createPrefixedKey, parsePrefixedKey } from '../utils/key-builder.js';
 import { createContactId, platformTypeSchema, type ContactId, type PlatformType } from './types';
+import { InvariantViolationError } from '@/errors';
 
 /**
  * DynamoDB key structure for Contact profile items.
@@ -130,7 +131,8 @@ export const ContactKeyGenerator = {
      */
     parsePersonIdFromPK(pk: string): ContactId {
         if(!pk.startsWith('CONTACT#')) {
-            throw new Error(`Invalid PK format: expected CONTACT#..., got ${pk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromPK', `Invalid PK format: expected CONTACT#..., got ${pk}`);
         }
         return createContactId(parsePrefixedKey(PREFIX_CONTACT, pk));
     },
@@ -152,12 +154,14 @@ export const ContactKeyGenerator = {
         // Stryker disable next-line StringLiteral: PK prefix is a configuration constant
         const PREFIX = 'CONTACT_LOOKUP#';
         if(!pk.startsWith(PREFIX)) {
-            throw new Error(`Invalid lookup PK format: expected CONTACT_LOOKUP#..., got ${pk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: expected CONTACT_LOOKUP#..., got ${pk}`);
         }
         const rest = pk.slice(PREFIX.length);
         const hashIndex = rest.indexOf('#');
         if(hashIndex === -1) {
-            throw new Error(`Invalid lookup PK format: missing platform separator in ${pk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: missing platform separator in ${pk}`);
         }
         const platform = platformTypeSchema.parse(rest.slice(0, hashIndex));
         const value    = rest.slice(hashIndex + 1);
@@ -179,7 +183,8 @@ export const ContactKeyGenerator = {
      */
     parsePersonIdFromLookupSK(sk: string): ContactId {
         if(!sk.startsWith('CONTACT#')) {
-            throw new Error(`Invalid lookup SK format: expected CONTACT#..., got ${sk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromLookupSK', `Invalid lookup SK format: expected CONTACT#..., got ${sk}`);
         }
         return createContactId(parsePrefixedKey(PREFIX_CONTACT, sk));
     },

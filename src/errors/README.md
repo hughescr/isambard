@@ -60,6 +60,7 @@ classDiagram
 
     StorageError <|-- ContactNotFoundError
     StorageError <|-- ContactLastIdentifierError
+    StorageError <|-- BatchWriteExhaustedError
 
     class IsambardError {
         +code: ErrorCode

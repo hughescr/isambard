@@ -8,6 +8,8 @@
  * 1024 floats → 128 bytes (1024 bits).
  */
 
+import { InvariantViolationError } from '@/errors';
+
 /**
  * Packs sign bits from a float32 array into a compact Uint8Array.
  *
@@ -19,8 +21,8 @@
  */
 export function packSignBits(input: Float32Array, batchSize: number, dim: number): Uint8Array {
     if(dim <= 0 || dim % 8 !== 0) {
-        // Stryker disable next-line StringLiteral: error message text is cosmetic — the throw itself is tested
-        throw new Error(`dim must be a positive multiple of 8, got ${dim}`);
+        // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+        throw new InvariantViolationError('packSignBits', `dim must be a positive multiple of 8, got ${dim}`);
     }
     const bytesPerVector = dim / 8;
     const output = new Uint8Array(batchSize * bytesPerVector);

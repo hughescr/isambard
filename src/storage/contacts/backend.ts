@@ -8,7 +8,7 @@ import {
     type ContactProfileItem,
     type PlatformType
 } from './types';
-import { ContactLastIdentifierError, ContactNoIdentifiersError, ContactNotFoundError } from '@/errors';
+import { BatchWriteExhaustedError, ContactLastIdentifierError, ContactNoIdentifiersError, ContactNotFoundError } from '@/errors';
 import { BaseRepository } from '@/storage';
 
 /** BatchWrite request shape matching lib-dynamodb's BatchWriteCommand input */
@@ -119,10 +119,8 @@ export class ContactBackend extends BaseRepository<Contact> {
         // Budget exhausted — throw so the caller knows the write is incomplete
         const pendingTyped = pending as Record<string, BatchWriteRequest[]>;
         const remainingCount = Object.values(pendingTyped).flat().length;
-        throw new Error(
-            // Stryker disable next-line StringLiteral: error message is informational
-            `ContactBackend.batchWriteWithRetry: ${remainingCount} items remain unprocessed after ${BATCH_WRITE_MAX_RETRIES} attempts`
-        );
+        // Stryker disable next-line StringLiteral: operation name string is debug-only metadata — the throw itself is tested
+        throw new BatchWriteExhaustedError('ContactBackend.batchWriteWithRetry', remainingCount, BATCH_WRITE_MAX_RETRIES);
     }
 
     /**

@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import { type MemoryPath, extractLayerFromPath  } from './types';
+import { InvariantViolationError } from '@/errors';
 
 /**
  * DynamoDB key structure for MemoryTool items using filesystem-like organization
@@ -98,10 +99,12 @@ export const MemoryToolKeyGenerator = {
    */
     parsePath(pk: string, sk: string): string {
         if(!pk.startsWith('DIR#')) {
-            throw new Error(`Invalid PK format: expected DIR#..., got ${pk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('MemoryToolKeyGenerator.parsePath', `Invalid PK format: expected DIR#..., got ${pk}`);
         }
         if(!sk.startsWith('FILE#')) {
-            throw new Error(`Invalid SK format: expected FILE#..., got ${sk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('MemoryToolKeyGenerator.parsePath', `Invalid SK format: expected FILE#..., got ${sk}`);
         }
 
         const parentPath = pk.slice(4); // Remove 'DIR#' prefix
@@ -164,7 +167,8 @@ export const MemoryToolKeyGenerator = {
    */
     parseTagFromPK(pk: string): string {
         if(!pk.startsWith('TAG#')) {
-            throw new Error(`Invalid tag PK format: expected TAG#..., got ${pk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('MemoryToolKeyGenerator.parseTagFromPK', `Invalid tag PK format: expected TAG#..., got ${pk}`);
         }
         return pk.slice(4);
     },
@@ -184,7 +188,8 @@ export const MemoryToolKeyGenerator = {
    */
     parsePathFromTagSK(sk: string): string {
         if(!sk.startsWith('PATH#')) {
-            throw new Error(`Invalid tag SK format: expected PATH#..., got ${sk}`);
+            // Stryker disable next-line StringLiteral: location and message strings are debug-only metadata — the throw itself is tested
+            throw new InvariantViolationError('MemoryToolKeyGenerator.parsePathFromTagSK', `Invalid tag SK format: expected PATH#..., got ${sk}`);
         }
         return sk.slice(5);
     },
