@@ -99,8 +99,7 @@
     "discord-api-types": "0.38.42"
   },
   "trustedDependencies": [
-    "@ast-grep/cli",
-    "aws-sdk"
+    "@ast-grep/cli"
   ],
   "engines": {
     "node": ">=23.0.0",

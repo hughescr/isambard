@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
-import { generateSpectrogram } from '@/utils/media/video/spectrogram';
 import { MediaProcessingError } from '@/errors';
+import { generateSpectrogram } from '@/utils/media/video/spectrogram';
 import type { BinarySpawnRunner } from '@/utils/media/video/types';
 
 const FAKE_PNG = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);

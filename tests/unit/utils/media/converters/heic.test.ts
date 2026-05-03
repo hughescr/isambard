@@ -1,7 +1,7 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { mockHeicConvert, resetHeicConvertImpl } from '../../../../setup';
-import { needsConversion, convert } from '@/utils/media/converters/heic';
 import { MediaProcessingError } from '@/errors';
+import { needsConversion, convert } from '@/utils/media/converters/heic';
 
 describe('HEIC Image Converter', () => {
     afterEach(() => {

@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'bun:test';
+import { MediaProcessingError } from '@/errors';
 import {
     extractEmbeddedSubtitles,
     transcribeWithWhisperKit,
     getSubtitlesOrTranscription
 } from '@/utils/media/video/subtitle-extractor';
-import { MediaProcessingError } from '@/errors';
 import type { VideoMetadata, SpawnRunner } from '@/utils/media/video/types';
 
 function makeTextRunner(stdout: string, exitCode = 0): SpawnRunner {

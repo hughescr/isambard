@@ -1,7 +1,7 @@
 import { describe, it, expect, mock, afterEach } from 'bun:test';
 import { rm } from 'node:fs/promises';
-import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
 import { MediaProcessingError } from '@/errors';
+import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
 const originalFetch = globalThis.fetch;

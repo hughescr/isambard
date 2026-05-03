@@ -7,15 +7,25 @@ Centralized error classes for all Isambard operations. All errors extend `Isamba
 ```mermaid
 classDiagram
     Error <|-- IsambardError
-    IsambardError <|-- ConfigValidationError
     IsambardError <|-- StorageError
     IsambardError <|-- DiscordError
     IsambardError <|-- PathSecurityError
+    IsambardError <|-- InvariantViolationError
+    IsambardError <|-- MediaProcessingError
+    IsambardError <|-- ConfigValidationError
+    IsambardError <|-- BrowserError
+
+    BrowserError <|-- BrowserNavigateTimeoutError
 
     StorageError <|-- ItemNotFoundError
     StorageError <|-- ValidationError
     StorageError <|-- DynamoTimeoutError
     StorageError <|-- MemoryToolError
+    StorageError <|-- ContactNotFoundError
+    StorageError <|-- ContactLastIdentifierError
+    StorageError <|-- ContactIdentifierLimitError
+    StorageError <|-- ContactNoIdentifiersError
+    StorageError <|-- BatchWriteExhaustedError
 
     MemoryToolError <|-- PathNotFoundError
     MemoryToolError <|-- PathAlreadyExistsError
@@ -58,10 +68,6 @@ classDiagram
     CaldavError <|-- CaldavFetchError
     CaldavError <|-- CaldavTimeoutError
     CaldavError <|-- AmbiguousCalendarMatchError
-
-    StorageError <|-- ContactNotFoundError
-    StorageError <|-- ContactLastIdentifierError
-    StorageError <|-- BatchWriteExhaustedError
 
     class IsambardError {
         +code: ErrorCode
@@ -117,9 +123,29 @@ classDiagram
         +code: ErrorCode
         +context?: Record~string, unknown~
     }
+
+    class BrowserError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
+
+    class MediaProcessingError {
+        +operation: string
+        +detail?: string
+    }
+
+    class ConfigValidationError {
+        +validationErrors: Array
+    }
+
+    class BatchWriteExhaustedError {
+        +remainingCount: number
+        +maxRetries: number
+        +operation: string
+    }
 ```
 
-> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`) re-export them for convenience.
+> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`, media/path errors in `src/errors/utils.ts`, config errors in `src/errors/config.ts`, browser errors in `src/errors/browser.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`) re-export them for convenience.
 
 ## When to Create vs Reuse Errors
 
@@ -143,6 +169,9 @@ classDiagram
    - Email operations → extend `EmailError`
    - Bluesky operations → extend `BskyError`
    - CalDAV operations → extend `CaldavError`
+   - Browser automation → extend `BrowserError`
+   - Media processing (video, audio, image conversion) → extend `MediaProcessingError` (extends `IsambardError` directly — media is cross-cutting, not a domain service)
+   - Configuration validation → extend `ConfigValidationError` (extends `IsambardError` directly — fatal startup errors)
 2. **Use intermediate base classes** for logical groupings (e.g., `ReconciliationError` under `MemoryToolError`, `WildDuckError` under `EmailError`, `CaldavError` under `IsambardError`)
 3. **Preserve the hierarchy** to enable broad catch blocks when appropriate
 

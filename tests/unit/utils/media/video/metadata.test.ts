@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../../setup';
-import { extractMetadata, parseFfprobeOutput } from '@/utils/media/video/metadata';
 import { MediaProcessingError } from '@/errors';
+import { extractMetadata, parseFfprobeOutput } from '@/utils/media/video/metadata';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
 function makeRunner(stdout: string, exitCode = 0): SpawnRunner {
@@ -292,9 +292,7 @@ describe('parseFfprobeOutput', () => {
         });
         const result = parseFfprobeOutput(input);
         expect(result.streams).toHaveLength(1);
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length asserted above
-        expect(result.streams![0]!.codec_name).toBeUndefined();
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length asserted above
-        expect(result.streams![0]!.width).toBeUndefined();
+        expect(result.streams?.[0]?.codec_name).toBeUndefined();
+        expect(result.streams?.[0]?.width).toBeUndefined();
     });
 });
