@@ -12,6 +12,7 @@
   },
   "scripts": {
     "backfill:contact-lookup-gsi2": "sst shell -- bun tools/backfill-contact-lookup-gsi2.ts",
+    "check:ast-grep": "ast-grep scan --report-style short",
     "clones": "jscpd src/",
     "dead-code": "knip",
     "dead-code:fix": "knip --fix",
@@ -29,7 +30,7 @@
     "sst-remove": "sst remove",
     "start": "bun run dev:sst",
     "test": "bun test ${CI:+--timeout 60}",
-    "test:full": "bun run lint;bun run typecheck;bun run mutate",
+    "test:full": "bun run check:ast-grep;bun run lint;bun run typecheck;bun run mutate",
     "test:watch": "bun test --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.src.json"
   },
@@ -64,6 +65,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@ast-grep/cli": "^0.42.1",
     "@hughescr/eslint-config-default": "^6.0.1",
     "@hughescr/eslint-plugin-module-boundaries": "^1.0.0",
     "@hughescr/eslint-plugin-test-hygiene": "^1.0.0",
@@ -97,6 +99,7 @@
     "discord-api-types": "0.38.42"
   },
   "trustedDependencies": [
+    "@ast-grep/cli",
     "aws-sdk"
   ],
   "engines": {

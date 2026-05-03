@@ -14,7 +14,7 @@ import type { InboxManager } from '../inbox';
 import type { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import type { BotStateManager } from '../state';
-import { createUserId, createChannelId, createGuildId, type ChannelId } from '../types';
+import { createUserId, createChannelId, createGuildId } from '../types';
 import { type AnswerClassifier, type QuestionRegistry, type PerchSessionRunner  } from '@/agent';
 import { createReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import { safeAsyncHandler } from '@/utils';
@@ -22,7 +22,7 @@ import { safeAsyncHandler } from '@/utils';
 // ResponseRouter treats unknown ChannelIds as fallback candidates;
 // SYNTHETIC_FALLBACK_CHANNEL_ID is a sentinel that exploits this contract
 // to route operator notifications through the fallback channel.
-const SYNTHETIC_FALLBACK_CHANNEL_ID = 'synthetic-channel' as ChannelId;
+const SYNTHETIC_FALLBACK_CHANNEL_ID = createChannelId('synthetic-channel');
 
 // ---------------------------------------------------------------------------
 // No-op health registry stub (used when no registry is provided)

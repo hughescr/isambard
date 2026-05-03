@@ -243,7 +243,7 @@ export class PersonAllowlist {
 
         return items.map((item) => {
             const entry: PersonAllowlistEntry = {
-                personId: item.personId as ContactId,
+                personId: createContactId(item.personId as string),
                 addedAt:  item.addedAt as string,
                 addedBy:  item.addedBy as string,
             };

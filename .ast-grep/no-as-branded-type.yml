@@ -1,0 +1,24 @@
+id: no-as-branded-type
+language: typescript
+severity: error
+files:
+  - src/**/*.ts
+message: |
+  Branded types must be constructed via their create*() factory functions, not via
+  type assertions (as BrandedType). Factories apply runtime validation through Zod
+  schemas; a bare 'as' cast bypasses that validation and can silently introduce
+  invalid values.
+  Use the appropriate factory: createMemoryPath(), createLayerName(),
+  createChannelId(), createGuildId(), createUserId(), createMessageId(),
+  createContactId(), createCalendarServerId(), or createSessionId().
+rule:
+  any:
+    - pattern: $X as MemoryPath
+    - pattern: $X as LayerName
+    - pattern: $X as ChannelId
+    - pattern: $X as GuildId
+    - pattern: $X as UserId
+    - pattern: $X as MessageId
+    - pattern: $X as ContactId
+    - pattern: $X as CalendarServerId
+    - pattern: $X as SessionId

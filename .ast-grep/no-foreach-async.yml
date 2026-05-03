@@ -1,0 +1,11 @@
+id: no-foreach-async
+language: typescript
+severity: error
+message: |
+  $ARR.forEach(async ...) silently discards returned Promises — any errors thrown
+  inside the callback are unhandled and the caller cannot await completion.
+  Use a for...of loop with await or Promise.all(arr.map(async ...)) instead.
+rule:
+  any:
+    - pattern: $ARR.forEach(async ($$$A) => $$$B)
+    - pattern: $ARR.forEach(async function ($$$A) { $$$B })
