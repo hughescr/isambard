@@ -6,6 +6,7 @@ import {
     QueryCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../setup';
 import { type ContactBackend, createContactId, type Contact } from '@/storage/contacts';
 import { PersonAllowlist } from '@/storage/person-allowlist';
 
@@ -15,6 +16,7 @@ const TABLE_NAME = 'test-table';
 
 beforeEach(() => {
     ddbMock.reset();
+    mockLogger.warn.mockClear();
 });
 
 function makeContact(personId: string, identifiers: { platform: string, value: string }[]): Contact {
@@ -602,6 +604,56 @@ describe('PersonAllowlist.list()', () => {
             PK: 'PERSON#ALLOWLIST',
             SK: `PERSON#${ALICE_ID}`,
         });
+    });
+
+    test('skips a corrupt row (invalid personId) and returns remaining valid entries', async () => {
+        const aliceEntry = {
+            PK:       'PERSON#ALLOWLIST',
+            SK:       `PERSON#${ALICE_ID}`,
+            personId: ALICE_ID,
+            addedAt:  '2026-01-01T00:00:00.000Z',
+            addedBy:  'discord-command',
+        };
+        const corruptEntry = {
+            PK:       'PERSON#ALLOWLIST',
+            SK:       'PERSON#INVALID ID!!!',
+            personId: 'INVALID ID!!!',
+            addedAt:  '2026-01-02T00:00:00.000Z',
+            addedBy:  'discord-command',
+        };
+
+        ddbMock.on(QueryCommand).resolves({
+            Items: [aliceEntry, corruptEntry],
+        });
+
+        const allowlist = makeAllowlist();
+        // Should not throw
+        const entries = await allowlist.list();
+
+        // Valid row is returned
+        expect(entries).toHaveLength(1);
+        expect(entries[0]?.personId).toBe(ALICE_ID);
+
+        // Corrupt row is omitted and a warning is logged
+        expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        const [warnArg] = mockLogger.warn.mock.calls[0] as [Record<string, unknown>];
+        expect(warnArg.personIdStr).toBe('INVALID ID!!!');
+        expect(warnArg.msg).toContain('invalid personId format in row');
+    });
+
+    test('skips all corrupt rows and returns empty array when every row is corrupt', async () => {
+        ddbMock.on(QueryCommand).resolves({
+            Items: [
+                { PK: 'PERSON#ALLOWLIST', SK: 'PERSON#BAD1', personId: 'BAD VALUE!!!', addedAt: '2026-01-01T00:00:00.000Z', addedBy: 'discord-command' },
+                { PK: 'PERSON#ALLOWLIST', SK: 'PERSON#BAD2', personId: '',             addedAt: '2026-01-01T00:00:00.000Z', addedBy: 'discord-command' },
+            ],
+        });
+
+        const allowlist = makeAllowlist();
+        const entries = await allowlist.list();
+
+        expect(entries).toHaveLength(0);
+        expect(mockLogger.warn).toHaveBeenCalledTimes(2);
     });
 });
 

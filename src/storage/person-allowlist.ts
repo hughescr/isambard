@@ -241,17 +241,27 @@ export class PersonAllowlist {
             lastEvaluatedKey = result.LastEvaluatedKey;
         } while(lastEvaluatedKey);
 
-        return items.map((item) => {
+        const entries: PersonAllowlistEntry[] = [];
+        for(const item of items) {
+            let personId: ContactId;
+            try {
+                personId = createContactId(item.personId as string);
+            } catch (error) {
+                // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
+                logger.warn({ personIdStr: item.personId, tableName: this.tableName, error, msg: 'PersonAllowlist.list(): invalid personId format in row — skipping' });
+                continue;
+            }
             const entry: PersonAllowlistEntry = {
-                personId: createContactId(item.personId as string),
-                addedAt:  item.addedAt as string,
-                addedBy:  item.addedBy as string,
+                personId,
+                addedAt: item.addedAt as string,
+                addedBy: item.addedBy as string,
             };
             if(item.notes !== undefined) {
                 entry.notes = item.notes as string;
             }
-            return entry;
-        });
+            entries.push(entry);
+        }
+        return entries;
     }
 
     /** Remove all reverseMap entries that point to the given personId */
