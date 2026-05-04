@@ -284,4 +284,38 @@ describe('MemoryToolBackendCore', () => {
             expect(result.tags).toBeUndefined();
         });
     });
+
+    describe('TTL support', () => {
+        test('putItem receives TTL attribute when input.ttl is set', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const epochTtl = 1_700_000_000;
+
+            await backend.create({
+                path:        '/test/with-ttl.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+                ttl:         epochTtl,
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const item = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(item.TTL).toBe(epochTtl);
+        });
+
+        test('putItem does NOT receive TTL attribute when input.ttl is omitted', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.create({
+                path:        '/test/no-ttl.md' as MemoryPath,
+                content:     'Test content',
+                contentType: 'text/plain',
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const item = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(item).not.toHaveProperty('TTL');
+        });
+    });
 });

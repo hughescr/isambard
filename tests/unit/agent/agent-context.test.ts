@@ -38,6 +38,7 @@ describe('createClaudeAgent context integration', () => {
             loadUserMemories:       mock(() => Promise.resolve('')),
             recordAccess:           mock(async () => {}),
             loadRecentEvents:       mock(() => Promise.resolve({ items: [], isFallback: false })),
+            loadRecentEventsSince:  mock(async () => []),
             loadUserTimezone:       mock(() => Promise.resolve(undefined)),
             buildPerchContext:      mock(() => Promise.resolve('')),
             buildUserMessagePrefix: mock(async (userId: string, _userTimezone?: string): Promise<string> => {

@@ -250,6 +250,58 @@ export class MemoryToolBackendQuery {
         return items.toReversed();
     }
 
+    async searchSince(
+        startTime: string,
+        layer?: LayerName,
+        options?: { limit?: number }
+    ): Promise<MemoryToolItemData[]> {
+        // Query GSI1 by layer with open-ended time range (>= startTime, no upper bound)
+        // GSI1PK = LAYER#{layer} AND GSI1SK >= UPDATED#{start}
+        const layers = layer ? [layer] : ['identity', 'state', 'events'] as const;
+        const allItems: MemoryToolItemData[] = [];
+
+        // Calculate per-layer limit to distribute evenly
+        const perLayerLimit = options?.limit ? Math.ceil(options.limit / layers.length) : undefined;
+
+        const layerResults = await Promise.all(layers.map((l) => {
+            const queryParams: Record<string, unknown> = {
+                IndexName:                 'GSI1',
+                KeyConditionExpression:    'GSI1PK = :pk AND GSI1SK >= :start',
+                ExpressionAttributeValues: {
+                    ':pk':    `LAYER#${l}`,
+                    ':start': `UPDATED#${startTime}`,
+                },
+                // Stryker disable next-line BooleanLiteral: Sort order is observational - descending reads from tail of GSI without full scan
+                ScanIndexForward: false, // Newest first
+            };
+
+            // Stryker disable next-line ConditionalExpression: Guard is defensive — setting Limit to undefined is equivalent to not setting it
+            if(perLayerLimit) {
+                queryParams.Limit = perLayerLimit;
+            }
+
+            return this.getDocClient().send(new QueryCommand({
+                TableName: this.tableName,
+                ...queryParams,
+            }));
+        }));
+
+        for(const result of layerResults) {
+            allItems.push(...((result.Items ?? []) as MemoryToolItem[]).map(item => this.stripKeys(item)));
+        }
+
+        // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
+        let items = allItems.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+        // Apply limit - keep newest N items
+        if(options?.limit) {
+            items = items.slice(0, options.limit);
+        }
+
+        // Reverse to ascending order (oldest first, newest last) for the caller
+        return items.toReversed();
+    }
+
     async getAutoLoadItems(
         options?: { maxIdentityItems?: number, maxStateItems?: number, now?: Date }
     ): Promise<MemoryToolItemData[]> {

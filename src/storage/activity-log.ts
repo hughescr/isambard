@@ -36,6 +36,9 @@ export interface ActivityLogger {
  * Errors from `backend.create()` are propagated to the caller.
  * For fire-and-forget usage: `void logger.log(entry).catch(() => undefined)`.
  */
+// Auto-logged activity entries expire after 30 days. Manual logEvent entries do not get a TTL.
+const ACTIVITY_TTL_DAYS = 30;
+
 export function createActivityLogger(backend: MemoryToolBackend): ActivityLogger {
     return {
         async log(entry: ActivityLogEntry): Promise<void> {
@@ -45,12 +48,15 @@ export function createActivityLogger(backend: MemoryToolBackend): ActivityLogger
                 ? `[auto] ${entry.summary}\n\n${entry.details}`
                 : `[auto] ${entry.summary}`;
             const tags = new Set(['auto-logged', entry.type, ...(entry.tags ?? [])]);
+            // Stryker disable next-line ArithmeticOperator: TTL arithmetic — 30-day constant; mutation to a different constant would still expire, just at a different time
+            const ttl = Math.floor(Date.now() / 1000) + ACTIVITY_TTL_DAYS * 86_400;
 
             await backend.create({
                 path,
                 content,
                 contentType: createContentType('text/plain'),
                 tags,
+                ttl,
                 ...(entry.metadata !== undefined && { metadata: entry.metadata }),
             });
         },

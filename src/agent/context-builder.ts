@@ -97,6 +97,16 @@ export interface ContextBuilder {
     loadRecentEvents: (limit?: number, now?: Date) => Promise<RecentEventsResult>
 
     /**
+     * Load recent events from a rolling time window using an open-ended >= query.
+     * Used by LiveSignals for the activity-log signal (2-hour window).
+     * @param windowMs Rolling window size in milliseconds
+     * @param limit Maximum number of events to load
+     * @param now Optional reference time (defaults to current time)
+     * @returns Raw event items array
+     */
+    loadRecentEventsSince: (windowMs: number, limit: number, now?: Date) => Promise<MemoryToolItemData[]>
+
+    /**
      * Load user timezone preference
      * @param userId User ID to load timezone for
      * @returns Timezone string (e.g., "America/Los_Angeles") or undefined if not found
@@ -845,6 +855,11 @@ class ContextBuilderImpl implements ContextBuilder {
 
         logger.debug({ eventCount: result.length }, 'Recent events loaded');
         return { items: result, isFallback };
+    }
+
+    async loadRecentEventsSince(windowMs: number, limit: number, now: Date = new Date()): Promise<MemoryToolItemData[]> {
+        const startTime = new Date(now.getTime() - windowMs).toISOString();
+        return this.#backend.searchSince(startTime, createLayerName('events'), { limit });
     }
 
     async loadUserTimezone(userId: string): Promise<string | undefined> {

@@ -16,6 +16,7 @@ export interface CreateMemoryToolItemInput {
     contentType: ContentType
     metadata?:   Record<string, unknown>
     tags?:       Set<string>
+    ttl?:        number   // DynamoDB TTL attribute (epoch seconds). When set, the item will be expired by DDB.
 }
 
 export interface UpdateMemoryToolItemInput {
@@ -75,8 +76,14 @@ export class MemoryToolBackendCore {
             ...keys,
         };
 
+        const ddbItem: Record<string, unknown> = { ...(item as unknown as Record<string, unknown>) };
+        // Stryker disable next-line ConditionalExpression: TTL is an optional DDB attribute; absence is intentional when ttl is undefined
+        if(input.ttl !== undefined) {
+            ddbItem.TTL = input.ttl;
+        }
+
         // boundary cast: constructor-injected putItem requires Record<string,unknown> but MemoryToolItem carries branded MemoryPath/ContentType; runtime shapes are compatible
-        await this.putItem(item as unknown as Record<string, unknown>);
+        await this.putItem(ddbItem);
 
         return data;
     }

@@ -32,6 +32,7 @@ function createMockContextBuilder(overrides?: Partial<ContextBuilder>): ContextB
         loadUserMemories:       mock(() => Promise.resolve('')),
         recordAccess:           mock(() => Promise.resolve()),
         loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),
+        loadRecentEventsSince:  mock(async () => []),
         loadUserTimezone:       mock(() => Promise.resolve(undefined)),
         buildUserMessagePrefix: mock(() => Promise.resolve('')),
         buildPerchContext:      mock(() => Promise.resolve('')),

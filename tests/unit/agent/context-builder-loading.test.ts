@@ -1481,6 +1481,74 @@ describe('createContextBuilder loading methods', () => {
         });
     });
 
+    describe('loadRecentEventsSince', () => {
+        const makeEventItem = (path: string, updatedAt: string): MemoryToolItemData => ({
+            path:        createMemoryPath(path),
+            content:     `Event at ${updatedAt}`,
+            contentType: 'text/plain' as const,
+            metadata:    {},
+            createdAt:   updatedAt,
+            updatedAt,
+        });
+
+        test('calls backend.searchSince with correct startTime from windowMs', async () => {
+            const now = new Date('2025-06-01T12:00:00.000Z');
+            const windowMs = 2 * 60 * 60 * 1000; // 2 hours
+            const expectedStart = new Date(now.getTime() - windowMs).toISOString();
+
+            backend.searchSince = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEventsSince(windowMs, 10, now);
+
+            expect(backend.searchSince).toHaveBeenCalledWith(
+                expectedStart,
+                'events',
+                { limit: 10 }
+            );
+        });
+
+        test('returns items array directly from searchSince', async () => {
+            const now = new Date('2025-06-01T12:00:00.000Z');
+            const items = [
+                makeEventItem('/events/activity/perch-end/ts1', '2025-06-01T10:00:00.000Z'),
+                makeEventItem('/events/conversation/ts2', '2025-06-01T11:00:00.000Z'),
+            ];
+
+            backend.searchSince = mock(async () => items);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEventsSince(2 * 60 * 60 * 1000, 10, now);
+
+            expect(result).toEqual(items);
+        });
+
+        test('returns empty array when searchSince returns empty', async () => {
+            backend.searchSince = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadRecentEventsSince(2 * 60 * 60 * 1000, 10);
+
+            expect(result).toEqual([]);
+        });
+
+        test('uses current time when now is not provided', async () => {
+            const before = Date.now();
+            backend.searchSince = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadRecentEventsSince(2 * 60 * 60 * 1000, 5);
+
+            const after = Date.now();
+            const searchSinceMock = backend.searchSince as ReturnType<typeof mock>;
+            const calledWith = searchSinceMock.mock.calls[0][0] as string;
+            const calledStartMs = new Date(calledWith).getTime();
+            // The start time should be approximately (now - 2h)
+            expect(calledStartMs).toBeGreaterThanOrEqual(before - 2 * 60 * 60 * 1000);
+            expect(calledStartMs).toBeLessThanOrEqual(after - 2 * 60 * 60 * 1000 + 100);
+        });
+    });
+
     describe('loadUserTimezone', () => {
         test('should return timezone content when found', async () => {
             backend.get = mock(async () => ({

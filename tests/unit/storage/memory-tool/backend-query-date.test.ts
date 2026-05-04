@@ -547,6 +547,215 @@ describe('MemoryToolBackend - Date Filtering', () => {
         });
     });
 
+    describe('searchSince', () => {
+        test('uses GSI1SK >= :start (not BETWEEN) in KeyConditionExpression', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.searchSince(
+                '2024-06-01T00:00:00.000Z',
+                'events' as LayerName
+            );
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            const queryInput = calls[0].args[0].input;
+            expect(queryInput.IndexName).toBe('GSI1');
+            expect(queryInput.KeyConditionExpression).toBe('GSI1PK = :pk AND GSI1SK >= :start');
+            expect(queryInput.ExpressionAttributeValues?.[':pk']).toBe('LAYER#events');
+            expect(queryInput.ExpressionAttributeValues?.[':start']).toBe('UPDATED#2024-06-01T00:00:00.000Z');
+            expect(queryInput.ExpressionAttributeValues).not.toHaveProperty(':end');
+        });
+
+        test('KeyConditionExpression does not contain BETWEEN', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName);
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            const queryInput = calls[0].args[0].input;
+            expect(queryInput.KeyConditionExpression).not.toContain('BETWEEN');
+        });
+
+        test('returns empty array when partition has no items', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            const result = await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName);
+
+            expect(result).toEqual([]);
+        });
+
+        test('returns items in ascending order (oldest first)', async () => {
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#newest.md',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-12-31T00:00:00.000Z',
+                    path:        '/events/newer.md' as MemoryPath,
+                    content:     'Newer',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    createdAt:   '2024-12-31T00:00:00.000Z',
+                    updatedAt:   '2024-12-31T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#oldest.md',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/events/older.md' as MemoryPath,
+                    content:     'Older',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+
+            const result = await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName);
+
+            expect(result).toHaveLength(2);
+            expect(result[0].path).toBe('/events/older.md' as MemoryPath);
+            expect(result[1].path).toBe('/events/newer.md' as MemoryPath);
+        });
+
+        test('applies limit option per-layer', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName, { limit: 5 });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            // Single layer: perLayerLimit = ceil(5/1) = 5
+            expect(calls[0].args[0].input.Limit).toBe(5);
+        });
+
+        test('queries all three layers when no layer specified and multi-layer merges correctly', async () => {
+            const identityItem: MemoryToolItem = {
+                PK:          'DIR#/identity',
+                SK:          'FILE#id1.md',
+                GSI1PK:      'LAYER#identity',
+                GSI1SK:      'UPDATED#2024-06-01T00:00:00.000Z',
+                path:        '/identity/id1.md' as MemoryPath,
+                content:     'Identity',
+                contentType: 'text/plain',
+                metadata:    {},
+                createdAt:   '2024-06-01T00:00:00.000Z',
+                updatedAt:   '2024-06-01T00:00:00.000Z',
+            };
+            const eventsItem: MemoryToolItem = {
+                PK:          'DIR#/events',
+                SK:          'FILE#ev1.md',
+                GSI1PK:      'LAYER#events',
+                GSI1SK:      'UPDATED#2024-12-01T00:00:00.000Z',
+                path:        '/events/ev1.md' as MemoryPath,
+                content:     'Event',
+                contentType: 'text/plain',
+                metadata:    {},
+                createdAt:   '2024-12-01T00:00:00.000Z',
+                updatedAt:   '2024-12-01T00:00:00.000Z',
+            };
+
+            ddbMock.on(QueryCommand)
+                .resolvesOnce({ Items: [identityItem] })
+                .resolvesOnce({ Items: [] })
+                .resolvesOnce({ Items: [eventsItem] });
+
+            const result = await backend.searchSince('2024-01-01T00:00:00.000Z');
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(3);
+            // Result should be sorted ascending
+            expect(result).toHaveLength(2);
+            expect(result[0].path).toBe('/identity/id1.md' as MemoryPath);
+            expect(result[1].path).toBe('/events/ev1.md' as MemoryPath);
+        });
+
+        test('applies limit and returns newest N items in ascending order', async () => {
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#newest.md',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-12-31T00:00:00.000Z',
+                    path:        '/events/newest.md' as MemoryPath,
+                    content:     'Newest',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    createdAt:   '2024-12-31T00:00:00.000Z',
+                    updatedAt:   '2024-12-31T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#middle.md',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-06-15T00:00:00.000Z',
+                    path:        '/events/middle.md' as MemoryPath,
+                    content:     'Middle',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    createdAt:   '2024-06-15T00:00:00.000Z',
+                    updatedAt:   '2024-06-15T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#oldest.md',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/events/oldest.md' as MemoryPath,
+                    content:     'Oldest',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+            ];
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+
+            const result = await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName, { limit: 2 });
+
+            // Top 2 newest, returned in ascending order: middle, newest
+            expect(result).toHaveLength(2);
+            expect(result[0].path).toBe('/events/middle.md' as MemoryPath);
+            expect(result[1].path).toBe('/events/newest.md' as MemoryPath);
+        });
+
+        test('strips DynamoDB keys from results', async () => {
+            const items: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/events',
+                    SK:          'FILE#file.md',
+                    GSI1PK:      'LAYER#events',
+                    GSI1SK:      'UPDATED#2024-01-15T00:00:00.000Z',
+                    path:        '/events/file.md' as MemoryPath,
+                    content:     'Test',
+                    contentType: 'text/plain',
+                    metadata:    {},
+                    createdAt:   '2024-01-15T00:00:00.000Z',
+                    updatedAt:   '2024-01-15T00:00:00.000Z',
+                },
+            ];
+            ddbMock.on(QueryCommand).resolves({ Items: items });
+
+            const result = await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName);
+
+            expect(result[0]).not.toHaveProperty('PK');
+            expect(result[0]).not.toHaveProperty('SK');
+            expect(result[0]).not.toHaveProperty('GSI1PK');
+            expect(result[0]).not.toHaveProperty('GSI1SK');
+        });
+
+        test('uses ScanIndexForward: false (newest first from DDB, then reversed to ascending)', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.searchSince('2024-01-01T00:00:00.000Z', 'events' as LayerName);
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls[0].args[0].input.ScanIndexForward).toBe(false);
+        });
+    });
+
     describe('getAutoLoadItems', () => {
         test('should use default limits (100 identity, 50 state)', async () => {
             ddbMock.on(QueryCommand)

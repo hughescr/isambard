@@ -22,7 +22,7 @@
  *   - bsky-discover    top posts from Bluesky discover feed
  *   - bsky-foryou      top posts from Bluesky for-you feed
  *   - bsky-notifications  recent unread Bluesky notifications (single summary)
- *   - activity         recent auto-logged activity events
+ *   - activity         recent activity events (auto-logged and manual logEvent)
  *
  * Time-of-day bucket mapping (24-hour local time):
  *   0–4    deep night
@@ -755,8 +755,9 @@ export class LiveSignals {
     }
 
     /**
-     * Returns up to 3 activity signals from the auto-logged activity log.
-     * Renders each as "type relative-time ago" (e.g. "perch-end 22m ago").
+     * Returns up to 3 activity signals from the recent activity log.
+     * Includes both auto-logged (/events/activity/{type}/{ts}) and manual
+     * logEvent (/events/{type}/{ts}) entries. Renders each as "type relative-time ago".
      */
     private async activitySignals(): Promise<Signal[] | undefined> {
         const { loadRecentActivityLog, idleSignalsConfig } = this.deps;
@@ -797,18 +798,21 @@ export class LiveSignals {
 
     private buildActivitySignals(items: MemoryToolItemData[]): Signal[] {
         const nowMs = this.getNowMs();
-        // Filter to auto-logged items first, then take the last 3 (most recent in ascending sort).
-        // Filtering before slicing ensures that manual events near the end of the window
-        // do not crowd out older auto-logged events that fall within the limit.
-        // Stryker disable next-line ConditionalExpression,BlockStatement: auto-logged tag filter — items without the tag are skipped
-        const recent = items.filter(item => item.tags?.has('auto-logged')).slice(-3);
+        // Take the last 3 items (most recent in ascending sort). No tag filter —
+        // the 2-hour window query already scopes to the events layer and includes
+        // both auto-logged (/events/activity/{type}/{ts}) and manual (/events/{type}/{ts}) entries.
+        const recent = items.slice(-3);
         const signals: Signal[] = [];
         for(const item of recent) {
-            // Extract activity type from path: /events/activity/{type}/{timestamp}
+            // Detect path shape:
+            //   auto-logged: /events/activity/{type}/{ts}  → 5 parts, type at index 3
+            //   manual:      /events/{type}/{ts}           → 4 parts, type at index 2
             const pathParts = item.path.split('/');
-            // Path is /events/activity/{type}/{timestamp} → parts index 3 is type
-            // Stryker disable next-line ArithmeticOperator: index 3 is correct for /events/activity/{type}/{ts}
-            const activityType = pathParts[3] ?? 'activity';
+            // Stryker disable next-line EqualityOperator: index 2 === 'activity' distinguishes the two path shapes
+            const activityType = pathParts[2] === 'activity'
+                // Stryker disable next-line ArithmeticOperator: index 3 is correct for /events/activity/{type}/{ts}
+                ? (pathParts[3] ?? 'activity')
+                : (pathParts[2] ?? 'event');
             const updatedMs = new Date(item.updatedAt).getTime();
             const ago = relativeTime(nowMs - updatedMs);
             signals.push({

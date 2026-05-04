@@ -545,6 +545,21 @@ describe.concurrent('LiveSignals.snapshot()', () => {
         };
     }
 
+    /** Manual logEvent item: /events/{eventType}/{ts} (one fewer path segment than auto-logged) */
+    function makeManualEventItem(
+        eventType: string,
+        updatedAt: string
+    ): MemoryToolItemData {
+        return {
+            path:        `/events/${eventType}/2026-01-01T00-00-00-000Z` as MemoryToolItemData['path'],
+            content:     `${eventType} happened`,
+            contentType: 'text/plain',
+            metadata:    {},
+            createdAt:   updatedAt,
+            updatedAt,
+        };
+    }
+
     /** Full IdleSignalsConfig with all flags on and standard TTLs. */
     const FULL_CONFIG = {
         bskyDiscoverEnabled:      true,
@@ -1264,7 +1279,8 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(activity.some(s => s.content.includes('bsky-post-sent') && s.content.includes('5m ago'))).toBe(true);
         });
 
-        test('filters out items not tagged auto-logged', async () => {
+        test('includes all items regardless of tags (no auto-logged filter)', async () => {
+            // After the fix: both manual and auto-logged items appear in the activity signal
             const items = [
                 makeActivityItem('perch-end', '2026-05-03T09:00:00Z', new Set(['perch-end'])), // no auto-logged tag
                 makeActivityItem('perch-start', '2026-05-03T09:30:00Z'),                       // has auto-logged tag
@@ -1272,8 +1288,10 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const ls = new LiveSignals(makeActivityDeps(items));
             const signals = await ls.snapshot();
             const activity = signals.filter(s => s.kind === 'activity');
-            expect(activity.every(s => s.content.includes('perch-start'))).toBe(true);
-            expect(activity.some(s => s.content.includes('perch-end'))).toBe(false);
+            // Both items should appear now (no filter on auto-logged tag)
+            expect(activity).toHaveLength(2);
+            expect(activity.some(s => s.content.includes('perch-end'))).toBe(true);
+            expect(activity.some(s => s.content.includes('perch-start'))).toBe(true);
         });
 
         test('cache hit: second call within TTL does not re-fetch', async () => {
@@ -1364,54 +1382,59 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(signals.filter(s => s.kind === 'activity')).toHaveLength(3);
         });
 
-        // FIX B: filter-then-slice — auto-logged items after manual items must not be lost
-        test('FIX B: filter first, then slice — auto-logged items after manual-only recent 3 are not dropped', async () => {
-            // 5 items ascending by time: 3 manual first, then 2 auto-logged
-            // Before fix: slice(-3) gives [manual1, manual2, auto1] — only auto1 passes filter
-            // After fix: filter first → [auto1, auto2], slice(-3) → [auto1, auto2]
-            const items = [
-                makeActivityItem('manual-a', '2026-05-03T07:00:00Z', new Set(['manual-a'])), // no auto-logged
-                makeActivityItem('manual-b', '2026-05-03T08:00:00Z', new Set(['manual-b'])), // no auto-logged
-                makeActivityItem('manual-c', '2026-05-03T09:00:00Z', new Set(['manual-c'])), // no auto-logged
-                makeActivityItem('auto-1',   '2026-05-03T10:00:00Z'),                         // has auto-logged
-                makeActivityItem('auto-2',   '2026-05-03T11:00:00Z'),                         // has auto-logged
-            ];
-            const ls = new LiveSignals(makeActivityDeps(items));
+        // Path-parsing: both auto-logged and manual event path shapes work
+        test('auto-logged path /events/activity/{type}/{ts} renders type correctly', async () => {
+            const now = new Date('2026-05-03T10:00:00Z');
+            const items = [makeActivityItem('perch-end', new Date(now.getTime() - 10 * 60_000).toISOString())];
+            const ls = new LiveSignals(makeActivityDeps(items, () => now.getTime()));
             const signals = await ls.snapshot();
             const activity = signals.filter(s => s.kind === 'activity');
-            // Both auto-logged items should appear (not just 1, and not 0)
+            expect(activity).toHaveLength(1);
+            expect(activity[0].content).toContain('perch-end');
+        });
+
+        test('manual path /events/{eventType}/{ts} renders eventType correctly', async () => {
+            const now = new Date('2026-05-03T10:00:00Z');
+            const items = [makeManualEventItem('conversation', new Date(now.getTime() - 5 * 60_000).toISOString())];
+            const ls = new LiveSignals(makeActivityDeps(items, () => now.getTime()));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
+            expect(activity).toHaveLength(1);
+            expect(activity[0].content).toContain('conversation');
+        });
+
+        test('mixed path shapes: both auto-logged and manual events render correctly', async () => {
+            const now = new Date('2026-05-03T10:00:00Z');
+            const items = [
+                makeActivityItem('perch-end', new Date(now.getTime() - 20 * 60_000).toISOString()),
+                makeManualEventItem('conversation', new Date(now.getTime() - 5 * 60_000).toISOString()),
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items, () => now.getTime()));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
             expect(activity).toHaveLength(2);
-            expect(activity.some(s => s.content.includes('auto-1'))).toBe(true);
-            expect(activity.some(s => s.content.includes('auto-2'))).toBe(true);
+            expect(activity.some(s => s.content.includes('perch-end'))).toBe(true);
+            expect(activity.some(s => s.content.includes('conversation'))).toBe(true);
         });
 
-        test('FIX B: when no items have auto-logged tag, activity output is empty', async () => {
+        test('returns last 3 items (no filter, pure slice(-3))', async () => {
+            // 4 items total; after removing filter, all 4 are candidates and last 3 are taken
             const items = [
-                makeActivityItem('event-a', '2026-05-03T08:00:00Z', new Set(['event-a'])),
-                makeActivityItem('event-b', '2026-05-03T09:00:00Z', new Set(['event-b'])),
-                makeActivityItem('event-c', '2026-05-03T10:00:00Z', new Set(['event-c'])),
-            ];
-            const ls = new LiveSignals(makeActivityDeps(items));
-            const signals = await ls.snapshot();
-            expect(signals.filter(s => s.kind === 'activity')).toHaveLength(0);
-        });
-
-        test('FIX B: mixed auto-logged and manual items — only auto-logged ones appear, capped at 3', async () => {
-            // 6 items, alternating manual and auto-logged
-            const items = [
-                makeActivityItem('manual-1', '2026-05-03T07:00:00Z', new Set(['manual'])),
-                makeActivityItem('auto-1',   '2026-05-03T08:00:00Z'),
-                makeActivityItem('manual-2', '2026-05-03T09:00:00Z', new Set(['manual'])),
-                makeActivityItem('auto-2',   '2026-05-03T10:00:00Z'),
-                makeActivityItem('manual-3', '2026-05-03T11:00:00Z', new Set(['manual'])),
-                makeActivityItem('auto-3',   '2026-05-03T12:00:00Z'),
+                makeActivityItem('perch-start', '2026-05-03T08:00:00Z'),
+                makeManualEventItem('conversation', '2026-05-03T09:00:00Z'),
+                makeActivityItem('perch-end', '2026-05-03T10:00:00Z'),
+                makeActivityItem('email-sent', '2026-05-03T11:00:00Z'),
             ];
             const ls = new LiveSignals(makeActivityDeps(items));
             const signals = await ls.snapshot();
             const activity = signals.filter(s => s.kind === 'activity');
-            // 3 auto-logged items, all pass filter, cap at 3
             expect(activity).toHaveLength(3);
-            expect(activity.every(s => /auto-\d/.test(s.content))).toBe(true);
+            // The oldest (perch-start) should NOT appear
+            expect(activity.some(s => s.content.includes('perch-start'))).toBe(false);
+            // The 3 most recent should appear
+            expect(activity.some(s => s.content.includes('conversation'))).toBe(true);
+            expect(activity.some(s => s.content.includes('perch-end'))).toBe(true);
+            expect(activity.some(s => s.content.includes('email-sent'))).toBe(true);
         });
     });
 

@@ -256,6 +256,14 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         return this.queryOps.searchByTimeRange(startTime, endTime, layer, options);
     }
 
+    async searchSince(
+        startTime: string,
+        layer?: LayerName,
+        options?: { limit?: number }
+    ): Promise<MemoryToolItemData[]> {
+        return this.queryOps.searchSince(startTime, layer, options);
+    }
+
     async getAutoLoadItems(
         options?: { maxIdentityItems?: number, maxStateItems?: number, now?: Date }
     ): Promise<MemoryToolItemData[]> {

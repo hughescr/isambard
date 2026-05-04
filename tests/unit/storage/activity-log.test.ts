@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { createActivityLogger, type ActivityLogEntry, type ActivityType } from '../../../src/storage/activity-log';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -205,6 +205,26 @@ describe.concurrent('createActivityLogger', () => {
             const input = createCall[0] as { tags: Set<string> };
             expect(input.tags.size).toBe(2);
             expect([...input.tags].toSorted((a, b) => a.localeCompare(b))).toEqual(['auto-logged', 'perch-suspend']);
+        });
+    });
+
+    describe('TTL', () => {
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('passes ttl ~30 days from now to backend.create()', async () => {
+            const pinnedNow = new Date('2025-06-01T00:00:00.000Z');
+            jest.useFakeTimers();
+            jest.setSystemTime(pinnedNow);
+
+            const logger = createActivityLogger(mockBackend);
+            await logger.log({ type: 'email-sent', summary: 'Test email' });
+
+            const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
+            const input = createCall[0] as { ttl?: number };
+            const expectedTtl = Math.floor(pinnedNow.getTime() / 1000) + 30 * 86_400;
+            expect(input.ttl).toBe(expectedTtl);
         });
     });
 

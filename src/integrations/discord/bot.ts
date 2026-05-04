@@ -47,6 +47,10 @@ declare global {
     var __discordClient: Client | undefined;
 }
 
+/** Rolling window for activity-log signals fed to LiveSignals (2 hours in ms). */
+// Stryker disable next-line ArithmeticOperator: window duration constant — mutation would change the window size, not the logic
+const ACTIVITY_WINDOW_MS = 2 * 60 * 60 * 1000;
+
 /**
  * Options for configuring the Discord bot.
  */
@@ -608,7 +612,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     idleSignalsConfig:     config.presence?.idleSignals,
                     // Stryker disable next-line BlockStatement: composition root callback — contextBuilder is optional
                     loadRecentActivityLog: contextBuilder
-                        ? (limit: number) => contextBuilder.loadRecentEvents(limit).then(r => r.items)
+                        ? (limit: number) => contextBuilder.loadRecentEventsSince(ACTIVITY_WINDOW_MS, limit)
                         : undefined,
                 })
                 : undefined;
