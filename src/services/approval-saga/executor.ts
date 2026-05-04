@@ -56,6 +56,7 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
 
     // Stryker disable next-line BooleanLiteral: initial value is always overwritten by start() which sets stopped = false; mutation has no observable effect
     let stopped          = false;
+    let generation       = 0;
     let currentIntervalMs = baseIntervalMs;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -102,6 +103,7 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
         if(stopped) {
             return;
         }
+        const myGen = generation;
         timeoutId = setTimeout(() => {
             void (async () => {
                 try {
@@ -127,7 +129,12 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
                     // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for observability only
                     logger.debug({ error: message }, 'Saga poll tick threw unexpectedly; rescheduling');
                 }
-                scheduleNextTick();
+                // Only reschedule if this tick's generation still matches the current generation.
+                // If stop()+start() ran while this tick was mid-flight, generation was bumped and
+                // start() already scheduled a new timer — skip to prevent a leaked duplicate timer.
+                if(generation === myGen) {
+                    scheduleNextTick();
+                }
             })();
         }, currentIntervalMs);
     }
@@ -135,6 +142,8 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
     return {
         start(): void {
             stopped = false; // Allow restart after stop()
+            // Stryker disable next-line AssignmentOperator: generation +=1 and -=1 are equivalent — both change the value away from myGen (captured at schedule time), ensuring the staleness check fires; only the direction of delta differs
+            generation += 1; // Invalidate any mid-flight tick's trailing reschedule
             // Stryker disable next-line ConditionalExpression: guard prevents double-start; mutation to false skips the guard (no functional effect in tests)
             if(timeoutId !== undefined) {
                 return;

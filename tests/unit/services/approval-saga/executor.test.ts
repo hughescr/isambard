@@ -294,6 +294,79 @@ describe('createSagaExecutor', () => {
             }).not.toThrow();
         });
 
+        test('stop then start during mid-flight tick leaves exactly one pending timer (no leak)', async () => {
+            // Regression test for stop/start race: Bun's advanceTimersByTime drains microtasks
+            // synchronously, so the race window must be opened by using a deferred (manually
+            // resolved) promise for listByState — this keeps the async IIFE suspended while we
+            // call stop()+start(), then we resolve to let the IIFE complete.
+            //
+            // Without the generation-counter fix, the in-flight IIFE's trailing scheduleNextTick
+            // runs after start() has already scheduled T2, producing two pending timers (T2+T3).
+            // With the fix, the IIFE detects its generation is stale and skips rescheduling.
+            let resolveListByState!: (value: ApprovalSaga[]) => void;
+            const deferredListByState = new Promise<ApprovalSaga[]>((resolve) => {
+                resolveListByState = resolve;
+            });
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                (): Promise<ApprovalSaga[]> => deferredListByState
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // Fire T1 — async IIFE begins, suspends at await backend.listByState()
+            jest.advanceTimersByTime(1000);
+            // T1 fired; IIFE is now truly suspended (timerCount=0 — no new timer scheduled yet)
+            expect(jest.getTimerCount()).toBe(0);
+
+            // Race: stop+start while T1's IIFE is mid-flight
+            executor.stop();   // stopped=true, clears timeoutId (T1 already fired, no-op)
+            executor.start();  // stopped=false, bumps generation, schedules T2 → timerCount=1
+            expect(jest.getTimerCount()).toBe(1);
+
+            // Now resolve listByState → T1's IIFE can complete
+            resolveListByState([]);
+            await Promise.resolve(); // listByState resolves inside executeOnce
+            await Promise.resolve(); // executeOnce returns; IIFE runs backoff branch
+            await Promise.resolve(); // trailing scheduleNextTick() — must be suppressed by generation check
+
+            // With the fix: only T2 (from start()) pending, T1's trailing reschedule was suppressed
+            expect(jest.getTimerCount()).toBe(1);
+
+            executor.stop();
+        });
+
+        test('stop alone (no restart) leaves zero pending timers after mid-flight tick', async () => {
+            // Verify that stop() without a subsequent start() leaves 0 timers, even when stop()
+            // races with a mid-flight tick (deferred listByState keeps the IIFE suspended).
+            let resolveListByState!: (value: ApprovalSaga[]) => void;
+            const deferredListByState = new Promise<ApprovalSaga[]>((resolve) => {
+                resolveListByState = resolve;
+            });
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                (): Promise<ApprovalSaga[]> => deferredListByState
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // Fire T1 — IIFE starts, suspends at listByState
+            jest.advanceTimersByTime(1000);
+            expect(jest.getTimerCount()).toBe(0); // T1 fired, IIFE suspended, no new timer yet
+
+            // Stop only — no subsequent start()
+            executor.stop();
+
+            // Resolve the deferred so IIFE can complete
+            resolveListByState([]);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // stopped=true → scheduleNextTick must bail out → 0 timers
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
         test('stopped flag starts as false: timer callback fires executeOnce on first tick', async () => {
             // If stopped started as true, timer callback would skip executeOnce
             const saga = makeSaga();
