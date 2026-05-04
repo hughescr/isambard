@@ -27,6 +27,9 @@ export interface SagaExecutor {
 
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 
+/** Maximum poll interval after repeated empty results (5 minutes). */
+const MAX_POLL_INTERVAL_MS = 5 * 60_000;
+
 function getRequiredService(type: ApprovalSagaType): ServiceName {
     switch(type) {
         case 'bsky_reply':
@@ -49,11 +52,12 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
     } = deps;
 
     // Stryker disable next-line ConditionalExpression,EqualityOperator: default value fallback — undefined branch never reached when caller provides value
-    const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    const baseIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
     // Stryker disable next-line BooleanLiteral: initial value is always overwritten by start() which sets stopped = false; mutation has no observable effect
-    let stopped      = false;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
+    let stopped          = false;
+    let currentIntervalMs = baseIntervalMs;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     async function executeOnce(): Promise<ExecuteOnceResult> {
         const result: ExecuteOnceResult = { executed: 0, failed: 0 };
@@ -93,28 +97,59 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
         return result;
     }
 
+    function scheduleNextTick(): void {
+        // Stryker disable next-line BlockStatement,ConditionalExpression: stopped guard prevents rescheduling after stop(); path unreachable in fake-timer tests — microtasks flush synchronously after advanceTimersByTime so stop() always precedes the .then() callback
+        if(stopped) {
+            return;
+        }
+        timeoutId = setTimeout(() => {
+            void (async () => {
+                try {
+                    const result = await executeOnce();
+                    if(result.executed > 0 || result.failed > 0) {
+                        // Stryker disable next-line BlockStatement,ConditionalExpression,EqualityOperator: debug log guard — only suppresses noise when already at base; equivalent mutant (log content is observability-only)
+                        if(currentIntervalMs !== baseIntervalMs) {
+                            // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for tuning observability only
+                            logger.debug({ intervalMs: baseIntervalMs }, 'Saga poll interval reset to base');
+                        }
+                        currentIntervalMs = baseIntervalMs;
+                    } else {
+                        const next = Math.min(currentIntervalMs * 2, MAX_POLL_INTERVAL_MS);
+                        // Stryker disable next-line BlockStatement,ConditionalExpression,EqualityOperator: debug log guard — only suppresses noise when already at cap; equivalent mutant (log content is observability-only)
+                        if(next !== currentIntervalMs) {
+                            // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for tuning observability only
+                            logger.debug({ intervalMs: next }, 'Saga poll interval extended');
+                        }
+                        currentIntervalMs = next;
+                    }
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    // Stryker disable next-line ObjectLiteral,StringLiteral: debug-level logging for observability only
+                    logger.debug({ error: message }, 'Saga poll tick threw unexpectedly; rescheduling');
+                }
+                scheduleNextTick();
+            })();
+        }, currentIntervalMs);
+    }
+
     return {
         start(): void {
             stopped = false; // Allow restart after stop()
             // Stryker disable next-line ConditionalExpression: guard prevents double-start; mutation to false skips the guard (no functional effect in tests)
-            if(intervalId !== undefined) {
+            if(timeoutId !== undefined) {
                 return;
             }
-            intervalId = setInterval(() => {
-                // Stryker disable next-line ConditionalExpression: stopped guard prevents execution after stop()
-                if(!stopped) {
-                    void executeOnce();
-                }
-            }, pollIntervalMs);
+            currentIntervalMs = baseIntervalMs;
+            scheduleNextTick();
         },
 
         stop(): void {
-            // Stryker disable next-line BooleanLiteral: clearInterval always runs below so stopped flag change is only observable via the interval callback, which is already cleared; equivalent mutant
+            // Stryker disable next-line BooleanLiteral: clearTimeout always runs below so stopped flag change is only observable via the timeout callback, which is already cleared; equivalent mutant
             stopped = true;
-            // Stryker disable next-line ConditionalExpression: clearInterval(undefined) is a no-op so →true mutation is equivalent
-            if(intervalId !== undefined) {
-                clearInterval(intervalId);
-                intervalId = undefined;
+            // Stryker disable next-line ConditionalExpression: clearTimeout(undefined) is a no-op so →true mutation is equivalent
+            if(timeoutId !== undefined) {
+                clearTimeout(timeoutId);
+                timeoutId = undefined;
             }
         },
 

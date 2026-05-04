@@ -46,6 +46,7 @@ describe('createOutboxDrainer', () => {
     };
     let deliverFn: ReturnType<typeof mock>;
     let logger: {
+        debug: ReturnType<typeof mock>
         warn:  ReturnType<typeof mock>
         error: ReturnType<typeof mock>
         info:  ReturnType<typeof mock>
@@ -65,6 +66,7 @@ describe('createOutboxDrainer', () => {
         };
         deliverFn = mock(async (): Promise<void> => undefined);
         logger    = {
+            debug: mock((): void => undefined),
             warn:  mock((): void => undefined),
             error: mock((): void => undefined),
             info:  mock((): void => undefined),

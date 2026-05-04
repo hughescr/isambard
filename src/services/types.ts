@@ -35,6 +35,7 @@ export type HealthChangeListener = (change: ServiceHealthChange) => void;
  * Matches the shape of the project-wide logger so real loggers satisfy it automatically.
  */
 export interface ServiceLogger {
+    debug: (obj: object, msg: string) => void
     warn:  (obj: object, msg: string) => void
     error: (obj: object, msg: string) => void
     info:  (obj: object, msg: string) => void

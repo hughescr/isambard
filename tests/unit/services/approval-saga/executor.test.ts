@@ -50,6 +50,7 @@ describe('createSagaExecutor', () => {
         };
 
         logger = {
+            debug: mock((): void => undefined),
             warn:  mock((): void => undefined),
             error: mock((): void => undefined),
             info:  mock((): void => undefined),
@@ -228,7 +229,7 @@ describe('createSagaExecutor', () => {
     });
 
     describe('start and stop', () => {
-        test('start creates an interval that calls executeOnce', async () => {
+        test('start creates a timer that calls executeOnce', async () => {
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<ApprovalSaga[]> => [saga]
@@ -245,7 +246,7 @@ describe('createSagaExecutor', () => {
             executor.stop();
         });
 
-        test('double-start guard: second start does not create a second interval', async () => {
+        test('double-start guard: second start does not create a second timer', async () => {
             const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.start();
@@ -259,7 +260,7 @@ describe('createSagaExecutor', () => {
             executor.stop();
         });
 
-        test('stop clears interval so executeOnce is no longer called', async () => {
+        test('stop clears timer so executeOnce is no longer called', async () => {
             const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
@@ -293,15 +294,15 @@ describe('createSagaExecutor', () => {
             }).not.toThrow();
         });
 
-        test('stopped flag starts as false: interval callback fires executeOnce immediately on first tick', async () => {
-            // If stopped started as true, interval callback would skip executeOnce
+        test('stopped flag starts as false: timer callback fires executeOnce on first tick', async () => {
+            // If stopped started as true, timer callback would skip executeOnce
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<ApprovalSaga[]> => [saga]
             );
 
             const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
-            executor.start(); // stopped must be false for interval to execute
+            executor.start(); // stopped must be false for timer to execute
 
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
@@ -312,22 +313,53 @@ describe('createSagaExecutor', () => {
             executor.stop();
         });
 
-        test('clearInterval is called when stop() is called after start()', async () => {
-            const clearIntervalSpy = jest.spyOn(globalThis, 'clearInterval');
+        test('clearTimeout is called when stop() is called after start()', async () => {
+            const clearTimeoutSpy = jest.spyOn(globalThis, 'clearTimeout');
 
             const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
-            // clearInterval must have been called (not skipped by inverted guard)
-            expect(clearIntervalSpy).toHaveBeenCalled();
+            // clearTimeout must have been called (not skipped by inverted guard)
+            expect(clearTimeoutSpy).toHaveBeenCalled();
 
             // After stop, advancing time should not trigger listByState
             jest.advanceTimersByTime(3000);
             await Promise.resolve();
             expect(backend.listByState).not.toHaveBeenCalled();
 
-            clearIntervalSpy.mockRestore();
+            clearTimeoutSpy.mockRestore();
+        });
+
+        test('start() after stop() resumes at base interval', async () => {
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+
+            // Start, let it run two empty ticks (interval should have doubled to 2000)
+            executor.start();
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            executor.stop();
+
+            // Restart — interval should snap back to base (1000)
+            executor.start();
+
+            // Should NOT fire before 1000ms
+            jest.advanceTimersByTime(999);
+            await Promise.resolve();
+            const callsBefore = (backend.listByState as ReturnType<typeof mock>).mock.calls.length;
+
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            const callsAfter = (backend.listByState as ReturnType<typeof mock>).mock.calls.length;
+
+            expect(callsAfter).toBe(callsBefore + 1);
+
+            executor.stop();
         });
     });
 
@@ -372,6 +404,283 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1);
             await Promise.resolve();
             expect(backend.listByState).toHaveBeenCalled();
+
+            executor.stop();
+        });
+    });
+
+    describe('poll backoff', () => {
+        test('empty result doubles the next tick interval', async () => {
+            // baseInterval = 1000, empty result → next tick at 2000
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // First tick fires at 1000ms, returns empty
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const callsAfterFirstTick = (backend.listByState as ReturnType<typeof mock>).mock.calls.length;
+            expect(callsAfterFirstTick).toBe(1);
+
+            // Next tick should NOT fire at base interval (1000ms more = 2000ms total)
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Next tick SHOULD fire at doubled interval (2000ms more = 3000ms total)
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            executor.stop();
+        });
+
+        test('two consecutive empty results produce interval of 4x base on third tick', async () => {
+            // tick 1 at 1000ms → empty → next at 2000ms
+            // tick 2 at 3000ms → empty → next at 4000ms
+            // tick 3 at 7000ms
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // First tick at 1000ms
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Second tick at 3000ms (1000 + 2000)
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            // Third tick should NOT fire at 6999ms (3000 + 3999 < 3000 + 4000)
+            jest.advanceTimersByTime(3999);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            // Third tick fires at 7000ms (3000 + 4000)
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+
+            executor.stop();
+        });
+
+        test('interval is capped at MAX_POLL_INTERVAL_MS (5 minutes)', async () => {
+            // Use a large base so we reach the cap quickly without many doublings
+            // base = 200_000ms → doubled = 400_000ms > MAX (300_000ms) → capped at 300_000ms
+            const base = 200_000;
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: base });
+            executor.start();
+
+            // First tick at 200_000ms — empty result
+            jest.advanceTimersByTime(base);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Doubled would be 400_000ms but cap is 300_000ms (5 min)
+            // Should NOT fire at 299_999ms more
+            jest.advanceTimersByTime(299_999);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Should fire at 300_000ms more (the cap)
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            // Another empty — should still use cap (300_000ms), not double further
+            jest.advanceTimersByTime(299_999);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+
+            executor.stop();
+        });
+
+        test('non-empty result resets interval to base', async () => {
+            // Start with an empty tick to build up backoff, then a non-empty tick
+            const saga = makeSaga();
+            let callCount = 0;
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<ApprovalSaga[]> => {
+                    callCount += 1;
+                    // First call: empty; second call: has a saga
+                    return callCount === 1 ? [] : [saga];
+                }
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // First tick at 1000ms — empty → interval doubles to 2000
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Second tick at 3000ms — non-empty → resets interval to 1000
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            // Third tick should fire at 1000ms after (not 2000ms), i.e. 4000ms total
+            jest.advanceTimersByTime(999);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+
+            executor.stop();
+        });
+
+        test('empty after non-empty restarts backoff from base', async () => {
+            // Tick 1 at 1000ms: empty → interval 2000
+            // Tick 2 at 3000ms: non-empty → reset to 1000
+            // Tick 3 at 4000ms: empty → interval 2000
+            // Tick 4 should fire at 6000ms (4000 + 2000), not 5000ms (4000 + 1000)
+            const saga = makeSaga();
+            let callCount = 0;
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<ApprovalSaga[]> => {
+                    callCount += 1;
+                    return callCount === 2 ? [saga] : [];
+                }
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // Tick 1 at 1000ms
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            // Tick 2 at 3000ms
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+            await Promise.resolve();
+            // Tick 3 at 4000ms
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+
+            // Tick 4 should NOT fire at 1000ms after tick 3 (5000ms total)
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+
+            // Tick 4 SHOULD fire at 2000ms after tick 3 (6000ms total)
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(4);
+
+            executor.stop();
+        });
+
+        test('stop() mid-backoff cancels the scheduled timer', async () => {
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // First tick at 1000ms — empty → next scheduled at 2000ms
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Stop mid-backoff
+            executor.stop();
+
+            // Advance past where the next backoff tick would have fired
+            jest.advanceTimersByTime(3000);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+        });
+
+        test('non-empty result (failed sagas) also resets interval to base', async () => {
+            const saga = makeSaga();
+            let callCount = 0;
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<ApprovalSaga[]> => {
+                    callCount += 1;
+                    return callCount === 1 ? [] : [saga];
+                }
+            );
+            // Make executor throw so result.failed > 0
+            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<void> => { throw new Error('oops'); }
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // First tick at 1000ms — empty → interval doubles to 2000
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            // Second tick at 3000ms — failed saga → reset to base (1000)
+            jest.advanceTimersByTime(2000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            // Third tick should fire at 1000ms (base) not 2000ms
+            jest.advanceTimersByTime(999);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+
+            executor.stop();
+        });
+
+        test('executeOnce rejection (backend throws) does not stop rescheduling', async () => {
+            // If listByState throws, executeOnce rejects and the .catch() handler reschedules
+            let callCount = 0;
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                async (): Promise<ApprovalSaga[]> => {
+                    callCount += 1;
+                    if(callCount === 1) {
+                        throw new Error('DynamoDB unavailable');
+                    }
+                    return [];
+                }
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // First tick at 1000ms — throws, catch block logs at debug level, reschedules at base interval
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect(logger.debug).toHaveBeenCalledWith(
+                expect.objectContaining({ error: 'DynamoDB unavailable' }),
+                expect.stringContaining('Saga poll tick threw')
+            );
+
+            // Next tick should still fire at base interval (not doubled — rejection doesn't backoff)
+            jest.advanceTimersByTime(999);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
 
             executor.stop();
         });
