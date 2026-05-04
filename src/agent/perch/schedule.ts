@@ -192,6 +192,100 @@ export function getSlotForHour(hour: number): PerchSlot {
 }
 
 /**
+ * Get the next perch slot after the given hour. Walks SLOT_CONFIGS forward
+ * with wraparound. Returns 'unscheduled' if the input is not a valid slot
+ * AND no later slot is found in the rest of the day.
+ *
+ * The order of slots when wrapping is: the SLOT_CONFIGS order, i.e.
+ * pre-dawn → mid-morning → wikipedia → afternoon → evening → late-night → pre-dawn.
+ *
+ * Late-night spans hours 23, 0, 1. When currently in late-night the "next"
+ * slot is pre-dawn (startHour 5). When currently between slots or at the end
+ * of a slot, the next upcoming slot's startHour is used for the comparison.
+ *
+ * @param currentHour - Hour in 24-hour format (0-23)
+ * @returns The next PerchSlot after the given hour
+ * @throws RangeError if hour is outside [0, 23]
+ *
+ * @example
+ * ```typescript
+ * getNextSlot(6);   // 'mid-morning'  (currently pre-dawn → next is mid-morning)
+ * getNextSlot(23);  // 'pre-dawn'     (currently late-night → wraps to pre-dawn)
+ * getNextSlot(0);   // 'pre-dawn'     (currently late-night → wraps to pre-dawn)
+ * getNextSlot(3);   // 'pre-dawn'     (between slots → next upcoming is pre-dawn)
+ * getNextSlot(22);  // 'late-night'   (between slots → next is late-night)
+ * ```
+ */
+export function getNextSlot(currentHour: number): PerchSlot {
+    // Validate hour range
+    // Stryker disable next-line ConditionalExpression,BlockStatement,LogicalOperator: when mutated to false/removed/&&, getSlotForHour(hour) throws the same RangeError with the same message — the test cannot distinguish which function threw
+    if(currentHour < 0 || currentHour > 23) {
+        throw new RangeError(`Hour must be between 0 and 23, got ${currentHour}`);
+    }
+
+    // Determine the current slot
+    const currentSlot = getSlotForHour(currentHour);
+
+    // Stryker disable next-line BlockStatement: optimization guard — for 'unscheduled' hours, nextUpcomingSlot also produces the correct result (both paths are equivalent)
+    if(currentSlot !== 'unscheduled') {
+        return nextSlotAfter(currentSlot);
+    }
+
+    return nextUpcomingSlot(currentHour);
+}
+
+/**
+ * Given a named (non-'unscheduled') current slot, return the following slot in
+ * SLOT_CONFIGS order with wraparound.
+ */
+function nextSlotAfter(currentSlot: Exclude<PerchSlot, 'unscheduled'>): PerchSlot {
+    const currentIndex = SLOT_CONFIGS.findIndex(c => c.slot === currentSlot);
+    // Stryker disable next-line ConditionalExpression,BlockStatement: currentSlot is always in SLOT_CONFIGS (getSlotForHour only returns valid slot names); -1 is unreachable
+    if(currentIndex === -1) {
+        return 'pre-dawn';
+    }
+    const nextIndex = (currentIndex + 1) % SLOT_CONFIGS.length;
+    // Stryker disable next-line OptionalChaining,StringLiteral: nextIndex is always in bounds (0 to SLOT_CONFIGS.length-1); optional chaining and fallback string are defensive
+    return SLOT_CONFIGS[nextIndex]?.slot ?? 'pre-dawn';
+}
+
+/**
+ * When the bot is between named slots ('unscheduled'), find the next upcoming
+ * slot by startHour.  If no slot starts later in the same day, wraps to the
+ * first SLOT_CONFIGS entry ('pre-dawn').
+ */
+function nextUpcomingSlot(currentHour: number): PerchSlot {
+    // Collect slots that start strictly after currentHour, skipping late-night
+    // (which starts at 23 and is handled separately to keep late-night last).
+    // Stryker disable ConditionalExpression,EqualityOperator: filter conditions inside arrow fn — ConditionalExpression mutant shifts late-night handling to the < 23 branch with same result; EqualityOperator on > produces same result since no unscheduled hour equals a slot startHour
+    const candidates = SLOT_CONFIGS.filter(
+        c => c.slot !== 'late-night' && c.startHour > currentHour
+    );
+    // Stryker restore ConditionalExpression,EqualityOperator
+
+    // Late-night (startHour 23) is a candidate only when we're before hour 23
+    // Stryker disable next-line EqualityOperator: nextUpcomingSlot is only called for 'unscheduled' hours (2-4, 7-8, 11, 16-17, 20-22); none equal 23, so < and <= are equivalent here
+    if(currentHour < 23) {
+        const lateNight = SLOT_CONFIGS.find(c => c.slot === 'late-night');
+        if(lateNight) {
+            candidates.push(lateNight);
+        }
+    }
+
+    // Pick the candidate with the smallest startHour
+    let next: PerchSlotConfig | undefined;
+    for(const c of candidates) {
+        // Stryker disable next-line EqualityOperator: all slot startHours are unique; < and <= are equivalent here
+        if(!next || c.startHour < next.startHour) {
+            next = c;
+        }
+    }
+
+    // Stryker disable next-line ConditionalExpression,BlockStatement: wraparound to pre-dawn — only reached when no later slot in same day (e.g. hour 22 → late-night found; but if somehow no slot found, pre-dawn wraps)
+    return next?.slot ?? 'pre-dawn';
+}
+
+/**
  * Get the configuration for a specific slot.
  * Returns undefined for 'unscheduled'.
  *

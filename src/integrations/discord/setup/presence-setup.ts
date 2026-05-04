@@ -8,7 +8,7 @@ import {
     PresenceManager
 } from '../presence';
 import type { BotStateManager, StateChange } from '../state';
-import { IdentityCache, type ContextBuilder } from '@/agent';
+import { IdentityCache, type ContextBuilder, type Signal } from '@/agent';
 import type { DiscordConfig } from '@/config';
 
 /**
@@ -47,6 +47,10 @@ export function setupPresence(params: {
     getLastThinkingContent?: () => string | undefined
     /** Pre-built write-through identity cache. When provided, replaces the inline loader. */
     identityCache?:          IdentityCache
+    /** Optional live-signals snapshot callback. Step 3 will consume this. */
+    getLiveSignals?:         () => Promise<Signal[]>
+    /** Setter for persisting the last idle status text (anti-rut, Step 3). */
+    setPreviousStatus?:      (text: string) => void
 }): PresenceSetupResult {
     const {
         identityContext,

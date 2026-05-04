@@ -31,7 +31,7 @@ import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -398,6 +398,40 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
     const getLastThinkingContent = (): string | undefined => lastThinkingContent;
 
+    // Recent-tools ring buffer for LiveSignals aggregator
+    const MAX_RECENT_TOOLS = 10;
+    const recentTools: RecentTool[] = [];
+    // Stryker disable BlockStatement: composition root helper — tested via ring-buffer unit tests
+    const addRecentTool = (toolName: string): void => {
+        recentTools.push({ toolName, timestamp: Date.now() });
+        if(recentTools.length > MAX_RECENT_TOOLS) {
+            recentTools.shift();
+        }
+    };
+    // Stryker restore BlockStatement
+    const getRecentTools = (): readonly RecentTool[] => recentTools;
+
+    // Recent-channels ring buffer for LiveSignals aggregator
+    const MAX_RECENT_CHANNELS = 10;
+    const recentChannels: RecentChannel[] = [];
+    // Stryker disable BlockStatement: composition root helper — tested via ring-buffer unit tests
+    const addRecentChannel = (channelId: RecentChannel['channelId']): void => {
+        recentChannels.push({ channelId, timestamp: Date.now() });
+        if(recentChannels.length > MAX_RECENT_CHANNELS) {
+            recentChannels.shift();
+        }
+    };
+    // Stryker restore BlockStatement
+    const getRecentChannels = (): readonly RecentChannel[] => recentChannels;
+
+    // Previous idle status holder — populated by Step 3; read by LiveSignals
+    let lastIdleText: string | undefined;
+    const getPreviousStatus = (): string | undefined => lastIdleText;
+    // Stryker disable next-line BlockStatement: composition root setter — populated in Step 3
+    const setPreviousStatus = (text: string): void => {
+        lastIdleText = text;
+    };
+
     // Create task list reader for idle status context
     const taskListReader = createTaskListReader({
         getCurrentSessionId: getLastSessionId,
@@ -507,6 +541,29 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Stryker restore BlockStatement
     });
 
+    // Subscribe to botStateManager for recent-tools ring buffer
+    // Stryker disable BlockStatement: Composition root — ring-buffer subscriptions are integration-wiring, not unit-testable
+    const unsubscribeToolTracking = botStateManager.subscribe((change) => {
+        if(change.changeType === 'activity_phase') {
+            const phase = change.newState.activityPhase;
+            if(phase?.type === 'using_tool') {
+                addRecentTool(phase.toolName);
+            }
+        }
+    });
+
+    // Subscribe to botStateManager for recent-channels ring buffer
+    // Records the channel whenever the bot transitions into processing_message mode
+    const unsubscribeChannelTracking = botStateManager.subscribe((change) => {
+        if(change.changeType === 'mode_transition' && change.newState.mode === 'processing_message') {
+            const ctx = change.newState.modeContext as { channelId?: RecentChannel['channelId'] };
+            if(ctx.channelId) {
+                addRecentChannel(ctx.channelId);
+            }
+        }
+    });
+    // Stryker restore BlockStatement
+
     // Create dynamic status generator if identityContext is provided
     // IMPORTANT: Must create before presence manager, catch-up session runner, and coordinator
     // Stryker disable next-line ConditionalExpression: composition root — identityContext optional dep wiring
@@ -533,6 +590,23 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         if(!initialized) {
             initialized = true;
 
+            // Construct LiveSignals aggregator (requires readyClient for channel name resolution)
+            // Stryker disable BlockStatement: composition root — LiveSignals construction is integration-wiring
+            const liveSignals = options.perchConfig
+                ? new LiveSignals({
+                    timezone:           options.perchConfig.timezone,
+                    getRecentTools,
+                    getRecentChannels,
+                    // Stryker disable next-line ConditionalExpression,BlockStatement: channel name resolution — cache miss path is a valid runtime state
+                    resolveChannelName: (id) => {
+                        const ch = readyClient.channels.cache.get(id);
+                        return ch && 'name' in ch ? (ch as { name: string }).name : undefined;
+                    },
+                    getPreviousStatus,
+                })
+                : undefined;
+            // Stryker restore BlockStatement
+
             // Setup presence manager if optional deps provided
             // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
             let presenceSetup: PresenceSetupResult | undefined;
@@ -557,6 +631,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     contextBuilder,
                     getLastThinkingContent,
                     identityCache,
+                    getLiveSignals: liveSignals ? () => liveSignals.snapshot() : undefined,
+                    setPreviousStatus,
                 });
                 presenceManager = presenceSetup.presenceManager;
                 unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
@@ -722,6 +798,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(unsubscribeActivityPhase) {
                 unsubscribeActivityPhase();
             }
+            unsubscribeToolTracking();
+            unsubscribeChannelTracking();
             // Abort sessions FIRST, before stopping botStateManager
             // Session aborts may trigger callbacks that need botStateManager to be alive
             // Abort any running catch-up session

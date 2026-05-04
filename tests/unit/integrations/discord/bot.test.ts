@@ -375,8 +375,9 @@ describe('createDiscordBot', () => {
                 messageSetupHandler(mockClient);
             }
 
-            // Verify subscriptions were created (2: one for mode transition, one for activity phase)
-            expect(subscribeCallCount).toBe(2);
+            // Verify subscriptions were created (4: mode transition, activity phase from presence-setup;
+            // plus tool-tracking and channel-tracking ring-buffer subscriptions from bot.ts)
+            expect(subscribeCallCount).toBe(4);
         });
 
         test('should complete full presence flow: state update → subscription → throttle check → presence update', async () => {

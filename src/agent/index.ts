@@ -69,6 +69,9 @@ export { createWebViewAdapter } from './browser';
 // Identity Cache
 export { IdentityCache, type IdentityLoader } from './identity-cache';
 
+// Live Signals
+export { LiveSignals, type Signal, type RecentTool, type RecentChannel, type LiveSignalsDeps } from './live-signals';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 
