@@ -30,20 +30,23 @@ export interface MemoryIndexer {
  * Provides a unified API for all memory tool operations.
  */
 export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
-    private readonly coreOps:     MemoryToolBackendCore;
-    private readonly queryOps:    MemoryToolBackendQuery;
-    private readonly tagIndexOps: MemoryToolBackendTagIndex;
-    private readonly indexer:     MemoryIndexer | undefined;
+    private readonly coreOps:          MemoryToolBackendCore;
+    private readonly queryOps:         MemoryToolBackendQuery;
+    private readonly tagIndexOps:      MemoryToolBackendTagIndex;
+    private readonly indexer:          MemoryIndexer | undefined;
+    private readonly onIdentityWrite?: () => void;
 
     constructor(
         docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName:         string,
         indexer?:          MemoryIndexer,
-        onDriftDetected?:  () => void
+        onDriftDetected?:  () => void,
+        onIdentityWrite?:  () => void
     ) {
         super(docClientOrHolder, tableName);
 
-        this.indexer = indexer;
+        this.indexer         = indexer;
+        this.onIdentityWrite = onIdentityWrite;
 
         this.coreOps = new MemoryToolBackendCore(
             tableName,
@@ -121,6 +124,11 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         const layerStr = layer ?? 'unknown';
         this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path: result.path, content: result.content });
 
+        // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
+        if(layerStr === 'identity') {
+            this.onIdentityWrite?.();
+        }
+
         return result;
     }
 
@@ -171,6 +179,11 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             // Enqueue vector index upsert job (fire-and-forget)
             const keys = MemoryToolKeyGenerator.createKeys(path);
             this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path, content: result.content });
+
+            // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
+            if(layerStr === 'identity') {
+                this.onIdentityWrite?.();
+            }
         }
 
         return result;
@@ -201,6 +214,12 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
         // Enqueue vector index delete job (fire-and-forget)
         const keys = MemoryToolKeyGenerator.createKeys(path);
         this.enqueueIndex({ kind: 'delete', pk: keys.PK, sk: keys.SK });
+
+        // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
+        // Stryker disable next-line StringLiteral: 'unknown' vs '' are equivalent fallback values for non-layer paths
+        if((extractLayerFromPath(path) ?? 'unknown') === 'identity') {
+            this.onIdentityWrite?.();
+        }
 
         return existing;
     }

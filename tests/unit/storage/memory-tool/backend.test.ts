@@ -926,4 +926,126 @@ describe('MemoryToolBackend', () => {
             });
         });
     });
+
+    describe('onIdentityWrite callback', () => {
+        let onIdentityWriteMock: ReturnType<typeof mock>;
+
+        beforeEach(() => {
+            onIdentityWriteMock = mock(() => {});
+        });
+
+        afterEach(() => {
+            mock.restore();
+        });
+
+        function makeBackendWithCallback(): MemoryToolBackend {
+            return new MemoryToolBackend(
+                ddbMock as unknown as DynamoDBDocumentClient,
+                'TestTable',
+                undefined,
+                undefined,
+                onIdentityWriteMock as () => void
+            );
+        }
+
+        const existingIdentityItem: MemoryToolItem = {
+            PK:             'DIR#/identity',
+            SK:             'FILE#foo',
+            GSI1PK:         'LAYER#identity',
+            GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+            path:           '/identity/foo' as MemoryPath,
+            content:        'old content',
+            contentType:    'text/plain',
+            metadata:       {},
+            contentPreview: 'old content',
+            createdAt:      '2024-01-01T00:00:00.000Z',
+            updatedAt:      '2024-01-01T00:00:00.000Z',
+        };
+
+        const existingStateItem: MemoryToolItem = {
+            PK:             'DIR#/state',
+            SK:             'FILE#bar',
+            GSI1PK:         'LAYER#state',
+            GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+            path:           '/state/bar' as MemoryPath,
+            content:        'old state',
+            contentType:    'text/plain',
+            metadata:       {},
+            contentPreview: 'old state',
+            createdAt:      '2024-01-01T00:00:00.000Z',
+            updatedAt:      '2024-01-01T00:00:00.000Z',
+        };
+
+        describe('create', () => {
+            test('fires callback when creating an identity-layer item', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.create({
+                    path:        '/identity/foo' as MemoryPath,
+                    content:     'hello world',
+                    contentType: 'text/plain',
+                });
+
+                expect(onIdentityWriteMock).toHaveBeenCalledTimes(1);
+            });
+
+            test('does not fire callback when creating a non-identity-layer item', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.create({
+                    path:        '/state/bar' as MemoryPath,
+                    content:     'hello world',
+                    contentType: 'text/plain',
+                });
+
+                expect(onIdentityWriteMock).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('update', () => {
+            test('fires callback when updating content of an identity-layer item', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.update('/identity/foo' as MemoryPath, { content: 'new content' });
+
+                expect(onIdentityWriteMock).toHaveBeenCalledTimes(1);
+            });
+
+            test('does not fire callback when updating content of a non-identity-layer item', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingStateItem });
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.update('/state/bar' as MemoryPath, { content: 'new state' });
+
+                expect(onIdentityWriteMock).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('delete', () => {
+            test('fires callback when deleting an identity-layer item', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
+                ddbMock.on(DeleteCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.delete('/identity/foo' as MemoryPath);
+
+                expect(onIdentityWriteMock).toHaveBeenCalledTimes(1);
+            });
+
+            test('does not fire callback when deleting a non-identity-layer item', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingStateItem });
+                ddbMock.on(DeleteCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.delete('/state/bar' as MemoryPath);
+
+                expect(onIdentityWriteMock).not.toHaveBeenCalled();
+            });
+        });
+    });
 });

@@ -8,7 +8,7 @@ import {
     PresenceManager
 } from '../presence';
 import type { BotStateManager, StateChange } from '../state';
-import type { ContextBuilder } from '@/agent';
+import { IdentityCache, type ContextBuilder } from '@/agent';
 import type { DiscordConfig } from '@/config';
 
 /**
@@ -45,6 +45,8 @@ export function setupPresence(params: {
     getRecentContext:        () => Promise<string | undefined>
     contextBuilder?:         ContextBuilder
     getLastThinkingContent?: () => string | undefined
+    /** Pre-built write-through identity cache. When provided, replaces the inline loader. */
+    identityCache?:          IdentityCache
 }): PresenceSetupResult {
     const {
         identityContext,
@@ -57,6 +59,7 @@ export function setupPresence(params: {
         getRecentContext,
         contextBuilder,
         getLastThinkingContent,
+        identityCache: providedIdentityCache,
     } = params;
 
     const activeStatusGenerator = createActiveStatusGenerator({
@@ -64,31 +67,18 @@ export function setupPresence(params: {
         logger,
     });
 
-    // Create TTL-cached identity context callback
-    // Stryker disable next-line ArithmeticOperator: TTL constant
-    const IDENTITY_TTL_MS = 5 * 60 * 1000; // 5 minutes
-    let cachedIdentity: string | undefined;
-    let cachedAt = 0;
-
-    const getIdentityContext = async (): Promise<string> => {
-        const now = Date.now();
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,ArithmeticOperator,BlockStatement: TTL cache check - boundary logic
-        if(cachedIdentity && (now - cachedAt) < IDENTITY_TTL_MS) {
-            return cachedIdentity;
-        }
-        // Stryker disable BlockStatement: Identity loading with fallback - tested via integration
-        // eslint-disable-next-line require-atomic-updates -- single-threaded: TTL cache with single async writer, no concurrent writers
-        cachedIdentity = contextBuilder ? await contextBuilder.loadCoreIdentity() : identityContext;
-        // Stryker restore BlockStatement
-        // eslint-disable-next-line require-atomic-updates -- single-threaded: sequential update after await, no concurrent writers
-        cachedAt = now;
-        return cachedIdentity;
-    };
+    // Use the provided write-through identity cache, or create a local one.
+    // The loader falls back to the static identityContext string when contextBuilder
+    // is not available (e.g. in tests or minimal setups).
+    const identityCache = providedIdentityCache ?? new IdentityCache(
+        // Stryker disable next-line ConditionalExpression: loader fallback — contextBuilder absent path is a valid production configuration
+        contextBuilder ? () => contextBuilder.loadCoreIdentity() : () => Promise.resolve(identityContext)
+    );
 
     const idleStatusGenerator = createIdleStatusGenerator({
         logger,
         activityType:    ActivityType.Custom,
-        identityContext: getIdentityContext,
+        identityContext: () => identityCache.get(),
         getTaskContext,
         getRecentContext,
         getLastThinkingContent,

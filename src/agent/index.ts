@@ -66,6 +66,9 @@ export { createBrowserMCPServer } from './browser-mcp-server';
 export type { BrowserAdapter, BrowserHostPolicy } from './browser';
 export { createWebViewAdapter } from './browser';
 
+// Identity Cache
+export { IdentityCache, type IdentityLoader } from './identity-cache';
+
 // Stream Tracker
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 

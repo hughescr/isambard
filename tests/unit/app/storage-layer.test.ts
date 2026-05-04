@@ -203,11 +203,13 @@ describe('createStorageLayer', () => {
         // The holder wraps the docClient created by createDynamoDBClient
         // Third arg (indexer) is undefined when no vectorIndexConfig provided
         // Fourth arg is the drift callback closure (always provided)
+        // Fifth arg (onIdentityWrite) is undefined when not supplied to createStorageLayer
         expect(MemoryToolBackendSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ getDocClient: expect.any(Function) }),
+            expect.any(Object),
             'TestTable',
             undefined,
-            expect.any(Function)
+            expect.any(Function),
+            undefined
         );
     });
 

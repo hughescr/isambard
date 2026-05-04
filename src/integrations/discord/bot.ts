@@ -31,7 +31,7 @@ import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -197,6 +197,14 @@ export interface DiscordBotOptions {
      * so messages are queued to the outbox when Discord is temporarily offline.
      */
     discordCapability?: DiscordCapability
+
+    /**
+     * Optional write-through identity cache.
+     * When provided, idle status generation uses the cache instead of the inline
+     * TTL-based loader.  Invalidate this cache from the memory-tool write path
+     * whenever an identity-layer write commits.
+     */
+    identityCache?: IdentityCache
 }
 
 /**
@@ -274,7 +282,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -548,6 +556,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     },
                     contextBuilder,
                     getLastThinkingContent,
+                    identityCache,
                 });
                 presenceManager = presenceSetup.presenceManager;
                 unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;

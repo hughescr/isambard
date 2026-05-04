@@ -75,7 +75,8 @@ export async function createStorageLayer(
     reconciliationConfig?:        ReconciliationConfig,
     contactReconciliationConfig?: ContactReconciliationConfig,
     vectorIndexConfig?:           VectorIndexConfig,
-    embedder?:                    EmbedderLike
+    embedder?:                    EmbedderLike,
+    onIdentityWrite?:             () => void
 ): Promise<StorageLayer> {
     // Create DynamoDB client
     const { client, docClient, tableName } = createDynamoDBClient(dynamoDBConfig);
@@ -109,7 +110,7 @@ export async function createStorageLayer(
     // call time — the scheduler is assigned after memoryBackend is constructed.
     const memoryBackend = new MemoryToolBackend(holder, tableName, asyncIndexer, () => {
         reconciliationScheduler?.notifyDrift();
-    });
+    }, onIdentityWrite);
 
     // Create contact backend
     const contactBackend = new ContactBackend(holder, tableName);

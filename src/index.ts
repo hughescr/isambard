@@ -6,7 +6,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
+import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -95,8 +95,26 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore BlockStatement
 
+    // Create a stable callback slot for identity-write invalidation.
+    // The identityCache is created below after identityContext is loaded, but
+    // MemoryToolBackend needs the callback at construction time.
+    // Indirection: a mutable slot object whose reference is captured by the closure.
+    // Stryker disable all: Composition root — identity cache wiring is not unit-testable
+    const identityCacheSlot: { cache: IdentityCache | undefined } = { cache: undefined };
+    const onIdentityWrite = (): void => {
+        identityCacheSlot.cache?.invalidate();
+    };
+    // Stryker restore all
+
     // Create infrastructure layers
-    const storage = await createStorageLayer(dynamoDBConfig, config.reconciliation, config.contactReconciliation, config.vectorIndex, embedder);
+    const storage = await createStorageLayer(
+        dynamoDBConfig,
+        config.reconciliation,
+        config.contactReconciliation,
+        config.vectorIndex,
+        embedder,
+        onIdentityWrite
+    );
 
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect
@@ -749,6 +767,17 @@ export async function createApp(): Promise<App> {
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Identity context loaded');
 
+    // Create identity cache with the loaded identity context as warm seed.
+    // Wire contextBuilder as the loader for future invalidate/reload cycles.
+    // `identityCacheSlot.cache` is assigned here; the onIdentityWrite callback
+    // captures the slot by reference so backend hooks land on this instance.
+    // Stryker disable all: Composition root — identity cache wiring is not unit-testable
+    identityCacheSlot.cache = new IdentityCache(() => contextLayer.contextBuilder.loadCoreIdentity());
+    if(identityContext !== undefined) {
+        identityCacheSlot.cache.set(identityContext);
+    }
+    // Stryker restore all
+
     // Construct allowlist command handler using the unified PersonAllowlist
     // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
     const allowlistHandler = new AllowlistCommandHandler(
@@ -767,6 +796,7 @@ export async function createApp(): Promise<App> {
         config:            config.discord,
         perchConfig:       config.perch,
         identityContext,
+        identityCache:     identityCacheSlot.cache,
         agent,
         client:            discordInfra.discordClient,
         questionRegistry,
