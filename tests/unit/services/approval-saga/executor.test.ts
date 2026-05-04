@@ -260,6 +260,61 @@ describe('createSagaExecutor', () => {
             executor.stop();
         });
 
+        test('redundant start() while mid-flight tick does not kill the poll loop', async () => {
+            // Regression test: generation counter must NOT be bumped when start() is a no-op.
+            // If generation is bumped before the idempotency guard, the in-flight tick's trailing
+            // scheduleNextTick() sees generation !== myGen and silently drops the loop.
+            //
+            // Uses a deferred listByState to hold T1's IIFE suspended while we inject a redundant
+            // start(). After resolving, T1 must still reschedule (T2), proving the loop is alive.
+            let resolveListByState!: (value: ApprovalSaga[]) => void;
+            const deferredListByState = new Promise<ApprovalSaga[]>((resolve) => {
+                resolveListByState = resolve;
+            });
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(
+                (): Promise<ApprovalSaga[]> => deferredListByState
+            );
+
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+
+            // Fire T1 — IIFE starts, suspends at listByState. timeoutId still holds T1's value.
+            jest.advanceTimersByTime(1000);
+            expect(backend.listByState).toHaveBeenCalledTimes(1);
+            // No new timer while suspended (T1 fired, nothing rescheduled yet)
+            expect(jest.getTimerCount()).toBe(0);
+
+            // Inject redundant start() while T1 is mid-flight:
+            // timeoutId (T1) !== undefined → idempotency guard must fire BEFORE generation bump.
+            // Buggy code: generation bumped first → T1's trailing scheduleNextTick() suppressed.
+            // Fixed code: guard fires first → generation unchanged → T1 reschedules normally.
+            executor.start();
+
+            // Resolve the deferred — let T1's IIFE complete
+            resolveListByState([]);
+            await Promise.resolve(); // listByState resolves
+            await Promise.resolve(); // executeOnce returns
+            await Promise.resolve(); // generation check + scheduleNextTick (T2) runs
+
+            // With fix: T2 is scheduled (loop alive). Without fix: generation mismatch → 0 timers.
+            expect(jest.getTimerCount()).toBe(1);
+
+            executor.stop();
+        });
+
+        test('redundant start() while running leaves exactly one pending timer', async () => {
+            // After a no-op start(), timer count must remain 1 (the already-scheduled next tick).
+            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            executor.start();
+            expect(jest.getTimerCount()).toBe(1);
+
+            // Redundant start() — must not create a second timer
+            executor.start();
+            expect(jest.getTimerCount()).toBe(1);
+
+            executor.stop();
+        });
+
         test('stop clears timer so executeOnce is no longer called', async () => {
             const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();

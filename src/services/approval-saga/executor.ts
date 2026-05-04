@@ -141,13 +141,13 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
 
     return {
         start(): void {
-            stopped = false; // Allow restart after stop()
-            // Stryker disable next-line AssignmentOperator: generation +=1 and -=1 are equivalent — both change the value away from myGen (captured at schedule time), ensuring the staleness check fires; only the direction of delta differs
-            generation += 1; // Invalidate any mid-flight tick's trailing reschedule
             // Stryker disable next-line ConditionalExpression: guard prevents double-start; mutation to false skips the guard (no functional effect in tests)
             if(timeoutId !== undefined) {
                 return;
             }
+            stopped = false; // Allow restart after stop()
+            // Stryker disable next-line AssignmentOperator: generation +=1 and -=1 are equivalent — both change the value away from myGen (captured at schedule time), ensuring the staleness check fires; only the direction of delta differs
+            generation += 1; // Invalidate any mid-flight tick's trailing reschedule
             currentIntervalMs = baseIntervalMs;
             scheduleNextTick();
         },
