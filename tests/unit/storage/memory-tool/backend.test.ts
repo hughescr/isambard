@@ -990,13 +990,26 @@ describe('MemoryToolBackend', () => {
                 expect(onIdentityWriteMock).toHaveBeenCalledTimes(1);
             });
 
-            test('does not fire callback when creating a non-identity-layer item', async () => {
+            test('does not fire callback when creating a non-identity-layer item (state)', async () => {
                 ddbMock.on(PutCommand).resolves({});
                 const backendWithCallback = makeBackendWithCallback();
 
                 await backendWithCallback.create({
                     path:        '/state/bar' as MemoryPath,
                     content:     'hello world',
+                    contentType: 'text/plain',
+                });
+
+                expect(onIdentityWriteMock).not.toHaveBeenCalled();
+            });
+
+            test('does not fire callback when creating a non-identity-layer item (events)', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.create({
+                    path:        '/events/entry' as MemoryPath,
+                    content:     'an event happened',
                     contentType: 'text/plain',
                 });
 
@@ -1013,6 +1026,26 @@ describe('MemoryToolBackend', () => {
                 await backendWithCallback.update('/identity/foo' as MemoryPath, { content: 'new content' });
 
                 expect(onIdentityWriteMock).toHaveBeenCalledTimes(1);
+            });
+
+            test('fires callback when updating tags of an identity-layer item', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.update('/identity/foo' as MemoryPath, { tags: new Set(['core', 'values']) });
+
+                expect(onIdentityWriteMock).toHaveBeenCalledTimes(1);
+            });
+
+            test('does NOT fire callback for metadata-only update on identity-layer item', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
+                ddbMock.on(PutCommand).resolves({});
+                const backendWithCallback = makeBackendWithCallback();
+
+                await backendWithCallback.update('/identity/foo' as MemoryPath, { metadata: { lastReadAt: '2025-01-01T00:00:00.000Z' } });
+
+                expect(onIdentityWriteMock).not.toHaveBeenCalled();
             });
 
             test('does not fire callback when updating content of a non-identity-layer item', async () => {
@@ -1045,6 +1078,38 @@ describe('MemoryToolBackend', () => {
                 await backendWithCallback.delete('/state/bar' as MemoryPath);
 
                 expect(onIdentityWriteMock).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('no callback configured', () => {
+            test('create on identity-layer does not throw when onIdentityWrite is undefined', async () => {
+                ddbMock.on(PutCommand).resolves({});
+                // backend in outer beforeEach has no onIdentityWrite
+                expect(
+                    backend.create({
+                        path:        '/identity/no-callback' as MemoryPath,
+                        content:     'some identity text',
+                        contentType: 'text/plain',
+                    })
+                ).resolves.toBeDefined();
+            });
+
+            test('update content on identity-layer does not throw when onIdentityWrite is undefined', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
+                ddbMock.on(PutCommand).resolves({});
+                // backend in outer beforeEach has no onIdentityWrite
+                expect(
+                    backend.update('/identity/foo' as MemoryPath, { content: 'updated' })
+                ).resolves.toBeDefined();
+            });
+
+            test('delete on identity-layer does not throw when onIdentityWrite is undefined', async () => {
+                ddbMock.on(GetCommand).resolves({ Item: existingIdentityItem });
+                ddbMock.on(DeleteCommand).resolves({});
+                // backend in outer beforeEach has no onIdentityWrite
+                expect(
+                    backend.delete('/identity/foo' as MemoryPath)
+                ).resolves.toBeDefined();
             });
         });
     });

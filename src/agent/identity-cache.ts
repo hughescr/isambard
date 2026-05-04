@@ -34,6 +34,13 @@ export class IdentityCache {
     private readonly loader: IdentityLoader;
     private cached:          string | undefined = undefined;
     private inflight:        Promise<string> | undefined = undefined;
+    /**
+     * Generation counter.  Incremented by `invalidate()` and `set()` so that an
+     * in-flight load can detect that the cache has moved on since it started.
+     * If the generation has changed by the time the loader resolves, the result
+     * is discarded rather than committed to `this.cached`.
+     */
+    private generation             = 0;
 
     constructor(loader: IdentityLoader) {
         this.loader = loader;
@@ -57,14 +64,19 @@ export class IdentityCache {
         if(this.inflight !== undefined) {
             return this.inflight;
         }
-        this.inflight = this.load();
+        this.inflight = this.load(this.generation);
         return this.inflight;
     }
 
-    private async load(): Promise<string> {
+    private async load(generationAtStart: number): Promise<string> {
         try {
             const value = await this.loader();
-            this.cached   = value;
+            // Only commit to cache if no invalidate() or set() has happened since
+            // this load was started.  If the generation has advanced, discard the
+            // result so the next get() will start a fresh load.
+            if(this.generation === generationAtStart) {
+                this.cached = value;
+            }
             this.inflight = undefined;
             return value;
         } catch (err) {
@@ -78,26 +90,33 @@ export class IdentityCache {
     /**
      * Clears the cached value so the next `get()` re-invokes the loader.
      *
-     * Any `get()` already in flight continues to its natural completion; its
-     * result will be stored in the cache once it resolves.  The _next_ `get()`
-     * issued after invalidate (i.e. once the in-flight settles) will trigger a
-     * fresh load.
+     * Any `get()` already in flight continues to its natural completion and the
+     * in-flight caller will still receive the value the loader produces.
+     * However, the in-flight result is NOT committed to the cache slot, so the
+     * _next_ `get()` issued after invalidate will trigger a fresh load.
      *
-     * Calling `invalidate()` while no value is cached is a no-op.
+     * Calling `invalidate()` while no value is cached and no load is in flight
+     * is a no-op in terms of observable behaviour, but the generation counter
+     * still advances to ensure any concurrent in-flight loads are discarded.
      */
     invalidate(): void {
         this.cached = undefined;
+        // Stryker disable next-line UpdateOperator: direction of generation change is irrelevant — any change invalidates the in-flight load
+        this.generation++;
     }
 
     /**
      * Stores a pre-computed identity string directly, bypassing the loader.
      *
      * Use this when the caller that triggered the write already holds the new
-     * content and wants to avoid an extra round-trip.
+     * content and wants to avoid an extra round-trip.  Advancing the generation
+     * ensures any concurrent in-flight load does not overwrite this value.
      *
      * @param text - The new identity string to cache.
      */
     set(text: string): void {
         this.cached = text;
+        // Stryker disable next-line UpdateOperator: direction of generation change is irrelevant — any change invalidates the in-flight load
+        this.generation++;
     }
 }

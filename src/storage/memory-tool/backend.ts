@@ -180,6 +180,9 @@ export class MemoryToolBackend extends BaseRepository<MemoryToolItemData> {
             const keys = MemoryToolKeyGenerator.createKeys(path);
             this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path, content: result.content });
 
+            // Metadata-only updates (content === undefined && tags === undefined) intentionally
+            // skip this callback because metadata fields are not part of the rendered identity
+            // string returned by loadCoreIdentity — only content and tags affect the output.
             // Stryker disable next-line ConditionalExpression: identity-write callback — only called when layer is 'identity'
             if(layerStr === 'identity') {
                 this.onIdentityWrite?.();

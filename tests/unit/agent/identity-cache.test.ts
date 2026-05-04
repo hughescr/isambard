@@ -116,6 +116,60 @@ describe('IdentityCache', () => {
             expect(result).toBe('identity text');
             expect(loaderMock).toHaveBeenCalledTimes(1);
         });
+
+        test('no-op when neither cached nor inflight — still increments generation cleanly', () => {
+            const cache = new IdentityCache(loaderMock);
+
+            // Should not throw on a brand-new cache with nothing loaded
+            expect(() => cache.invalidate()).not.toThrow();
+            // Should also be safe to call multiple times
+            expect(() => cache.invalidate()).not.toThrow();
+            // Loader has never been called
+            expect(loaderMock).not.toHaveBeenCalled();
+        });
+
+        test('invalidate during in-flight load → in-flight caller resolves with old value; next get() triggers fresh load', async () => {
+            let resolveFirst!: (value: string) => void;
+            let resolveSecond!: (value: string) => void;
+            let callCount = 0;
+            const controlled = mock((): Promise<string> => {
+                callCount++;
+                if(callCount === 1) {
+                    return new Promise<string>((resolve) => {
+                        resolveFirst = resolve;
+                    });
+                }
+                return new Promise<string>((resolve) => {
+                    resolveSecond = resolve;
+                });
+            });
+
+            const cache = new IdentityCache(controlled);
+
+            // Start first load — loader is called once
+            const inflightPromise = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(1);
+
+            // Invalidate while load is still in flight
+            cache.invalidate();
+
+            // Resolve the in-flight load with the "old" value
+            resolveFirst('old value');
+
+            // The in-flight caller SHOULD still see the old value (allowed staleness)
+            const inflightResult = await inflightPromise;
+            expect(inflightResult).toBe('old value');
+
+            // The cache slot must NOT have been populated with the stale value
+            // because invalidate fired during the load. The next get() must
+            // trigger a second load.
+            const secondGetPromise = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(2);
+
+            resolveSecond('fresh value');
+            const secondResult = await secondGetPromise;
+            expect(secondResult).toBe('fresh value');
+        });
     });
 
     describe('set()', () => {
@@ -153,6 +207,35 @@ describe('IdentityCache', () => {
 
             expect(result).toBe('identity text');
             expect(loaderMock).toHaveBeenCalledTimes(1);
+        });
+
+        test('set() during in-flight load wins — the in-flight result does not overwrite the set value', async () => {
+            let resolveLoader!: (value: string) => void;
+            const controlled = mock((): Promise<string> => new Promise<string>((resolve) => {
+                resolveLoader = resolve;
+            }));
+
+            const cache = new IdentityCache(controlled);
+
+            // Start a load
+            const inflightPromise = cache.get();
+            expect(controlled).toHaveBeenCalledTimes(1);
+
+            // While load is in flight, set a newer value directly
+            cache.set('pushed value');
+
+            // Resolve the in-flight load with a different value
+            resolveLoader('stale loaded value');
+
+            // The in-flight caller gets what the loader returned
+            const inflightResult = await inflightPromise;
+            expect(inflightResult).toBe('stale loaded value');
+
+            // But the cache should now hold the set() value, not the stale loaded one
+            // (get() returns cached, no second load needed)
+            const afterResult = await cache.get();
+            expect(afterResult).toBe('pushed value');
+            expect(controlled).toHaveBeenCalledTimes(1);
         });
     });
 });
