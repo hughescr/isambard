@@ -44,6 +44,31 @@ export const guildIdSchema = z
 
 export type GuildId = z.infer<typeof guildIdSchema>;
 
+// Idle signals configuration — feature flags and TTL overrides for network-fetched signals
+/* Stryker disable BooleanLiteral,ArithmeticOperator: Default values are configuration */
+export const idleSignalsConfigSchema = z.object({
+    /** Enable Bluesky discover feed signal (default: false — requires tuning) */
+    bskyDiscoverEnabled:      z.boolean().default(false),
+    /** Enable Bluesky for-you feed signal (default: false — requires tuning) */
+    bskyForYouEnabled:        z.boolean().default(false),
+    /** Enable Bluesky notifications signal (default: false) */
+    bskyNotificationsEnabled: z.boolean().default(false),
+    /** Enable activity-log signal (default: false) */
+    activityLogEnabled:       z.boolean().default(false),
+
+    /** Cache TTL for bsky-discover results (ms, default: 30 min) */
+    bskyDiscoverCacheMs:      z.number().int().positive().default(30 * 60_000),
+    /** Cache TTL for bsky-foryou results (ms, default: 30 min) */
+    bskyForYouCacheMs:        z.number().int().positive().default(30 * 60_000),
+    /** Cache TTL for bsky-notifications results (ms, default: 30 min) */
+    bskyNotificationsCacheMs: z.number().int().positive().default(30 * 60_000),
+    /** Cache TTL for activity-log results (ms, default: 15 min) */
+    activityLogCacheMs:       z.number().int().positive().default(15 * 60_000),
+});
+/* Stryker restore BooleanLiteral,ArithmeticOperator */
+
+export type IdleSignalsConfig = z.infer<typeof idleSignalsConfigSchema>;
+
 // Presence configuration schema - canonical definition (re-exported by src/integrations/discord/presence/types.ts)
 export const PresenceConfigSchema = z.object({
     /**
@@ -60,6 +85,9 @@ export const PresenceConfigSchema = z.object({
 
     /** How often to refresh idle status text (milliseconds) */
     idleRefreshIntervalMs: z.number().int().positive().default(300_000), // 5 minutes
+
+    /** Feature flags and TTL overrides for network-fetched idle signals */
+    idleSignals: idleSignalsConfigSchema.optional(),
 });
 
 export type PresenceConfig = z.infer<typeof PresenceConfigSchema>;

@@ -603,6 +603,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         return ch && 'name' in ch ? (ch as { name: string }).name : undefined;
                     },
                     getPreviousStatus,
+                    // Step 4: network-fetched signals
+                    bskyClient:            bskySetup?.client,
+                    idleSignalsConfig:     config.presence?.idleSignals,
+                    // Stryker disable next-line BlockStatement: composition root callback — contextBuilder is optional
+                    loadRecentActivityLog: contextBuilder
+                        ? (limit: number) => contextBuilder.loadRecentEvents(limit).then(r => r.items)
+                        : undefined,
                 })
                 : undefined;
             // Stryker restore BlockStatement

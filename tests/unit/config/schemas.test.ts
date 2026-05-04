@@ -10,7 +10,8 @@ import {
     configSchema,
     perchConfigSchema,
     reconciliationConfigSchema,
-    vectorIndexConfigSchema
+    vectorIndexConfigSchema,
+    idleSignalsConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
@@ -1047,5 +1048,105 @@ describe.concurrent('bskyConfigSchema', () => {
             appPassword: '',
         });
         expect(result.success).toBe(false);
+    });
+});
+
+describe.concurrent('idleSignalsConfigSchema', () => {
+    test('all feature flags default to false', () => {
+        const result = idleSignalsConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.bskyDiscoverEnabled).toBe(false);
+            expect(result.data.bskyForYouEnabled).toBe(false);
+            expect(result.data.bskyNotificationsEnabled).toBe(false);
+            expect(result.data.activityLogEnabled).toBe(false);
+        }
+    });
+
+    test('TTL defaults are sensible (30min for bsky, 15min for activity)', () => {
+        const result = idleSignalsConfigSchema.safeParse({});
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.bskyDiscoverCacheMs).toBe(30 * 60_000);
+            expect(result.data.bskyForYouCacheMs).toBe(30 * 60_000);
+            expect(result.data.bskyNotificationsCacheMs).toBe(30 * 60_000);
+            expect(result.data.activityLogCacheMs).toBe(15 * 60_000);
+        }
+    });
+
+    test('feature flags can be enabled independently', () => {
+        const result = idleSignalsConfigSchema.safeParse({ bskyDiscoverEnabled: true });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.bskyDiscoverEnabled).toBe(true);
+            expect(result.data.bskyForYouEnabled).toBe(false);
+        }
+    });
+
+    test('TTL values can be overridden', () => {
+        const result = idleSignalsConfigSchema.safeParse({ bskyDiscoverCacheMs: 5000, activityLogCacheMs: 60_000 });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.bskyDiscoverCacheMs).toBe(5000);
+            expect(result.data.activityLogCacheMs).toBe(60_000);
+            // Other TTLs still default
+            expect(result.data.bskyForYouCacheMs).toBe(30 * 60_000);
+        }
+    });
+
+    test('rejects non-positive TTL values', () => {
+        const result = idleSignalsConfigSchema.safeParse({ bskyDiscoverCacheMs: 0 });
+        expect(result.success).toBe(false);
+    });
+
+    test('rejects negative TTL values', () => {
+        const result = idleSignalsConfigSchema.safeParse({ activityLogCacheMs: -1 });
+        expect(result.success).toBe(false);
+    });
+
+    test('all flags on with custom TTLs round-trips correctly', () => {
+        const input = {
+            bskyDiscoverEnabled:      true,
+            bskyForYouEnabled:        true,
+            bskyNotificationsEnabled: true,
+            activityLogEnabled:       true,
+            bskyDiscoverCacheMs:      10_000,
+            bskyForYouCacheMs:        20_000,
+            bskyNotificationsCacheMs: 30_000,
+            activityLogCacheMs:       40_000,
+        };
+        const result = idleSignalsConfigSchema.safeParse(input);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).toStrictEqual(input);
+        }
+    });
+
+    test('PresenceConfigSchema accepts idleSignals as optional sub-key', () => {
+        const result = discordConfigSchema.safeParse({
+            botToken:      'token123',
+            applicationId: '123456789012345678',
+            homeGuildId:   '987654321098765432',
+            presence:      {
+                idleSignals: { bskyDiscoverEnabled: true },
+            },
+        });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.presence?.idleSignals?.bskyDiscoverEnabled).toBe(true);
+            expect(result.data.presence?.idleSignals?.bskyForYouEnabled).toBe(false);
+        }
+    });
+
+    test('PresenceConfigSchema works without idleSignals', () => {
+        const result = discordConfigSchema.safeParse({
+            botToken:      'token123',
+            applicationId: '123456789012345678',
+            homeGuildId:   '987654321098765432',
+        });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.presence?.idleSignals).toBeUndefined();
+        }
     });
 });

@@ -5,11 +5,13 @@
  * and deterministic.  No real timers are used.
  */
 
-import { describe, test, expect, afterEach, spyOn, jest } from 'bun:test';
+import { describe, test, expect, afterEach, spyOn, jest, mock } from 'bun:test';
 import * as loggerModule from '@hughescr/logger';
 import { DateTime } from 'luxon';
 import { LiveSignals, type LiveSignalsDeps, type RecentTool, type RecentChannel } from '@/agent/live-signals';
 import { createChannelId } from '@/agent/types';
+import type { BskyFeedItem, BskyNotification, BlueskyClient } from '@/integrations/bsky';
+import type { MemoryToolItemData } from '@/storage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -452,6 +454,906 @@ describe.concurrent('LiveSignals.snapshot()', () => {
                 expect(typeof s.content).toBe('string');
                 expect(s.content.length).toBeGreaterThan(0);
             }
+        });
+    });
+
+    // =========================================================================
+    // Step 4: network-fetched signal tests
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // Helpers and fake client factories
+    // -------------------------------------------------------------------------
+
+    function makeFeedItem(text: string, handle: string): BskyFeedItem {
+        return {
+            post: {
+                uri:         `at://did:test/${handle}/1`,
+                cid:         'cid1',
+                author:      { did: `did:test:${handle}`, handle },
+                text,
+                createdAt:   '2026-01-01T00:00:00Z',
+                replyCount:  0,
+                likeCount:   0,
+                repostCount: 0,
+                indexedAt:   '2026-01-01T00:00:00Z',
+            },
+        };
+    }
+
+    function makeNotification(reason: BskyNotification['reason'], handle: string, indexedAt = '2026-05-03T10:00:00Z'): BskyNotification {
+        return {
+            reason,
+            uri:    `at://did:test/${handle}/notif1`,
+            author: { did: `did:test:${handle}`, handle },
+            indexedAt,
+        };
+    }
+
+    function makeActivityItem(
+        activityType: string,
+        updatedAt: string,
+        tags = new Set<string>(['auto-logged', activityType])
+    ): MemoryToolItemData {
+        return {
+            path:        `/events/activity/${activityType}/2026-01-01T00-00-00-000Z` as MemoryToolItemData['path'],
+            content:     `[auto] ${activityType} happened`,
+            contentType: 'text/plain',
+            metadata:    {},
+            createdAt:   updatedAt,
+            updatedAt,
+            tags,
+        };
+    }
+
+    /** Full IdleSignalsConfig with all flags on and standard TTLs. */
+    const FULL_CONFIG = {
+        bskyDiscoverEnabled:      true,
+        bskyForYouEnabled:        true,
+        bskyNotificationsEnabled: true,
+        activityLogEnabled:       true,
+        bskyDiscoverCacheMs:      30 * 60_000,
+        bskyForYouCacheMs:        30 * 60_000,
+        bskyNotificationsCacheMs: 30 * 60_000,
+        activityLogCacheMs:       15 * 60_000,
+    } as const;
+
+    /** Make a minimal BlueskyClient mock (only the methods LiveSignals calls). */
+    function makeBskyClient(overrides: {
+        getFeed?:          (name: string, limit?: number) => Promise<{ items: BskyFeedItem[], cursor?: string }>
+        getNotifications?: (limit?: number) => Promise<{ notifications: BskyNotification[], cursor?: string }>
+    } = {}): BlueskyClient {
+        return {
+            getFeed: mock(async (name: string, limit?: number): Promise<{ items: BskyFeedItem[], cursor?: string }> => {
+                if(overrides.getFeed) {
+                    return overrides.getFeed(name, limit);
+                }
+                return { items: [] };
+            }),
+            getNotifications: mock(async (_limit?: number): Promise<{ notifications: BskyNotification[], cursor?: string }> => {
+                if(overrides.getNotifications) {
+                    return overrides.getNotifications(_limit);
+                }
+                return { notifications: [] };
+            }),
+        } as unknown as BlueskyClient;
+    }
+
+    // -------------------------------------------------------------------------
+    // bsky-discover
+    // -------------------------------------------------------------------------
+    describe('bsky-discover signals', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        test('happy path: cache populates and snapshot includes items', async () => {
+            const item1 = makeFeedItem('Hello world', 'alice.bsky');
+            const item2 = makeFeedItem('Another post', 'bob.bsky');
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [item1, item2] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const discover = signals.filter(s => s.kind === 'bsky-discover');
+            expect(discover).toHaveLength(2);
+            expect(discover[0].label).toBe('bsky-discover');
+            expect(discover[0].content).toContain('Hello world');
+            expect(discover[0].content).toContain('@alice.bsky');
+            expect(discover[1].content).toContain('Another post');
+        });
+
+        test('cache hit: second call within TTL does not re-fetch', async () => {
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem('Post', 'alice.bsky')] }),
+            });
+            let nowMs = 1_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+                nowMs:             () => nowMs,
+            }));
+            await ls.snapshot();
+            nowMs += 60_000; // advance 1 minute — still within 30-min TTL
+            const signals = await ls.snapshot();
+            // getFeed should have been called only once (the first snapshot)
+            const getFeedMock = client.getFeed as ReturnType<typeof mock>;
+            expect(getFeedMock.mock.calls.filter(args => args[0] === 'discover').length).toBe(1);
+            // Signal kind and label are correct from fresh cache path
+            const discover = signals.filter(s => s.kind === 'bsky-discover');
+            expect(discover).toHaveLength(1);
+            expect(discover[0].label).toBe('bsky-discover');
+        });
+
+        test('cache fresh at exact TTL boundary: no background refresh when elapsed === ttlMs', async () => {
+            let callCount = 0;
+            const client = makeBskyClient({
+                getFeed: async () => {
+                    callCount++;
+                    return { items: [makeFeedItem('Exact boundary post', 'alice.bsky')] };
+                },
+            });
+            let nowMs = 1_000_000;
+            const ttlMs = 5000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false, bskyDiscoverCacheMs: ttlMs },
+                nowMs:             () => nowMs,
+            }));
+            // First call: cold start, populates cache
+            await ls.snapshot();
+            expect(callCount).toBe(1);
+            // Advance to exactly ttlMs elapsed — cache should still be fresh (> not >=)
+            nowMs += ttlMs;
+            await ls.snapshot();
+            // Flush any microtasks — a stale path would kick a background refresh
+            await Promise.resolve();
+            await Promise.resolve();
+            // Still fresh: no second fetch triggered (elapsed === ttlMs, NOT > ttlMs)
+            expect(callCount).toBe(1);
+        });
+
+        test('cache miss: stale entry triggers background refresh; snapshot returns cached items', async () => {
+            const item = makeFeedItem('Old post', 'alice.bsky');
+            let callCount = 0;
+            const client = makeBskyClient({
+                getFeed: async () => {
+                    callCount++;
+                    return { items: [item] };
+                },
+            });
+            let nowMs = 1_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false, bskyDiscoverCacheMs: 5000 },
+                nowMs:             () => nowMs,
+            }));
+            // First call: cold start, populates cache
+            await ls.snapshot();
+            expect(callCount).toBe(1);
+            // Advance past TTL
+            nowMs += 10_000;
+            // Second call: stale — returns cached items and fires background refresh
+            const signals = await ls.snapshot();
+            // Returns the stale cached items immediately (non-blocking)
+            const discover = signals.filter(s => s.kind === 'bsky-discover');
+            expect(discover).toHaveLength(1);
+            expect(discover[0].label).toBe('bsky-discover');
+            // Background refresh should eventually complete (await it)
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(callCount).toBe(2);
+        });
+
+        test('first-call timeout: snapshot returns empty if initial fetch takes too long', async () => {
+            // getFeed hangs — never resolves during the test
+            const client = makeBskyClient({
+                getFeed: async () => new Promise<{ items: BskyFeedItem[] }>(() => {
+                    // never resolves
+                }),
+            });
+            // Override setTimeout so the bootstrap timer fires immediately
+            const originalSetTimeout = globalThis.setTimeout;
+
+            (globalThis as unknown as Record<string, unknown>).setTimeout = (fn: () => void) => {
+                fn();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test shim for return type
+                return 0 as any;
+            };
+            try {
+                const ls = new LiveSignals(makeDefaultDeps({
+                    bskyClient:        client,
+                    idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+                }));
+                const signals = await ls.snapshot();
+                expect(signals.filter(s => s.kind === 'bsky-discover')).toHaveLength(0);
+            } finally {
+                (globalThis as unknown as Record<string, unknown>).setTimeout = originalSetTimeout;
+            }
+        });
+
+        test('feature flag off: no fetch, no signals', async () => {
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem('Post', 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'bsky-discover')).toHaveLength(0);
+            const getFeedMock = client.getFeed as ReturnType<typeof mock>;
+            expect(getFeedMock.mock.calls.filter(args => args[0] === 'discover').length).toBe(0);
+        });
+
+        test('missing bskyClient: bsky-discover signals are skipped without errors', async () => {
+            const ls = new LiveSignals(makeDefaultDeps({
+                idleSignalsConfig: FULL_CONFIG,
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'bsky-discover')).toHaveLength(0);
+        });
+
+        test('bsky-discover error isolation: other signals still returned', async () => {
+            const debugSpy = spyOn(loggerModule.logger, 'debug');
+            const client = makeBskyClient({
+                getFeed: async (name: string) => {
+                    if(name === 'discover') {
+                        throw new Error('bsky discover down');
+                    }
+                    return { items: [] };
+                },
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.find(s => s.kind === 'perch')).toBeDefined();
+            expect(signals.find(s => s.kind === 'time')).toBeDefined();
+            // Debug log should mention the failure
+            const discoverFailCalls = debugSpy.mock.calls.filter((args: unknown[]) => {
+                const arg = args[0];
+                if(typeof arg !== 'object' || arg === null) {
+                    return false;
+                }
+                const r = arg as Record<string, unknown>;
+                return typeof r.msg === 'string' && r.msg.includes('bsky-discover');
+            });
+            expect(discoverFailCalls.length).toBeGreaterThanOrEqual(1);
+            debugSpy.mockRestore();
+        });
+
+        test('truncates long post text to 120 chars and appends ellipsis', async () => {
+            const longText = 'A'.repeat(130);
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem(longText, 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const discover = signals.find(s => s.kind === 'bsky-discover');
+            expect(discover!.content).toContain('…');
+            // snippet portion is exactly 120 A's — NOT 121+
+            expect(discover!.content).toContain('A'.repeat(120));
+            expect(discover!.content).not.toContain('A'.repeat(121));
+        });
+
+        test('text at exactly 120 chars is NOT truncated (boundary: > not >=)', async () => {
+            const exactText = 'B'.repeat(120);
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem(exactText, 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const discover = signals.find(s => s.kind === 'bsky-discover');
+            // Exactly at boundary: should not be truncated
+            expect(discover!.content).not.toContain('…');
+            expect(discover!.content).toContain('B'.repeat(120));
+        });
+
+        test('short text is not truncated', async () => {
+            const shortText = 'Short post';
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem(shortText, 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const discover = signals.find(s => s.kind === 'bsky-discover');
+            expect(discover!.content).not.toContain('…');
+            expect(discover!.content).toContain('Short post');
+        });
+
+        test('newlines in post text are replaced with spaces and leading/trailing spaces are trimmed', async () => {
+            // Leading/trailing newlines become spaces, which are then trimmed
+            const multiline = '\nLine one\nLine two\n';
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem(multiline, 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const discover = signals.find(s => s.kind === 'bsky-discover');
+            // Content should not contain newlines
+            expect(discover!.content).not.toContain('\n');
+            // Leading/trailing spaces from newline replacement should be trimmed
+            // Without trim: content would be '" Line one Line two " — @alice.bsky'
+            // With trim: content would be '"Line one Line two" — @alice.bsky'
+            expect(discover!.content).toContain('"Line one Line two"');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // bsky-foryou
+    // -------------------------------------------------------------------------
+    describe('bsky-foryou signals', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        test('happy path: populates from for-you feed', async () => {
+            const items = [
+                makeFeedItem('For you post 1', 'alice.bsky'),
+                makeFeedItem('For you post 2', 'bob.bsky'),
+            ];
+            const client = makeBskyClient({
+                getFeed: async (name: string) => (name === 'for-you' ? { items } : { items: [] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const forYou = signals.filter(s => s.kind === 'bsky-foryou');
+            expect(forYou).toHaveLength(2);
+            expect(forYou[0].label).toBe('bsky-foryou');
+            expect(forYou[0].content).toContain('For you post 1');
+        });
+
+        test('cache hit: second call within TTL does not re-fetch for-you', async () => {
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem('Post', 'alice.bsky')] }),
+            });
+            let nowMs = 2_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+                nowMs:             () => nowMs,
+            }));
+            await ls.snapshot();
+            nowMs += 60_000;
+            const signals = await ls.snapshot();
+            const getFeedMock = client.getFeed as ReturnType<typeof mock>;
+            expect(getFeedMock.mock.calls.filter(args => args[0] === 'for-you').length).toBe(1);
+            // Signal kind and label are correct from fresh cache path
+            const forYou = signals.filter(s => s.kind === 'bsky-foryou');
+            expect(forYou).toHaveLength(1);
+            expect(forYou[0].label).toBe('bsky-foryou');
+        });
+
+        test('cache miss: stale entry triggers background refresh; snapshot returns cached items', async () => {
+            const item = makeFeedItem('Old for-you post', 'bob.bsky');
+            let callCount = 0;
+            const client = makeBskyClient({
+                getFeed: async () => {
+                    callCount++;
+                    return { items: [item] };
+                },
+            });
+            let nowMs = 3_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false, bskyForYouCacheMs: 5000 },
+                nowMs:             () => nowMs,
+            }));
+            // First call: cold start, populates cache
+            await ls.snapshot();
+            expect(callCount).toBe(1);
+            // Advance past TTL
+            nowMs += 10_000;
+            // Second call: stale — returns cached items and fires background refresh
+            const signals = await ls.snapshot();
+            // Returns the stale cached items immediately (non-blocking)
+            const forYou = signals.filter(s => s.kind === 'bsky-foryou');
+            expect(forYou).toHaveLength(1);
+            // Background refresh should eventually complete (await it)
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(callCount).toBe(2);
+        });
+
+        test('feature flag off: for-you is skipped', async () => {
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem('Post', 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'bsky-foryou')).toHaveLength(0);
+        });
+
+        test('bsky-foryou error does not break other signals', async () => {
+            const client = makeBskyClient({
+                getFeed: async (name: string) => {
+                    if(name === 'for-you') {
+                        throw new Error('for-you broken');
+                    }
+                    return { items: [] };
+                },
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.find(s => s.kind === 'perch')).toBeDefined();
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // bsky-notifications
+    // -------------------------------------------------------------------------
+    describe('bsky-notifications signal', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        test('happy path: mentions rendered as single summary signal', async () => {
+            const notifs = [
+                makeNotification('mention', 'alice.bsky', '2026-05-03T12:00:00Z'),
+                makeNotification('mention', 'bob.bsky',  '2026-05-03T11:00:00Z'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.label).toBe('bsky-notifications');
+            expect(notifSignal!.content).toContain('2 mentions');
+            // Latest notification is alice (later timestamp)
+            expect(notifSignal!.content).toContain('@alice.bsky');
+        });
+
+        test('mixed notifications: likes, reposts, follows counted separately', async () => {
+            const notifs = [
+                makeNotification('like',   'alice.bsky'),
+                makeNotification('like',   'bob.bsky'),
+                makeNotification('repost', 'carol.bsky'),
+                makeNotification('follow', 'dave.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('2 likes');
+            expect(notifSignal!.content).toContain('1 repost');
+            expect(notifSignal!.content).toContain('1 new follower');
+            // Non-mention notifications are NOT counted as mentions
+            expect(notifSignal!.content).not.toContain('mention');
+        });
+
+        test('singular like count: 1 like vs multiple reposts — ensures correct like filter', async () => {
+            // Tests that likeCount filters by reason === 'like' (not !=='like')
+            // With 1 like and 2 reposts, mutating to !=='like' would produce likeCount=2 (reposts)
+            const notifs = [
+                makeNotification('like',   'alice.bsky'),
+                makeNotification('repost', 'bob.bsky'),
+                makeNotification('repost', 'carol.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('1 like');
+            expect(notifSignal!.content).not.toContain('Stryker');
+            expect(notifSignal!.content).toContain('2 reposts');
+        });
+
+        test('no notifications: signal is omitted', async () => {
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: [] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.find(s => s.kind === 'bsky-notifications')).toBeUndefined();
+        });
+
+        test('cache hit: second call within TTL does not re-fetch notifications', async () => {
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: [makeNotification('like', 'alice.bsky')] }),
+            });
+            let nowMs = 3_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+                nowMs:             () => nowMs,
+            }));
+            await ls.snapshot();
+            nowMs += 60_000;
+            await ls.snapshot();
+            const getNotifMock = client.getNotifications as ReturnType<typeof mock>;
+            expect(getNotifMock.mock.calls.length).toBe(1);
+        });
+
+        test('feature flag off: notifications signal is skipped', async () => {
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: [makeNotification('like', 'alice.bsky')] }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.find(s => s.kind === 'bsky-notifications')).toBeUndefined();
+        });
+
+        test('notifications error does not break other signals', async () => {
+            const client = makeBskyClient({
+                getNotifications: async () => {
+                    throw new Error('notif API broken');
+                },
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.find(s => s.kind === 'perch')).toBeDefined();
+        });
+
+        test('reply and quote notifications counted as mentions', async () => {
+            const notifs = [
+                makeNotification('mention', 'alice.bsky'),
+                makeNotification('reply',   'bob.bsky'),
+                makeNotification('quote',   'carol.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('3 mentions');
+        });
+
+        test('singular/plural forms: 1 mention, 2 reposts, 2 follows', async () => {
+            // Tests singular vs plural forms: '1 mention' not '1 mentions', '2 reposts' not '2 repost'
+            // Also verifies parts array starts empty (no garbage prefix from initial value)
+            const notifs = [
+                makeNotification('mention', 'alice.bsky'),
+                makeNotification('repost',  'bob.bsky'),
+                makeNotification('repost',  'carol.bsky'),
+                makeNotification('follow',  'dave.bsky'),
+                makeNotification('follow',  'eve.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            // Singular mention
+            expect(notifSignal!.content).toContain('1 mention');
+            expect(notifSignal!.content).not.toContain('1 mentions');
+            // Plural reposts
+            expect(notifSignal!.content).toContain('2 reposts');
+            expect(notifSignal!.content).not.toContain('2 repost,');
+            // Plural followers
+            expect(notifSignal!.content).toContain('2 new followers');
+            expect(notifSignal!.content).not.toContain('2 new follower,');
+            // Verify no garbage prefix from initial parts array, no garbage suffix from '' replacements
+            expect(notifSignal!.content).not.toContain('Stryker');
+        });
+
+        test('singular repost and follower forms', async () => {
+            // Tests that repostCount === 1 gives '1 repost' (not '1 reposts')
+            // and followCount === 1 gives '1 new follower' (not '1 new followers')
+            const notifs = [
+                makeNotification('repost', 'alice.bsky'),
+                makeNotification('follow', 'bob.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('1 repost');
+            expect(notifSignal!.content).not.toContain('1 reposts');
+            expect(notifSignal!.content).toContain('1 new follower');
+            expect(notifSignal!.content).not.toContain('1 new followers');
+            expect(notifSignal!.content).not.toContain('Stryker');
+        });
+
+        test('only reposts: no mention/like/follow labels in output', async () => {
+            // Guards for mentionCount > 0, likeCount > 0, followCount > 0 are tested here:
+            // With counts of zero, those labels should NOT appear (>0, not >=0)
+            const notifs = [
+                makeNotification('repost', 'alice.bsky'),
+                makeNotification('repost', 'bob.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('2 reposts');
+            // Zero-count categories should not appear at all
+            expect(notifSignal!.content).not.toContain('mention');
+            expect(notifSignal!.content).not.toContain('like');
+            expect(notifSignal!.content).not.toContain('follower');
+        });
+
+        test('only likes: no mention/repost/follow labels in output', async () => {
+            // Verifies that non-like notifications are NOT counted as likes (=== vs !==)
+            // Also verifies zero-count repost/follow guards work (>0 not >=0)
+            const notifs = [
+                makeNotification('like', 'alice.bsky'),
+                makeNotification('like', 'bob.bsky'),
+                makeNotification('like', 'carol.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('3 likes');
+            // Zero-count categories should not appear
+            expect(notifSignal!.content).not.toContain('mention');
+            expect(notifSignal!.content).not.toContain('repost');
+            expect(notifSignal!.content).not.toContain('follower');
+        });
+
+        test('only follows: no mention/like/repost labels in output', async () => {
+            // Verifies zero-count guards work: mentionCount/likeCount/repostCount all 0 with >=0 mutant
+            const notifs = [
+                makeNotification('follow', 'alice.bsky'),
+                makeNotification('follow', 'bob.bsky'),
+            ];
+            const client = makeBskyClient({
+                getNotifications: async () => ({ notifications: notifs }),
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:        client,
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            const notifSignal = signals.find(s => s.kind === 'bsky-notifications');
+            expect(notifSignal).toBeDefined();
+            expect(notifSignal!.content).toContain('2 new followers');
+            // Zero-count categories should not appear
+            expect(notifSignal!.content).not.toContain('mention');
+            expect(notifSignal!.content).not.toContain('like');
+            expect(notifSignal!.content).not.toContain('repost');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // activity-log signals
+    // -------------------------------------------------------------------------
+    describe('activity-log signals', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        function makeActivityDeps(
+            items: MemoryToolItemData[],
+            nowMs?: () => number,
+            configOverride?: Partial<typeof FULL_CONFIG>
+        ): LiveSignalsDeps {
+            return makeDefaultDeps({
+                loadRecentActivityLog: async (_limit: number) => items,
+                idleSignalsConfig:     {
+                    ...FULL_CONFIG,
+                    bskyDiscoverEnabled:      false,
+                    bskyForYouEnabled:        false,
+                    bskyNotificationsEnabled: false,
+                    ...configOverride,
+                },
+                nowMs,
+            });
+        }
+
+        test('happy path: activity items rendered as signals', async () => {
+            const now = new Date('2026-05-03T10:00:00Z');
+            const items = [
+                makeActivityItem('perch-end',   new Date(now.getTime() - 22 * 60_000).toISOString()),
+                makeActivityItem('bsky-post-sent', new Date(now.getTime() - 5 * 60_000).toISOString()),
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items, () => now.getTime()));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
+            expect(activity.length).toBeGreaterThanOrEqual(2);
+            expect(activity.some(s => s.content.includes('perch-end') && s.content.includes('22m ago'))).toBe(true);
+            expect(activity.some(s => s.content.includes('bsky-post-sent') && s.content.includes('5m ago'))).toBe(true);
+        });
+
+        test('filters out items not tagged auto-logged', async () => {
+            const items = [
+                makeActivityItem('perch-end', '2026-05-03T09:00:00Z', new Set(['perch-end'])), // no auto-logged tag
+                makeActivityItem('perch-start', '2026-05-03T09:30:00Z'),                       // has auto-logged tag
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
+            expect(activity.every(s => s.content.includes('perch-start'))).toBe(true);
+            expect(activity.some(s => s.content.includes('perch-end'))).toBe(false);
+        });
+
+        test('cache hit: second call within TTL does not re-fetch', async () => {
+            let callCount = 0;
+            const items = [makeActivityItem('perch-end', '2026-05-03T09:00:00Z')];
+            let nowMs = 5_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                loadRecentActivityLog: async (_limit: number) => {
+                    callCount++;
+                    return items;
+                },
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false },
+                nowMs:             () => nowMs,
+            }));
+            await ls.snapshot();
+            nowMs += 60_000; // still within 15-min TTL
+            await ls.snapshot();
+            expect(callCount).toBe(1);
+        });
+
+        test('stale cache triggers background refresh; snapshot returns cached items', async () => {
+            let callCount = 0;
+            const items = [makeActivityItem('perch-end', '2026-05-03T09:00:00Z')];
+            let nowMs = 5_000_000;
+            const ls = new LiveSignals(makeDefaultDeps({
+                loadRecentActivityLog: async (_limit: number) => {
+                    callCount++;
+                    return items;
+                },
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogCacheMs: 5000 },
+                nowMs:             () => nowMs,
+            }));
+            await ls.snapshot();
+            expect(callCount).toBe(1);
+            nowMs += 10_000; // past TTL
+            const signals = await ls.snapshot();
+            // Returns stale cached items immediately
+            expect(signals.filter(s => s.kind === 'activity').length).toBeGreaterThanOrEqual(1);
+            // Background refresh eventually fires
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(callCount).toBe(2);
+        });
+
+        test('feature flag off: activity-log is skipped', async () => {
+            let callCount = 0;
+            const ls = new LiveSignals(makeDefaultDeps({
+                loadRecentActivityLog: async () => {
+                    callCount++;
+                    return [];
+                },
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'activity')).toHaveLength(0);
+            expect(callCount).toBe(0);
+        });
+
+        test('missing loadRecentActivityLog: activity signals are skipped without errors', async () => {
+            const ls = new LiveSignals(makeDefaultDeps({
+                idleSignalsConfig: FULL_CONFIG,
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'activity')).toHaveLength(0);
+        });
+
+        test('activity-log fetch error does not break other signals', async () => {
+            const ls = new LiveSignals(makeDefaultDeps({
+                loadRecentActivityLog: async () => {
+                    throw new Error('DDB read failed');
+                },
+                idleSignalsConfig: { ...FULL_CONFIG, bskyDiscoverEnabled: false, bskyForYouEnabled: false, bskyNotificationsEnabled: false },
+            }));
+            const signals = await ls.snapshot();
+            expect(signals.find(s => s.kind === 'perch')).toBeDefined();
+            expect(signals.find(s => s.kind === 'time')).toBeDefined();
+        });
+
+        test('returns at most 3 activity signals (last 3 of sorted items)', async () => {
+            const items = [
+                makeActivityItem('perch-start', '2026-05-03T08:00:00Z'),
+                makeActivityItem('perch-end',   '2026-05-03T09:00:00Z'),
+                makeActivityItem('perch-start', '2026-05-03T10:00:00Z'),
+                makeActivityItem('perch-end',   '2026-05-03T11:00:00Z'),
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'activity')).toHaveLength(3);
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // Cross-source error isolation
+    // -------------------------------------------------------------------------
+    describe('cross-source error isolation', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        test('bsky throwing does not break activity-log signal emission', async () => {
+            const activityItems = [makeActivityItem('perch-end', '2026-05-03T09:00:00Z')];
+            const client = makeBskyClient({
+                getFeed: async () => {
+                    throw new Error('all bsky down');
+                },
+                getNotifications: async () => {
+                    throw new Error('notifs down');
+                },
+            });
+            const ls = new LiveSignals(makeDefaultDeps({
+                bskyClient:            client,
+                loadRecentActivityLog: async () => activityItems,
+                idleSignalsConfig:     FULL_CONFIG,
+            }));
+            const signals = await ls.snapshot();
+            // activity signal should still appear
+            expect(signals.find(s => s.kind === 'activity')).toBeDefined();
+            // core signals still present
+            expect(signals.find(s => s.kind === 'perch')).toBeDefined();
         });
     });
 });

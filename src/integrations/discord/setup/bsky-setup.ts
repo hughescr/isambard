@@ -51,6 +51,8 @@ export interface BskySetupOptions {
 }
 
 export interface BskySetupResult {
+    /** The BlueskyClient used by this setup (for LiveSignals Step 4 feed/notification signals) */
+    client:                  BlueskyClient
     allowlist:               PersonAllowlist
     rateLimiter:             TokenBucketRateLimiter
     rejectionBackend:        BskyRejectionBackend
@@ -204,6 +206,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
 
     // Stryker disable next-line ObjectLiteral: return object is integration wiring
     return {
+        client: bskyClient,
         allowlist,
         rateLimiter,
         rejectionBackend,

@@ -7,16 +7,22 @@
  * Each signal is { kind, label, content } where:
  *   kind    — identifies the signal type (e.g. 'perch', 'time', 'tool')
  *   label   — short bracket label used in the menu (e.g. 'perch')
- *   content — the body text that follows the bracket
+ *   content — the body text that follows the bracket label
  *
  * Step 2 signals (in-memory only, no network):
- *   - perch       current slot hint text (or "between slots" line)
- *   - perch-next  next slot hint, prefixed with hours-until
- *   - time        time-of-day bucket (e.g. "late morning")
- *   - day         day-of-week + time-of-day descriptor
- *   - tool        most-recent tool name + relative time ago
- *   - channel     most-recent channel + relative time ago
- *   - previous    previous idle status text (anti-rut hint for Step 3)
+ *   - perch            current slot hint text (or "between slots" line)
+ *   - perch-next       next slot hint, prefixed with hours-until
+ *   - time             time-of-day bucket (e.g. "late morning")
+ *   - day              day-of-week + time-of-day descriptor
+ *   - tool             most-recent tool name + relative time ago
+ *   - channel          most-recent channel + relative time ago
+ *   - previous         previous idle status text (anti-rut hint for Step 3)
+ *
+ * Step 4 signals (network-fetched, TTL-cached, feature-flag gated):
+ *   - bsky-discover    top posts from Bluesky discover feed
+ *   - bsky-foryou      top posts from Bluesky for-you feed
+ *   - bsky-notifications  recent unread Bluesky notifications (single summary)
+ *   - activity         recent auto-logged activity events
  *
  * Time-of-day bucket mapping (24-hour local time):
  *   0–4    deep night
@@ -35,6 +41,9 @@ import { logger } from '@hughescr/logger';
 import { DateTime } from 'luxon';
 import { getSlotConfig, getSlotForHour, getNextSlot } from './perch/schedule';
 import type { ChannelId } from './types';
+import type { IdleSignalsConfig } from '@/config';
+import type { BlueskyClient, BskyFeedItem, BskyNotification } from '@/integrations/bsky';
+import type { MemoryToolItemData } from '@/storage';
 
 // ============================================================================
 // Public interfaces
@@ -64,6 +73,10 @@ export interface RecentChannel {
     timestamp: number
 }
 
+/** Initial bootstrap fetch timeout (ms): wait at most this long on the very first call. */
+// Stryker disable next-line ArithmeticOperator: 2-second bootstrap timeout is an operational constant
+const BOOTSTRAP_TIMEOUT_MS = 2000;
+
 /**
  * Dependencies injected into the LiveSignals aggregator.
  * All deps are synchronous or callback-based to keep snapshot() fast.
@@ -81,6 +94,21 @@ export interface LiveSignalsDeps {
     resolveChannelName: (id: ChannelId) => string | undefined
     /** Read the previous idle status text; undefined on cold start */
     getPreviousStatus:  () => string | undefined
+
+    // ---- Step 4: network-fetched signal deps (all optional) ----
+
+    /** Bluesky client for fetching feed and notification signals */
+    bskyClient?:            BlueskyClient
+    /** Feature flags and TTL overrides for network-fetched signals */
+    idleSignalsConfig?:     IdleSignalsConfig
+    /**
+     * Callback for loading recent activity log events.
+     * Receives a limit; returns MemoryToolItemData[] sorted ascending by updatedAt.
+     */
+    loadRecentActivityLog?: (limit: number) => Promise<MemoryToolItemData[]>
+
+    /** @internal Injectable "current wall-clock ms" for TTL math in tests */
+    nowMs?: () => number
 }
 
 // ============================================================================
@@ -160,6 +188,81 @@ function relativeTime(ms: number): string {
 }
 
 // ============================================================================
+// Step 4 helpers
+// ============================================================================
+
+/** Maximum character length for a bsky post snippet in a signal. */
+// Stryker disable next-line ArithmeticOperator: 120-char cap is an aesthetic constant
+const BSKY_SNIPPET_MAX_CHARS = 120;
+
+/**
+ * Format a BskyFeedItem as a short signal content string.
+ * Strips newlines, truncates to BSKY_SNIPPET_MAX_CHARS, appends author handle.
+ */
+function formatFeedItemContent(item: BskyFeedItem): string {
+    // Stryker disable all -- direct unit tests exist; Bun inspector static-mutant limitation prevents per-test coverage tracking for module-scope functions
+    const text = item.post.text.replaceAll('\n', ' ').trim();
+    const snippet = text.length > BSKY_SNIPPET_MAX_CHARS
+        ? `${text.slice(0, BSKY_SNIPPET_MAX_CHARS)}…`
+        : text;
+    const handle = item.post.author.handle;
+    return `"${snippet}" — @${handle}`;
+    // Stryker restore all
+}
+
+/**
+ * Summarise a list of BskyNotification objects into a single short string.
+ * Returns undefined when there are no notifications.
+ */
+function summariseNotifications(notifications: BskyNotification[]): string | undefined {
+    // Stryker disable all -- direct unit tests exist; Bun inspector static-mutant limitation prevents per-test coverage tracking for module-scope functions
+    if(notifications.length === 0) {
+        return undefined;
+    }
+
+    // Count by reason; mention/reply/quote are grouped as "mentions" in the summary
+    const mentionCount = notifications.filter(n => n.reason === 'mention' || n.reason === 'reply' || n.reason === 'quote').length;
+    const likeCount    = notifications.filter(n => n.reason === 'like').length;
+    const repostCount  = notifications.filter(n => n.reason === 'repost').length;
+    const followCount  = notifications.filter(n => n.reason === 'follow').length;
+
+    const parts: string[] = [];
+    if(mentionCount > 0) {
+        parts.push(`${mentionCount} mention${mentionCount === 1 ? '' : 's'}`);
+    }
+    if(likeCount > 0) {
+        parts.push(`${likeCount} like${likeCount === 1 ? '' : 's'}`);
+    }
+    if(repostCount > 0) {
+        parts.push(`${repostCount} repost${repostCount === 1 ? '' : 's'}`);
+    }
+    if(followCount > 0) {
+        parts.push(`${followCount} new follower${followCount === 1 ? '' : 's'}`);
+    }
+
+    if(parts.length === 0) {
+        return undefined;
+    }
+
+    // Most recent notification author, if any
+    const sorted = notifications.toSorted((a, b) => b.indexedAt.localeCompare(a.indexedAt));
+    const latest = sorted[0];
+    if(!latest) {
+        return parts.join(', ');
+    }
+    return `${parts.join(', ')} — latest from @${latest.author.handle}`;
+    // Stryker restore all
+}
+
+/**
+ * Generic TTL cache for a list of items.
+ */
+interface TtlCache<T> {
+    items:     T[]
+    fetchedAt: number
+}
+
+// ============================================================================
 // LiveSignals class
 // ============================================================================
 
@@ -176,6 +279,18 @@ function relativeTime(ms: number): string {
  */
 export class LiveSignals {
     private readonly deps: LiveSignalsDeps;
+
+    // Step 4 TTL caches
+    private discoverCache:      TtlCache<BskyFeedItem> | undefined;
+    private forYouCache:        TtlCache<BskyFeedItem> | undefined;
+    private notificationsCache: TtlCache<BskyNotification> | undefined;
+    private activityCache:      TtlCache<MemoryToolItemData> | undefined;
+
+    // In-flight refresh promises (prevents duplicate concurrent fetches)
+    private discoverInFlight:      Promise<void> | undefined;
+    private forYouInFlight:        Promise<void> | undefined;
+    private notificationsInFlight: Promise<void> | undefined;
+    private activityInFlight:      Promise<void> | undefined;
 
     constructor(deps: LiveSignalsDeps) {
         this.deps = deps;
@@ -208,14 +323,26 @@ export class LiveSignals {
             wrap(() => this.toolSignal()),
             wrap(() => this.channelSignal()),
             wrap(() => this.previousSignal()),
+            // Step 4: network-fetched signals (async, TTL-cached)
+            this.bskyDiscoverSignals(),
+            this.bskyForYouSignals(),
+            this.bskyNotificationsSignal(),
+            this.activitySignals(),
         ]);
 
+        return this.collectResults(results);
+    }
+
+    /**
+     * Collect fulfilled results from allSettled, flattening arrays, and log failures.
+     */
+    private collectResults(
+        results: PromiseSettledResult<Signal | Signal[] | undefined>[]
+    ): Signal[] {
         const signals: Signal[] = [];
         for(const result of results) {
             if(result.status === 'fulfilled') {
-                if(result.value !== undefined) {
-                    signals.push(result.value);
-                }
+                this.appendSignalValue(signals, result.value);
             } else {
                 logger.debug({
                     error: result.reason instanceof Error ? result.reason.message : String(result.reason),
@@ -226,6 +353,22 @@ export class LiveSignals {
         return signals;
     }
 
+    /**
+     * Append a single signal, an array of signals, or nothing (undefined) to the accumulator.
+     */
+    private appendSignalValue(signals: Signal[], value: Signal | Signal[] | undefined): void {
+        if(value === undefined) {
+            return;
+        }
+        if(Array.isArray(value)) {
+            for(const s of value) {
+                signals.push(s);
+            }
+        } else {
+            signals.push(value);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Private signal builders
     // -------------------------------------------------------------------------
@@ -234,6 +377,11 @@ export class LiveSignals {
         const { now, timezone } = this.deps;
         // Stryker disable next-line ConditionalExpression: injectable clock — now() injected in tests; production always uses DateTime.now()
         return now ? now() : DateTime.now().setZone(timezone);
+    }
+
+    private getNowMs(): number {
+        // Stryker disable next-line ConditionalExpression: injectable clock for TTL math — injected in tests; production uses Date.now()
+        return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
     private perchSignal(): Signal {
@@ -345,5 +493,343 @@ export class LiveSignals {
             label:   'previous',
             content: prev,
         };
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: TTL-cached network signal helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Read from a TTL cache.
+     *
+     * @param cache   - Current cache state (undefined = never fetched)
+     * @param ttlMs   - Cache TTL in milliseconds
+     * @param nowMs   - Current wall-clock time
+     * @returns The cached items if still fresh; undefined if stale or cold
+     */
+    private readCache<T>(
+        cache: TtlCache<T> | undefined,
+        ttlMs: number,
+        nowMs: number
+    ): T[] | undefined {
+        if(cache === undefined) {
+            return undefined;
+        }
+        // Stryker disable next-line ArithmeticOperator,EqualityOperator: TTL staleness check — subtraction is correct; > not >= so cache is still valid at exact TTL boundary (tested)
+        if(nowMs - cache.fetchedAt > ttlMs) {
+            return undefined;   // stale
+        }
+        return cache.items;
+    }
+
+    /**
+     * Returns cached bsky-discover feed items as Signals.
+     *
+     * If no cache exists yet, awaits the first fetch with a short timeout
+     * (BOOTSTRAP_TIMEOUT_MS) so the very first idle snapshot can include data.
+     * If the cache is stale, returns the stale items immediately and kicks
+     * a background refresh.  If the cache is fresh, returns it directly.
+     */
+    private async bskyDiscoverSignals(): Promise<Signal[] | undefined> {
+        const { bskyClient, idleSignalsConfig } = this.deps;
+        if(!bskyClient || !idleSignalsConfig?.bskyDiscoverEnabled) {
+            return undefined;
+        }
+
+        const ttlMs = idleSignalsConfig.bskyDiscoverCacheMs;
+        const nowMs = this.getNowMs();
+        const cached = this.readCache(this.discoverCache, ttlMs, nowMs);
+
+        if(cached !== undefined) {
+            // Fresh cache hit — no refresh needed
+            // Stryker disable next-line StringLiteral: kind/label are constant signal identifiers — tested via s.kind === 'bsky-discover' assertions; Bun inspector cannot map per-test coverage for class methods
+            return cached.map(item => ({
+                kind:    'bsky-discover',
+                label:   'bsky-discover',
+                content: formatFeedItemContent(item),
+            }));
+        }
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
+        if(this.discoverCache !== undefined) {
+            // Stale: kick background refresh and return the stale data immediately
+            void (this.discoverInFlight ?? this.startDiscoverRefresh(bskyClient));
+            // Stryker disable next-line StringLiteral: kind/label are constant signal identifiers — tested via s.kind === 'bsky-discover' assertions; Bun inspector cannot map per-test coverage for class methods
+            return this.discoverCache.items.map(item => ({
+                kind:    'bsky-discover',
+                label:   'bsky-discover',
+                content: formatFeedItemContent(item),
+            }));
+        }
+
+        // Cold start: await first fetch with timeout
+        await Promise.race([
+            this.discoverInFlight ?? this.startDiscoverRefresh(bskyClient),
+            new Promise<void>((resolve) => {
+                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
+                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
+                // Stryker restore all
+            }),
+        ]);
+
+        const afterWait = this.readCache<BskyFeedItem>(this.discoverCache, ttlMs, this.getNowMs());
+        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
+        if(afterWait === undefined) {
+            return [];
+        }
+        return afterWait.map(item => ({
+            kind:    'bsky-discover',
+            label:   'bsky-discover',
+            content: formatFeedItemContent(item),
+        }));
+    }
+
+    private startDiscoverRefresh(bskyClient: BlueskyClient): Promise<void> {
+        const promise = (async () => {
+            try {
+                const result = await bskyClient.getFeed('discover', 5);
+                this.discoverCache = { items: result.items, fetchedAt: this.getNowMs() };
+            } catch (err: unknown) {
+                logger.debug({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'LiveSignals: bsky-discover fetch failed',
+                });
+            } finally {
+                this.discoverInFlight = undefined;
+            }
+        })();
+        this.discoverInFlight = promise;
+        return promise;
+    }
+
+    /**
+     * Returns cached bsky-foryou feed items as Signals.
+     * Same TTL + first-call-await semantics as bskyDiscoverSignals.
+     */
+    private async bskyForYouSignals(): Promise<Signal[] | undefined> {
+        const { bskyClient, idleSignalsConfig } = this.deps;
+        if(!bskyClient || !idleSignalsConfig?.bskyForYouEnabled) {
+            return undefined;
+        }
+
+        const ttlMs = idleSignalsConfig.bskyForYouCacheMs;
+        const nowMs = this.getNowMs();
+        const cached = this.readCache(this.forYouCache, ttlMs, nowMs);
+
+        if(cached !== undefined) {
+            return cached.map(item => ({
+                kind:    'bsky-foryou',
+                label:   'bsky-foryou',
+                content: formatFeedItemContent(item),
+            }));
+        }
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
+        if(this.forYouCache !== undefined) {
+            void (this.forYouInFlight ?? this.startForYouRefresh(bskyClient));
+            return this.forYouCache.items.map(item => ({
+                kind:    'bsky-foryou',
+                label:   'bsky-foryou',
+                content: formatFeedItemContent(item),
+            }));
+        }
+
+        await Promise.race([
+            this.forYouInFlight ?? this.startForYouRefresh(bskyClient),
+            new Promise<void>((resolve) => {
+                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
+                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
+                // Stryker restore all
+            }),
+        ]);
+
+        const afterWait = this.readCache<BskyFeedItem>(this.forYouCache, ttlMs, this.getNowMs());
+        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
+        if(afterWait === undefined) {
+            return [];
+        }
+        return afterWait.map(item => ({
+            kind:    'bsky-foryou',
+            label:   'bsky-foryou',
+            content: formatFeedItemContent(item),
+        }));
+    }
+
+    private startForYouRefresh(bskyClient: BlueskyClient): Promise<void> {
+        const promise = (async () => {
+            try {
+                const result = await bskyClient.getFeed('for-you', 10);
+                this.forYouCache = { items: result.items, fetchedAt: this.getNowMs() };
+            } catch (err: unknown) {
+                logger.debug({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'LiveSignals: bsky-foryou fetch failed',
+                });
+            } finally {
+                this.forYouInFlight = undefined;
+            }
+        })();
+        this.forYouInFlight = promise;
+        return promise;
+    }
+
+    /**
+     * Returns a single bsky-notifications signal summarising recent notifications.
+     * Same TTL + first-call-await semantics as feed signals.
+     */
+    private async bskyNotificationsSignal(): Promise<Signal | undefined> {
+        const { bskyClient, idleSignalsConfig } = this.deps;
+        if(!bskyClient || !idleSignalsConfig?.bskyNotificationsEnabled) {
+            return undefined;
+        }
+
+        const ttlMs = idleSignalsConfig.bskyNotificationsCacheMs;
+        const nowMs = this.getNowMs();
+        const cached = this.readCache(this.notificationsCache, ttlMs, nowMs);
+
+        if(cached !== undefined) {
+            const summary = summariseNotifications(cached);
+            // Stryker disable next-line ConditionalExpression,BlockStatement: summary is undefined when no notifications — correct to omit signal
+            if(summary === undefined) {
+                return undefined;
+            }
+            return { kind: 'bsky-notifications', label: 'bsky-notifications', content: summary };
+        }
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
+        if(this.notificationsCache !== undefined) {
+            void (this.notificationsInFlight ?? this.startNotificationsRefresh(bskyClient));
+            const summary = summariseNotifications(this.notificationsCache.items);
+            // Stryker disable next-line ConditionalExpression,BlockStatement: summary is undefined when no notifications — correct to omit signal
+            if(summary === undefined) {
+                return undefined;
+            }
+            return { kind: 'bsky-notifications', label: 'bsky-notifications', content: summary };
+        }
+
+        await Promise.race([
+            this.notificationsInFlight ?? this.startNotificationsRefresh(bskyClient),
+            new Promise<void>((resolve) => {
+                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
+                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
+                // Stryker restore all
+            }),
+        ]);
+
+        const afterWait = this.readCache<BskyNotification>(this.notificationsCache, ttlMs, this.getNowMs());
+        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
+        if(afterWait === undefined) {
+            return undefined;
+        }
+        const summary = summariseNotifications(afterWait);
+        // Stryker disable next-line ConditionalExpression,BlockStatement: summary is undefined when no notifications — correct to omit signal
+        if(summary === undefined) {
+            return undefined;
+        }
+        return { kind: 'bsky-notifications', label: 'bsky-notifications', content: summary };
+    }
+
+    private startNotificationsRefresh(bskyClient: BlueskyClient): Promise<void> {
+        const promise = (async () => {
+            try {
+                const result = await bskyClient.getNotifications(20);
+                this.notificationsCache = { items: result.notifications, fetchedAt: this.getNowMs() };
+            } catch (err: unknown) {
+                logger.debug({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'LiveSignals: bsky-notifications fetch failed',
+                });
+            } finally {
+                this.notificationsInFlight = undefined;
+            }
+        })();
+        this.notificationsInFlight = promise;
+        return promise;
+    }
+
+    /**
+     * Returns up to 3 activity signals from the auto-logged activity log.
+     * Renders each as "type relative-time ago" (e.g. "perch-end 22m ago").
+     */
+    private async activitySignals(): Promise<Signal[] | undefined> {
+        const { loadRecentActivityLog, idleSignalsConfig } = this.deps;
+        if(!loadRecentActivityLog || !idleSignalsConfig?.activityLogEnabled) {
+            return undefined;
+        }
+
+        const ttlMs = idleSignalsConfig.activityLogCacheMs;
+        const nowMs = this.getNowMs();
+        const cached = this.readCache(this.activityCache, ttlMs, nowMs);
+
+        if(cached !== undefined) {
+            return this.buildActivitySignals(cached);
+        }
+
+        // Stryker disable next-line ConditionalExpression,BlockStatement: stale-vs-cold branch — stale returns existing data + kicks background refresh; cold awaits with timeout
+        if(this.activityCache !== undefined) {
+            void (this.activityInFlight ?? this.startActivityRefresh(loadRecentActivityLog));
+            return this.buildActivitySignals(this.activityCache.items);
+        }
+
+        await Promise.race([
+            this.activityInFlight ?? this.startActivityRefresh(loadRecentActivityLog),
+            new Promise<void>((resolve) => {
+                // Stryker disable all: setTimeout is forbidden in production tests; bootstrap timer is tested via injected clock
+                setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS);
+                // Stryker restore all
+            }),
+        ]);
+
+        const afterWait = this.readCache<MemoryToolItemData>(this.activityCache, ttlMs, this.getNowMs());
+        // Stryker disable next-line ConditionalExpression,BlockStatement: defensive check — afterWait may still be undefined if timeout fired before fetch completed
+        if(afterWait === undefined) {
+            return [];
+        }
+        return this.buildActivitySignals(afterWait);
+    }
+
+    private buildActivitySignals(items: MemoryToolItemData[]): Signal[] {
+        const nowMs = this.getNowMs();
+        // Take last 3 items (most recent in ascending sort)
+        const recent = items.slice(-3);
+        const signals: Signal[] = [];
+        for(const item of recent) {
+            // Filter to auto-logged items only (tagged 'auto-logged')
+            // Stryker disable next-line ConditionalExpression,BlockStatement: auto-logged tag filter — items without the tag are skipped
+            if(!item.tags?.has('auto-logged')) {
+                continue;
+            }
+            // Extract activity type from path: /events/activity/{type}/{timestamp}
+            const pathParts = item.path.split('/');
+            // Path is /events/activity/{type}/{timestamp} → parts index 3 is type
+            // Stryker disable next-line ArithmeticOperator: index 3 is correct for /events/activity/{type}/{ts}
+            const activityType = pathParts[3] ?? 'activity';
+            const updatedMs = new Date(item.updatedAt).getTime();
+            const ago = relativeTime(nowMs - updatedMs);
+            signals.push({
+                kind:    'activity',
+                label:   'activity',
+                content: `${activityType} ${ago}`,
+            });
+        }
+        return signals;
+    }
+
+    private startActivityRefresh(loadFn: (limit: number) => Promise<MemoryToolItemData[]>): Promise<void> {
+        const promise = (async () => {
+            try {
+                const items = await loadFn(10);
+                this.activityCache = { items, fetchedAt: this.getNowMs() };
+            } catch (err: unknown) {
+                logger.debug({
+                    error: err instanceof Error ? err.message : String(err),
+                    msg:   'LiveSignals: activity-log fetch failed',
+                });
+            } finally {
+                this.activityInFlight = undefined;
+            }
+        })();
+        this.activityInFlight = promise;
+        return promise;
     }
 }

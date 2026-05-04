@@ -14,7 +14,9 @@ export {
     type InboxConfig,
     type ReconciliationConfig,
     type ContactReconciliationConfig,
-    type VectorIndexConfig
+    type VectorIndexConfig,
+    idleSignalsConfigSchema,
+    type IdleSignalsConfig
 } from './schemas';
 
 export {
