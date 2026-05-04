@@ -49,6 +49,8 @@ export function setupPresence(params: {
     identityCache?:          IdentityCache
     /** Optional live-signals snapshot callback. Step 3 will consume this. */
     getLiveSignals?:         () => Promise<Signal[]>
+    /** Getter for the last idle status text (anti-rut, Step 3). */
+    getPreviousStatus?:      () => string | undefined
     /** Setter for persisting the last idle status text (anti-rut, Step 3). */
     setPreviousStatus?:      (text: string) => void
 }): PresenceSetupResult {
@@ -65,6 +67,7 @@ export function setupPresence(params: {
         getLastThinkingContent,
         identityCache: providedIdentityCache,
         getLiveSignals,
+        getPreviousStatus,
         setPreviousStatus,
     } = params;
 
@@ -86,6 +89,7 @@ export function setupPresence(params: {
         activityType:    ActivityType.Custom,
         identityContext: () => identityCache.get(),
         getLiveSignals,
+        getPreviousStatus,
         setPreviousStatus,
         getTaskContext,
         getRecentContext,

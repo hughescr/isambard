@@ -639,6 +639,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     getLastThinkingContent,
                     identityCache,
                     getLiveSignals: liveSignals ? () => liveSignals.snapshot() : undefined,
+                    getPreviousStatus,
                     setPreviousStatus,
                 });
                 presenceManager = presenceSetup.presenceManager;

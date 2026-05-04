@@ -766,6 +766,41 @@ describe('IdleStatusGenerator', () => {
             expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
         });
 
+        test('should append previous-status block in else-branch when signals empty and getPreviousStatus has value', async () => {
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.resolve([]),
+                getPreviousStatus: () => 'Pondering the void',
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            // Fallback text must be present (kills removal of menuText from else-branch)
+            expect(userPromptArg).toContain('Status text (first person, under 50 chars):');
+            // Previous-status block must also be present (kills dropping ${previousBlock} from else-branch)
+            expect(userPromptArg).toContain('The idea is to make the status different each time');
+            expect(userPromptArg).toContain('"Pondering the void"');
+        });
+
+        test('should omit previous-status block in else-branch when signals empty and getPreviousStatus returns undefined', async () => {
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.resolve([]),
+                getPreviousStatus: () => undefined,
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
+            expect(userPromptArg).not.toContain('The idea is to make the status different');
+        });
+
         test('should include previous-status anti-rut block when getPreviousStatus returns a value', async () => {
             const signals = makeSignals();
             const generator = createIdleStatusGenerator({

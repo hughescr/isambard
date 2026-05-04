@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
 import {
@@ -642,6 +643,43 @@ describe('generateTextWithSystemPrompt', () => {
                     options: expect.objectContaining({ systemPrompt: 'Single string system prompt' }),
                 })
             );
+        });
+    });
+
+    describe('SYSTEM_PROMPT_DYNAMIC_BOUNDARY sentinel filtering', () => {
+        test('should filter sentinel from prompt body when array contains boundary', async () => {
+            const arrayWithBoundary = ['Static prefix', SYSTEM_PROMPT_DYNAMIC_BOUNDARY, 'Dynamic suffix'];
+
+            await generateTextWithSystemPrompt(arrayWithBoundary, 'User question');
+
+            const callArgs = mockQuery.mock.calls[0][0] as { prompt: string };
+            // Sentinel must NOT appear in the visible prompt body passed to the model
+            expect(callArgs.prompt).not.toContain(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+            // Both surrounding elements must still be in the prompt, joined with \n\n
+            expect(callArgs.prompt).toContain('Static prefix\n\nDynamic suffix');
+            expect(callArgs.prompt).toContain('User:\nUser question');
+        });
+
+        test('should keep sentinel intact in options.systemPrompt for SDK caching', async () => {
+            const arrayWithBoundary = ['Static prefix', SYSTEM_PROMPT_DYNAMIC_BOUNDARY, 'Dynamic suffix'];
+
+            await generateTextWithSystemPrompt(arrayWithBoundary, 'User question');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ systemPrompt: arrayWithBoundary }),
+                })
+            );
+        });
+
+        test('should leave string systemPrompt unchanged (no filtering for string form)', async () => {
+            const stringWithSentinel = `Before\n${SYSTEM_PROMPT_DYNAMIC_BOUNDARY}\nAfter`;
+
+            await generateTextWithSystemPrompt(stringWithSentinel, 'User');
+
+            const callArgs = mockQuery.mock.calls[0][0] as { prompt: string };
+            // String form is not filtered — passed through as-is
+            expect(callArgs.prompt).toBe(`System:\n${stringWithSentinel}\n\nUser:\nUser`);
         });
     });
 });

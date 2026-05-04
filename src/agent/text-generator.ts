@@ -1,7 +1,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import removeMarkdown from 'remove-markdown';
 
 /**
@@ -253,6 +253,8 @@ export async function generateTextWithSystemPrompt(
     options?: TextGeneratorOptions
 ): Promise<string> {
     // Stryker disable next-line ConditionalExpression: array check — string arrays are passed to SDK as-is for caching; strings are passed directly
-    const flatPrompt = Array.isArray(systemPrompt) ? systemPrompt.join('\n\n') : systemPrompt;
+    const flatPrompt = Array.isArray(systemPrompt)
+        ? systemPrompt.filter(s => s !== SYSTEM_PROMPT_DYNAMIC_BOUNDARY).join('\n\n')
+        : systemPrompt;
     return executePrompt(`System:\n${flatPrompt}\n\nUser:\n${userPrompt}`, { ...options, systemPrompt });
 }
