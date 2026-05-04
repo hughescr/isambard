@@ -65,6 +65,13 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                 updateThrottleMs:      12_000,       // Throttle Discord API calls to avoid rate limiting (12s cooldown)
                 idleTimeoutMs:         60_000,        // Transition to idle after 1 minute of inactivity
                 idleRefreshIntervalMs: 300_000,       // Refresh idle status every 5 minutes to maintain visibility
+                // Stryker disable next-line ObjectLiteral: idle signal flags tested via loader unit tests
+                idleSignals:           {
+                    bskyDiscoverEnabled:      true,
+                    bskyForYouEnabled:        false,  // 10-item payload would dominate the snapshot menu
+                    bskyNotificationsEnabled: true,
+                    activityLogEnabled:       true,
+                },
             },
         },
         perch: env.get('PERCH_ENABLED').default('true').asBool()

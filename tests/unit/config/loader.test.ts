@@ -239,20 +239,43 @@ describe.concurrent('loadConfig', () => {
             const config = loadConfig(resources);
 
             // Verify presence object structure and exact values
-            expect(config.discord.presence).toEqual({
-                updateThrottleMs:      12_000,
-                idleTimeoutMs:         60_000,
-                idleRefreshIntervalMs: 300_000,
-            });
+            const presence = config.discord.presence!;
+            expect(presence.updateThrottleMs).toBe(12_000);
+            expect(presence.idleTimeoutMs).toBe(60_000);
+            expect(presence.idleRefreshIntervalMs).toBe(300_000);
 
             // Verify exact numeric values with range checks to catch mutations
-            const presence = config.discord.presence!;
             expect(presence.updateThrottleMs).toBeGreaterThan(0);
             expect(presence.updateThrottleMs).toBeLessThanOrEqual(12_000);
             expect(presence.idleTimeoutMs).toBeGreaterThan(0);
             expect(presence.idleTimeoutMs).toBeLessThan(120_000);
             expect(presence.idleRefreshIntervalMs).toBeGreaterThan(0);
             expect(presence.idleRefreshIntervalMs).toBeLessThan(600_000);
+        });
+
+        test('enables bsky-discover, bsky-notifications, activity-log idle signals; keeps for-you disabled', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            const idleSignals = config.discord.presence?.idleSignals;
+            expect(idleSignals).toBeDefined();
+            expect(idleSignals!.bskyDiscoverEnabled).toBe(true);
+            expect(idleSignals!.bskyForYouEnabled).toBe(false);
+            expect(idleSignals!.bskyNotificationsEnabled).toBe(true);
+            expect(idleSignals!.activityLogEnabled).toBe(true);
+        });
+
+        test('idleSignals cache TTLs are set to schema defaults (30min for bsky, 15min for activity)', () => {
+            const resources = createMockResources();
+            const config = loadConfig(resources);
+
+            const idleSignals = config.discord.presence?.idleSignals;
+            expect(idleSignals).toBeDefined();
+            // Schema defaults: 30 min for bsky feeds, 15 min for activity log
+            expect(idleSignals!.bskyDiscoverCacheMs).toBe(30 * 60_000);
+            expect(idleSignals!.bskyForYouCacheMs).toBe(30 * 60_000);
+            expect(idleSignals!.bskyNotificationsCacheMs).toBe(30 * 60_000);
+            expect(idleSignals!.activityLogCacheMs).toBe(15 * 60_000);
         });
     });
 
