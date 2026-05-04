@@ -276,6 +276,27 @@ describe('buildTimingMiddleware', () => {
         }
     }
 
+    // Helper: invoke the middleware with a next that throws, with a given commandName and elapsed ms.
+    // Returns a rejected promise (re-throws the error).
+    async function runMiddlewareThatThrows(commandName: string | undefined, elapsedMs: number, error: Error): Promise<unknown> {
+        jest.useFakeTimers();
+        try {
+            const middleware = buildTimingMiddleware();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
+            const next: any = mock(async (_args: unknown) => {
+                throw error;
+            });
+            const handler = middleware(next, { commandName });
+
+            const callPromise = handler({ input: {} });
+            // Advance time so `Date.now() - startTime` equals elapsedMs
+            jest.advanceTimersByTime(elapsedMs);
+            return await callPromise;
+        } finally {
+            jest.useRealTimers();
+        }
+    }
+
     beforeEach(() => {
         mockLogger.debug.mockClear();
     });
@@ -370,6 +391,100 @@ describe('buildTimingMiddleware', () => {
             const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, msg: unknown }];
             expect(logArg.operation).toBeUndefined();
             expect(logArg.msg).toBe('DynamoDB operation completed in 10ms');
+        });
+    });
+
+    describe.concurrent('Error path — always logs and re-throws', () => {
+        test('failing fast DescribeTableCommand is logged and error propagates', async () => {
+            const error = new Error('ResourceNotFoundException');
+            expect(runMiddlewareThatThrows('DescribeTableCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ResourceNotFoundException');
+
+            // Wait a tick for the rejection to settle so the debug call registers
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, durationMs: unknown, error: unknown, msg: unknown }];
+            expect(logArg.operation).toBe('DescribeTableCommand');
+            expect(logArg.durationMs).toBe(SLOW_READ_MS - 1);
+            expect(logArg.error).toBe('ResourceNotFoundException');
+            expect(logArg.msg).toContain('DescribeTableCommand');
+            expect(logArg.msg).toContain('failed');
+        });
+
+        test('failing fast QueryCommand is logged and error propagates', async () => {
+            const error = new Error('ValidationException');
+            expect(runMiddlewareThatThrows('QueryCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ValidationException');
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, error: unknown }];
+            expect(logArg.operation).toBe('QueryCommand');
+            expect(logArg.error).toBe('ValidationException');
+        });
+
+        test('failing slow QueryCommand (over threshold) is also logged', async () => {
+            const error = new Error('ProvisionedThroughputExceededException');
+            expect(runMiddlewareThatThrows('QueryCommand', SLOW_READ_MS + 50, error)).rejects.toThrow('ProvisionedThroughputExceededException');
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, durationMs: unknown, error: unknown }];
+            expect(logArg.operation).toBe('QueryCommand');
+            expect(logArg.durationMs).toBe(SLOW_READ_MS + 50);
+            expect(logArg.error).toBe('ProvisionedThroughputExceededException');
+        });
+
+        test('failing PutItemCommand (write) is logged on error path', async () => {
+            const error = new Error('ConditionalCheckFailedException');
+            expect(runMiddlewareThatThrows('PutItemCommand', 10, error)).rejects.toThrow('ConditionalCheckFailedException');
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, error: unknown }];
+            expect(logArg.operation).toBe('PutItemCommand');
+            expect(logArg.error).toBe('ConditionalCheckFailedException');
+        });
+
+        test('failing command with undefined commandName logs fallback msg', async () => {
+            const error = new Error('SomeError');
+            expect(runMiddlewareThatThrows(undefined, 10, error)).rejects.toThrow('SomeError');
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, msg: unknown }];
+            expect(logArg.operation).toBeUndefined();
+            expect(logArg.msg).toBe('DynamoDB operation failed in 10ms');
+        });
+
+        test('non-Error thrown value uses String() in log', async () => {
+            jest.useFakeTimers();
+            try {
+                const middleware = buildTimingMiddleware();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
+                const next: any = mock(async (_args: unknown) => {
+                    throw 'string-error';
+                });
+                const handler = middleware(next, { commandName: 'GetItemCommand' });
+                const callPromise = handler({ input: {} });
+                jest.advanceTimersByTime(5);
+                expect(callPromise).rejects.toBe('string-error');
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+                const [logArg] = mockLogger.debug.mock.calls[0] as [{ error: unknown }];
+                expect(logArg.error).toBe('string-error');
+            } finally {
+                jest.useRealTimers();
+            }
         });
     });
 

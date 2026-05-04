@@ -35,8 +35,8 @@ export function buildTimingMiddleware() {
         ): Promise<InitializeHandlerOutput<ServiceOutputTypes>> {
             const startTime = Date.now();
             try {
-                return await next(args);
-            } finally {
+                // eslint-disable-next-line n/callback-return -- result must be awaited before success-path logging; cannot use return-immediately form
+                const result = await next(args);
                 const duration = Date.now() - startTime;
                 // Stryker disable next-line ConditionalExpression,LogicalOperator,StringLiteral: filter predicate — routine reads suppressed below SLOW_READ_MS; writes always log; '' fallback is equivalent to any non-Set string
                 const isRoutineRead = ROUTINE_READ_COMMANDS.has(context.commandName ?? '');
@@ -47,6 +47,16 @@ export function buildTimingMiddleware() {
                         msg:        `DynamoDB ${context.commandName ?? 'operation'} completed in ${duration}ms`,
                     });
                 }
+                return result;
+            } catch (err) {
+                const duration = Date.now() - startTime;
+                logger.debug({
+                    operation:  context.commandName,
+                    durationMs: duration,
+                    error:      err instanceof Error ? err.message : String(err),
+                    msg:        `DynamoDB ${context.commandName ?? 'operation'} failed in ${duration}ms`,
+                });
+                throw err;
             }
         };
     };
