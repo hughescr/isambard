@@ -66,11 +66,13 @@ TARGET LENGTH: under 50 characters. HARD MAX: 80 characters. NEVER more than 80.
 {identityContext}`;
 
 /**
- * Dynamic suffix of the system prompt — contains signal-menu instructions.
- * This block follows the SYSTEM_PROMPT_DYNAMIC_BOUNDARY sentinel and is NOT
- * cached cross-session (it may vary based on configuration).
+ * Static instructions block — contains signal-menu vibe guidance and output rules.
+ * This block precedes the SYSTEM_PROMPT_DYNAMIC_BOUNDARY sentinel along with the
+ * static prefix, making the entire system prompt eligible for cross-session caching.
+ * Per-call dynamic content (signals menu, previous-status block) lives in the user
+ * prompt, not here.
  */
-const SYSTEM_PROMPT_DYNAMIC_SUFFIX = `## The Vibe
+const SYSTEM_PROMPT_INSTRUCTIONS = `## The Vibe
 You will be given a numbered list of "now-signals". Pick one or two — or if a theme runs across many of them, evoke the FEELING of the theme (not a list of what makes the theme). Write a short first-person fragment about what you picked. If you pick two, let them blur into one mood; do not list them. Never summarize, enumerate, or name the signal(s). Let the feeling seep through. Vary which kind of signal you pick across calls.
 
 Be VAGUE and evocative. Do NOT reference specific commit hashes, exact task counts, specific implementation names, or other precise details from the context. Let the feeling seep through without the specifics.
@@ -145,18 +147,21 @@ export function createIdleStatusGenerator(
 
     /**
      * Build system prompt + user prompt using the live-signals numbered-menu path.
-     * System prompt is a string array with SYSTEM_PROMPT_DYNAMIC_BOUNDARY so the static
-     * identity prefix is eligible for cross-session Anthropic prompt caching.
+     * System prompt is a string array with SYSTEM_PROMPT_DYNAMIC_BOUNDARY at the end
+     * so the entire system prompt (static prefix + instructions) is eligible for
+     * cross-session Anthropic prompt caching.  Per-call dynamic content (signals menu,
+     * previous-status block) lives in the user prompt.
      */
     async function buildLiveSignalsPrompts(identity: string): Promise<{ systemPrompt: string[], userPrompt: string }> {
         // getLiveSignals is always defined when this function is called (guarded by if(getLiveSignals) at call site)
         // boundary cast: TypeScript cannot narrow the closure-captured optional based on the outer if-guard
         const signals = await getLiveSignals!();
 
-        // Static prefix (with identity) precedes the boundary — globally cacheable.
-        // Dynamic suffix follows the boundary — not cached cross-session.
+        // Both static prefix and instructions precede the boundary — all fully cacheable.
+        // SYSTEM_PROMPT_DYNAMIC_BOUNDARY at the end signals that nothing follows it (all dynamic
+        // content is in the user prompt).
         const staticPrefix = SYSTEM_PROMPT_STATIC_PREFIX.replace('{identityContext}', identity);
-        const systemPrompt = [staticPrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, SYSTEM_PROMPT_DYNAMIC_SUFFIX];
+        const systemPrompt = [staticPrefix, SYSTEM_PROMPT_INSTRUCTIONS, SYSTEM_PROMPT_DYNAMIC_BOUNDARY];
 
         const menuText = signals.length > 0
             ? renderSignalMenu(signals)
@@ -181,7 +186,7 @@ export function createIdleStatusGenerator(
      */
     async function buildLegacyPrompts(identity: string): Promise<{ systemPrompt: string, userPrompt: string }> {
         const staticPrefix = SYSTEM_PROMPT_STATIC_PREFIX.replace('{identityContext}', identity);
-        const systemPrompt = `${staticPrefix}\n\n${SYSTEM_PROMPT_DYNAMIC_SUFFIX}`;
+        const systemPrompt = `${staticPrefix}\n\n${SYSTEM_PROMPT_INSTRUCTIONS}`;
 
         const taskContext = await getTaskContext?.();
         const recentContext = await getRecentContext?.();

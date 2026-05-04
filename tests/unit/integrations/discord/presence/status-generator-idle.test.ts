@@ -705,9 +705,10 @@ describe('IdleStatusGenerator', () => {
             // Must be an array when getLiveSignals is provided
             expect(Array.isArray(systemPromptArg)).toBe(true);
             const parts = systemPromptArg as string[];
-            // Array must have exactly 3 elements: static prefix, boundary, dynamic suffix
+            // Array must have exactly 3 elements: static prefix, instructions, boundary sentinel
             expect(parts.length).toBe(3);
-            expect(parts[1]).toBe(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+            // BOUNDARY must be the LAST element so everything before it is fully cacheable
+            expect(parts[parts.length - 1]).toBe(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
         });
 
         test('should include identity in static prefix of array systemPrompt', async () => {
@@ -724,8 +725,8 @@ describe('IdleStatusGenerator', () => {
             const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[];
             // Identity should be in the static prefix (first element, before the boundary)
             expect(systemPromptArg[0]).toContain('My unique identity text');
-            // Dynamic suffix (third element) should NOT contain the identity text
-            expect(systemPromptArg[2]).not.toContain('My unique identity text');
+            // Instructions block (second element) should NOT contain the identity text
+            expect(systemPromptArg[1]).not.toContain('My unique identity text');
             // Placeholder must NOT remain literally in the output (kills '{identityContext}' → '' mutant)
             expect(systemPromptArg[0]).not.toContain('{identityContext}');
             // Identity must appear AFTER the '## Who is Isambard' heading, not prepended at position 0
@@ -735,7 +736,7 @@ describe('IdleStatusGenerator', () => {
             expect(identityTextIdx).toBeGreaterThan(identityHeaderIdx);
         });
 
-        test('should include "now-signals" instructions in dynamic suffix', async () => {
+        test('should include "now-signals" instructions in static instructions block', async () => {
             const signals = makeSignals();
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
@@ -747,9 +748,9 @@ describe('IdleStatusGenerator', () => {
             await generator.generate();
 
             const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[];
-            // Dynamic suffix should contain the "pick one or two" instruction
-            expect(systemPromptArg[2]).toContain('now-signals');
-            expect(systemPromptArg[2]).toContain('Pick one or two');
+            // Instructions block (second element, before the boundary) should contain the "pick one or two" instruction
+            expect(systemPromptArg[1]).toContain('now-signals');
+            expect(systemPromptArg[1]).toContain('Pick one or two');
         });
 
         test('should use fallback user prompt when getLiveSignals returns empty array', async () => {

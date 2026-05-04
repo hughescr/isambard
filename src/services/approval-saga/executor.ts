@@ -141,7 +141,7 @@ export function createSagaExecutor(deps: SagaExecutorDeps): SagaExecutor {
 
     return {
         start(): void {
-            // Stryker disable next-line ConditionalExpression: guard prevents double-start; mutation to false skips the guard (no functional effect in tests)
+            // Stryker disable next-line ConditionalExpression: → true direction (guard always fires) is the equivalent mutant — would prevent restarts even after stop(); → false direction (guard never fires) is killed by the redundant-start tests that verify generation is not bumped on a second start() while already running
             if(timeoutId !== undefined) {
                 return;
             }

@@ -93,7 +93,10 @@ export class IdentityCache {
      * Any `get()` already in flight continues to its natural completion and the
      * in-flight caller will still receive the value the loader produces.
      * However, the in-flight result is NOT committed to the cache slot, so the
-     * _next_ `get()` issued after invalidate will trigger a fresh load.
+     * next `get()` issued _after the in-flight load settles_ will trigger a fresh
+     * load.  (A `get()` issued during the in-flight window joins that promise and
+     * receives its value once, then the subsequent `get()` triggers the fresh
+     * load.)
      *
      * Calling `invalidate()` while no value is cached and no load is in flight
      * is a no-op in terms of observable behaviour, but the generation counter
