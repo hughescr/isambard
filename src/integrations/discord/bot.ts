@@ -738,6 +738,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     onThinkingContentUpdate: setLastThinkingContent,
                     setLastSessionId,
                     addRecentMessage,
+                    addRecentChannel,
                     activityLogger,
                     historyCoordinator,
                     discordCapability,

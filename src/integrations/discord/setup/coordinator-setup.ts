@@ -17,7 +17,7 @@ import { type createDynamicStatusGenerator, type PresenceManager } from '../pres
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
-import type { DiscordMessageContext } from '../types';
+import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
 import { createPresenceStreamHandler, type PresenceStreamHandler } from './presence-stream-handler';
 import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
 
@@ -137,6 +137,8 @@ interface SetupCoordinatorParams {
     onThinkingContentUpdate?: (content: string) => void
     setLastSessionId?:        (sessionId: string | undefined) => void
     addRecentMessage?:        (content: string, author: 'user' | 'izzy') => void
+    /** Push a channel into the recent-channels ring buffer on successful response send. */
+    addRecentChannel?:        (channelId: ChannelId) => void
     activityLogger?:          ActivityLogger
     historyCoordinator?:      PersonHistoryCoordinator
     discordCapability?:       DiscordCapability
@@ -213,6 +215,7 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                 }
             }
         },
+        // eslint-disable-next-line complexity -- onResponse coordinates send, ring-buffer, activity-log, session-resume; branching is inherent
         onResponse: async (result, discordMessage) => {
             // Only send response if we have both a response and a message to reply to
             if(result.response && discordMessage) {
@@ -232,6 +235,12 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
                     useFallbackOnError: false,
                     discordCapability:  params.discordCapability,
                 });
+
+                // Feed recent-channels ring buffer from the response-send path.
+                // This ensures channels where Izzy replied (not just received) appear in signals.
+                if(sendResult.sent) {
+                    params.addRecentChannel?.(createChannelId(discordMessage.channelId));
+                }
 
                 // If response was queued to outbox (Discord offline), ensure bot returns to idle
                 // so perch/catch-up aren't blocked waiting for a send that already completed

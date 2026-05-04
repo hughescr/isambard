@@ -106,8 +106,15 @@ export interface LiveSignalsDeps {
      * Receives a limit; returns MemoryToolItemData[] sorted ascending by updatedAt.
      */
     loadRecentActivityLog?: (limit: number) => Promise<MemoryToolItemData[]>
+}
 
-    /** @internal Injectable "current wall-clock ms" for TTL math in tests */
+/**
+ * Internal extension of LiveSignalsDeps for test injection.
+ * Adds the injectable clock for TTL math — NOT exported from the barrel
+ * so the `nowMs` field is not part of the public API surface.
+ */
+export interface LiveSignalsDepsInternal extends LiveSignalsDeps {
+    /** Injectable "current wall-clock ms" for TTL math in tests */
     nowMs?: () => number
 }
 
@@ -278,7 +285,7 @@ interface TtlCache<T> {
  * are still returned.
  */
 export class LiveSignals {
-    private readonly deps: LiveSignalsDeps;
+    private readonly deps: LiveSignalsDepsInternal;
 
     // Step 4 TTL caches
     private discoverCache:      TtlCache<BskyFeedItem> | undefined;
@@ -292,7 +299,7 @@ export class LiveSignals {
     private notificationsInFlight: Promise<void> | undefined;
     private activityInFlight:      Promise<void> | undefined;
 
-    constructor(deps: LiveSignalsDeps) {
+    constructor(deps: LiveSignalsDeps | LiveSignalsDepsInternal) {
         this.deps = deps;
     }
 
@@ -454,7 +461,7 @@ export class LiveSignals {
         if(!latest) {
             return undefined;
         }
-        const ago = relativeTime(Date.now() - latest.timestamp);
+        const ago = relativeTime(this.getNowMs() - latest.timestamp);
         return {
             kind:    'tool',
             label:   'tool',
@@ -475,7 +482,7 @@ export class LiveSignals {
         }
         const name = this.deps.resolveChannelName(latest.channelId);
         const displayName = name === undefined ? `#?${latest.channelId}` : `#${name}`;
-        const ago = relativeTime(Date.now() - latest.timestamp);
+        const ago = relativeTime(this.getNowMs() - latest.timestamp);
         return {
             kind:    'channel',
             label:   'channel',
@@ -790,15 +797,13 @@ export class LiveSignals {
 
     private buildActivitySignals(items: MemoryToolItemData[]): Signal[] {
         const nowMs = this.getNowMs();
-        // Take last 3 items (most recent in ascending sort)
-        const recent = items.slice(-3);
+        // Filter to auto-logged items first, then take the last 3 (most recent in ascending sort).
+        // Filtering before slicing ensures that manual events near the end of the window
+        // do not crowd out older auto-logged events that fall within the limit.
+        // Stryker disable next-line ConditionalExpression,BlockStatement: auto-logged tag filter — items without the tag are skipped
+        const recent = items.filter(item => item.tags?.has('auto-logged')).slice(-3);
         const signals: Signal[] = [];
         for(const item of recent) {
-            // Filter to auto-logged items only (tagged 'auto-logged')
-            // Stryker disable next-line ConditionalExpression,BlockStatement: auto-logged tag filter — items without the tag are skipped
-            if(!item.tags?.has('auto-logged')) {
-                continue;
-            }
             // Extract activity type from path: /events/activity/{type}/{timestamp}
             const pathParts = item.path.split('/');
             // Path is /events/activity/{type}/{timestamp} → parts index 3 is type

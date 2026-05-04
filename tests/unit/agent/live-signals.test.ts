@@ -8,7 +8,7 @@
 import { describe, test, expect, afterEach, spyOn, jest, mock } from 'bun:test';
 import * as loggerModule from '@hughescr/logger';
 import { DateTime } from 'luxon';
-import { LiveSignals, type LiveSignalsDeps, type RecentTool, type RecentChannel } from '@/agent/live-signals';
+import { LiveSignals, type LiveSignalsDepsInternal, type RecentTool, type RecentChannel } from '@/agent/live-signals';
 import { createChannelId } from '@/agent/types';
 import type { BskyFeedItem, BskyNotification, BlueskyClient } from '@/integrations/bsky';
 import type { MemoryToolItemData } from '@/storage';
@@ -31,7 +31,7 @@ function makeClock(hour: number, weekday = 1 /* Monday */): () => DateTime {
     return () => dt;
 }
 
-function makeDefaultDeps(overrides: Partial<LiveSignalsDeps> = {}): LiveSignalsDeps {
+function makeDefaultDeps(overrides: Partial<LiveSignalsDepsInternal> = {}): LiveSignalsDepsInternal {
     return {
         timezone:           TIMEZONE,
         now:                makeClock(10),
@@ -253,6 +253,25 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const tool = signals.find(s => s.kind === 'tool');
             expect(tool!.content).toBe('2h ago: calendar.list');
         });
+
+        // FIX C: toolSignal must use this.getNowMs() so injected clock is respected
+        test('FIX C: tool signal uses injected nowMs for deterministic relative-time output', async () => {
+            // Fixed injected "now" = 1_000_000_000 ms epoch
+            const fixedNowMs = 1_000_000_000;
+            // Tool timestamp is exactly 11 minutes before fixedNowMs
+            const toolTimestamp = fixedNowMs - 11 * 60 * 1000;
+            const tools: RecentTool[] = [
+                { toolName: 'memory.recall', timestamp: toolTimestamp },
+            ];
+            const signals = await new LiveSignals(makeDefaultDeps({
+                getRecentTools: () => tools,
+                nowMs:          () => fixedNowMs,
+            })).snapshot();
+            const tool = signals.find(s => s.kind === 'tool');
+            // With injectable clock, relative time is exactly 11m ago
+            expect(tool).toBeDefined();
+            expect(tool!.content).toBe('11m ago: memory.recall');
+        });
     });
 
     // -------------------------------------------------------------------------
@@ -307,6 +326,26 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             })).snapshot();
             const channel = signals.find(s => s.kind === 'channel');
             expect(channel!.content).toBe('2m ago: #private');
+        });
+
+        // FIX C: channelSignal must use this.getNowMs() so injected clock is respected
+        test('FIX C: channel signal uses injected nowMs for deterministic relative-time output', async () => {
+            // Fixed injected "now" = 2_000_000_000 ms epoch
+            const fixedNowMs = 2_000_000_000;
+            // Channel timestamp is exactly 7 minutes before fixedNowMs
+            const channelTimestamp = fixedNowMs - 7 * 60 * 1000;
+            const channels: RecentChannel[] = [
+                { channelId: chanId, timestamp: channelTimestamp },
+            ];
+            const signals = await new LiveSignals(makeDefaultDeps({
+                getRecentChannels:  () => channels,
+                resolveChannelName: () => 'test-chan',
+                nowMs:              () => fixedNowMs,
+            })).snapshot();
+            const channel = signals.find(s => s.kind === 'channel');
+            // With injectable clock, relative time is exactly 7m ago
+            expect(channel).toBeDefined();
+            expect(channel!.content).toBe('7m ago: #test-chan');
         });
     });
 
@@ -1197,7 +1236,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             items: MemoryToolItemData[],
             nowMs?: () => number,
             configOverride?: Partial<typeof FULL_CONFIG>
-        ): LiveSignalsDeps {
+        ): LiveSignalsDepsInternal {
             return makeDefaultDeps({
                 loadRecentActivityLog: async (_limit: number) => items,
                 idleSignalsConfig:     {
@@ -1323,6 +1362,56 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const ls = new LiveSignals(makeActivityDeps(items));
             const signals = await ls.snapshot();
             expect(signals.filter(s => s.kind === 'activity')).toHaveLength(3);
+        });
+
+        // FIX B: filter-then-slice — auto-logged items after manual items must not be lost
+        test('FIX B: filter first, then slice — auto-logged items after manual-only recent 3 are not dropped', async () => {
+            // 5 items ascending by time: 3 manual first, then 2 auto-logged
+            // Before fix: slice(-3) gives [manual1, manual2, auto1] — only auto1 passes filter
+            // After fix: filter first → [auto1, auto2], slice(-3) → [auto1, auto2]
+            const items = [
+                makeActivityItem('manual-a', '2026-05-03T07:00:00Z', new Set(['manual-a'])), // no auto-logged
+                makeActivityItem('manual-b', '2026-05-03T08:00:00Z', new Set(['manual-b'])), // no auto-logged
+                makeActivityItem('manual-c', '2026-05-03T09:00:00Z', new Set(['manual-c'])), // no auto-logged
+                makeActivityItem('auto-1',   '2026-05-03T10:00:00Z'),                         // has auto-logged
+                makeActivityItem('auto-2',   '2026-05-03T11:00:00Z'),                         // has auto-logged
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
+            // Both auto-logged items should appear (not just 1, and not 0)
+            expect(activity).toHaveLength(2);
+            expect(activity.some(s => s.content.includes('auto-1'))).toBe(true);
+            expect(activity.some(s => s.content.includes('auto-2'))).toBe(true);
+        });
+
+        test('FIX B: when no items have auto-logged tag, activity output is empty', async () => {
+            const items = [
+                makeActivityItem('event-a', '2026-05-03T08:00:00Z', new Set(['event-a'])),
+                makeActivityItem('event-b', '2026-05-03T09:00:00Z', new Set(['event-b'])),
+                makeActivityItem('event-c', '2026-05-03T10:00:00Z', new Set(['event-c'])),
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items));
+            const signals = await ls.snapshot();
+            expect(signals.filter(s => s.kind === 'activity')).toHaveLength(0);
+        });
+
+        test('FIX B: mixed auto-logged and manual items — only auto-logged ones appear, capped at 3', async () => {
+            // 6 items, alternating manual and auto-logged
+            const items = [
+                makeActivityItem('manual-1', '2026-05-03T07:00:00Z', new Set(['manual'])),
+                makeActivityItem('auto-1',   '2026-05-03T08:00:00Z'),
+                makeActivityItem('manual-2', '2026-05-03T09:00:00Z', new Set(['manual'])),
+                makeActivityItem('auto-2',   '2026-05-03T10:00:00Z'),
+                makeActivityItem('manual-3', '2026-05-03T11:00:00Z', new Set(['manual'])),
+                makeActivityItem('auto-3',   '2026-05-03T12:00:00Z'),
+            ];
+            const ls = new LiveSignals(makeActivityDeps(items));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
+            // 3 auto-logged items, all pass filter, cap at 3
+            expect(activity).toHaveLength(3);
+            expect(activity.every(s => /auto-\d/.test(s.content))).toBe(true);
         });
     });
 
