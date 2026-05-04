@@ -1,9 +1,10 @@
-import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, spyOn, jest, beforeEach, afterEach } from 'bun:test';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { mockClient } from 'aws-sdk-client-mock';
+import { mockLogger } from '../../setup';
 import type { DynamoDBConfig } from '@/config/schemas';
-import { createDynamoDBClient, buildClientConfig, probeDynamoDB } from '@/storage/client';
+import { createDynamoDBClient, buildClientConfig, probeDynamoDB, buildTimingMiddleware, SLOW_READ_MS } from '@/storage/client';
 
 // AWS SDK is mocked globally in tests/setup.ts
 
@@ -251,6 +252,167 @@ describe.concurrent('DynamoDBDocumentClient marshalling', () => {
 
         // Verify send was called (our mock returns empty object)
         expect(result).toBeDefined();
+    });
+});
+
+describe('buildTimingMiddleware', () => {
+    // Helper: invoke the middleware with a given commandName and elapsed ms (via fake timers).
+    // Returns the value that the inner handler resolves with.
+    async function runMiddleware(commandName: string | undefined, elapsedMs: number): Promise<unknown> {
+        jest.useFakeTimers();
+        try {
+            const middleware = buildTimingMiddleware();
+            const fakeResult = { output: {} };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
+            const next: any = mock(async (_args: unknown) => fakeResult);
+            const handler = middleware(next, { commandName });
+
+            const callPromise = handler({ input: {} });
+            // Advance time so `Date.now() - startTime` equals elapsedMs
+            jest.advanceTimersByTime(elapsedMs);
+            return await callPromise;
+        } finally {
+            jest.useRealTimers();
+        }
+    }
+
+    beforeEach(() => {
+        mockLogger.debug.mockClear();
+    });
+
+    afterEach(() => {
+        mockLogger.debug.mockRestore();
+    });
+
+    describe.concurrent('DescribeTableCommand (routine read)', () => {
+        test('under threshold → no debug log', async () => {
+            await runMiddleware('DescribeTableCommand', SLOW_READ_MS - 1);
+
+            expect(mockLogger.debug).not.toHaveBeenCalled();
+        });
+
+        test('exactly at threshold → no debug log', async () => {
+            await runMiddleware('DescribeTableCommand', SLOW_READ_MS);
+
+            expect(mockLogger.debug).not.toHaveBeenCalled();
+        });
+
+        test('over threshold → debug log emitted with correct payload', async () => {
+            await runMiddleware('DescribeTableCommand', SLOW_READ_MS + 1);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, durationMs: unknown, msg: unknown }];
+            expect(logArg.operation).toBe('DescribeTableCommand');
+            expect(logArg.durationMs).toBe(SLOW_READ_MS + 1);
+            expect(logArg.msg).toContain('DescribeTableCommand');
+            expect(logArg.msg).toContain(`${SLOW_READ_MS + 1}ms`);
+        });
+    });
+
+    describe.concurrent('QueryCommand (routine read)', () => {
+        test('under threshold → no debug log', async () => {
+            await runMiddleware('QueryCommand', SLOW_READ_MS - 1);
+
+            expect(mockLogger.debug).not.toHaveBeenCalled();
+        });
+
+        test('over threshold → debug log emitted', async () => {
+            await runMiddleware('QueryCommand', SLOW_READ_MS + 50);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, durationMs: unknown }];
+            expect(logArg.operation).toBe('QueryCommand');
+            expect(logArg.durationMs).toBe(SLOW_READ_MS + 50);
+        });
+    });
+
+    describe.concurrent('Write commands → always log regardless of duration', () => {
+        test('PutItemCommand under threshold → debug log emitted', async () => {
+            await runMiddleware('PutItemCommand', 10);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
+            expect(logArg.operation).toBe('PutItemCommand');
+        });
+
+        test('UpdateItemCommand under threshold → debug log emitted', async () => {
+            await runMiddleware('UpdateItemCommand', 5);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
+            expect(logArg.operation).toBe('UpdateItemCommand');
+        });
+
+        test('BatchWriteItemCommand under threshold → debug log emitted', async () => {
+            await runMiddleware('BatchWriteItemCommand', 1);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
+            expect(logArg.operation).toBe('BatchWriteItemCommand');
+        });
+    });
+
+    describe.concurrent('GetItemCommand (non-routine read) → always logs', () => {
+        test('under threshold → debug log emitted', async () => {
+            await runMiddleware('GetItemCommand', SLOW_READ_MS - 1);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown }];
+            expect(logArg.operation).toBe('GetItemCommand');
+        });
+    });
+
+    describe.concurrent('undefined commandName → always logs with fallback message', () => {
+        test('treats undefined commandName as non-routine → always logs', async () => {
+            await runMiddleware(undefined, 10);
+
+            expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+            const [logArg] = mockLogger.debug.mock.calls[0] as [{ operation: unknown, msg: unknown }];
+            expect(logArg.operation).toBeUndefined();
+            expect(logArg.msg).toBe('DynamoDB operation completed in 10ms');
+        });
+    });
+
+    describe.concurrent('Pass-through and duration accuracy', () => {
+        test('middleware passes args through to next and returns its result', async () => {
+            jest.useFakeTimers();
+            try {
+                const middleware = buildTimingMiddleware();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub: args and result satisfy handler shapes at runtime
+                const sentArgs: any = { input: { TableName: 'TestTable' } };
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub: satisfies InitializeHandlerOutput shape at runtime
+                const expectedResult: any = { output: {}, response: {} };
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
+                const next: any = mock(async (args: unknown) => {
+                    expect(args).toBe(sentArgs);
+                    return expectedResult;
+                });
+                const handler = middleware(next, { commandName: 'PutItemCommand' });
+                const resultPromise = handler(sentArgs);
+                jest.advanceTimersByTime(50);
+                const result = await resultPromise;
+                expect(result).toBe(expectedResult);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        test('middleware records duration correctly in log payload', async () => {
+            jest.useFakeTimers();
+            try {
+                const middleware = buildTimingMiddleware();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only: mock satisfies InitializeHandler call signature at runtime
+                const next: any = mock(async (_args: unknown) => ({ output: {}, response: {} }));
+                const handler = middleware(next, { commandName: 'PutItemCommand' });
+                const resultPromise = handler({ input: {} });
+                jest.advanceTimersByTime(123);
+                await resultPromise;
+                const [logArg] = mockLogger.debug.mock.calls[0] as [{ durationMs: unknown }];
+                expect(logArg.durationMs).toBe(123);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
     });
 });
 
