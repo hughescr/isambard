@@ -76,8 +76,10 @@ interface TextGeneratorOptions {
     /**
      * Optional system prompt to pass to the query as a separate option.
      * When provided, passed directly to the SDK's systemPrompt option.
+     * Accepts a string or a string array (with optional SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+     * sentinel element) for cross-session prompt caching.
      */
-    systemPrompt?:    string
+    systemPrompt?:    string | string[]
 }
 
 /**
@@ -236,17 +238,21 @@ export async function generateText(
  * Generate text with separate system and user prompts for richer context.
  *
  * Passes systemPrompt as a dedicated SDK option for proper separation of concerns.
+ * When systemPrompt is a string array (with optional SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+ * sentinel), the array is passed to the SDK for cross-session prompt caching.
  *
- * @param systemPrompt - Instructions for how the LLM should behave
+ * @param systemPrompt - Instructions for how the LLM should behave; string or string array
  * @param userPrompt - The actual user request/question
  * @param options - Optional configuration
  * @param options.stripMarkdown - If true, strips markdown formatting from result
  * @returns Generated text, trimmed of whitespace, or empty string on abort/error
  */
 export async function generateTextWithSystemPrompt(
-    systemPrompt: string,
+    systemPrompt: string | string[],
     userPrompt: string,
     options?: TextGeneratorOptions
 ): Promise<string> {
-    return executePrompt(`System:\n${systemPrompt}\n\nUser:\n${userPrompt}`, { ...options, systemPrompt });
+    // Stryker disable next-line ConditionalExpression: array check — string arrays are passed to SDK as-is for caching; strings are passed directly
+    const flatPrompt = Array.isArray(systemPrompt) ? systemPrompt.join('\n\n') : systemPrompt;
+    return executePrompt(`System:\n${flatPrompt}\n\nUser:\n${userPrompt}`, { ...options, systemPrompt });
 }

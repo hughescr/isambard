@@ -366,7 +366,7 @@ describe('EmailClassifier', () => {
     describe('input formatting', () => {
         test('includes from, subject, date in user message', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -382,7 +382,7 @@ describe('EmailClassifier', () => {
 
         test('includes rspamd headers when present', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -398,7 +398,7 @@ describe('EmailClassifier', () => {
 
         test('omits optional headers when absent', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -414,7 +414,7 @@ describe('EmailClassifier', () => {
 
         test('formats from address without name when name is absent', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -429,7 +429,7 @@ describe('EmailClassifier', () => {
 
         test('formats To address with name as "Name <address>"', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -443,7 +443,7 @@ describe('EmailClassifier', () => {
 
         test('formats To address without name as plain address', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -458,7 +458,7 @@ describe('EmailClassifier', () => {
 
         test('includes email body text with structural security delimiter', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -473,7 +473,7 @@ describe('EmailClassifier', () => {
 
         test('body delimiter is present in user message', async () => {
             let capturedUserMessage: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string, user: string) => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (_system: string | string[], user: string) => {
                 capturedUserMessage = user;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });
@@ -496,8 +496,8 @@ describe('EmailClassifier', () => {
         });
 
         test('passes CLASSIFIER_SYSTEM_PROMPT as system prompt', async () => {
-            let capturedSystemPrompt: string | undefined;
-            mockGenerateTextWithSystemPrompt.mockImplementation(async (system: string) => {
+            let capturedSystemPrompt: string | string[] | undefined;
+            mockGenerateTextWithSystemPrompt.mockImplementation(async (system: string | string[]) => {
                 capturedSystemPrompt = system;
                 return makeVerdictJson({ verdict: 'safe', confidence: 0.9, reason: 'OK' });
             });

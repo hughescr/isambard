@@ -599,4 +599,49 @@ describe('generateTextWithSystemPrompt', () => {
             );
         });
     });
+
+    describe('string array systemPrompt', () => {
+        test('should pass string array as systemPrompt option to SDK when array is provided', async () => {
+            const arrayPrompt = ['Static identity block', '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', 'Dynamic instructions'];
+
+            await generateTextWithSystemPrompt(arrayPrompt, 'User prompt');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ systemPrompt: arrayPrompt }),
+                })
+            );
+        });
+
+        test('should flatten array to string for the prompt field when array is provided', async () => {
+            const arrayPrompt = ['Block one', 'Block two', 'Block three'];
+
+            await generateTextWithSystemPrompt(arrayPrompt, 'The question');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    prompt: 'System:\nBlock one\n\nBlock two\n\nBlock three\n\nUser:\nThe question',
+                })
+            );
+        });
+
+        test('should still return generated text when systemPrompt is an array', async () => {
+            mockQuery.mockImplementation(() => makeQueryGenerator('Array prompt result'));
+            const arrayPrompt = ['Part one', 'Part two'];
+
+            const result = await generateTextWithSystemPrompt(arrayPrompt, 'User');
+
+            expect(result).toBe('Array prompt result');
+        });
+
+        test('should pass string systemPrompt as-is to SDK options when string is provided', async () => {
+            await generateTextWithSystemPrompt('Single string system prompt', 'User');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ systemPrompt: 'Single string system prompt' }),
+                })
+            );
+        });
+    });
 });

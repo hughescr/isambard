@@ -193,11 +193,12 @@ export const mockQuery = mock(defaultMockQueryImpl);
 import * as realAgentSdk from '@anthropic-ai/claude-agent-sdk';
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-    // Pass through real SDK functions that aren't mocked
-    createSdkMcpServer: realAgentSdk.createSdkMcpServer,
-    tool:               realAgentSdk.tool,
+    // Pass through real SDK functions and constants that aren't mocked
+    createSdkMcpServer:             realAgentSdk.createSdkMcpServer,
+    tool:                           realAgentSdk.tool,
+    SYSTEM_PROMPT_DYNAMIC_BOUNDARY: realAgentSdk.SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     // Replace query with a controllable mock
-    query:              mockQuery,
+    query:                          mockQuery,
 }));
 
 // Mock text-generator module to claim it before any test file

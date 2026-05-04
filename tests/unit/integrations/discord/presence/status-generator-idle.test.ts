@@ -1,6 +1,8 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { ActivityType } from 'discord.js';
 import { mockGenerateTextWithSystemPrompt } from '../../../../setup';
+import type { Signal } from '@/agent';
 import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 
 describe('IdleStatusGenerator', () => {
@@ -520,11 +522,13 @@ describe('IdleStatusGenerator', () => {
                 expect(taskIndex).toBeGreaterThan(-1);
                 expect(recentIndex).toBeGreaterThan(-1);
                 expect(taskIndex).toBeLessThan(recentIndex);
+                // Sections must be separated by double newline (kills '\n\n' → '' separator mutant)
+                expect(userPromptArg).toContain(`Current work:\n${taskContext}\n\nRecent conversation:`);
             });
 
             test.each([
                 { section: 'Who is Isambard', marker: '## Who is Isambard (Izzy)?', content: 'Test identity' },
-                { section: 'The Vibe', marker: '## The Vibe', content: 'Izzy is between conversations, mind wandering' },
+                { section: 'The Vibe', marker: '## The Vibe', content: 'You will be given a numbered list of "now-signals"' },
                 { section: 'NEVER restrictions', marker: '## NEVER output:', content: 'Corporate speak ("Processing", "Standing by", "Idle", "Waiting")' },
             ])('should include $section section in system prompt', async ({ marker, content }) => {
                 const generator = createIdleStatusGenerator({
@@ -535,7 +539,8 @@ describe('IdleStatusGenerator', () => {
 
                 await generator.generate();
 
-                const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
+                // Legacy path: systemPrompt is a string (no getLiveSignals)
+                const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string;
                 expect(systemPromptArg).toContain(marker);
                 expect(systemPromptArg).toContain(content);
             });
@@ -636,6 +641,292 @@ describe('IdleStatusGenerator', () => {
             const firstCall = debugCalls[0];
             expect(firstCall[0]).toBe('Generating idle status with Haiku');
             expect(firstCall[0]).not.toBe('');
+        });
+    });
+
+    describe('live-signals path', () => {
+        const makeSignals = (overrides?: Partial<Signal>[]): Signal[] => [
+            { kind: 'perch', label: 'perch', content: 'late-night exploration', ...overrides?.[0] },
+            { kind: 'tool',  label: 'tool',  content: '3m ago: bsky.getFeed',   ...overrides?.[1] },
+            { kind: 'time',  label: 'time',  content: 'late night',             ...overrides?.[2] },
+        ];
+
+        test('should render numbered signal menu in user prompt when getLiveSignals provided', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).toContain('Now-signals:');
+            expect(userPromptArg).toContain('1.  [perch] late-night exploration');
+            expect(userPromptArg).toContain('2.  [tool] 3m ago: bsky.getFeed');
+            expect(userPromptArg).toContain('3.  [time] late night');
+            // Status instruction follows the menu (kills signals.length>0 → false mutant)
+            expect(userPromptArg).toContain('Status text (first person, under 50 chars):');
+            // Signals appear on separate lines (kills '\n' → '' separator mutant)
+            expect(userPromptArg).toContain('1.  [perch] late-night exploration\n2.  [tool]');
+        });
+
+        test('should number signals starting from 1', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            // Verify first index is 1 not 0
+            expect(userPromptArg).toContain('1.  [perch]');
+            expect(userPromptArg).not.toContain('0.  [');
+        });
+
+        test('should build systemPrompt as array with SYSTEM_PROMPT_DYNAMIC_BOUNDARY when getLiveSignals provided', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
+            // Must be an array when getLiveSignals is provided
+            expect(Array.isArray(systemPromptArg)).toBe(true);
+            const parts = systemPromptArg as string[];
+            // Array must have exactly 3 elements: static prefix, boundary, dynamic suffix
+            expect(parts.length).toBe(3);
+            expect(parts[1]).toBe(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+        });
+
+        test('should include identity in static prefix of array systemPrompt', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('My unique identity text'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[];
+            // Identity should be in the static prefix (first element, before the boundary)
+            expect(systemPromptArg[0]).toContain('My unique identity text');
+            // Dynamic suffix (third element) should NOT contain the identity text
+            expect(systemPromptArg[2]).not.toContain('My unique identity text');
+            // Placeholder must NOT remain literally in the output (kills '{identityContext}' → '' mutant)
+            expect(systemPromptArg[0]).not.toContain('{identityContext}');
+            // Identity must appear AFTER the '## Who is Isambard' heading, not prepended at position 0
+            const identityHeaderIdx = systemPromptArg[0].indexOf('## Who is Isambard');
+            const identityTextIdx = systemPromptArg[0].indexOf('My unique identity text');
+            expect(identityHeaderIdx).toBeGreaterThan(-1);
+            expect(identityTextIdx).toBeGreaterThan(identityHeaderIdx);
+        });
+
+        test('should include "now-signals" instructions in dynamic suffix', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[];
+            // Dynamic suffix should contain the "pick one or two" instruction
+            expect(systemPromptArg[2]).toContain('now-signals');
+            expect(systemPromptArg[2]).toContain('Pick one or two');
+        });
+
+        test('should use fallback user prompt when getLiveSignals returns empty array', async () => {
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve([]),
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).toBe('Status text (first person, under 50 chars):');
+        });
+
+        test('should include previous-status anti-rut block when getPreviousStatus returns a value', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.resolve(signals),
+                getPreviousStatus: () => '💤 Mind tangled in diaspora threads',
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).toContain('The idea is to make the status different each time');
+            expect(userPromptArg).toContain('"💤 Mind tangled in diaspora threads"');
+        });
+
+        test('should omit previous-status block when getPreviousStatus returns undefined', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.resolve(signals),
+                getPreviousStatus: () => undefined,
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).not.toContain('The idea is to make the status different');
+        });
+
+        test('should omit previous-status block when getPreviousStatus is not provided', async () => {
+            const signals = makeSignals();
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+                // No getPreviousStatus
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).not.toContain('The idea is to make the status different');
+        });
+
+        test('should call setPreviousStatus with statusText (without emoji prefix) after successful generate', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('Deep in thought');
+            const mockSetPreviousStatus = mock((_text: string) => undefined);
+            const signals = makeSignals();
+
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.resolve(signals),
+                setPreviousStatus: mockSetPreviousStatus,
+            });
+
+            await generator.generate();
+
+            expect(mockSetPreviousStatus).toHaveBeenCalledTimes(1);
+            expect(mockSetPreviousStatus).toHaveBeenCalledWith('Deep in thought');
+        });
+
+        test('should not call setPreviousStatus when not provided', async () => {
+            mockGenerateTextWithSystemPrompt.mockResolvedValue('Deep in thought');
+            const signals = makeSignals();
+
+            // Should not throw when setPreviousStatus is absent
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+                // No setPreviousStatus
+            });
+
+            expect(generator.generate()).resolves.toBeDefined();
+        });
+
+        test('should call setPreviousStatus even when text gets truncated', async () => {
+            // 200 A's — truncated to 124 chars + '…'
+            const longText = 'A'.repeat(200);
+            mockGenerateTextWithSystemPrompt.mockResolvedValue(longText);
+            const mockSetPreviousStatus = mock((_text: string) => undefined);
+            const signals = makeSignals();
+
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.resolve(signals),
+                setPreviousStatus: mockSetPreviousStatus,
+            });
+
+            await generator.generate();
+
+            // setPreviousStatus receives the truncated statusText (without emoji prefix)
+            expect(mockSetPreviousStatus).toHaveBeenCalledTimes(1);
+            // toHaveBeenCalledWith with a matcher verifies truncation happened
+            expect(mockSetPreviousStatus).toHaveBeenCalledWith(expect.stringMatching(/…$/u));
+        });
+
+        test('should fall back to Idle on getLiveSignals error without calling setPreviousStatus', async () => {
+            const mockSetPreviousStatus = mock((_text: string) => undefined);
+
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                getLiveSignals:    () => Promise.reject(new Error('signals failed')),
+                setPreviousStatus: mockSetPreviousStatus,
+            });
+
+            const result = await generator.generate();
+
+            expect(result.name).toBe('💤 Idle');
+            expect(mockSetPreviousStatus).not.toHaveBeenCalled();
+        });
+
+        test('should use legacy fallback path (no systemPrompt array) when getLiveSignals is not provided', async () => {
+            const taskContext = 'Working on: Test task';
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getTaskContext:  () => Promise.resolve(taskContext),
+                // No getLiveSignals
+            });
+
+            await generator.generate();
+
+            const systemPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][0];
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+
+            // Legacy path uses a plain string system prompt, not an array
+            expect(typeof systemPromptArg).toBe('string');
+            // Legacy user prompt contains task context
+            expect(userPromptArg).toContain('Current work:');
+            expect(userPromptArg).toContain(taskContext);
+        });
+
+        test('should include signal label in brackets in numbered menu', async () => {
+            const signals: Signal[] = [
+                { kind: 'channel', label: 'channel', content: '5m ago: #general' },
+            ];
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+                getLiveSignals:  () => Promise.resolve(signals),
+            });
+
+            await generator.generate();
+
+            const userPromptArg = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+            expect(userPromptArg).toContain('[channel] 5m ago: #general');
         });
     });
 });

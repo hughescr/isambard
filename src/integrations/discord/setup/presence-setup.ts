@@ -64,6 +64,8 @@ export function setupPresence(params: {
         contextBuilder,
         getLastThinkingContent,
         identityCache: providedIdentityCache,
+        getLiveSignals,
+        setPreviousStatus,
     } = params;
 
     const activeStatusGenerator = createActiveStatusGenerator({
@@ -83,6 +85,8 @@ export function setupPresence(params: {
         logger,
         activityType:    ActivityType.Custom,
         identityContext: () => identityCache.get(),
+        getLiveSignals,
+        setPreviousStatus,
         getTaskContext,
         getRecentContext,
         getLastThinkingContent,
