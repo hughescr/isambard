@@ -24,6 +24,7 @@ export interface UpdateMemoryToolItemInput {
     metadata?:          Record<string, unknown>
     tags?:              Set<string>
     preserveUpdatedAt?: boolean
+    ttl?:               number   // DynamoDB TTL attribute (epoch seconds). When set, overrides the existing TTL (or adds one if absent). When omitted, existing TTL is preserved.
 }
 
 /**
@@ -128,16 +129,27 @@ export class MemoryToolBackendCore {
             updatedAt: input.preserveUpdatedAt ? existing.updatedAt : DateTime.utc().toISO(),
         };
 
+        // Preserve TTL across update — TTL is a DDB-level attribute (uppercase key), not part of
+        // memoryToolItemSchema. stripDynamoKeys does not strip TTL, so it survives on the runtime
+        // value of `existing` even though MemoryToolItemData has no TTL field. Without explicit
+        // re-attachment, the Zod schema parse strips it and PutItem silently clears the expiration.
+        // input.ttl takes priority (caller is refreshing the TTL); otherwise carry forward existing.
+        const ttlToWrite = input.ttl ?? (existing as { TTL?: number }).TTL;
+
         const result = memoryToolItemSchema.safeParse(updatedData);
         if(!result.success) {
             throw new ValidationError(result.error.issues);
         }
 
         const updated = result.data;
-        const item = this.buildUpdatedItem(updated);
+        const ddbItem: Record<string, unknown> = { ...(this.buildUpdatedItem(updated) as unknown as Record<string, unknown>) };
+        // Stryker disable next-line ConditionalExpression: TTL is an optional DDB attribute; absence is intentional when no TTL is set
+        if(ttlToWrite !== undefined) {
+            ddbItem.TTL = ttlToWrite;
+        }
 
         // boundary cast: constructor-injected putItem requires Record<string,unknown> but MemoryToolItem carries branded MemoryPath/ContentType; runtime shapes are compatible
-        await this.putItem(item as unknown as Record<string, unknown>);
+        await this.putItem(ddbItem);
 
         return updated;
     }

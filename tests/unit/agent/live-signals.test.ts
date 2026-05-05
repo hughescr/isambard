@@ -1417,6 +1417,29 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             expect(activity.some(s => s.content.includes('conversation'))).toBe(true);
         });
 
+        test('manual /events/activity/{ts} path (eventType="activity") renders type as "activity" not the timestamp', async () => {
+            // When a user literally does logEvent({eventType: 'activity', ...}), the path is
+            // /events/activity/{ts} — 4 parts. Without the length===5 guard, pathParts[3] would
+            // be the timestamp, rendering it as the activity type.
+            const now = new Date('2026-05-03T10:00:00Z');
+            const ts = new Date(now.getTime() - 5 * 60_000).toISOString();
+            const manualActivityItem: MemoryToolItemData = {
+                path:        `/events/activity/${ts}` as MemoryToolItemData['path'],
+                content:     'activity happened',
+                contentType: 'text/plain',
+                metadata:    {},
+                createdAt:   ts,
+                updatedAt:   ts,
+            };
+            const ls = new LiveSignals(makeActivityDeps([manualActivityItem], () => now.getTime()));
+            const signals = await ls.snapshot();
+            const activity = signals.filter(s => s.kind === 'activity');
+            expect(activity).toHaveLength(1);
+            // Should render 'activity' as the type, NOT the ISO timestamp as type
+            expect(activity[0].content).toMatch(/^activity /);
+            expect(activity[0].content).not.toContain(ts);
+        });
+
         test('returns last 3 items (no filter, pure slice(-3))', async () => {
             // 4 items total; after removing filter, all 4 are candidates and last 3 are taken
             const items = [

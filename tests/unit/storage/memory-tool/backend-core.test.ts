@@ -317,5 +317,109 @@ describe('MemoryToolBackendCore', () => {
             const item = putCalls[0].args[0].input.Item as Record<string, unknown>;
             expect(item).not.toHaveProperty('TTL');
         });
+
+        // update() must preserve TTL — DDB PutItem replaces the entire item, so without
+        // explicit re-attachment the TTL attribute is silently cleared on every update.
+        const ttlItemBase: MemoryToolItem = {
+            PK:             'DIR#/events/activity',
+            SK:             'FILE#perch-end',
+            GSI1PK:         'LAYER#events',
+            GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+            path:           '/events/activity/perch-end/2024-01-01T00-00-00-000Z' as MemoryPath,
+            content:        'Activity content',
+            contentType:    'text/plain',
+            metadata:       {},
+            createdAt:      '2024-01-01T00:00:00.000Z',
+            updatedAt:      '2024-01-01T00:00:00.000Z',
+            contentPreview: 'Activity content',
+        };
+
+        test('update() preserves TTL when existing row has one', async () => {
+            const epochTtl = 1_700_000_000;
+            const itemWithTtl = { ...ttlItemBase, TTL: epochTtl } as unknown as MemoryToolItem;
+            ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, { content: 'Updated content' });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(written.TTL).toBe(epochTtl);
+        });
+
+        test('update() does not add TTL when existing row has none', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: ttlItemBase });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, { content: 'Updated content' });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(written).not.toHaveProperty('TTL');
+        });
+
+        test('update() preserves TTL when changing metadata and tags', async () => {
+            const epochTtl = 1_800_000_000;
+            const itemWithTtl = { ...ttlItemBase, TTL: epochTtl } as unknown as MemoryToolItem;
+            ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, {
+                metadata: { source: 'test' },
+                tags:     new Set(['auto-logged']),
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(written.TTL).toBe(epochTtl);
+        });
+
+        test('update() with preserveUpdatedAt: true also preserves TTL', async () => {
+            const epochTtl = 1_700_000_000;
+            const itemWithTtl = { ...ttlItemBase, TTL: epochTtl } as unknown as MemoryToolItem;
+            ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, {
+                content:           'recordAccess-style touch',
+                preserveUpdatedAt: true,
+            });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(written.TTL).toBe(epochTtl);
+        });
+
+        test('update() can accept a new ttl to refresh expiration', async () => {
+            const oldTtl = 1_700_000_000;
+            const newTtl = 1_800_000_000;
+            const itemWithTtl = { ...ttlItemBase, TTL: oldTtl } as unknown as MemoryToolItem;
+            ddbMock.on(GetCommand).resolves({ Item: itemWithTtl });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, { content: 'Updated content', ttl: newTtl });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(written.TTL).toBe(newTtl);
+        });
+
+        test('update() can set a ttl on a row that had none', async () => {
+            const newTtl = 1_800_000_000;
+            ddbMock.on(GetCommand).resolves({ Item: ttlItemBase });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.update(ttlItemBase.path, { content: 'Updated content', ttl: newTtl });
+
+            const putCalls = ddbMock.commandCalls(PutCommand);
+            expect(putCalls).toHaveLength(1);
+            const written = putCalls[0].args[0].input.Item as Record<string, unknown>;
+            expect(written.TTL).toBe(newTtl);
+        });
     });
 });

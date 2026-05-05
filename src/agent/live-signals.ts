@@ -808,8 +808,13 @@ export class LiveSignals {
             //   auto-logged: /events/activity/{type}/{ts}  → 5 parts, type at index 3
             //   manual:      /events/{type}/{ts}           → 4 parts, type at index 2
             const pathParts = item.path.split('/');
-            // Stryker disable next-line EqualityOperator: index 2 === 'activity' distinguishes the two path shapes
-            const activityType = pathParts[2] === 'activity'
+            // Detect path shape by part count, not just name match:
+            //   auto-logged: /events/activity/{type}/{ts} → 5 parts → type at index 3
+            //   manual:      /events/{type}/{ts}          → 4 parts → type at index 2
+            // Using length===5 prevents a manual logEvent({eventType:'activity'}) at
+            // /events/activity/{ts} (4 parts) from rendering the timestamp as the type.
+            // Stryker disable next-line ConditionalExpression,EqualityOperator: length===5 is the unambiguous structural discriminator between auto-logged (5 parts) and manual (4 parts) paths
+            const activityType = pathParts.length === 5 && pathParts[2] === 'activity'
                 // Stryker disable next-line ArithmeticOperator: index 3 is correct for /events/activity/{type}/{ts}
                 ? (pathParts[3] ?? 'activity')
                 : (pathParts[2] ?? 'event');
