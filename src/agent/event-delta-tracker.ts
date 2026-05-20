@@ -8,9 +8,14 @@ import { type ContextBuilder, formatMemoryPreview  } from './context-builder';
 
 /**
  * Event delta tracker for tracking new events during message processing.
+ *
+ * Uses timestamp-based tracking so that markStart() is a pure in-memory
+ * operation (no DB I/O), and getNewEvents() queries only for events that
+ * arrived after the start timestamp — correctly handling edge cases where
+ * there are already ≥ 50 events in the window at markStart time.
  */
 export class EventDeltaTracker {
-    private startEventCount = 0;
+    private startTimeMs: number | undefined;
     private readonly contextBuilder: ContextBuilder;
 
     constructor(contextBuilder: ContextBuilder) {
@@ -18,27 +23,26 @@ export class EventDeltaTracker {
     }
 
     /**
-     * Mark the start of processing. Captures current event count.
+     * Mark the start of processing. Captures the current timestamp as an
+     * in-memory operation — no database I/O is performed.
      */
-    async markStart(): Promise<void> {
-        // Load recent events and store the count
-        const result = await this.contextBuilder.loadRecentEvents(50);
-        this.startEventCount = result.items.length;
+    markStart(): void {
+        this.startTimeMs = Date.now();
     }
 
     /**
      * Get events that occurred after the start marker.
-     * @returns Array of formatted event strings (preview format)
+     * @returns Array of formatted event strings (preview format), or empty
+     *   array if markStart has not been called.
      */
     async getNewEvents(): Promise<string[]> {
+        if (this.startTimeMs === undefined) {
+            return [];
+        }
         const now = new Date();
-        // Load recent events
-        const result = await this.contextBuilder.loadRecentEvents(50);
-
-        // Return only events that occurred after the start marker
-        // Events are sorted oldest-first, so new events are at the end
-        const newItems = result.items.slice(this.startEventCount);
-        return newItems.map(item =>
+        const windowMs = now.getTime() - this.startTimeMs;
+        const items = await this.contextBuilder.loadRecentEventsSince(windowMs, 50);
+        return items.map(item =>
             formatMemoryPreview(item.path, item.content, item.contentPreview, item.updatedAt, now));
     }
 }

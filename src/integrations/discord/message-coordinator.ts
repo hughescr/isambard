@@ -243,8 +243,8 @@ export class MessageCoordinator {
         const processingPromise = (async () => {
             let wasInterrupted = true; // Default: treat errors/aborts as interruptions
             try {
-                // Mark event delta start point before processing begins (must await to prevent race)
-                await this.eventDeltaTracker?.markStart();
+                // Mark event delta start point before processing begins (pure in-memory, no I/O)
+                this.eventDeltaTracker?.markStart();
 
                 // Call processor
                 const result = await this.processor!(

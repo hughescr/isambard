@@ -341,8 +341,12 @@ export class MemoryToolBackendQuery {
         // Stryker disable next-line LogicalOperator,OptionalChaining: ?? operator is correct for default values
         const nowMs = (options?.now ?? new Date()).getTime();
 
-        // Get all state items
-        const stateResult = await this.listByLayer(createLayerName('state'));
+        // Invariant: GSI1SK is UPDATED#{updatedAt}, descending, so this query returns the
+        // most-recently-touched items first. Since recencyDecay → 0 for stale items (7-day
+        // half-life) regardless of accessCount, the top-scoring maxItems are provably contained
+        // within the maxItems*2 most-recently-touched candidates. The ×2 headroom keeps this
+        // bound safe across future sigmoid parameter tuning.
+        const stateResult = await this.listByLayer(createLayerName('state'), { limit: maxItems * 2 });
         const stateItems = stateResult.items;
 
         // Score items using sigmoid function for frequency × recency

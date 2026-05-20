@@ -1428,5 +1428,96 @@ describe('MemoryToolBackend - Date Filtering', () => {
 
             expect(result).toEqual([]);
         });
+
+        test('should pass Limit of maxItems * 2 to DynamoDB (GSI1 throughput bound)', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.getStateItemsScored({ maxItems: 10 });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            // Invariant: top-scoring maxItems are guaranteed within the maxItems*2 most-recently-touched
+            // candidates because recencyDecay→0 for tail items regardless of accessCount.
+            expect(calls[0].args[0].input.Limit).toBe(20);
+        });
+
+        test('should pass default Limit of 100 (50 * 2) when maxItems not provided', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            await backend.getStateItemsScored();
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(1);
+            expect(calls[0].args[0].input.Limit).toBe(100);
+        });
+
+        test('should return correct top-maxItems from bounded candidate set', async () => {
+            // The 2 most-recently-touched items (high accessCount + recent) should win.
+            // Items at indices 0-1 are recent and high-access; items 2-3 are old with any accessCount.
+            const maxItems = 2;
+            const now = new Date('2024-07-01T00:00:00.000Z');
+
+            // DynamoDB returns maxItems*2=4 candidates, newest first (as GSI1 would with ScanIndexForward:false)
+            const candidates: MemoryToolItem[] = [
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#recent-a.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-06-30T00:00:00.000Z',
+                    path:        '/state/recent-a.md' as MemoryPath,
+                    content:     'Recent A',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 15, lastAccessed: '2024-06-30T00:00:00.000Z' },
+                    createdAt:   '2024-06-30T00:00:00.000Z',
+                    updatedAt:   '2024-06-30T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#recent-b.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-06-29T00:00:00.000Z',
+                    path:        '/state/recent-b.md' as MemoryPath,
+                    content:     'Recent B',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 12, lastAccessed: '2024-06-29T00:00:00.000Z' },
+                    createdAt:   '2024-06-29T00:00:00.000Z',
+                    updatedAt:   '2024-06-29T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#old-c.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/state/old-c.md' as MemoryPath,
+                    content:     'Old C',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 999, lastAccessed: '2024-01-01T00:00:00.000Z' },
+                    createdAt:   '2024-01-01T00:00:00.000Z',
+                    updatedAt:   '2024-01-01T00:00:00.000Z',
+                },
+                {
+                    PK:          'DIR#/state',
+                    SK:          'FILE#old-d.md',
+                    GSI1PK:      'LAYER#state',
+                    GSI1SK:      'UPDATED#2023-01-01T00:00:00.000Z',
+                    path:        '/state/old-d.md' as MemoryPath,
+                    content:     'Old D',
+                    contentType: 'text/markdown',
+                    metadata:    { accessCount: 999, lastAccessed: '2023-01-01T00:00:00.000Z' },
+                    createdAt:   '2023-01-01T00:00:00.000Z',
+                    updatedAt:   '2023-01-01T00:00:00.000Z',
+                },
+            ];
+
+            ddbMock.on(QueryCommand).resolves({ Items: candidates });
+
+            const result = await backend.getStateItemsScored({ maxItems, now });
+
+            // Should return only maxItems items
+            expect(result).toHaveLength(maxItems);
+            // The two recent items score higher than the stale high-count items
+            expect(result[0].item.path).toBe('/state/recent-a.md' as MemoryPath);
+            expect(result[1].item.path).toBe('/state/recent-b.md' as MemoryPath);
+        });
     });
 });

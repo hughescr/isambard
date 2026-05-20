@@ -1934,7 +1934,7 @@ describe('MessageCoordinator', () => {
     describe('EventDeltaTracker Integration', () => {
         it('should call markStart when processing begins with tracker provided', async () => {
             const mockTracker = {
-                markStart:    mock(async () => { /* no-op */ }),
+                markStart:    mock(() => { /* no-op */ }),
                 getNewEvents: mock(async () => []),
             } as unknown as EventDeltaTracker;
 
@@ -1955,7 +1955,7 @@ describe('MessageCoordinator', () => {
         it('should populate newEvents in resume context when tracker provided', async () => {
             const testEvents = ['Event 1 happened', 'Event 2 happened'];
             const mockTracker = {
-                markStart:    mock(async () => { /* no-op */ }),
+                markStart:    mock(() => { /* no-op */ }),
                 getNewEvents: mock(async () => testEvents),
             } as unknown as EventDeltaTracker;
 
@@ -2056,7 +2056,7 @@ describe('MessageCoordinator', () => {
 
         it('should not call getNewEvents when no interruption occurs', async () => {
             const mockTracker = {
-                markStart:    mock(async () => { /* no-op */ }),
+                markStart:    mock(() => { /* no-op */ }),
                 getNewEvents: mock(async () => ['Event 1']),
             } as unknown as EventDeltaTracker;
 

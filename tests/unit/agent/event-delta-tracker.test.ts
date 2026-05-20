@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { type ContextBuilder, type RecentEventsResult  } from '../../../src/agent/context-builder';
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from 'bun:test';
+import { type ContextBuilder } from '../../../src/agent/context-builder';
 import { EventDeltaTracker } from '../../../src/agent/event-delta-tracker';
 import { createMemoryPath, type MemoryToolItemData  } from '../../../src/storage/memory-tool/types';
 
@@ -15,19 +15,28 @@ function createMockEventItem(path: string, updatedAt: string, content: string): 
     };
 }
 
-// Helper to create a RecentEventsResult
-function eventsResult(items: MemoryToolItemData[], isFallback = false): RecentEventsResult {
-    return { items, isFallback };
-}
+// Fixed reference time for deterministic tests
+const T0 = new Date('2025-01-15T10:00:00.000Z');
 
-describe.concurrent('EventDeltaTracker', () => {
+// Tests use fake timers to control Date.now() deterministically.
+// describe.concurrent is intentionally NOT used here because jest.useFakeTimers()
+// is global state and must be isolated per-test in serial execution.
+// Note: in Bun, jest.advanceTimersByTime() only fires timer callbacks and does NOT
+// advance Date.now(). Use jest.setSystemTime() to update the clock between calls.
+describe('EventDeltaTracker', () => {
     let mockContextBuilder: ContextBuilder;
 
     beforeEach(() => {
-        // Create a minimal mock ContextBuilder with just the methods we need
+        jest.useFakeTimers();
+        jest.setSystemTime(T0);
+
         mockContextBuilder = {
-            loadRecentEvents: mock(async (): Promise<RecentEventsResult> => eventsResult([])),
+            loadRecentEventsSince: mock(async (): Promise<MemoryToolItemData[]> => []),
         } as unknown as ContextBuilder;
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     describe('initial state', () => {
@@ -38,260 +47,200 @@ describe.concurrent('EventDeltaTracker', () => {
 
             expect(newEvents).toEqual([]);
         });
+
+        test('should NOT call any contextBuilder methods before markStart', async () => {
+            const loadSince = mock(async (): Promise<MemoryToolItemData[]> => []);
+            mockContextBuilder.loadRecentEventsSince = loadSince;
+
+            const tracker = new EventDeltaTracker(mockContextBuilder);
+
+            // getNewEvents before markStart must be a pure no-op
+            await tracker.getNewEvents();
+
+            expect(loadSince).not.toHaveBeenCalled();
+        });
     });
 
     describe('markStart', () => {
-        test('should capture current event count', async () => {
-            const existingItems = [
-                createMockEventItem('/events/2025-01-15/interaction_abc', '2025-01-15T10:00:00.000Z', 'User asked about X'),
-                createMockEventItem('/events/2025-01-15/interaction_def', '2025-01-15T11:00:00.000Z', 'User asked about Y'),
-            ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(existingItems));
+        test('should capture timestamp without calling any contextBuilder methods (no DB I/O)', () => {
+            const loadSince = mock(async (): Promise<MemoryToolItemData[]> => []);
+            mockContextBuilder.loadRecentEventsSince = loadSince;
 
             const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
+            tracker.markStart();
 
-            // After markStart, getNewEvents should return empty (no new events yet)
+            // markStart is a pure in-memory operation — no DB calls
+            expect(loadSince).not.toHaveBeenCalled();
+        });
+
+        test('should handle case when no events exist after markStart', async () => {
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => []);
+
+            const tracker = new EventDeltaTracker(mockContextBuilder);
+            tracker.markStart();
+
             const newEvents = await tracker.getNewEvents();
             expect(newEvents).toEqual([]);
         });
 
-        test('should handle case when no events exist at start', async () => {
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult([]));
-
-            const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
-
-            const newEvents = await tracker.getNewEvents();
-            expect(newEvents).toEqual([]);
-        });
-
-        test('should be callable multiple times (resets the marker)', async () => {
-            // First call: 2 events exist
-            const initialItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:00.000Z', 'First event'),
-                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T11:00:00.000Z', 'Second event'),
+        test('should be callable multiple times (resets the timestamp)', async () => {
+            const twoNewItems = [
+                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:05.000Z', 'Event 1'),
+                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T10:00:10.000Z', 'Event 2'),
             ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
-
-            const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
-
-            // Simulate new events being added (3 events total now)
-            const updatedItems = [
-                ...initialItems,
-                createMockEventItem('/events/2025-01-15/event3', '2025-01-15T11:30:00.000Z', 'Third event'),
+            const threeNewItems = [
+                ...twoNewItems,
+                createMockEventItem('/events/2025-01-15/event3', '2025-01-15T10:00:15.000Z', 'Event 3'),
             ];
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(updatedItems));
 
-            // Before second markStart, should show 1 new event
+            // First markStart at T0 = 10:00:00 UTC
+            const tracker = new EventDeltaTracker(mockContextBuilder);
+            tracker.markStart();
+
+            // Advance clock to T0+5s; mock returns 2 events
+            jest.setSystemTime(new Date(T0.getTime() + 5000));
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => twoNewItems);
+
             let newEvents = await tracker.getNewEvents();
-            expect(newEvents).toHaveLength(1);
-            expect(newEvents[0]).toContain('/events/2025-01-15/event3');
-            expect(newEvents[0]).toContain('Third event');
+            expect(newEvents).toHaveLength(2);
 
-            // Call markStart again (resets to current 3 events)
-            await tracker.markStart();
+            // Second markStart at T0+5s — resets the start time to now
+            tracker.markStart();
 
-            // After reset, no new events
+            // Advance clock to T0+15s; mock returns 3 events after new start
+            jest.setSystemTime(new Date(T0.getTime() + 15_000));
+            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => threeNewItems);
+
             newEvents = await tracker.getNewEvents();
-            expect(newEvents).toEqual([]);
+            expect(newEvents).toHaveLength(3);
         });
     });
 
     describe('getNewEvents', () => {
-        test('should return empty array when no new events after markStart', async () => {
-            const existingItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:00.000Z', 'Event 1'),
-            ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(existingItems));
+        test('should return empty array when loadRecentEventsSince returns no items', async () => {
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => []);
 
             const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
+            tracker.markStart();
 
-            // No new events added, loadRecentEvents still returns same events
             const newEvents = await tracker.getNewEvents();
             expect(newEvents).toEqual([]);
         });
 
-        test('should return new events added after markStart', async () => {
-            // Start with 2 events
-            const initialItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T09:00:00.000Z', 'First event'),
-                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T10:00:00.000Z', 'Second event'),
+        test('should return events from loadRecentEventsSince as formatted strings', async () => {
+            const newItems = [
+                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:03.000Z', 'Third event'),
+                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T10:00:06.000Z', 'Fourth event'),
             ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => newItems);
 
             const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
+            tracker.markStart();
 
-            // Now simulate 2 new events being added
-            const updatedItems = [
-                ...initialItems,
-                createMockEventItem('/events/2025-01-15/event3', '2025-01-15T11:00:00.000Z', 'Third event'),
-                createMockEventItem('/events/2025-01-15/event4', '2025-01-15T11:30:00.000Z', 'Fourth event'),
-            ];
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(updatedItems));
-
+            jest.setSystemTime(new Date(T0.getTime() + 10_000));
             const newEvents = await tracker.getNewEvents();
 
             expect(newEvents).toHaveLength(2);
-            expect(newEvents[0]).toContain('/events/2025-01-15/event3');
+            expect(newEvents[0]).toContain('/events/2025-01-15/event1');
             expect(newEvents[0]).toContain('Third event');
-            expect(newEvents[1]).toContain('/events/2025-01-15/event4');
+            expect(newEvents[1]).toContain('/events/2025-01-15/event2');
             expect(newEvents[1]).toContain('Fourth event');
         });
 
-        test('should be idempotent (multiple calls return same count of results)', async () => {
-            // Start with 1 event
-            const initialItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:00.000Z', 'First event'),
-            ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
+        test('should call loadRecentEventsSince with exact windowMs and limit 50', async () => {
+            const loadSince = mock(async (): Promise<MemoryToolItemData[]> => []);
+            mockContextBuilder.loadRecentEventsSince = loadSince;
 
             const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
+            tracker.markStart(); // T0 = 10:00:00
 
-            // Add a new event
-            const updatedItems = [
-                ...initialItems,
-                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T11:00:00.000Z', 'Second event'),
-            ];
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(updatedItems));
+            // Advance clock by exactly 3000ms
+            jest.setSystemTime(new Date(T0.getTime() + 3000));
+            await tracker.getNewEvents();
 
-            // Call getNewEvents multiple times
+            expect(loadSince).toHaveBeenCalledTimes(1);
+            const [windowMs, limit] = loadSince.mock.calls[0] as unknown as [number, number];
+            expect(windowMs).toBe(3000);
+            expect(limit).toBe(50);
+        });
+
+        test('should be idempotent (multiple calls each query independently)', async () => {
+            const eventItem = createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:01.000Z', 'New event');
+            const loadSince = mock(async (): Promise<MemoryToolItemData[]> => [eventItem]);
+            mockContextBuilder.loadRecentEventsSince = loadSince;
+
+            const tracker = new EventDeltaTracker(mockContextBuilder);
+            tracker.markStart();
+
+            jest.setSystemTime(new Date(T0.getTime() + 5000));
+
             const firstCall = await tracker.getNewEvents();
             const secondCall = await tracker.getNewEvents();
             const thirdCall = await tracker.getNewEvents();
 
-            // All calls should return same number of results
             expect(firstCall).toHaveLength(1);
             expect(secondCall).toHaveLength(1);
             expect(thirdCall).toHaveLength(1);
-            // All should contain the new event
-            expect(firstCall[0]).toContain('/events/2025-01-15/event2');
-            expect(secondCall[0]).toContain('/events/2025-01-15/event2');
-            expect(thirdCall[0]).toContain('/events/2025-01-15/event2');
-        });
-
-        test('should handle events being added at the end (sorted oldest-first)', async () => {
-            // Start with events from today
-            const initialItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:00.000Z', 'Recent event'),
-            ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
-
-            const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
-
-            // New events added at end (sorted oldest-first by context-builder)
-            const updatedItems = [
-                ...initialItems,
-                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T11:00:00.000Z', 'Newer event'),
-            ];
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(updatedItems));
-
-            const newEvents = await tracker.getNewEvents();
-
-            // New events should be at the end
-            expect(newEvents).toHaveLength(1);
-            expect(newEvents[0]).toContain('/events/2025-01-15/event2');
-            expect(newEvents[0]).toContain('Newer event');
-        });
-
-        test('should handle limit of 50 events in loadRecentEvents', async () => {
-            // Generate 48 initial events
-            const initialItems = Array.from({ length: 48 }, (_elem, i) =>
-                createMockEventItem(`/events/2025-01-15/event${i}`, `2025-01-15T${String(i).padStart(2, '0')}:00:00.000Z`, `Event ${i}`)
-            );
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
-
-            const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
-
-            // Add 5 more events (total 53, but limit is 50 so oldest 3 are dropped)
-            const newItems = Array.from({ length: 50 }, (_elem, i) =>
-                createMockEventItem(`/events/2025-01-15/event${i + 3}`, `2025-01-15T${String(i + 3).padStart(2, '0')}:00:00.000Z`, `Event ${i + 3}`)
-            );
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(newItems));
-
-            const newEvents = await tracker.getNewEvents();
-
-            // Should return last 2 events (50 - 48 = 2)
-            expect(newEvents.length).toBe(2);
-        });
-    });
-
-    describe('edge cases', () => {
-        test('should handle events being removed (count decreases)', async () => {
-            // Start with 3 events
-            const initialItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T09:00:00.000Z', 'First'),
-                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T10:00:00.000Z', 'Second'),
-                createMockEventItem('/events/2025-01-15/event3', '2025-01-15T11:00:00.000Z', 'Third'),
-            ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
-
-            const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
-
-            // Events are removed/expired (only 1 remains)
-            const reducedItems = [
-                createMockEventItem('/events/2025-01-15/event3', '2025-01-15T11:00:00.000Z', 'Third'),
-            ];
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(reducedItems));
-
-            const newEvents = await tracker.getNewEvents();
-
-            // When count decreases, slice returns empty array (no new events)
-            expect(newEvents).toEqual([]);
-        });
-
-        test('should call loadRecentEvents with limit of 50', async () => {
-            const mockLoad = mock(async (): Promise<RecentEventsResult> => eventsResult([]));
-            mockContextBuilder.loadRecentEvents = mockLoad;
-
-            const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
-
-            // Verify markStart calls with default limit
-            expect(mockLoad).toHaveBeenCalledWith(50);
-
-            mockLoad.mockClear();
-            await tracker.getNewEvents();
-
-            // Verify getNewEvents also calls with limit of 50
-            expect(mockLoad).toHaveBeenCalledWith(50);
+            expect(loadSince).toHaveBeenCalledTimes(3);
         });
 
         test('should format new events using formatMemoryPreview', async () => {
-            const initialItems = [
-                createMockEventItem('/events/2025-01-15/event1', '2025-01-15T10:00:00.000Z', 'First event'),
-            ];
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(initialItems));
+            const eventItem = createMockEventItem('/events/2025-01-15/event2', '2025-01-15T10:00:02.000Z', 'New event with some content');
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => [eventItem]);
 
             const tracker = new EventDeltaTracker(mockContextBuilder);
-            await tracker.markStart();
+            tracker.markStart();
 
-            // Add a new event with long content
-            const updatedItems = [
-                ...initialItems,
-                createMockEventItem('/events/2025-01-15/event2', '2025-01-15T11:00:00.000Z', 'New event with some content'),
-            ];
-            // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
-            mockContextBuilder.loadRecentEvents = mock(async (): Promise<RecentEventsResult> => eventsResult(updatedItems));
-
+            jest.setSystemTime(new Date(T0.getTime() + 5000));
             const newEvents = await tracker.getNewEvents();
 
             expect(newEvents).toHaveLength(1);
             // Should be formatted by formatMemoryPreview: "- path (age): content"
             expect(newEvents[0]).toMatch(/^- \/events\/2025-01-15\/event2 \(.+\): New event with some content$/);
+        });
+    });
+
+    describe('edge cases', () => {
+        test('NEW: events layer has >50 items at markStart — new events still returned (was silently empty before)', async () => {
+            // The old count-based approach: startEventCount=50, slice(50) → []
+            // The new timestamp-based approach: loadRecentEventsSince returns only post-markStart items
+            const newItemsAfterStart = [
+                createMockEventItem('/events/2025-01-15/event51', '2025-01-15T10:00:05.000Z', 'New event A'),
+                createMockEventItem('/events/2025-01-15/event52', '2025-01-15T10:00:10.000Z', 'New event B'),
+                createMockEventItem('/events/2025-01-15/event53', '2025-01-15T10:00:15.000Z', 'New event C'),
+            ];
+            // loadRecentEventsSince is called with a small windowMs (seconds since markStart)
+            // and returns only items created after the start time — not all 50+ existing items
+            mockContextBuilder.loadRecentEventsSince = mock(async (): Promise<MemoryToolItemData[]> => newItemsAfterStart);
+
+            const tracker = new EventDeltaTracker(mockContextBuilder);
+            tracker.markStart(); // Captures T0 in memory — no DB call
+
+            jest.setSystemTime(new Date(T0.getTime() + 20_000));
+            const newEvents = await tracker.getNewEvents();
+
+            // With timestamp-based tracking, the 3 new events are correctly returned
+            expect(newEvents).toHaveLength(3);
+            expect(newEvents[0]).toContain('New event A');
+            expect(newEvents[1]).toContain('New event B');
+            expect(newEvents[2]).toContain('New event C');
+        });
+
+        test('windowMs passed to loadRecentEventsSince is exact with fake timers', async () => {
+            const loadSince = mock(async (): Promise<MemoryToolItemData[]> => []);
+            mockContextBuilder.loadRecentEventsSince = loadSince;
+
+            // Start at T0 = 10:00:00 UTC
+            const tracker = new EventDeltaTracker(mockContextBuilder);
+            tracker.markStart();
+
+            // Advance exactly 7500ms
+            jest.setSystemTime(new Date(T0.getTime() + 7500));
+            await tracker.getNewEvents();
+
+            const [windowMs] = loadSince.mock.calls[0] as unknown as [number, number];
+            expect(windowMs).toBe(7500);
         });
     });
 });
