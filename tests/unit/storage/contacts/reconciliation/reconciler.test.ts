@@ -96,6 +96,7 @@ describe('runContactReconciliation', () => {
     afterEach(() => {
         ddbMock.restore();
         mockSleep.mockReset();
+        jest.useRealTimers();
         jest.restoreAllMocks();
     });
 

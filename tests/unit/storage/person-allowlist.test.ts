@@ -14,11 +14,6 @@ const ddbMock = mockClient(DynamoDBDocumentClient);
 
 const TABLE_NAME = 'test-table';
 
-beforeEach(() => {
-    ddbMock.reset();
-    mockLogger.warn.mockClear();
-});
-
 function makeContact(personId: string, identifiers: { platform: string, value: string }[]): Contact {
     return {
         personId:    createContactId(personId),
@@ -45,6 +40,8 @@ const BOB_CONTACT = makeContact('bob-jones', [
 let mockBackend: ContactBackend;
 
 beforeEach(() => {
+    ddbMock.reset();
+    mockLogger.warn.mockClear();
     mockBackend = {
         getContact: mock(async (_id: unknown) => undefined as Contact | undefined),
     } as unknown as ContactBackend;

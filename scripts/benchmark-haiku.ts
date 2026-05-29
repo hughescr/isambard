@@ -1,7 +1,7 @@
 /**
- * Side-by-side benchmark: unstable_v2_prompt vs V1 query() for text generation.
+ * Latency benchmark for the V1 query() text-generation path.
  *
- * Measures latency across varying prompt sizes to compare the two SDK APIs.
+ * Measures latency across varying prompt sizes for the query() API.
  * Useful for tracking performance as SDK versions change.
  *
  * Usage: bun scripts/benchmark-haiku.ts
@@ -11,7 +11,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { query, unstable_v2_prompt } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 const SHORT_PROMPT = 'Generate a 40-char status. User asked: "hello". Output only the status text.';
 
@@ -76,21 +76,6 @@ const ITERATIONS = 3;
 
 console.log(`Prompt sizes — short: ${SHORT_PROMPT.length} chars, medium: ${MEDIUM_PROMPT.length} chars, long: ${LONG_PROMPT.length} chars`);
 console.log(`Iterations per prompt: ${ITERATIONS}\n`);
-
-// ── V2: unstable_v2_prompt (old approach — spawns full session per call) ─────
-
-console.log('═══ unstable_v2_prompt (V2 — full session per call) ═══\n');
-
-for(const [label, prompt] of prompts) {
-    for(let i = 0; i < ITERATIONS; i++) {
-        const start = Date.now();
-        const result = await unstable_v2_prompt(prompt, { model: 'haiku' });
-        const elapsed = Date.now() - start;
-        const text = result.subtype === 'success' ? result.result : '(no result)';
-        console.log(`  ${label} #${i + 1}: ${elapsed}ms — "${text.slice(0, 60)}"`);
-    }
-    console.log();
-}
 
 // ── V1: query() with lightweight options (new approach) ─────────────────────
 

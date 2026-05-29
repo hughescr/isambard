@@ -213,9 +213,11 @@ describe.concurrent('system-prompt', () => {
             });
 
             test('should not call loadCoreIdentity when contextBuilder not provided', async () => {
-                // Don't pass the context builder
-                await buildSystemPrompt({ channelList: ['general'] });
-                // Cannot check if loadCoreIdentity was called since it's not defined
+                // Don't pass the context builder; with no identity loaded, the
+                // "Who You Are" section must never be appended to the prompt.
+                const prompt = await buildSystemPrompt({ channelList: ['general'] });
+                expect(prompt).not.toContain('Who You Are');
+                expect(prompt).toContain('Discord Channel Context');
             });
 
             test('should handle contextBuilder with null identity gracefully', async () => {

@@ -787,7 +787,14 @@ describe('WildDuckListener', () => {
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
             await flushAsync();
 
-            // No crash — just no events recorded anywhere
+            // The poll failure path ran (recordPollFailure returns early with no
+            // registry) — proven by the warn log — and no health event was emitted
+            // anywhere, since there is no registry to receive one.
+            expect(listCount).toBe(2);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg:   'Poll cycle failed, will retry',
+                error: 'Network error',
+            }));
 
             await listener.stop();
         });

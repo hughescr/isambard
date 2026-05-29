@@ -7,17 +7,17 @@
  */
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { ActivityType, type Client } from 'discord.js';
+import type { DiscordConfig } from '@/config';
 import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
 import type { IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 import { setupPresence } from '@/integrations/discord/setup/presence-setup';
 import type { BotStateManager, StateChange } from '@/integrations/discord/state';
-import type { DiscordConfig } from '@/config';
 
 /** Minimal presence config for tests — required fields only, all others use defaults */
 const MINIMAL_PRESENCE_CONFIG: NonNullable<DiscordConfig['presence']> = {
-    updateThrottleMs:    12_000,
-    idleTimeoutMs:       60_000,
+    updateThrottleMs:      12_000,
+    idleTimeoutMs:         60_000,
     idleRefreshIntervalMs: 300_000,
 };
 
@@ -77,13 +77,13 @@ describe('setupPresence — getPreviousStatus forwarding', () => {
         const getPreviousStatus = mock((): string | undefined => 'previous status text');
 
         setupPresence({
-            identityContext:   'Test identity',
-            presenceConfig:    MINIMAL_PRESENCE_CONFIG,
-            readyClient:       makeMockClient(),
-            botStateManager:   makeMockBotStateManager(),
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            botStateManager:        makeMockBotStateManager(),
             dynamicStatusGenerator: undefined,
-            inboxManager:      undefined,
-            getRecentContext:  () => Promise.resolve(undefined),
+            inboxManager:           undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
             getPreviousStatus,
         });
 
@@ -96,13 +96,13 @@ describe('setupPresence — getPreviousStatus forwarding', () => {
         const getPreviousStatus = mock((): string | undefined => 'last idle text');
 
         setupPresence({
-            identityContext:   'Test identity',
-            presenceConfig:    MINIMAL_PRESENCE_CONFIG,
-            readyClient:       makeMockClient(),
-            botStateManager:   makeMockBotStateManager(),
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            botStateManager:        makeMockBotStateManager(),
             dynamicStatusGenerator: undefined,
-            inboxManager:      undefined,
-            getRecentContext:  () => Promise.resolve(undefined),
+            inboxManager:           undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
             getPreviousStatus,
         });
 
@@ -112,13 +112,13 @@ describe('setupPresence — getPreviousStatus forwarding', () => {
 
     test('getPreviousStatus is undefined in createIdleStatusGenerator deps when not passed to setupPresence', () => {
         setupPresence({
-            identityContext:   'Test identity',
-            presenceConfig:    MINIMAL_PRESENCE_CONFIG,
-            readyClient:       makeMockClient(),
-            botStateManager:   makeMockBotStateManager(),
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            botStateManager:        makeMockBotStateManager(),
             dynamicStatusGenerator: undefined,
-            inboxManager:      undefined,
-            getRecentContext:  () => Promise.resolve(undefined),
+            inboxManager:           undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
             // No getPreviousStatus
         });
 

@@ -93,12 +93,12 @@ interface ContentBlock {
 /**
  * Extracts accumulated text from a query assistant event.
  */
-function extractTextFromEvent(event: { type: string, message?: { content?: unknown } }): string {
+function extractTextFromEvent(event: { type: string, message?: unknown }): string {
     // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent mutant — non-assistant events have no message.content, so filter returns [] and we return '' either way
     if(event.type !== 'assistant') {
         return '';
     }
-    const content = event.message?.content as ContentBlock[] | undefined;
+    const content = (event.message as { content?: unknown } | undefined)?.content as ContentBlock[] | undefined;
     // Stryker disable next-line ArrayDeclaration,ConditionalExpression,LogicalOperator,MethodExpression: Equivalent mutant — filter on non-text blocks or without text field produces empty result either way
     const textBlocks = (content ?? []).filter(block => block.type === 'text' && block.text);
     // Stryker disable next-line StringLiteral: ?? '' fallback is defensive — filter guarantees block.text is truthy, so '' default is never reached

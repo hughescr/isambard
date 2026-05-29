@@ -177,122 +177,181 @@ describe('Discord Event Handlers', () => {
         };
 
         it('should infer image/heic for .heic files with null contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.heic', contentType: 'image/heic' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should infer image/heif for .heif files with null contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heif', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.heif', contentType: 'image/heif' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should infer image/jpeg for .jpg files with null contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.jpg', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.jpg', contentType: 'image/jpeg' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should infer image/png for .png files with null contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'image.png', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'image.png', contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should fallback to application/octet-stream for unknown extensions with null contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.xyz', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'file.xyz', contentType: 'application/octet-stream' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should use provided contentType when Discord provides a valid image type', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: 'image/webp' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            // Discord-provided valid image type wins over extension inference
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.heic', contentType: 'image/webp' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should infer from extension when Discord provides application/octet-stream', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: 'application/octet-stream' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            // octet-stream is not an image/* type, so inference from .heic wins
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.heic', contentType: 'image/heic' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should handle case-insensitive file extensions', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.HEIC', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.HEIC', contentType: 'image/heic' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should reject contentType that ends with image/ instead of starting with it', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
@@ -300,126 +359,191 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessage([{ name: 'photo.png', contentType: 'text/image/' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            // 'text/image/' does not start with 'image/', so inference from .png wins
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'photo.png', contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should prefer Discord contentType over extension when valid image type provided', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.txt', contentType: 'image/png' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            // Discord's valid image/png is preferred over the .txt extension
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'file.txt', contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return exact image/heic string for .heic extension', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/heic' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return exact image/jpeg string for .jpg extension', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.jpg', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/jpeg' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return exact image/png string for .png extension', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'image.png', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return exact application/octet-stream string for unknown extension', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.xyz', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'application/octet-stream' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should handle file without extension and return octet-stream', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'README', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'README', contentType: 'application/octet-stream' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should use filename "unknown" when attachment name is null', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: null, contentType: 'image/png' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'unknown', contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should use actual filename when attachment name is provided', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'my-photo.jpg', contentType: 'image/jpeg' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'my-photo.jpg', contentType: 'image/jpeg' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should include attachments in context when present', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
@@ -429,28 +553,43 @@ describe('Discord Event Handlers', () => {
             ]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [
+                        expect.objectContaining({ filename: 'photo1.png', contentType: 'image/png' }),
+                        expect.objectContaining({ filename: 'photo2.jpg', contentType: 'image/jpeg' }),
+                    ],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should NOT include attachments in context when empty', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ attachments: undefined }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should verify startsWith not endsWith for image/ prefix', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
@@ -458,119 +597,182 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessage([{ name: 'test.png', contentType: 'data/image/' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            // 'data/image/' does not start with 'image/', so inference from .png wins
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for heic contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heic', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/heic' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for heif contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.heif', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/heif' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for jpeg contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.jpeg', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/jpeg' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for png contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'image.png', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for gif contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'animation.gif', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/gif' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for webp contentType', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'photo.webp', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/webp' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for unknown filename', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: null, contentType: 'image/png' }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ filename: 'unknown', contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should return non-empty string for octet-stream', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessage([{ name: 'file.unknown', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'application/octet-stream' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
 
         it('should NOT set attachments when size is 0 (test for size === 0 logic)', async () => {
@@ -648,10 +850,11 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should handle null Discord contentType correctly (test always-true conditional)', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
@@ -659,7 +862,14 @@ describe('Discord Event Handlers', () => {
             const message = createMockMessage([{ name: 'test.png', contentType: null }]);
             await handler(message);
 
-            // onMessage is no longer called directly - coordinator handles messages;
+            // Null Discord contentType falls through to extension inference
+            expect(coordinator.handleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    attachments: [expect.objectContaining({ contentType: 'image/png' })],
+                }),
+                message,
+                expect.anything()
+            );
         });
     });
 
@@ -748,20 +958,20 @@ describe('Discord Event Handlers', () => {
                 startProcessingMessage: mock(() => undefined),
             };
 
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 // catchUpSessionRunner is undefined
                 botStateManager: mockBotStateManager as unknown as BotStateManager,
             });
 
             const message = createMockMessageForCatchUp();
-            // Should not throw
+            // Should not throw when catchUpSessionRunner is undefined; message still reaches coordinator
             await handler(message);
 
-            // No exception should be thrown when catchUpSessionRunner is undefined
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalled();
         });
 
         it('should call coordinator after interrupting catch-up (message reaches coordinator)', async () => {
@@ -923,17 +1133,19 @@ describe('Discord Event Handlers', () => {
         });
 
         it('should handle undefined botStateManager gracefully', async () => {
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId,
-                coordinator:     createMockCoordinator(),
+                coordinator,
                 botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const message = createMockMessageForState();
-            // Should not throw when botStateManager is undefined
+            // Should not throw when botStateManager is undefined; message still reaches coordinator
             await handler(message);
-            // onMessage is no longer called directly - coordinator handles messages;
+
+            expect(coordinator.handleMessage).toHaveBeenCalled();
         });
     });
 
@@ -1108,20 +1320,20 @@ describe('Discord Event Handlers', () => {
             };
 
             const mockChannelRegistry = { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager;
+            const coordinator = createMockCoordinator();
             const handler = createMessageHandler({
                 channelRegistry: mockChannelRegistry,
                 botUserId,
                 // perchSessionRunner is undefined
                 botStateManager: mockBotStateManager as unknown as BotStateManager,
-                coordinator:     createMockCoordinator(),
+                coordinator,
             });
 
             const message = createMockMessageForPerch();
-            // Should not throw
+            // Should not throw when perchSessionRunner is undefined; message still reaches coordinator
             await handler(message);
 
-            // No exception should be thrown when perchSessionRunner is undefined
-            // onMessage is no longer called directly - coordinator handles messages;
+            expect(coordinator.handleMessage).toHaveBeenCalled();
         });
 
         it('should call coordinator after suspending perch (message reaches coordinator)', async () => {

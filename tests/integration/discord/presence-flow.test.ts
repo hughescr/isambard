@@ -5,7 +5,7 @@
  * using real components (not mocks) except for Discord client and Anthropic API.
  */
 
-import { describe, it, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { ActivityType, type Client  } from 'discord.js';
 import { mockGenerateText, mockGenerateTextWithSystemPrompt, originalGenerateText, originalGenerateTextWithSystemPrompt } from '../../setup';
 import { PresenceManager } from '@/integrations/discord/presence/manager';
@@ -84,8 +84,16 @@ describe('Discord Presence Flow (Integration)', () => {
         jest.advanceTimersByTime(300);
         await Promise.resolve();
 
-        // The idle refresh should have been triggered, but due to debouncing and mock timing,
-        // we just verify the system doesn't crash and cleans up properly
+        // Simulate the idle timeout firing: transition to the idle phase. This starts
+        // the idle refresh loop, which drives the real idle status generator and so
+        // invokes the (mocked) Haiku text generator that produces the idle status text.
+        await presenceManager.updatePhase({
+            type:  'idle',
+            since: new Date(),
+        });
+
+        // Transitioning to idle must exercise the idle status generation path.
+        expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalled();
 
         // Clean up
         presenceManager.stop();

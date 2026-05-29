@@ -77,6 +77,7 @@ export class MemoryToolBackendCore {
             ...keys,
         };
 
+        // boundary cast: spreading a branded MemoryToolItem into a plain DynamoDB Record for putItem; branded MemoryPath/ContentType are runtime-compatible strings
         const ddbItem: Record<string, unknown> = { ...(item as unknown as Record<string, unknown>) };
         // Stryker disable next-line ConditionalExpression: TTL is an optional DDB attribute; absence is intentional when ttl is undefined
         if(input.ttl !== undefined) {
@@ -142,6 +143,7 @@ export class MemoryToolBackendCore {
         }
 
         const updated = result.data;
+        // boundary cast: spreading a branded MemoryToolItem into a plain DynamoDB Record for putItem; branded MemoryPath/ContentType are runtime-compatible strings
         const ddbItem: Record<string, unknown> = { ...(this.buildUpdatedItem(updated) as unknown as Record<string, unknown>) };
         // Stryker disable next-line ConditionalExpression: TTL is an optional DDB attribute; absence is intentional when no TTL is set
         if(ttlToWrite !== undefined) {

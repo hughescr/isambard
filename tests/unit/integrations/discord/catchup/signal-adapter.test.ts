@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { mockLogger } from '../../../../setup';
 import type { CatchUpCompletionSignal, CatchUpInProgressSignal } from '@/integrations/discord/catchup/session-runner';
 import { createCatchUpSignalAdapter, type CatchUpSignalAdapter } from '@/integrations/discord/catchup/signal-adapter';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -74,18 +75,30 @@ describe('createCatchUpSignalAdapter', () => {
             mockBackend.get = mock(async () => {
                 throw error;
             });
+            mockLogger.error.mockClear();
 
             // Should not throw
             await adapter.storeCompletionSignal(signal);
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                error: 'DynamoDB connection failed',
+                msg:   'Failed to store catch-up completion signal',
+            });
         });
 
         test('should handle non-Error exceptions', async () => {
             mockBackend.get = mock(async () => {
                 throw 'string error';
             });
+            mockLogger.error.mockClear();
 
             // Should not throw
             await adapter.storeCompletionSignal(signal);
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                error: 'string error',
+                msg:   'Failed to store catch-up completion signal',
+            });
         });
     });
 
@@ -199,18 +212,30 @@ describe('createCatchUpSignalAdapter', () => {
             mockBackend.get = mock(async () => {
                 throw error;
             });
+            mockLogger.error.mockClear();
 
             // Should not throw
             await adapter.storeInProgressSignal(signal);
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                error: 'DynamoDB connection failed',
+                msg:   'Failed to store catch-up in-progress signal',
+            });
         });
 
         test('should handle non-Error exceptions', async () => {
             mockBackend.get = mock(async () => {
                 throw 'string error';
             });
+            mockLogger.error.mockClear();
 
             // Should not throw
             await adapter.storeInProgressSignal(signal);
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                error: 'string error',
+                msg:   'Failed to store catch-up in-progress signal',
+            });
         });
     });
 
@@ -286,18 +311,30 @@ describe('createCatchUpSignalAdapter', () => {
             mockBackend.delete = mock(async () => {
                 throw error;
             });
+            mockLogger.error.mockClear();
 
             // Should not throw
             await adapter.deleteInProgressSignal();
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                error: 'DynamoDB connection failed',
+                msg:   'Failed to delete catch-up in-progress signal',
+            });
         });
 
         test('should handle non-Error exceptions', async () => {
             mockBackend.delete = mock(async () => {
                 throw 'string error';
             });
+            mockLogger.error.mockClear();
 
             // Should not throw
             await adapter.deleteInProgressSignal();
+
+            expect(mockLogger.error).toHaveBeenCalledWith({
+                error: 'string error',
+                msg:   'Failed to delete catch-up in-progress signal',
+            });
         });
     });
 });

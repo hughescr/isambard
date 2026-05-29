@@ -928,7 +928,8 @@ describe('createWebViewAdapter — waitForSelector', () => {
         const adapter = createWebViewAdapter(defaultConfig, factory, immediateDelay);
         await adapter.navigate('https://example.com');
         fakeView.evaluate = mock(async (_expr: string): Promise<boolean> => true);
-        await adapter.waitForSelector('button');
+        expect(adapter.waitForSelector('button')).resolves.toBeUndefined();
+        expect(fakeView.evaluate).toHaveBeenCalledWith('!!document.querySelector("button")');
     });
 
     test('waitForSelector rejects when element never appears within 1ms timeout', async () => {

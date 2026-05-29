@@ -17,8 +17,8 @@ describe('delay', () => {
     test('should resolve after delay', async () => {
         const delayPromise = delay(10);
         jest.advanceTimersByTime(10);
-        await delayPromise;
-        // Promise resolved — fake timer correctly fired the setTimeout callback
+        // Fake timer fired the setTimeout callback, so the promise resolves with void
+        expect(delayPromise).resolves.toBeUndefined();
     });
 
     test('should reject with DOMException AbortError if signal already aborted', async () => {
@@ -42,9 +42,8 @@ describe('delay', () => {
 
     test('should return immediately for zero or negative delays', async () => {
         // Zero and negative delays return early without setTimeout — no timer needed
-        await delay(0);
-        await delay(-5);
-        // If we reach here without hanging, the early-return path works correctly
+        expect(delay(0)).resolves.toBeUndefined();
+        expect(delay(-5)).resolves.toBeUndefined();
     });
 });
 

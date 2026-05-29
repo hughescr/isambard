@@ -157,8 +157,16 @@ describe('PerchScheduler', () => {
 
             scheduler.start();
 
-            // Note: Actual cron job creation testing would require mocking Cron more deeply
-            // This test validates the scheduler calls start()
+            // start() schedules the first trigger via the 'H * * * *' cron expression,
+            // logging the computed schedule: an ISO-8601 next-trigger time within the
+            // next hour (delaySeconds <= 3600).
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    delaySeconds: expect.any(Number),
+                    nextTrigger:  expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/),
+                }),
+                expect.stringContaining('Next perch trigger scheduled')
+            );
 
             scheduler.stop();
         });

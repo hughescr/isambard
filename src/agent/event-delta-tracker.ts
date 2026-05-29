@@ -15,7 +15,7 @@ import { type ContextBuilder, formatMemoryPreview  } from './context-builder';
  * there are already ≥ 50 events in the window at markStart time.
  */
 export class EventDeltaTracker {
-    private startTimeMs: number | undefined;
+    private startTimeMs:             number | undefined;
     private readonly contextBuilder: ContextBuilder;
 
     constructor(contextBuilder: ContextBuilder) {
@@ -36,7 +36,7 @@ export class EventDeltaTracker {
      *   array if markStart has not been called.
      */
     async getNewEvents(): Promise<string[]> {
-        if (this.startTimeMs === undefined) {
+        if(this.startTimeMs === undefined) {
             return [];
         }
         const now = new Date();

@@ -146,10 +146,10 @@ describe('TaskSessionBackend', () => {
             });
         });
 
-        test('should succeed even if no record exists', async () => {
+        test('should succeed even if no record exists', () => {
             ddbMock.on(DeleteCommand).resolves({});
 
-            await backend.clearCurrentSessionId();
+            expect(backend.clearCurrentSessionId()).resolves.toBeUndefined();
         });
     });
 });

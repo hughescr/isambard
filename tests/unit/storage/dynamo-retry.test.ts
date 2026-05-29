@@ -377,6 +377,10 @@ describe('setDynamoHealthNotifier / health notifier integration', () => {
             operation: 'DeleteItem',
         });
 
+        // With no notifier set, withDynamoTimeout must skip the notifier branch and
+        // still re-throw the original network error unchanged (it does not crash).
+        expect(resultPromise).rejects.toBe(networkError);
+
         try {
             await resultPromise;
         } catch{

@@ -451,10 +451,11 @@ describe('CalDAVClient.getEvents', () => {
             throw new Error('Network error');
         });
 
-        // Should not crash when no health registry
+        // Should not crash when no health registry: getEvents swallows the
+        // fetch failure, returns empty results, and emits no health events.
         const client = new CalDAVClient();
-        await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
-        // No assertion — just verifying no exception from missing registry
+        const result = await client.getEvents([makeServer()], BASE_DATE, new Date('2025-06-18T12:00:00.000Z'));
+        expect(result).toEqual({ events: [], failed: [] });
     });
 
     test('no CONNECTION_LOST until 3 consecutive server failures', async () => {
@@ -1109,9 +1110,12 @@ describe('CalDAVClient timeout', () => {
         mockFetchCalendars.mockImplementation(async (): Promise<Record<string, unknown>[]> => []);
 
         const client = new CalDAVClient(300_000, 5000);
-        // Should not leak timers
-        await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
-        // If timer wasn't cleared, it would fire after test completion (no assertion needed, just no hanging)
+        // Should not leak timers: the connect + fetchCalendars withTimeout
+        // wrappers both clear their timer in finally on success.
+        const result = await client.discoverCalendars('https://caldav.example.com', 'user', 'pass');
+        expect(result).toEqual([]);
+        // If a timer wasn't cleared it would remain pending and fire after the test.
+        expect(jest.getTimerCount()).toBe(0);
     });
 });
 
