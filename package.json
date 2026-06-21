@@ -43,8 +43,6 @@
     "@hughescr/logger": "^2.10.0",
     "@sapphire/snowflake": "^3.5.5",
     "@smithy/node-http-handler": "^4.8.1",
-    "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^12.11.1",
     "cron-parser": "^5.5.0",
     "discord.js": "^14.26.4",
     "env-var": "^7.5.0",
@@ -71,6 +69,7 @@
     "@hughescr/eslint-plugin-test-hygiene": "^1.0.0",
     "@hughescr/stryker-bun-runner": "^1.2.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@smithy/types": "^4.15.0",
     "@stryker-mutator/api": "^9.6.1",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/typescript-checker": "^9.6.1",
@@ -79,7 +78,6 @@
     "@types/html-to-text": "^9.0.4",
     "@types/lodash-es": "^4.17.12",
     "@types/luxon": "^3.7.2",
-    "@types/picomatch": "^4.0.3",
     "@types/remove-markdown": "^0.3.4",
     "@types/semver": "^7.7.1",
     "aws-sdk-client-mock": "^4.1.0",
@@ -92,7 +90,6 @@
     "eslint-plugin-package-json": "^1.4.0",
     "jscpd": "^5.0.11",
     "knip": "^6.17.1",
-    "picomatch": "^4.0.4",
     "typescript": "^6.0.3"
   },
   "overrides": {

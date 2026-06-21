@@ -41,7 +41,7 @@ function mapAddress(addr: { address: string, name?: string }): EmailAddress {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SearchCriteria {
+interface SearchCriteria {
     correspondent?: string
     content?:       string
     before?:        string

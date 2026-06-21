@@ -37,7 +37,7 @@ import { extractToolUses, redactSensitiveArgs, type AgentStreamEvent } from '@/a
  * @param botStateManager - Optional state manager with throttle logic
  * @returns true if synopsis generation should be attempted
  */
-export function shouldGenerateSynopsis(
+function shouldGenerateSynopsis(
     dynamicStatusGenerator: DynamicStatusGenerator | undefined,
     botStateManager:        BotStateManager | undefined
 ): dynamicStatusGenerator is DynamicStatusGenerator {

@@ -15,7 +15,7 @@ import { createChannelId } from '@/integrations/discord/types';
  * Input type for search parameters.
  * Uses z.input to allow optional fields with defaults to be omitted.
  */
-export type SearchParamsInput = z.input<typeof searchParamsSchema>;
+type SearchParamsInput = z.input<typeof searchParamsSchema>;
 
 /**
  * Default number of messages to return when no limit is specified.

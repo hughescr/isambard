@@ -14,7 +14,7 @@ const directionSchema = z.enum(['inbound', 'outbound', 'mutual']);
  * The set of known history platforms. Adding a new platform here will
  * cause a compile error in formatHistoryEntries until the switch is updated.
  */
-export const knownPlatformSchema = z.enum(['discord', 'email', 'bsky']);
+const knownPlatformSchema = z.enum(['discord', 'email', 'bsky']);
 // Stryker restore all
 
 /** Literal union of all known history platform identifiers. */

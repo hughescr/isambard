@@ -147,7 +147,7 @@ interface SetupCoordinatorParams {
 /**
  * Maps a single Discord message context to platform-agnostic message context for the agent.
  */
-export function toMessageContext(context: DiscordMessageContext): MessageContext {
+function toMessageContext(context: DiscordMessageContext): MessageContext {
     return {
         channelId:   context.channelId,
         userId:      context.userId,

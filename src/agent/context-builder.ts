@@ -14,7 +14,7 @@ import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, creat
 import { formatShortRelativeTime, formatTimeHeader, resolveTimezone } from '@/utils';
 
 /** Minimal interface for retrieving message metadata from WildDuck */
-export interface WildDuckService {
+interface WildDuckService {
     getMessage:       (mailboxPath: string, uid: number) => Promise<{ id: number, subject?: string, to?: { address: string, name?: string }[], metaData?: Record<string, unknown> } | null>
     getMailboxCounts: (mailboxPath: string) => Promise<{ total: number, unseen: number }>
     listMessages:     (mailboxPath: string, options?: { unseen?: boolean }) => Promise<{ id: number, from: { address: string, name?: string }, subject: string, date: string }[]>
@@ -37,7 +37,7 @@ export interface CalendarService {
     registry: CalendarRegistryBackend
 }
 
-export interface RecentEventsResult {
+interface RecentEventsResult {
     items:      MemoryToolItemData[]
     isFallback: boolean
 }

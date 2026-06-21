@@ -140,7 +140,7 @@ export type AgentStreamEvent
  * - tool_use: Tool invocation request
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
-export interface ContentBlock {
+interface ContentBlock {
     type:   string
     text?:  string
     id?:    string
@@ -168,7 +168,7 @@ export interface AssistantEvent {
  * Includes the tool name and ID for tracking long-running operations.
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
-export interface ToolProgressEvent {
+interface ToolProgressEvent {
     type:                  'tool_progress'
     tool_use_id?:          string
     tool_name?:            string
@@ -180,7 +180,7 @@ export interface ToolProgressEvent {
  * Includes the tool name and result.
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
-export interface ToolResultEvent {
+interface ToolResultEvent {
     type:         'tool_result'
     tool_use_id?: string
     tool_name?:   string
@@ -191,7 +191,7 @@ export interface ToolResultEvent {
  * Includes usage statistics and final status.
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
-export interface ResultEvent {
+interface ResultEvent {
     type:            'result'
     subtype?:        'success' | 'error_during_execution' | 'error_max_turns'
     duration_ms?:    number
@@ -202,7 +202,7 @@ export interface ResultEvent {
  * Event emitted for user messages (echoed back).
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
-export interface UserEvent {
+interface UserEvent {
     type:     'user'
     message?: { content?: unknown }
 }
@@ -237,7 +237,7 @@ export interface SystemEvent {
  * Structurally equivalent but decouples the agent module from platform-specific types.
  * @internal Used only within MessageContext; no external file imports this by name.
  */
-export interface PlatformAttachmentMetadata {
+interface PlatformAttachmentMetadata {
     url:         string
     filename:    string
     contentType: string
@@ -370,7 +370,7 @@ export interface MCPMessageSearchService {
  * Mirrors Discord UnreadMessage without importing from integrations.
  * @internal Only consumed within src/agent/ (MCPInboxManager interface).
  */
-export interface MCPUnreadMessage {
+interface MCPUnreadMessage {
     id:          string
     channelId:   ChannelId
     channelName: string
@@ -396,7 +396,7 @@ export interface MCPMessageMetadata {
  * Platform-agnostic unread overview shape for inbox MCP server.
  * @internal Only consumed within src/agent/ (MCPInboxManager interface).
  */
-export interface MCPUnreadOverview {
+interface MCPUnreadOverview {
     totalUnread: number
     channels:    { channelId: ChannelId, channelName: string, messageCount: number }[]
 }

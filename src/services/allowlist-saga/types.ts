@@ -9,7 +9,7 @@ const allowlistSagaStateSchema = z.enum([
     'cancelled',         // flow abandoned (terminal)
 ]);
 
-export const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
+const allowlistSagaPlatformSchema = z.enum(['email', 'bsky']);
 export type AllowlistSagaPlatform = z.infer<typeof allowlistSagaPlatformSchema>;
 
 // Stryker restore all

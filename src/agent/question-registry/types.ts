@@ -10,7 +10,7 @@ export const questionOptionSchema = z.object({
 export type QuestionOption = z.infer<typeof questionOptionSchema>;
 
 export const questionStateSchema = z.enum(['waiting', 'answered', 'timed_out', 'cancelled']);
-export type QuestionState = z.infer<typeof questionStateSchema>;
+type QuestionState = z.infer<typeof questionStateSchema>;
 
 export interface PendingQuestion {
     questionId:      string              // UUID

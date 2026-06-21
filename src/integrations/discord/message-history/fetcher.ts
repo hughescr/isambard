@@ -15,7 +15,7 @@ const DISCORD_API_MAX_MESSAGES = 100;
 /**
  * Options for fetching messages from a Discord channel.
  */
-export interface FetchOptions {
+interface FetchOptions {
     /** The Discord channel ID to fetch messages from */
     channelId:  string
     /** Only include messages after this time (inclusive) */
@@ -29,7 +29,7 @@ export interface FetchOptions {
 /**
  * Result of a message fetch operation.
  */
-export interface FetchResult {
+interface FetchResult {
     /** Array of fetched messages transformed to DiscordSearchResult format */
     messages: DiscordSearchResult[]
     /** True if more messages exist beyond what was fetched */

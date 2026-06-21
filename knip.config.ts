@@ -8,20 +8,25 @@ const config: KnipConfig = {
         'src/index.ts',
         '*.config.mjs',
         '*.conf.mjs',
-        'tools/**/*.mjs',
+        'tools/**/*.ts',
         'scripts/**/*.ts',
         'tests/**/*.test.ts',
     ],
     project: [
         'src/**/*.ts',
-        'tools/**/*.mjs',
+        'tools/**/*.ts',
         'scripts/**/*.ts',
     ],
     ignoreDependencies: [
         'eslint-plugin-package-json',
         '@stryker-mutator/bun-runner',
     ],
-    bun: true,
+    ignoreBinaries: [
+        'tools/run-stryker.sh',
+        'tools/setup-node-llama-cpp.sh',
+    ],
+    tags: ['internal'],
+    bun:  true,
 };
 
 export default config;

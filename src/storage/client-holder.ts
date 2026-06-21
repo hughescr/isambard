@@ -8,7 +8,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
  * before the underlying sockets are torn down.  5 s is conservative relative to
  * the 30 s requestTimeout configured on the AWS SDK handler.
  */
-export const SWAP_GRACE_MS = 5000;
+const SWAP_GRACE_MS = 5000;
 
 /**
  * Holds the live DynamoDB client pair and allows atomic swapping.

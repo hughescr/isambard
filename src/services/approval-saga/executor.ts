@@ -14,7 +14,7 @@ interface SagaExecutorDeps {
     pollIntervalMs?: number
 }
 
-export interface ExecuteOnceResult {
+interface ExecuteOnceResult {
     executed: number
     failed:   number
 }
