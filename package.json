@@ -68,6 +68,7 @@
     "@hughescr/eslint-plugin-module-boundaries": "^1.0.0",
     "@hughescr/eslint-plugin-test-hygiene": "^1.0.0",
     "@hughescr/stryker-bun-runner": "^1.2.2",
+    "@hughescr/stryker-llm-mutator": "^1.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@smithy/types": "^4.15.0",
     "@stryker-mutator/api": "^9.6.1",

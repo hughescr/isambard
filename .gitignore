@@ -61,3 +61,4 @@ scratch/
 # Running worktree
 running/
 .claude/worktrees
+/.stryker-llm-cache

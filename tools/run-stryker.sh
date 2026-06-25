@@ -4,6 +4,8 @@
 set -e
 
 LOCKFILE="reports/.stryker.lock"
+CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Private/Anthropic/Isambard API Key")
+export CLAUDE_CODE_OAUTH_TOKEN
 
 # Parse optional --wait flag (must be first arg).
 # Without --wait: non-blocking (-t 0); exits 75 if lock is held.
