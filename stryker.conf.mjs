@@ -1,3 +1,4 @@
+// eslint-disable-next-line import-x/no-extraneous-dependencies -- dev-only config file uses devDependencies
 import { withLlmMutators } from '@hughescr/stryker-llm-mutator';
 
 const isCI = Boolean(process.env.GITHUB_SHA);

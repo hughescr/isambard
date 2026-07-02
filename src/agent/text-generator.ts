@@ -91,6 +91,24 @@ interface ContentBlock {
 }
 
 /**
+ * Boundary type for the events streamed by the Claude Agent SDK's `query()`.
+ *
+ * The SDK's published `SDKMessage` union is currently unusable as a type: it lists
+ * `SDKControlRequestProgressMessage` and `SDKConversationResetMessage` as members,
+ * but neither is defined anywhere in the shipped `.d.ts`. That undefined reference
+ * collapses the whole union to the `error` type — silently tolerated by `tsc` under
+ * `skipLibCheck`, but flagged by typed linting as an unresolvable type. Until the SDK
+ * ships correct types, we describe only the fields we consume, discriminated by
+ * `type` (and `subtype`/`result` on the terminal `result` event).
+ */
+interface QueryEvent {
+    type:     string
+    subtype?: string
+    message?: unknown
+    result?:  string
+}
+
+/**
  * Extracts accumulated text from a query assistant event.
  */
 function extractTextFromEvent(event: { type: string, message?: unknown }): string {
@@ -154,7 +172,9 @@ async function executePrompt(
         let successResult: string | undefined;
         const tmpDir = await getTmpDir();
 
-        for await (const event of query({
+        // boundary cast: the SDK's query() yields the broken `SDKMessage` union (see QueryEvent);
+        // laundering through `unknown` lets us consume the events under a resolvable type.
+        const events = query({
             prompt,
             options: {
                 // Stryker disable next-line StringLiteral: default model name is SDK configuration constant
@@ -173,7 +193,8 @@ async function executePrompt(
                 // Stryker disable next-line ConditionalExpression,LogicalOperator: undefined passthrough — systemPrompt is only included when the caller provides it
                 ...(options?.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
             },
-        })) {
+        }) as unknown as AsyncIterable<QueryEvent>;
+        for await (const event of events) {
             resultText += extractTextFromEvent(event);
             // Stryker disable next-line BlockStatement: Equivalent mutant — skipping the result-event handler means the loop runs to completion anyway; non-success subtypes yield no assistant text so resultText is '' either way
             if(event.type === 'result') {
@@ -183,8 +204,7 @@ async function executePrompt(
                 }
                 // Capture canonical result text as fallback in case no assistant events were streamed
                 // Stryker disable next-line AssignmentOperator,ConditionalExpression: successResult fallback — only used when resultText is empty (e.g. haiku returns via result.result instead of streaming)
-                // boundary cast: Claude Agent SDK ResultEvent lacks a `.result` property in its published .d.ts; accessed at runtime to capture haiku's non-streaming response
-                successResult = (event as unknown as { result?: string }).result;
+                successResult = event.result;
                 break; // Success — return accumulated text below
             }
         }

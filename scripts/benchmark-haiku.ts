@@ -13,6 +13,20 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
+/**
+ * Structural view of the fields this benchmark reads from a query() event.
+ *
+ * The SDK's published event union (SDKMessage) transitively imports BetaMessage from
+ * @anthropic-ai/sdk, which ESLint's type program resolves to the intrinsic error type —
+ * collapsing the whole union so raw `event.*` access is flagged unsafe. We model only the
+ * fields we consume here (boundary-typing convention; see src/agent/text-generator.ts).
+ */
+interface QueryEvent {
+    type:     string
+    message?: { content?: { type: string, text?: string }[] }
+    result?:  string
+}
+
 const SHORT_PROMPT = 'Generate a 40-char status. User asked: "hello". Output only the status text.';
 
 const MEDIUM_PROMPT = `You are generating a first-person inner thought for Izzy (Isambard) as a brief Discord status (max 40 characters).
@@ -99,9 +113,9 @@ for(const [label, prompt] of prompts) {
                 effort:         'low',
                 maxTurns:       1,
             },
-        })) {
+        }) as AsyncIterable<QueryEvent>) {
             if(event.type === 'assistant') {
-                const content = (event as { type: string, message?: { content?: { type: string, text?: string }[] } }).message?.content ?? [];
+                const content = event.message?.content ?? [];
                 for(const block of content) {
                     if(block.type === 'text' && block.text) {
                         resultText += block.text;
@@ -109,9 +123,8 @@ for(const [label, prompt] of prompts) {
                 }
             }
             if(event.type === 'result') {
-                const resultEvent = event as { result?: string };
-                if(!resultText && resultEvent.result) {
-                    resultText = resultEvent.result;
+                if(!resultText && event.result) {
+                    resultText = event.result;
                 }
                 break;
             }
