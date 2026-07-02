@@ -4,6 +4,9 @@
 // Claude Agent
 export const claudeCodeOAuthToken = new sst.Secret('ClaudeCodeOAuthToken');
 export const isambardMainModel = new sst.Secret('IsambardMainModel');
+// Placeholder default 'sonnet' must stay in sync with the Zod default for
+// agentConfigSchema.fallbackModel in src/config/schemas.ts.
+export const isambardFallbackModel = new sst.Secret('IsambardFallbackModel', 'sonnet');
 
 // Discord
 export const discordBotToken = new sst.Secret('DiscordBotToken');

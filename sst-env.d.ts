@@ -46,6 +46,10 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "IsambardFallbackModel": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "IsambardMainModel": {
       "type": "sst.sst.Secret"
       "value": string
@@ -72,7 +76,6 @@ declare module "sst" {
     }
   }
 }
-/// <reference path="sst-env.d.ts" />
 
 import "sst"
 export {}

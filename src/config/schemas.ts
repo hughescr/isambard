@@ -17,6 +17,8 @@ export const agentConfigSchema = z.object({
     oauthToken:    z.string().min(1),
     // Stryker disable next-line StringLiteral: Default model value is configuration
     mainModel:     z.string().min(1).default('opus'),
+    // Default 'sonnet' must stay in sync with the sst.Secret('IsambardFallbackModel', 'sonnet')
+    // placeholder default in sst/secrets.ts.
     // Stryker disable next-line StringLiteral: Default fallback model value is configuration
     fallbackModel: z.string().min(1).default('sonnet'),
 });

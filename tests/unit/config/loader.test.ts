@@ -18,6 +18,7 @@ function createMockResources(
         DiscordHomeGuildId:    { value: 'home-guild-123' },
         ClaudeCodeOAuthToken:  { value: 'test-oauth-token-12345' },
         IsambardMainModel:     { value: 'sonnet' },
+        IsambardFallbackModel: { value: 'sonnet' },
         // Email secrets default to undefined (email config is optional)
         EmailUser:             { value: undefined },
         EmailPassword:         { value: undefined },
@@ -113,6 +114,25 @@ describe.concurrent('loadConfig', () => {
             const config = loadConfig(resources);
 
             expect(config.agent.mainModel).toBe('opus');
+        });
+
+        test('should pass custom IsambardFallbackModel through to config.agent.fallbackModel', () => {
+            const resources = createMockResources({
+                IsambardFallbackModel: { value: 'opus' },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.agent.fallbackModel).toBe('opus');
+            expect(config.agent.fallbackModel).not.toBe('sonnet');
+        });
+
+        test('should use default fallbackModel "sonnet" when IsambardFallbackModel value is undefined', () => {
+            const resources = createMockResources({
+                IsambardFallbackModel: { value: undefined },
+            });
+            const config = loadConfig(resources);
+
+            expect(config.agent.fallbackModel).toBe('sonnet');
         });
     });
 

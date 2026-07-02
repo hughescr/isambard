@@ -51,8 +51,9 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             port:     resources.Port.value,
         },
         agent: {
-            oauthToken: resources.ClaudeCodeOAuthToken.value,
-            mainModel:  resources.IsambardMainModel.value,
+            oauthToken:    resources.ClaudeCodeOAuthToken.value,
+            mainModel:     resources.IsambardMainModel.value,
+            fallbackModel: resources.IsambardFallbackModel.value,
         },
         discord: {
             botToken:      resources.DiscordBotToken.value,

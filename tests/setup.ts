@@ -39,14 +39,15 @@ export function textContent(item: ContentItem): string {
 
 // Mock SST Resource - MUST be mutable so tests can customize values
 export const mockSstResource: Record<string, { value?: unknown, name?: string }> = {
-    App:                  { value: 'test-app' },
-    DiscordToken:         { value: 'test-discord-token' },
-    ClaudeApiKey:         { value: 'test-claude-api-key' },
-    ClaudeCodeOAuthToken: { value: 'test-oauth-token' },
-    DiscordHomeGuildId:   { value: 'test-guild-123' },
-    DiscordApplicationId: { value: 'test-app-id' },
-    IsambardMainModel:    { value: 'sonnet' },
-    IsambardMemory:       { name: 'IsambardMemory' },
+    App:                   { value: 'test-app' },
+    DiscordToken:          { value: 'test-discord-token' },
+    ClaudeApiKey:          { value: 'test-claude-api-key' },
+    ClaudeCodeOAuthToken:  { value: 'test-oauth-token' },
+    DiscordHomeGuildId:    { value: 'test-guild-123' },
+    DiscordApplicationId:  { value: 'test-app-id' },
+    IsambardMainModel:     { value: 'sonnet' },
+    IsambardFallbackModel: { value: 'sonnet' },
+    IsambardMemory:        { name: 'IsambardMemory' },
     // Planned integrations (commented out - not yet implemented):
     // CaldavUrl:                     { value: 'https://caldav.icloud.com' },
     // CaldavUsername:                { value: 'test@icloud.com' },
@@ -65,6 +66,7 @@ export function resetMockSstResource(): void {
     mockSstResource.DiscordHomeGuildId = { value: 'test-guild-123' };
     mockSstResource.DiscordApplicationId = { value: 'test-app-id' };
     mockSstResource.IsambardMainModel = { value: 'sonnet' };
+    mockSstResource.IsambardFallbackModel = { value: 'sonnet' };
     mockSstResource.IsambardMemory = { name: 'IsambardMemory' };
     // Planned integrations (commented out - not yet implemented):
     // mockSstResource.CaldavUrl = { value: 'https://caldav.icloud.com' };
