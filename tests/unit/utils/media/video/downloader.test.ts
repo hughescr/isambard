@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, afterEach } from 'bun:test';
-import { rm } from 'node:fs/promises';
+import { rm, mkdir } from 'node:fs/promises';
 import { MediaProcessingError } from '@/errors';
 import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
 import type { SpawnRunner } from '@/utils/media/video/types';
@@ -73,8 +73,9 @@ describe('downloadVideo', () => {
     });
 
     it('fetches directly for non-HLS URLs and writes to disk', async () => {
-        // eslint-disable-next-line no-restricted-syntax -- node:fs/promises is imported dynamically to use the real fs after mock setup (mockFsPromises in setup.ts only mocks the module mock, but this test uses the real fs for temp dirs)
-        const { mkdir } = await import('node:fs/promises');
+        // node:fs/promises is globally mocked (see tests/setup.ts mockFsPromises); this satisfies
+        // that in-memory mock. The real on-disk write below goes through Bun.write, which creates
+        // any missing parent directories itself, so no real mkdir is required.
         await mkdir(`${TEST_DIR}/direct`, { recursive: true });
 
         const fakeBuffer = Buffer.from('fake video data');

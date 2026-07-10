@@ -2,17 +2,24 @@
  * Tests for Discord infrastructure factory.
  */
 
-/* eslint-disable no-restricted-syntax -- This file tests createDiscordInfrastructure() wiring; dynamic imports are required so that spyOn() can intercept constructors and factory functions before they are called during module load. Refactoring to static imports + beforeEach spyOn would require restructuring how module-level singletons are initialized. */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { mockLogger } from '../../setup';
+import * as discordInfrastructureModule from '@/app/discord-infrastructure';
 import type { DiscordConfig } from '@/config/schemas';
+import * as channelRegistryModule from '@/integrations/discord/channel-registry';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
+import * as clientModule from '@/integrations/discord/client';
+import * as inboxModule from '@/integrations/discord/inbox';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
+import * as fetcherModule from '@/integrations/discord/message-history/fetcher';
 import type { MessageFetcher } from '@/integrations/discord/message-history/fetcher';
+import * as searchModule from '@/integrations/discord/message-history/search';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import * as summarizerModule from '@/integrations/discord/message-history/summarizer';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
+import * as stateModule from '@/integrations/discord/state';
 import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createGuildId } from '@/integrations/discord/types';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -59,16 +66,8 @@ describe('createDiscordInfrastructure', () => {
         spies.length = 0;
     });
 
-    test('returns all required infrastructure components', async () => {
+    test('returns all required infrastructure components', () => {
         // Mock all the Discord integration modules
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
         const mockDiscordClient = {} as unknown as Client;
         const mockChannelRegistryBackend = {};
         const mockChannelRegistry = {} as unknown as ChannelRegistryManager;
@@ -119,10 +118,7 @@ describe('createDiscordInfrastructure', () => {
         const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => mockBotStateManager);
         spies.push(stateSpy);
 
-        // Import after mocks are set up
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        const result = createDiscordInfrastructure({
+        const result = discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -138,15 +134,7 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('passes discordConfig to createDiscordClient', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('passes discordConfig to createDiscordClient', () => {
         const clientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client);
         spies.push(
             clientSpy,
@@ -165,9 +153,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -177,15 +163,7 @@ describe('createDiscordInfrastructure', () => {
         expect(clientSpy).toHaveBeenCalledWith(mockDiscordConfig);
     });
 
-    test('creates ChannelRegistryBackend with docClient and tableName', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('creates ChannelRegistryBackend with docClient and tableName', () => {
         // @ts-expect-error - Mocking constructor
         const backendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
             return {};
@@ -206,9 +184,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -218,15 +194,7 @@ describe('createDiscordInfrastructure', () => {
         expect(backendSpy).toHaveBeenCalledWith(mockDocClient, mockTableName);
     });
 
-    test('creates ChannelRegistryManager with correct options', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('creates ChannelRegistryManager with correct options', () => {
         const mockDiscordClient = {} as unknown as Client;
         const mockBackend = {};
 
@@ -250,9 +218,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -266,15 +232,7 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('creates message history chain with correct dependencies', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('creates message history chain with correct dependencies', () => {
         const mockDiscordClient = {} as unknown as Client;
         const mockFetcher = {} as unknown as MessageFetcher;
         const mockSummarizer = {} as unknown as MessageSummarizer;
@@ -299,9 +257,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -316,15 +272,7 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('creates CheckpointManager with memoryBackend', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('creates CheckpointManager with memoryBackend', () => {
         // @ts-expect-error - Mocking constructor
         const checkpointSpy = spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => {
             return {};
@@ -345,9 +293,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -357,15 +303,7 @@ describe('createDiscordInfrastructure', () => {
         expect(checkpointSpy).toHaveBeenCalledWith({ backend: mockMemoryBackend });
     });
 
-    test('creates InboxManager with correct dependencies', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('creates InboxManager with correct dependencies', () => {
         const mockCheckpointManager = {};
         const mockSearchService = {} as unknown as MessageSearchService;
         const mockRegistry = {} as unknown as ChannelRegistryManager;
@@ -390,9 +328,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -407,15 +343,7 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('creates BotStateManager with logger and throttle config', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('creates BotStateManager with logger and throttle config', () => {
         // @ts-expect-error - Mocking constructor
         const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}));
         spies.push(
@@ -434,9 +362,7 @@ describe('createDiscordInfrastructure', () => {
             stateSpy
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -449,18 +375,14 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('throws when createDiscordClient throws', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-
+    test('throws when createDiscordClient throws', () => {
         const testError = new Error('Discord client creation failed');
         const clientSpy = spyOn(clientModule, 'createDiscordClient').mockImplementation(() => {
             throw testError;
         });
         spies.push(clientSpy);
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        expect(() => createDiscordInfrastructure({
+        expect(() => discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -468,10 +390,7 @@ describe('createDiscordInfrastructure', () => {
         })).toThrow(testError);
     });
 
-    test('throws when ChannelRegistryBackend constructor throws', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-
+    test('throws when ChannelRegistryBackend constructor throws', () => {
         const testError = new Error('Backend creation failed');
 
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client));
@@ -481,9 +400,7 @@ describe('createDiscordInfrastructure', () => {
         });
         spies.push(backendSpy);
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
-        expect(() => createDiscordInfrastructure({
+        expect(() => discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -491,15 +408,7 @@ describe('createDiscordInfrastructure', () => {
         })).toThrow(testError);
     });
 
-    test('handles missing presence config', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('handles missing presence config', () => {
         // @ts-expect-error - Mocking constructor
         const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}));
         spies.push(
@@ -518,14 +427,12 @@ describe('createDiscordInfrastructure', () => {
             stateSpy
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
         const configWithoutPresence = {
             ...mockDiscordConfig,
             presence: undefined,
         };
 
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: configWithoutPresence,
             docClient:     mockDocClient,
             tableName:     mockTableName,
@@ -538,15 +445,7 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('handles missing inbox config', async () => {
-        const clientModule = await import('@/integrations/discord/client');
-        const channelRegistryModule = await import('@/integrations/discord/channel-registry');
-        const fetcherModule = await import('@/integrations/discord/message-history/fetcher');
-        const summarizerModule = await import('@/integrations/discord/message-history/summarizer');
-        const searchModule = await import('@/integrations/discord/message-history/search');
-        const inboxModule = await import('@/integrations/discord/inbox');
-        const stateModule = await import('@/integrations/discord/state');
-
+    test('handles missing inbox config', () => {
         const mockSearchService = {} as unknown as MessageSearchService;
         const mockRegistry = {} as unknown as ChannelRegistryManager;
         const mockCheckpointManager = {};
@@ -569,14 +468,12 @@ describe('createDiscordInfrastructure', () => {
             spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
         );
 
-        const { createDiscordInfrastructure } = await import('@/app/discord-infrastructure');
-
         const configWithoutInbox = {
             ...mockDiscordConfig,
             inbox: undefined,
         };
 
-        createDiscordInfrastructure({
+        discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: configWithoutInbox,
             docClient:     mockDocClient,
             tableName:     mockTableName,

@@ -1,7 +1,7 @@
-/* eslint-disable no-restricted-syntax -- handlers are imported dynamically in wrapper functions to test the public export surface; the module is already loaded so the performance cost is a cache lookup, not a re-evaluation */
 import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
+import { search, recall, list_by_layer } from '@/storage/memory-tool/handlers';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
 // Helper to create a minimal mock backend for concurrent tests
@@ -26,13 +26,10 @@ describe('Memory Tool Handlers - Search Operations', () => {
     });
 
     describe('search', () => {
-        const searchHandler = async (
+        const searchHandler = (
             backend: MemoryToolBackend,
             params: { tags?: string[], layer?: string, time_range?: { start: string, end: string }, limit?: number }
-        ): Promise<string> => {
-            const { search } = await import('@/storage/memory-tool/handlers');
-            return search(backend, params as Parameters<typeof search>[1]);
-        };
+        ): Promise<string> => search(backend, params as Parameters<typeof search>[1]);
 
         describe('mock verification', () => {
             it('should search by single tag', async () => {
@@ -333,13 +330,10 @@ describe('Memory Tool Handlers - Search Operations', () => {
     });
 
     describe('recall', () => {
-        const recallHandler = async (
+        const recallHandler = (
             backend: MemoryToolBackend,
             params: { max_items?: number, include_layers?: string[] }
-        ): Promise<string> => {
-            const { recall } = await import('@/storage/memory-tool/handlers');
-            return recall(backend, params as Parameters<typeof recall>[1]);
-        };
+        ): Promise<string> => recall(backend, params as Parameters<typeof recall>[1]);
 
         describe('mock verification', () => {
             it('should pass max_items to getAutoLoadItems', async () => {
@@ -628,13 +622,10 @@ describe('Memory Tool Handlers - Search Operations', () => {
     });
 
     describe('list_by_layer', () => {
-        const listByLayerHandler = async (
+        const listByLayerHandler = (
             backend: MemoryToolBackend,
             params: { layer: string, include_content?: boolean, limit?: number }
-        ): Promise<string> => {
-            const { list_by_layer } = await import('@/storage/memory-tool/handlers');
-            return list_by_layer(backend, params as Parameters<typeof list_by_layer>[1]);
-        };
+        ): Promise<string> => list_by_layer(backend, params as Parameters<typeof list_by_layer>[1]);
 
         describe('mock verification', () => {
             it('should list items by layer without content', async () => {
@@ -841,13 +832,10 @@ describe('Memory Tool Handlers - Search Operations', () => {
     });
 
     describe('search query building and logging', () => {
-        const searchHandler = async (
+        const searchHandler = (
             backend: MemoryToolBackend,
             params: { tags?: string[], layer?: string, time_range?: { start: string, end: string }, limit?: number }
-        ): Promise<string> => {
-            const { search } = await import('@/storage/memory-tool/handlers');
-            return search(backend, params as Parameters<typeof search>[1]);
-        };
+        ): Promise<string> => search(backend, params as Parameters<typeof search>[1]);
 
         it('should log search with tags joined by comma as query', async () => {
             mockBackend.searchByTags = mock(async () => ({

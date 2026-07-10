@@ -3,7 +3,8 @@ import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import * as loggerModule from '@hughescr/logger';
-import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs } from '../../../src/agent/agent';
+import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs, resetLogStreamState } from '../../../src/agent/agent';
+import * as sessionCleanupModule from '../../../src/agent/session-cleanup';
 import { type PlatformImage } from '../../../src/agent/types';
 import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '../../../src/integrations/discord/types';
 import { mockLogger } from '../../setup';
@@ -1828,9 +1829,7 @@ describe('createClaudeAgent', () => {
             });
 
             // Spy on cleanupSession (it's a fire-and-forget call)
-            // eslint-disable-next-line no-restricted-syntax -- dynamic import required to spy on module-level export before test execution
-            const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
-            const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
+            const cleanupSpy = spyOn(sessionCleanupModule, 'cleanupSession');
 
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext], { abortController });
@@ -1861,9 +1860,7 @@ describe('createClaudeAgent', () => {
 
             // Spy on cleanupSession — it is called directly (fire-and-forget) for the non-interrupted path.
             // Interrupted sessions are cleaned up by the SessionEnd hook in hooks/lifecycle.ts.
-            // eslint-disable-next-line no-restricted-syntax -- dynamic import required to spy on module-level export before test execution
-            const cleanupSessionModule = await import('../../../src/agent/session-cleanup');
-            const cleanupSpy = spyOn(cleanupSessionModule, 'cleanupSession');
+            const cleanupSpy = spyOn(sessionCleanupModule, 'cleanupSession');
 
             const agent = createClaudeAgent({});
             const result = await agent.handleInput([mockMessageContext]);
@@ -2246,11 +2243,8 @@ describe('createClaudeAgent', () => {
     });
 
     describe('logUserEvent and logAssistantEvent', () => {
-        beforeEach(async () => {
+        beforeEach(() => {
             mockLogger.debug.mockClear();
-            // Import and use the resetLogStreamState function
-            // eslint-disable-next-line no-restricted-syntax -- dynamic import required; resetLogStreamState is module-level state, must be imported after mock setup
-            const { resetLogStreamState } = await import('../../../src/agent/agent');
             resetLogStreamState();
         });
 
@@ -3033,8 +3027,6 @@ describe('createClaudeAgent', () => {
     describe('resetLogStreamState', () => {
         test('should start with empty pendingToolRequests', async () => {
             // Verify initial state by sending a user message with no prior tool requests
-            // eslint-disable-next-line no-restricted-syntax -- dynamic import required; resetLogStreamState is module-level state
-            const { resetLogStreamState } = await import('../../../src/agent/agent');
             resetLogStreamState();
             mockLogger.debug.mockClear();
 
@@ -3097,8 +3089,6 @@ describe('createClaudeAgent', () => {
             await agent.handleInput([mockMessageContext]);
 
             // Now reset the state
-            // eslint-disable-next-line no-restricted-syntax -- dynamic import required; resetLogStreamState is module-level state
-            const { resetLogStreamState } = await import('../../../src/agent/agent');
             resetLogStreamState();
 
             // Clear logs and run another batch

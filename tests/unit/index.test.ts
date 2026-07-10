@@ -1,10 +1,43 @@
-/* eslint-disable no-restricted-syntax -- This file tests createApp() wiring; dynamic imports are required so that spyOn() can intercept constructors and factory functions before they are called during module load. Refactoring to static imports + beforeEach spyOn would require restructuring how module-level singletons are initialized. */
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { mockLogger, resetMockSstResource } from '../setup';
+// Static (file-scope) imports used throughout this file's tests instead of per-test
+// `await import(...)`. spyOn() still intercepts these exports before createApp() calls
+// them, since ESM re-exports are live bindings — a per-test dynamic import is not required
+// for that to work, and Bun's dynamic import has real per-call overhead (~0.6ms even for
+// an already-cached module — measured via local benchmark), which on a slow CI runner was
+// pushing tests close enough to the 60ms CI timeout cap to risk a mid-test timeout (see CI
+// failure: "should throw fatal error when ChannelRegistryBackend construction fails" at
+// 64.40ms on macOS).
+import * as staticAgentModule from '@/agent/agent';
+import * as staticContextBuilderModule from '@/agent/context-builder';
+import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
+import * as staticInboxMcpModule from '@/agent/inbox-mcp-server';
+import * as staticMemoryMcpModule from '@/agent/memory-mcp-server';
+import * as staticPluginLoaderModule from '@/agent/plugin-loader';
+import * as staticQuestionRegistryModule from '@/agent/question-registry';
 import type { StreamTracker } from '@/agent/stream-tracker';
+import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
+import * as staticTaskCopierModule from '@/agent/task-directory-copier';
+import * as staticTaskCoordinatorModule from '@/agent/task-persistence-coordinator';
+import * as staticConfigModule from '@/config/loader';
+import * as staticIndexModule from '@/index';
+import * as staticDiscordModule from '@/integrations/discord/bot';
+import * as staticChannelRegistryModule from '@/integrations/discord/channel-registry';
+import * as staticDiscordClientModule from '@/integrations/discord/client';
+import * as staticCheckpointModule from '@/integrations/discord/inbox';
+import * as staticMessageFetcherModule from '@/integrations/discord/message-history/fetcher';
+import * as staticMessageSearchModule from '@/integrations/discord/message-history/search';
+import * as staticMessageSummarizerModule from '@/integrations/discord/message-history/summarizer';
+import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setup';
+import * as staticStateModule from '@/integrations/discord/state';
 import { createGuildId } from '@/integrations/discord/types';
+import * as staticWildDuckClientModule from '@/integrations/email';
+import * as staticPersonAllowlistModule from '@/storage';
+import * as staticStorageClientModule from '@/storage/client';
+import * as staticMemoryToolModule from '@/storage/memory-tool';
+import * as staticTaskSessionModule from '@/storage/task-session';
 
 describe('createApp', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -32,9 +65,8 @@ describe('createApp', () => {
     describe('Memory initialization failure handling', () => {
         test('should throw fatal error when memory backend initialization fails', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -42,16 +74,14 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock MemoryToolBackend to throw error (now REQUIRED, not optional)
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => {
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => {
                 throw new Error('Memory backend initialization failed');
             });
             spies.push(MemoryToolBackendSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -87,21 +117,20 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp - should throw raw error from factory
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             expect(createApp()).rejects.toThrow('Memory backend initialization failed');
         });
 
         test('should handle non-Error exceptions in memory initialization', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -109,16 +138,14 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock MemoryToolBackend to throw a string (non-Error)
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => {
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => {
                 throw 'String error thrown';
             });
             spies.push(MemoryToolBackendSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -154,13 +181,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp - should throw raw string error
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             expect(createApp()).rejects.toThrow('String error thrown');
         });
     });
@@ -168,27 +195,23 @@ describe('createApp', () => {
     describe('Plugin loading path', () => {
         test('should call loadPlugins with absolute path to agents-skills-plugins/plugins', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
             });
             spies.push(createClientSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
-            const discordModule = await import('@/integrations/discord/bot');
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
                 triggerCatchUp: mock(async () => undefined),
@@ -196,118 +219,97 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock all required systems to succeed
-            const memoryMcpModule = await import('@/agent/memory-mcp-server');
-            const createMemoryMcpSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof memoryMcpModule.createMemoryMCPServer>);
+            const createMemoryMcpSpy = spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>);
             spies.push(createMemoryMcpSpy);
 
-            const discordMcpModule = await import('@/agent/discord-mcp-server');
-            const createDiscordMcpSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof discordMcpModule.createDiscordMCPServer>);
+            const createDiscordMcpSpy = spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>);
             spies.push(createDiscordMcpSpy);
 
-            const discordClientModule = await import('@/integrations/discord/client');
-            const createDiscordClientSpy = spyOn(discordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof discordClientModule.createDiscordClient>);
+            const createDiscordClientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
             spies.push(createDiscordClientSpy);
 
-            const messageFetcherModule = await import('@/integrations/discord/message-history/fetcher');
-            const createFetcherSpy = spyOn(messageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof messageFetcherModule.createMessageFetcher>);
+            const createFetcherSpy = spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>);
             spies.push(createFetcherSpy);
 
-            const messageSummarizerModule = await import('@/integrations/discord/message-history/summarizer');
-            const createSummarizerSpy = spyOn(messageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof messageSummarizerModule.createMessageSummarizer>);
+            const createSummarizerSpy = spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>);
             spies.push(createSummarizerSpy);
 
-            const messageSearchModule = await import('@/integrations/discord/message-history/search');
-            const createSearchSpy = spyOn(messageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof messageSearchModule.createMessageSearchService>);
+            const createSearchSpy = spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>);
             spies.push(createSearchSpy);
 
-            const questionRegistryModule = await import('@/agent/question-registry');
             // @ts-expect-error - Mocking constructor
-            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof questionRegistryModule.QuestionRegistry>));
+            const QuestionRegistrySpy = spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>));
             spies.push(QuestionRegistrySpy);
 
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
-            const personAllowlistModule = await import('@/storage');
             // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            const PersonAllowlistSpy = spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
-            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>));
             spies.push(PersonAllowlistSpy);
 
-            const contextBuilderModule = await import('@/agent/context-builder');
-            const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
+            const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-            const createInboxMcpSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof inboxMcpModule.createInboxMCPServer>);
+            const createInboxMcpSpy = spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>);
             spies.push(createInboxMcpSpy);
 
-            const checkpointModule = await import('@/integrations/discord/inbox');
             // @ts-expect-error - Mocking constructor
-            const CheckpointManagerSpy = spyOn(checkpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof checkpointModule.CheckpointManager>));
+            const CheckpointManagerSpy = spyOn(staticCheckpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.CheckpointManager>));
             spies.push(CheckpointManagerSpy);
             // @ts-expect-error - Mocking constructor
-            const InboxManagerSpy = spyOn(checkpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof checkpointModule.InboxManager>));
+            const InboxManagerSpy = spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>));
             spies.push(InboxManagerSpy);
 
-            const stateModule = await import('@/integrations/discord/state');
             // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
+            const createBotStateManagerSpy = spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>));
             spies.push(createBotStateManagerSpy);
 
-            const taskSessionModule = await import('@/storage/task-session');
             // @ts-expect-error - Mocking constructor
-            const TaskSessionBackendSpy = spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof taskSessionModule.TaskSessionBackend>));
+            const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
             spies.push(TaskSessionBackendSpy);
 
-            const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-            const createTaskCleanupSpy = spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof taskCleanupModule.createTaskCleanupProcessor>);
+            const createTaskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>);
             spies.push(createTaskCleanupSpy);
 
-            const taskCopierModule = await import('@/agent/task-directory-copier');
-            const createTaskCopierSpy = spyOn(taskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof taskCopierModule.createTaskDirectoryCopier>);
+            const createTaskCopierSpy = spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>);
             spies.push(createTaskCopierSpy);
 
-            const taskCoordinatorModule = await import('@/agent/task-persistence-coordinator');
-            const createTaskCoordinatorSpy = spyOn(taskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof taskCoordinatorModule.createTaskPersistenceCoordinator>);
+            const createTaskCoordinatorSpy = spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>);
             spies.push(createTaskCoordinatorSpy);
 
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>));
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
             spies.push(ChannelRegistryBackendSpy);
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
+            const ChannelRegistryManagerSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
 
             // Mock WildDuckClient to prevent real HTTP calls in email setup
-            const wildDuckClientModule = await import('@/integrations/email');
             // @ts-expect-error - Mocking constructor
-            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            const WildDuckClientSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
                 init: mock(async () => {}),
-            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
             spies.push(WildDuckClientSpy);
 
             // Mock setupEmail to prevent real email integration setup
-            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
-            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+            const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:     mock(async () => {}),
             });
             spies.push(setupEmailSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -343,13 +345,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             await createApp();
 
             // Kills mutant: Verify loadPlugins was called with absolute path to agents-skills-plugins/plugins
@@ -361,27 +363,23 @@ describe('createApp', () => {
     describe('Identity context loading branches', () => {
         test('should use fallback when oauthToken is falsy (empty string)', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
             });
             spies.push(createClientSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
-            const discordModule = await import('@/integrations/discord/bot');
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
                 triggerCatchUp: mock(async () => undefined),
@@ -389,118 +387,97 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock all required systems to succeed
-            const memoryMcpModule = await import('@/agent/memory-mcp-server');
-            const createMemoryMcpSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof memoryMcpModule.createMemoryMCPServer>);
+            const createMemoryMcpSpy = spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>);
             spies.push(createMemoryMcpSpy);
 
-            const discordMcpModule = await import('@/agent/discord-mcp-server');
-            const createDiscordMcpSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof discordMcpModule.createDiscordMCPServer>);
+            const createDiscordMcpSpy = spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>);
             spies.push(createDiscordMcpSpy);
 
-            const discordClientModule = await import('@/integrations/discord/client');
-            const createDiscordClientSpy = spyOn(discordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof discordClientModule.createDiscordClient>);
+            const createDiscordClientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
             spies.push(createDiscordClientSpy);
 
-            const messageFetcherModule = await import('@/integrations/discord/message-history/fetcher');
-            const createFetcherSpy = spyOn(messageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof messageFetcherModule.createMessageFetcher>);
+            const createFetcherSpy = spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>);
             spies.push(createFetcherSpy);
 
-            const messageSummarizerModule = await import('@/integrations/discord/message-history/summarizer');
-            const createSummarizerSpy = spyOn(messageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof messageSummarizerModule.createMessageSummarizer>);
+            const createSummarizerSpy = spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>);
             spies.push(createSummarizerSpy);
 
-            const messageSearchModule = await import('@/integrations/discord/message-history/search');
-            const createSearchSpy = spyOn(messageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof messageSearchModule.createMessageSearchService>);
+            const createSearchSpy = spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>);
             spies.push(createSearchSpy);
 
-            const questionRegistryModule = await import('@/agent/question-registry');
             // @ts-expect-error - Mocking constructor
-            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof questionRegistryModule.QuestionRegistry>));
+            const QuestionRegistrySpy = spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>));
             spies.push(QuestionRegistrySpy);
 
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
-            const personAllowlistModule = await import('@/storage');
             // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            const PersonAllowlistSpy = spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
-            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>));
             spies.push(PersonAllowlistSpy);
 
-            const contextBuilderModule = await import('@/agent/context-builder');
-            const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
+            const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-            const createInboxMcpSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof inboxMcpModule.createInboxMCPServer>);
+            const createInboxMcpSpy = spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>);
             spies.push(createInboxMcpSpy);
 
-            const checkpointModule = await import('@/integrations/discord/inbox');
             // @ts-expect-error - Mocking constructor
-            const CheckpointManagerSpy = spyOn(checkpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof checkpointModule.CheckpointManager>));
+            const CheckpointManagerSpy = spyOn(staticCheckpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.CheckpointManager>));
             spies.push(CheckpointManagerSpy);
             // @ts-expect-error - Mocking constructor
-            const InboxManagerSpy = spyOn(checkpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof checkpointModule.InboxManager>));
+            const InboxManagerSpy = spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>));
             spies.push(InboxManagerSpy);
 
-            const stateModule = await import('@/integrations/discord/state');
             // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
+            const createBotStateManagerSpy = spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>));
             spies.push(createBotStateManagerSpy);
 
-            const taskSessionModule = await import('@/storage/task-session');
             // @ts-expect-error - Mocking constructor
-            const TaskSessionBackendSpy = spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof taskSessionModule.TaskSessionBackend>));
+            const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
             spies.push(TaskSessionBackendSpy);
 
-            const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-            const createTaskCleanupSpy = spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof taskCleanupModule.createTaskCleanupProcessor>);
+            const createTaskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>);
             spies.push(createTaskCleanupSpy);
 
-            const taskCopierModule = await import('@/agent/task-directory-copier');
-            const createTaskCopierSpy = spyOn(taskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof taskCopierModule.createTaskDirectoryCopier>);
+            const createTaskCopierSpy = spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>);
             spies.push(createTaskCopierSpy);
 
-            const taskCoordinatorModule = await import('@/agent/task-persistence-coordinator');
-            const createTaskCoordinatorSpy = spyOn(taskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof taskCoordinatorModule.createTaskPersistenceCoordinator>);
+            const createTaskCoordinatorSpy = spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>);
             spies.push(createTaskCoordinatorSpy);
 
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>));
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
             spies.push(ChannelRegistryBackendSpy);
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
+            const ChannelRegistryManagerSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
 
             // Mock WildDuckClient to prevent real HTTP calls in email setup
-            const wildDuckClientModule = await import('@/integrations/email');
             // @ts-expect-error - Mocking constructor
-            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            const WildDuckClientSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
                 init: mock(async () => {}),
-            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
             spies.push(WildDuckClientSpy);
 
             // Mock setupEmail to prevent real email integration setup
-            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
-            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+            const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:     mock(async () => {}),
             });
             spies.push(setupEmailSpy);
 
             // Mock loadConfig with empty oauthToken
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -536,13 +513,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             await createApp();
 
             // Kills mutant on line 216: When oauthToken is falsy, identityContext should stay undefined
@@ -554,9 +531,8 @@ describe('createApp', () => {
 
         test('should call loadCoreIdentity when oauthToken is truthy and contextBuilder exists', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -564,25 +540,21 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock context builder with loadCoreIdentity
-            const contextBuilderModule = await import('@/agent/context-builder');
             const mockLoadCoreIdentity = mock(async () => 'Test Identity from Memory');
-            const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({
+            const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({
                 loadCoreIdentity: mockLoadCoreIdentity,
-            } as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
+            } as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
-            const discordModule = await import('@/integrations/discord/bot');
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
                 triggerCatchUp: mock(async () => undefined),
@@ -590,72 +562,60 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock MCP server factories
-            const memoryMcpModule = await import('@/agent/memory-mcp-server');
-            const createMemoryMcpSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof memoryMcpModule.createMemoryMCPServer>);
+            const createMemoryMcpSpy = spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>);
             spies.push(createMemoryMcpSpy);
 
-            const discordMcpModule = await import('@/agent/discord-mcp-server');
-            const createDiscordMcpSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof discordMcpModule.createDiscordMCPServer>);
+            const createDiscordMcpSpy = spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>);
             spies.push(createDiscordMcpSpy);
 
-            const discordClientModule = await import('@/integrations/discord/client');
-            const createDiscordClientSpy = spyOn(discordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof discordClientModule.createDiscordClient>);
+            const createDiscordClientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
             spies.push(createDiscordClientSpy);
 
-            const messageFetcherModule = await import('@/integrations/discord/message-history/fetcher');
-            const createFetcherSpy = spyOn(messageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof messageFetcherModule.createMessageFetcher>);
+            const createFetcherSpy = spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>);
             spies.push(createFetcherSpy);
 
-            const messageSummarizerModule = await import('@/integrations/discord/message-history/summarizer');
-            const createSummarizerSpy = spyOn(messageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof messageSummarizerModule.createMessageSummarizer>);
+            const createSummarizerSpy = spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>);
             spies.push(createSummarizerSpy);
 
-            const messageSearchModule = await import('@/integrations/discord/message-history/search');
-            const createSearchSpy = spyOn(messageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof messageSearchModule.createMessageSearchService>);
+            const createSearchSpy = spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>);
             spies.push(createSearchSpy);
 
-            const questionRegistryModule = await import('@/agent/question-registry');
             // @ts-expect-error - Mocking constructor
-            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof questionRegistryModule.QuestionRegistry>));
+            const QuestionRegistrySpy = spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>));
             spies.push(QuestionRegistrySpy);
 
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
-            const personAllowlistModule = await import('@/storage');
             // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            const PersonAllowlistSpy = spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
-            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>));
             spies.push(PersonAllowlistSpy);
 
             // Mock WildDuckClient to prevent real HTTP calls in email setup
-            const wildDuckClientModule = await import('@/integrations/email');
             // @ts-expect-error - Mocking constructor
-            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            const WildDuckClientSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
                 init: mock(async () => {}),
-            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
             spies.push(WildDuckClientSpy);
 
             // Mock setupEmail to prevent real email integration setup
-            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
-            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+            const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:     mock(async () => {}),
             });
             spies.push(setupEmailSpy);
 
             // Mock loadConfig with valid oauthToken
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -691,13 +651,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             await createApp();
 
             // Kills mutant on lines 130-134: Verify loadCoreIdentity was called
@@ -711,9 +671,8 @@ describe('createApp', () => {
 
         test('should use fallback when loadCoreIdentity returns empty string', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -721,25 +680,21 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock context builder with loadCoreIdentity returning empty string
-            const contextBuilderModule = await import('@/agent/context-builder');
             const mockLoadCoreIdentity = mock(async () => ''); // Empty string (falsy)
-            const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({
+            const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({
                 loadCoreIdentity: mockLoadCoreIdentity,
-            } as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
+            } as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
-            const discordModule = await import('@/integrations/discord/bot');
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
                 triggerCatchUp: mock(async () => undefined),
@@ -747,72 +702,60 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock MCP server factories (same as previous test)
-            const memoryMcpModule = await import('@/agent/memory-mcp-server');
-            const createMemoryMcpSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof memoryMcpModule.createMemoryMCPServer>);
+            const createMemoryMcpSpy = spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>);
             spies.push(createMemoryMcpSpy);
 
-            const discordMcpModule = await import('@/agent/discord-mcp-server');
-            const createDiscordMcpSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof discordMcpModule.createDiscordMCPServer>);
+            const createDiscordMcpSpy = spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>);
             spies.push(createDiscordMcpSpy);
 
-            const discordClientModule = await import('@/integrations/discord/client');
-            const createDiscordClientSpy = spyOn(discordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof discordClientModule.createDiscordClient>);
+            const createDiscordClientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
             spies.push(createDiscordClientSpy);
 
-            const messageFetcherModule = await import('@/integrations/discord/message-history/fetcher');
-            const createFetcherSpy = spyOn(messageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof messageFetcherModule.createMessageFetcher>);
+            const createFetcherSpy = spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>);
             spies.push(createFetcherSpy);
 
-            const messageSummarizerModule = await import('@/integrations/discord/message-history/summarizer');
-            const createSummarizerSpy = spyOn(messageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof messageSummarizerModule.createMessageSummarizer>);
+            const createSummarizerSpy = spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>);
             spies.push(createSummarizerSpy);
 
-            const messageSearchModule = await import('@/integrations/discord/message-history/search');
-            const createSearchSpy = spyOn(messageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof messageSearchModule.createMessageSearchService>);
+            const createSearchSpy = spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>);
             spies.push(createSearchSpy);
 
-            const questionRegistryModule = await import('@/agent/question-registry');
             // @ts-expect-error - Mocking constructor
-            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof questionRegistryModule.QuestionRegistry>));
+            const QuestionRegistrySpy = spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>));
             spies.push(QuestionRegistrySpy);
 
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
-            const personAllowlistModule = await import('@/storage');
             // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            const PersonAllowlistSpy = spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
-            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>));
             spies.push(PersonAllowlistSpy);
 
             // Mock WildDuckClient to prevent real HTTP calls in email setup
-            const wildDuckClientModule = await import('@/integrations/email');
             // @ts-expect-error - Mocking constructor
-            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            const WildDuckClientSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
                 init: mock(async () => {}),
-            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
             spies.push(WildDuckClientSpy);
 
             // Mock setupEmail to prevent real email integration setup
-            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
-            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+            const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:     mock(async () => {}),
             });
             spies.push(setupEmailSpy);
 
             // Mock loadConfig with valid oauthToken
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -848,13 +791,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             await createApp();
 
             // Kills mutant on line 134: When loadCoreIdentity returns empty string, should use fallback
@@ -870,9 +813,8 @@ describe('createApp', () => {
             mockLogger.warn.mockClear();
 
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -880,27 +822,23 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock context builder with loadCoreIdentity throwing error
-            const contextBuilderModule = await import('@/agent/context-builder');
             const mockLoadCoreIdentity = mock(async () => {
                 throw new Error('Failed to load identity from DynamoDB');
             });
-            const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({
+            const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({
                 loadCoreIdentity: mockLoadCoreIdentity,
-            } as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
+            } as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
-            const discordModule = await import('@/integrations/discord/bot');
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
                 triggerCatchUp: mock(async () => undefined),
@@ -908,72 +846,60 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock MCP server factories
-            const memoryMcpModule = await import('@/agent/memory-mcp-server');
-            const createMemoryMcpSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof memoryMcpModule.createMemoryMCPServer>);
+            const createMemoryMcpSpy = spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>);
             spies.push(createMemoryMcpSpy);
 
-            const discordMcpModule = await import('@/agent/discord-mcp-server');
-            const createDiscordMcpSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof discordMcpModule.createDiscordMCPServer>);
+            const createDiscordMcpSpy = spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>);
             spies.push(createDiscordMcpSpy);
 
-            const discordClientModule = await import('@/integrations/discord/client');
-            const createDiscordClientSpy = spyOn(discordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof discordClientModule.createDiscordClient>);
+            const createDiscordClientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
             spies.push(createDiscordClientSpy);
 
-            const messageFetcherModule = await import('@/integrations/discord/message-history/fetcher');
-            const createFetcherSpy = spyOn(messageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof messageFetcherModule.createMessageFetcher>);
+            const createFetcherSpy = spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>);
             spies.push(createFetcherSpy);
 
-            const messageSummarizerModule = await import('@/integrations/discord/message-history/summarizer');
-            const createSummarizerSpy = spyOn(messageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof messageSummarizerModule.createMessageSummarizer>);
+            const createSummarizerSpy = spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>);
             spies.push(createSummarizerSpy);
 
-            const messageSearchModule = await import('@/integrations/discord/message-history/search');
-            const createSearchSpy = spyOn(messageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof messageSearchModule.createMessageSearchService>);
+            const createSearchSpy = spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>);
             spies.push(createSearchSpy);
 
-            const questionRegistryModule = await import('@/agent/question-registry');
             // @ts-expect-error - Mocking constructor
-            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof questionRegistryModule.QuestionRegistry>));
+            const QuestionRegistrySpy = spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>));
             spies.push(QuestionRegistrySpy);
 
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
-            const personAllowlistModule = await import('@/storage');
             // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            const PersonAllowlistSpy = spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
-            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>));
             spies.push(PersonAllowlistSpy);
 
             // Mock WildDuckClient to prevent real HTTP calls in email setup
-            const wildDuckClientModule = await import('@/integrations/email');
             // @ts-expect-error - Mocking constructor
-            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            const WildDuckClientSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
                 init: mock(async () => {}),
-            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
             spies.push(WildDuckClientSpy);
 
             // Mock setupEmail to prevent real email integration setup
-            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
-            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+            const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:     mock(async () => {}),
             });
             spies.push(setupEmailSpy);
 
             // Mock loadConfig with valid oauthToken
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -1009,13 +935,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             await createApp();
 
             // Kills mutant on lines 136-140: Verify error was caught and logged
@@ -1033,9 +959,8 @@ describe('createApp', () => {
 
         test('should use fallback when contextBuilder is undefined', async () => {
             // Mock storage client to succeed (required for channelRegistry)
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -1043,34 +968,29 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock channelRegistry creation (REQUIRED)
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>));
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
             spies.push(ChannelRegistryBackendSpy);
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
+            const ChannelRegistryManagerSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
 
             // Mock MemoryToolBackend to throw error (so contextBuilder stays undefined)
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => {
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => {
                 throw new Error('Memory not available');
             });
             spies.push(MemoryToolBackendSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
-            const discordModule = await import('@/integrations/discord/bot');
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
                 triggerCatchUp: mock(async () => undefined),
@@ -1078,8 +998,7 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock loadConfig with valid oauthToken
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -1115,13 +1034,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp - should throw raw error from factory
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             expect(createApp()).rejects.toThrow('Memory not available');
         });
     });
@@ -1129,9 +1048,8 @@ describe('createApp', () => {
     describe('ChannelRegistry initialization failure handling', () => {
         test('should throw fatal error when ChannelRegistryBackend construction fails', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -1139,16 +1057,14 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock ChannelRegistryBackend constructor to throw error
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
                 throw new Error('DynamoDB connection failed');
             });
             spies.push(ChannelRegistryBackendSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -1184,21 +1100,20 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp - should throw raw error from factory
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             expect(createApp()).rejects.toThrow('DynamoDB connection failed');
         });
 
         test('should throw fatal error when ChannelRegistryManager construction fails', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -1206,21 +1121,19 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock ChannelRegistryBackend to succeed
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>));
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
             spies.push(ChannelRegistryBackendSpy);
 
             // Mock ChannelRegistryManager constructor to throw error
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => {
+            const ChannelRegistryManagerSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => {
                 throw new Error('Invalid configuration');
             });
             spies.push(ChannelRegistryManagerSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -1256,21 +1169,20 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp - should throw raw error from factory
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             expect(createApp()).rejects.toThrow('Invalid configuration');
         });
 
         test('should handle non-Error exceptions in ChannelRegistry initialization', async () => {
             // Mock storage client to succeed
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
                 tableName: 'IsambardMemory',
@@ -1278,16 +1190,14 @@ describe('createApp', () => {
             spies.push(createClientSpy);
 
             // Mock ChannelRegistryBackend to throw non-Error exception
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => {
                 throw 'String error in channel registry';
             });
             spies.push(ChannelRegistryBackendSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -1323,13 +1233,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp - should throw raw string error
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             expect(createApp()).rejects.toThrow('String error in channel registry');
         });
     });
@@ -1339,9 +1249,8 @@ describe('createApp', () => {
             mockLogger.debug.mockClear();
 
             // Mock storage client to succeed (required for channelRegistry)
-            const storageClientModule = await import('@/storage/client');
             const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-            const createClientSpy = spyOn(storageClientModule, 'createDynamoDBClient').mockReturnValue({
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 // Must include destroy() — app.stop() calls storage.holder.destroy()
                 client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
                 docClient: mockDocClient,
@@ -1349,20 +1258,17 @@ describe('createApp', () => {
             });
             spies.push(createClientSpy);
 
-            const pluginLoaderModule = await import('@/agent/plugin-loader');
-            const loadPluginsSpy = spyOn(pluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
+            const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const agentModule = await import('@/agent/agent');
-            const createAgentSpy = spyOn(agentModule, 'createClaudeAgent').mockReturnValue({
+            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
                 handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
             });
             spies.push(createAgentSpy);
 
             // Mock bot with trackable stop method
-            const discordModule = await import('@/integrations/discord/bot');
             const mockBotStop = mock(async () => undefined);
-            const createBotSpy = spyOn(discordModule, 'createDiscordBot').mockReturnValue({
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mockBotStop,
                 triggerCatchUp: mock(async () => undefined),
@@ -1370,118 +1276,97 @@ describe('createApp', () => {
             spies.push(createBotSpy);
 
             // Mock all required systems to succeed
-            const memoryMcpModule = await import('@/agent/memory-mcp-server');
-            const createMemoryMcpSpy = spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof memoryMcpModule.createMemoryMCPServer>);
+            const createMemoryMcpSpy = spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>);
             spies.push(createMemoryMcpSpy);
 
-            const discordMcpModule = await import('@/agent/discord-mcp-server');
-            const createDiscordMcpSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof discordMcpModule.createDiscordMCPServer>);
+            const createDiscordMcpSpy = spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>);
             spies.push(createDiscordMcpSpy);
 
-            const discordClientModule = await import('@/integrations/discord/client');
-            const createDiscordClientSpy = spyOn(discordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof discordClientModule.createDiscordClient>);
+            const createDiscordClientSpy = spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>);
             spies.push(createDiscordClientSpy);
 
-            const messageFetcherModule = await import('@/integrations/discord/message-history/fetcher');
-            const createFetcherSpy = spyOn(messageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof messageFetcherModule.createMessageFetcher>);
+            const createFetcherSpy = spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>);
             spies.push(createFetcherSpy);
 
-            const messageSummarizerModule = await import('@/integrations/discord/message-history/summarizer');
-            const createSummarizerSpy = spyOn(messageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof messageSummarizerModule.createMessageSummarizer>);
+            const createSummarizerSpy = spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>);
             spies.push(createSummarizerSpy);
 
-            const messageSearchModule = await import('@/integrations/discord/message-history/search');
-            const createSearchSpy = spyOn(messageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof messageSearchModule.createMessageSearchService>);
+            const createSearchSpy = spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>);
             spies.push(createSearchSpy);
 
-            const questionRegistryModule = await import('@/agent/question-registry');
             // @ts-expect-error - Mocking constructor
-            const QuestionRegistrySpy = spyOn(questionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof questionRegistryModule.QuestionRegistry>));
+            const QuestionRegistrySpy = spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>));
             spies.push(QuestionRegistrySpy);
 
-            const memoryToolModule = await import('@/storage/memory-tool');
             // @ts-expect-error - Mocking constructor
-            const MemoryToolBackendSpy = spyOn(memoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof memoryToolModule.MemoryToolBackend>));
+            const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>));
             spies.push(MemoryToolBackendSpy);
 
-            const personAllowlistModule = await import('@/storage');
             // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(personAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            const PersonAllowlistSpy = spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
-            } as unknown as InstanceType<typeof personAllowlistModule.PersonAllowlist>));
+            } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>));
             spies.push(PersonAllowlistSpy);
 
-            const contextBuilderModule = await import('@/agent/context-builder');
-            const createContextBuilderSpy = spyOn(contextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof contextBuilderModule.createContextBuilder>);
+            const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const inboxMcpModule = await import('@/agent/inbox-mcp-server');
-            const createInboxMcpSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof inboxMcpModule.createInboxMCPServer>);
+            const createInboxMcpSpy = spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>);
             spies.push(createInboxMcpSpy);
 
-            const checkpointModule = await import('@/integrations/discord/inbox');
             // @ts-expect-error - Mocking constructor
-            const CheckpointManagerSpy = spyOn(checkpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof checkpointModule.CheckpointManager>));
+            const CheckpointManagerSpy = spyOn(staticCheckpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.CheckpointManager>));
             spies.push(CheckpointManagerSpy);
             // @ts-expect-error - Mocking constructor
-            const InboxManagerSpy = spyOn(checkpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof checkpointModule.InboxManager>));
+            const InboxManagerSpy = spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>));
             spies.push(InboxManagerSpy);
 
-            const stateModule = await import('@/integrations/discord/state');
             // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof stateModule.BotStateManagerImpl>));
+            const createBotStateManagerSpy = spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>));
             spies.push(createBotStateManagerSpy);
 
-            const taskSessionModule = await import('@/storage/task-session');
             // @ts-expect-error - Mocking constructor
-            const TaskSessionBackendSpy = spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof taskSessionModule.TaskSessionBackend>));
+            const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
             spies.push(TaskSessionBackendSpy);
 
-            const taskCleanupModule = await import('@/agent/task-cleanup-processor');
-            const createTaskCleanupSpy = spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof taskCleanupModule.createTaskCleanupProcessor>);
+            const createTaskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>);
             spies.push(createTaskCleanupSpy);
 
-            const taskCopierModule = await import('@/agent/task-directory-copier');
-            const createTaskCopierSpy = spyOn(taskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof taskCopierModule.createTaskDirectoryCopier>);
+            const createTaskCopierSpy = spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>);
             spies.push(createTaskCopierSpy);
 
-            const taskCoordinatorModule = await import('@/agent/task-persistence-coordinator');
-            const createTaskCoordinatorSpy = spyOn(taskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof taskCoordinatorModule.createTaskPersistenceCoordinator>);
+            const createTaskCoordinatorSpy = spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>);
             spies.push(createTaskCoordinatorSpy);
 
-            const channelRegistryModule = await import('@/integrations/discord/channel-registry');
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryBackendSpy = spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryBackend>));
+            const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
             spies.push(ChannelRegistryBackendSpy);
             // @ts-expect-error - Mocking constructor
-            const ChannelRegistryManagerSpy = spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof channelRegistryModule.ChannelRegistryManager>));
+            const ChannelRegistryManagerSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryManager>));
             spies.push(ChannelRegistryManagerSpy);
 
             // Mock WildDuckClient to prevent real HTTP calls in email setup
-            const wildDuckClientModule = await import('@/integrations/email');
             // @ts-expect-error - Mocking constructor
-            const WildDuckClientSpy = spyOn(wildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            const WildDuckClientSpy = spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
                 init: mock(async () => {}),
-            } as unknown as InstanceType<typeof wildDuckClientModule.WildDuckClient>));
+            } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>));
             spies.push(WildDuckClientSpy);
 
             // Mock setupEmail to prevent real email integration setup
-            const emailSetupModule = await import('@/integrations/discord/setup/email-setup');
-            const setupEmailSpy = spyOn(emailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof emailSetupModule.setupEmail>>['adminChannelId'],
+            const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
                 sendApprovalRequest:     mock(async () => {}),
             });
             spies.push(setupEmailSpy);
 
             // Mock loadConfig and loadDynamoDBConfig
-            const configModule = await import('@/config/loader');
-            const loadConfigSpy = spyOn(configModule, 'loadConfig').mockReturnValue({
+            const loadConfigSpy = spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
                 app: {
                     nodeEnv:  'development',
                     logLevel: 'info',
@@ -1517,13 +1402,13 @@ describe('createApp', () => {
             });
             spies.push(loadConfigSpy);
 
-            const loadDynamoDBConfigSpy = spyOn(configModule, 'loadDynamoDBConfig').mockReturnValue({
+            const loadDynamoDBConfigSpy = spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
                 tableName: 'IsambardMemory',
             });
             spies.push(loadDynamoDBConfigSpy);
 
             // Import and call createApp
-            const { createApp } = await import('@/index');
+            const { createApp } = staticIndexModule;
             const app = await createApp();
 
             // Call stop twice

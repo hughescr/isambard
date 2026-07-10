@@ -12,13 +12,12 @@
  * - @@NO_RESPONSE@@ sentinel is respected
  */
 
-/* eslint-disable no-restricted-syntax -- sendResponseToWellKnownChannel is re-imported per test to avoid module-level spy contamination; these imports are lightweight (same module, cached by bun) and necessary because the function is a module-level export that needs fresh resolution after mock setup */
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type { Message, TextChannel, Client, DMChannel } from 'discord.js';
 import { ChannelNotAccessibleError, WellKnownChannelNotFoundError } from '@/errors/discord';
 import type { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
-import { sendResponse } from '@/integrations/discord/response-sender';
+import { sendResponse, sendResponseToWellKnownChannel } from '@/integrations/discord/response-sender';
 import type { BotStateManager } from '@/integrations/discord/state/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
@@ -532,8 +531,6 @@ describe('sendResponse', () => {
 
     describe('sendResponseToWellKnownChannel', () => {
         test('returns skipReason when response is null', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             const result = await sendResponseToWellKnownChannel({
                 response:       null,
                 sessionType:    'catching_up',
@@ -548,8 +545,6 @@ describe('sendResponse', () => {
         });
 
         test('returns skipReason when response is undefined', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             const result = await sendResponseToWellKnownChannel({
                 response:       undefined,
                 sessionType:    'perching',
@@ -564,8 +559,6 @@ describe('sendResponse', () => {
         });
 
         test('returns skipReason when response is empty string', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             const result = await sendResponseToWellKnownChannel({
                 response:       '',
                 sessionType:    'catching_up',
@@ -580,8 +573,6 @@ describe('sendResponse', () => {
         });
 
         test('detects sentinel and logs full response', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             mockRouteResponse.mockResolvedValue({
                 targetChannelId: 'catch-up-channel-789' as ChannelId,
                 shouldSend:      false,
@@ -603,8 +594,6 @@ describe('sendResponse', () => {
         });
 
         test('sends response to catch-up well-known channel', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             mockRouteResponse.mockResolvedValue({
                 targetChannelId: 'catch-up-channel-789' as ChannelId,
                 shouldSend:      true,
@@ -635,8 +624,6 @@ describe('sendResponse', () => {
         });
 
         test('sends response to perch-time well-known channel', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             mockRouteResponse.mockResolvedValue({
                 targetChannelId: 'perch-time-channel-890' as ChannelId,
                 shouldSend:      true,
@@ -667,8 +654,6 @@ describe('sendResponse', () => {
         });
 
         test('splits long messages into chunks and sends exact chunk count', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             // Create a message that produces exactly 2 chunks (1900 chars each)
             const twoChunkResponse = 'a'.repeat(1900) + 'b'.repeat(1900);
 
@@ -695,8 +680,6 @@ describe('sendResponse', () => {
         });
 
         test('handles send errors gracefully', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             const sendError = new Error('Failed to send to channel');
 
             mockRouteResponse.mockResolvedValue({
@@ -722,8 +705,6 @@ describe('sendResponse', () => {
         });
 
         test('handles well-known channel not found error', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             const notFoundError = new WellKnownChannelNotFoundError('catch-up');
             mockRouteResponse.mockRejectedValue(notFoundError);
 
@@ -741,8 +722,6 @@ describe('sendResponse', () => {
         });
 
         test('handles target channel not found', async () => {
-            const { sendResponseToWellKnownChannel } = await import('@/integrations/discord/response-sender');
-
             mockRouteResponse.mockResolvedValue({
                 targetChannelId: 'nonexistent-channel' as ChannelId,
                 shouldSend:      true,

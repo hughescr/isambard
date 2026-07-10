@@ -283,6 +283,16 @@ describe('VectorIndex', () => {
     });
 
     describe('VectorIndex.open()', () => {
+        // This test's genuine purpose is to exercise the real file-backed open path:
+        // a real bun:sqlite Database on disk, real sqlite-vec native extension loading
+        // (configureCustomSQLite + sqliteVec.load), a real schema migration, and real
+        // file cleanup — unlike every other test in this file, which uses
+        // VectorIndex.openWithDb(new Database(':memory:')) and stays well under 1ms.
+        // That is genuine native-binding/file I/O, not fakeable without testing
+        // something else, so per CLAUDE.md's documented last-resort exception this
+        // gets an explicit per-test timeout override instead of a sub-1ms budget.
+        // Observed CI durations vary by runner load (local: ~4ms; CI: up to ~1020ms),
+        // so the override is generous rather than tuned to a specific runner.
         it('opens a database at the given path and returns a VectorIndex', async () => {
             const tmpPath = `${process.env.TMPDIR ?? '/tmp'}/vec-test-${Date.now()}.sqlite`;
             const vi = await VectorIndex.open(tmpPath);
@@ -302,6 +312,6 @@ describe('VectorIndex', () => {
                 await Bun.file(`${tmpPath}-wal`).delete().catch(() => undefined);
                 await Bun.file(`${tmpPath}-shm`).delete().catch(() => undefined);
             }
-        });
+        }, 5000);
     });
 });

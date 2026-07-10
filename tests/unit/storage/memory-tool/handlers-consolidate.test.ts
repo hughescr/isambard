@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- consolidate handler is imported dynamically in a wrapper to test the public export surface; the module is already loaded so the performance cost is a cache lookup, not a re-evaluation */
 import { describe, it, test, expect, beforeEach, mock  } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import {
@@ -10,7 +9,8 @@ import {
     create,
     insert,
     str_replace as strReplace,
-    formatLineNumbers
+    formatLineNumbers,
+    consolidate
 } from '@/storage/memory-tool/handlers';
 import type { MemoryPath, ContentType } from '@/storage/memory-tool/types';
 
@@ -36,10 +36,7 @@ describe('Memory Tool Handlers - Consolidate and Logging', () => {
         const consolidateHandler = async (
             backend: MemoryToolBackend,
             params: { source_paths: string[], target_path: string, summary: string, keep_sources?: boolean }
-        ): Promise<string> => {
-            const { consolidate } = await import('@/storage/memory-tool/handlers');
-            return consolidate(backend, params);
-        };
+        ): Promise<string> => consolidate(backend, params);
 
         it('should create summary and delete sources', async () => {
             mockBackend.get = mock(async (path: MemoryPath) => {
