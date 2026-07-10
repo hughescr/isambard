@@ -1,0 +1,150 @@
+# Seed / re-seed the CI mutation baseline (reports/stryker-incremental.json in
+# actions/cache) that ci.yml's mutate job requires. Dispatch on develop:
+#   gh workflow run mutation-baseline-bootstrap.yml --ref develop
+# When: first-time setup, after a cache nuke, after any toolchain-fingerprint change
+# (bun version or bun.lock) — the mutate job fails fast telling you so.
+# Full ops runbook: the mutate job comment in ci.yml.
+#
+# Why sharded: full CI-config execution is 13,591 mutants ≈ 12h at concurrency 2
+# (measured 61m58s at concurrency 12 locally, ~3.3 s/mutant/worker; the ~3.2 s/mutant
+# CI wall figure is an EXTRAPOLATION — no shard has run on hosted hardware yet) vs
+# the 6-hour hosted-job cap. Verified enabler: a --mutate-scoped incremental run
+# COPIES out-of-scope baseline entries into its merged report (this also requires
+# stryker.conf.mjs ignorePatterns to stay broader than any --mutate scope — see the
+# comment there), so serialized shards accumulate one baseline. max-parallel: 1 is
+# load-bearing — concurrent shards would each restore the same base and the last
+# save would drop the others' results. Shards run SMALLEST FIRST: the first is a
+# deliberate ~30 min calibration pilot — check its wall time before the multi-hour
+# shards run; if (pilot mutation minutes / 419) x 1,300 threatens the 350-min shard
+# budget, cancel this dispatch and re-shard instead of burning hours (fail-fast
+# would stop a timed-out dispatch anyway, but later and more expensively).
+# A red shard saves nothing (save gated on success; break=100 keeps saved baselines
+# all-green). Re-dispatch after fixing is cheap: already-seeded shards reuse their
+# verdicts through the differ. Shard ORDER is not load-bearing for correctness;
+# each shard adds its slice to whatever baseline exists.
+#
+# Re-sharded 2026-07 (6→13 shards, max shard 2,963→~1,300): hosted runners are
+# assumed to be significantly slower per-worker than the ~3.0 s/mutant/worker
+# measured locally at concurrency 12 — CI itself runs at concurrency 2
+# (stryker.conf.mjs: isCI ? 2 : 12). At that local per-worker rate, the OLD
+# 2,963-mutant max shard's own-hardware wall time is 2,963/2 x 3.0s ≈ 74 min,
+# leaving only ~4.6x margin against the ~344-min mutation budget (350-min timeout
+# minus ~6 min install/dry-run overhead) before a slower-than-local CI runner blows
+# the budget. The NEW ~1,300 cap's own-hardware wall time is 1,300/2 x 3.0s ≈ 33
+# min, giving ~10x margin instead — the pilot shard's own measured rate (not this
+# assumption) remains the authoritative go/no-go signal per the checkpoint above.
+# Cost: ~+6 min install overhead x 7 extra jobs, negligible next to the added
+# margin.
+#
+# Shard sizing (exact CI-config mutant counts from the 2026-07 baseline census).
+# Three shards are closures — a family's full glob minus its sibling shards' globs
+# — so each family's union with its siblings is exact BY CONSTRUCTION; a new file
+# in that family lands in the closure shard until rebalanced:
+#   pilot-calibration      419   (tools 40, config 125, app 92, errors 162; ~22 min)
+#   agent-tail              597   (src/agent closure of agent-core-a/b/c)
+#   bsky                    715   (src/integrations/bsky)
+#   email                   725   (src/integrations/email)
+#   utils                   979   (src/utils)
+#   discord-tail-caldav   1,138   (discord closure of discord-primary/secondary + caldav)
+#   storage-tail-services 1,233   (storage closure of storage-primary + services)
+#   storage-primary       1,293   (memory-tool, memory-vec, memory-vec-store, client-holder.ts)
+#   agent-core-a          1,295   (agent.ts, discord-mcp-server.ts, context-builder.ts, answer-classifier)
+#   discord-secondary     1,298   (state, handlers.ts, inbox, messages.ts, allowlist-commands.ts,
+#                                  message-coordinator.ts, response-sender.ts,
+#                                  allowlist-interaction-handler.ts, catchup, history-provider.ts)
+#   discord-primary       1,299   (channel-registry, presence, message-history, register-commands.ts)
+#   agent-core-b          1,300   (memory-mcp-server.ts, browser, perch, email-mcp-server.ts,
+#                                  wikipedia-mcp-server.ts)
+#   agent-core-c          1,300   (bsky-mcp-server.ts, history-providers, plugin-loader.ts,
+#                                  session-cleanup.ts, task-cleanup-processor.ts, mcp-helpers.ts,
+#                                  stream-tracker.ts, browser-mcp-server.ts, caldav-mcp-server.ts,
+#                                  task-list-reader.ts, text-generator.ts)
+# Central estimates at the assumed ~3.2 s/mutant wall, concurrency 2 (an ASSUMPTION —
+# no shard has run on hosted hardware yet). Sum: 13,591.
+name: Mutation baseline bootstrap
+
+on:
+  workflow_dispatch:
+
+# Two overlapping bootstraps would interleave saves and waste hours; queue instead.
+concurrency:
+  group: mutation-baseline-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  shard:
+    name: Seed shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    # Largest shard 1,300 mutants ≈ 69 min central + ~6 min install/dry-run
+    # overhead; 350 gives >4x margin under the 360-min hosted cap. The pilot
+    # completes inside 350 even at 10x the assumed rate, so a bad rate yields a
+    # DATA POINT, not a timeout.
+    timeout-minutes: 350
+    strategy:
+      max-parallel: 1   # load-bearing: serializes shards so each builds on the last save
+      fail-fast: true   # a red shard cancels the rest; re-dispatch resumes from saved shards
+      matrix:
+        include:   # ordered smallest-first; with max-parallel: 1 list order IS run order
+          - shard: pilot-calibration
+            globs: 'tools/**/*.ts,src/config/**/*.ts,src/app/**/*.ts,src/errors/**/*.ts'
+          - shard: agent-tail   # closure: src/agent minus agent-core-a/b/c
+            globs: 'src/agent/**/*.ts,!src/agent/agent.ts,!src/agent/discord-mcp-server.ts,!src/agent/context-builder.ts,!src/agent/answer-classifier/**/*.ts,!src/agent/memory-mcp-server.ts,!src/agent/browser/**/*.ts,!src/agent/perch/**/*.ts,!src/agent/email-mcp-server.ts,!src/agent/wikipedia-mcp-server.ts,!src/agent/bsky-mcp-server.ts,!src/agent/history-providers/**/*.ts,!src/agent/plugin-loader.ts,!src/agent/session-cleanup.ts,!src/agent/task-cleanup-processor.ts,!src/agent/mcp-helpers.ts,!src/agent/stream-tracker.ts,!src/agent/browser-mcp-server.ts,!src/agent/caldav-mcp-server.ts,!src/agent/task-list-reader.ts,!src/agent/text-generator.ts'
+          - shard: bsky
+            globs: 'src/integrations/bsky/**/*.ts'
+          - shard: email
+            globs: 'src/integrations/email/**/*.ts'
+          - shard: utils
+            globs: 'src/utils/**/*.ts'
+          - shard: discord-tail-caldav   # closure: discord minus discord-primary/secondary, plus caldav
+            globs: 'src/integrations/discord/**/*.ts,!src/integrations/discord/channel-registry/**/*.ts,!src/integrations/discord/presence/**/*.ts,!src/integrations/discord/message-history/**/*.ts,!src/integrations/discord/register-commands.ts,!src/integrations/discord/state/**/*.ts,!src/integrations/discord/handlers.ts,!src/integrations/discord/inbox/**/*.ts,!src/integrations/discord/messages.ts,!src/integrations/discord/allowlist-commands.ts,!src/integrations/discord/message-coordinator.ts,!src/integrations/discord/response-sender.ts,!src/integrations/discord/allowlist-interaction-handler.ts,!src/integrations/discord/catchup/**/*.ts,!src/integrations/discord/history-provider.ts,src/integrations/caldav/**/*.ts'
+          - shard: storage-tail-services   # closure: storage minus storage-primary, plus services
+            globs: 'src/storage/**/*.ts,!src/storage/memory-tool/**/*.ts,!src/storage/memory-vec/**/*.ts,!src/storage/memory-vec-store/**/*.ts,!src/storage/client-holder.ts,src/services/**/*.ts'
+          - shard: storage-primary
+            globs: 'src/storage/memory-tool/**/*.ts,src/storage/memory-vec/**/*.ts,src/storage/memory-vec-store/**/*.ts,src/storage/client-holder.ts'
+          - shard: agent-core-a
+            globs: 'src/agent/agent.ts,src/agent/discord-mcp-server.ts,src/agent/context-builder.ts,src/agent/answer-classifier/**/*.ts'
+          - shard: discord-secondary
+            globs: 'src/integrations/discord/state/**/*.ts,src/integrations/discord/handlers.ts,src/integrations/discord/inbox/**/*.ts,src/integrations/discord/messages.ts,src/integrations/discord/allowlist-commands.ts,src/integrations/discord/message-coordinator.ts,src/integrations/discord/response-sender.ts,src/integrations/discord/allowlist-interaction-handler.ts,src/integrations/discord/catchup/**/*.ts,src/integrations/discord/history-provider.ts'
+          - shard: discord-primary
+            globs: 'src/integrations/discord/channel-registry/**/*.ts,src/integrations/discord/presence/**/*.ts,src/integrations/discord/message-history/**/*.ts,src/integrations/discord/register-commands.ts'
+          - shard: agent-core-b
+            globs: 'src/agent/memory-mcp-server.ts,src/agent/browser/**/*.ts,src/agent/perch/**/*.ts,src/agent/email-mcp-server.ts,src/agent/wikipedia-mcp-server.ts'
+          - shard: agent-core-c
+            globs: 'src/agent/bsky-mcp-server.ts,src/agent/history-providers/**/*.ts,src/agent/plugin-loader.ts,src/agent/session-cleanup.ts,src/agent/task-cleanup-processor.ts,src/agent/mcp-helpers.ts,src/agent/stream-tracker.ts,src/agent/browser-mcp-server.ts,src/agent/caldav-mcp-server.ts,src/agent/task-list-reader.ts,src/agent/text-generator.ts'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Identical key family to ci.yml's mutate job — sharing it is the whole point.
+      - name: Compute toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=${{ runner.os }}-bun$(bun --version)-lock${{ hashFiles('bun.lock') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore mutation baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.ref_name }}-
+            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-
+
+      # CLI --mutate overrides the config globs; negations behave as in the config
+      # (order-independent excludes). Env indirection keeps the invocation
+      # shell-injection-inert by construction.
+      - name: Mutation testing (shard)
+        env:
+          MUTATE_GLOBS: ${{ matrix.globs }}
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+        run: bun run mutate -- --mutate "$MUTATE_GLOBS"
+
+      - name: Save accumulated baseline (green shards only)
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.ref_name }}-bootstrap-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}

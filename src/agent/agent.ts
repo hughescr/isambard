@@ -16,7 +16,7 @@ import type { TaskPersistenceCoordinator } from './task-persistence-coordinator'
 import { type AgentStreamEvent, type MessageContext, type PlatformImage  } from './types';
 import { loadRetryConfig } from '@/config';
 import { InvariantViolationError } from '@/errors';
-import { formatLocalDateTime, resolveTimezone } from '@/utils';
+import { formatLocalDateTime, resolveTimezone, type RetryDeps } from '@/utils';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
@@ -281,6 +281,8 @@ export interface ClaudeAgentOptions {
     fallbackModel?:              string
     /** Optional state manager for compaction phase tracking (PreCompact/PostCompact hooks) */
     compactionStateManager?:     CompactionStateManager
+    /** Retry dependency overrides (sleep/now/logger) for the Claude query retry wrapper — test injection point, defaults to real timers in production */
+    retryDeps?:                  Partial<RetryDeps>
 }
 
 /** Options for handleInput processing */
@@ -1342,7 +1344,7 @@ async function collectBackgroundTasks(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, taskPersistenceCoordinator, mainModel, compactionStateManager, fallbackModel } = options;
+    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, taskPersistenceCoordinator, mainModel, compactionStateManager, fallbackModel, retryDeps } = options;
     const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
@@ -1352,6 +1354,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
     // Stryker disable next-line ObjectLiteral: Retry policy config object is structural, mutations don't affect behavior
     const retryableQuery = createRetryableQuery(query, {
         policy: retryConfig.claude,
+        deps:   retryDeps,
     });
 
     const agent: ClaudeAgent = {

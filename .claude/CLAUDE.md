@@ -23,7 +23,7 @@ Before any PR or commit:
 - [ ] All tests pass (`bun test`)
 - [ ] Zero TypeScript errors (`bun run typecheck`)
 - [ ] Zero lint warnings (`bun run lint`)
-- [ ] Mutation score = 100% for changed files (`bun mutate` — not `bun run mutate` or `npx stryker`. `reports/stryker-incremental.json` is sandbox-protected; use `dangerouslyDisableSandbox: true`.)
+- [ ] Mutation score = 100% (`bun mutate` — incremental over the full mutate glob, so only mutants your change affects re-execute; not `bun run mutate` or `npx stryker`. `reports/stryker-incremental.json` is sandbox-protected; use `dangerouslyDisableSandbox: true`.)
 
 ### Test Performance Anti-Patterns
 Since Stryker runs each test potentially hundreds of times, even small per-test overhead compounds dramatically. Every test should target <1ms execution. Avoid these patterns:

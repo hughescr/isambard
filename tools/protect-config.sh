@@ -32,7 +32,7 @@ PROTECTED_FILES=(
   "tsconfig.json"
   "bunfig.toml"
   "stryker.conf.mjs"
-  "knip.json"
+  "knip.config.ts"
 )
 
 # Check if the file is protected

@@ -172,8 +172,7 @@ async function executePrompt(
         let successResult: string | undefined;
         const tmpDir = await getTmpDir();
 
-        // boundary cast: the SDK's query() yields the broken `SDKMessage` union (see QueryEvent);
-        // laundering through `unknown` lets us consume the events under a resolvable type.
+        // boundary cast: the SDK's query() yields the broken `SDKMessage` union (see QueryEvent); laundering through `unknown` lets us consume the events under a resolvable type.
         const events = query({
             prompt,
             options: {

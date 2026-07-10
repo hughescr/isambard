@@ -1527,7 +1527,11 @@ describe('createClaudeAgent', () => {
                 } as unknown as Query;
             });
 
-            const agent = createClaudeAgent({});
+            // 'TimeoutError' is classified as a transient/retryable error (see classifyClaudeError),
+            // so the SDK query is retried once before the outer catch sees the final failure.
+            // Inject a no-op sleep so the real retry backoff (~1s by default) doesn't add
+            // real wall-clock delay to this test.
+            const agent = createClaudeAgent({ retryDeps: { sleep: () => Promise.resolve() } });
 
             // When abort signal is set, even non-AbortError should mark wasInterrupted=true
             const result = await agent.handleInput([mockMessageContext], { abortController });

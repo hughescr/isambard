@@ -108,6 +108,26 @@ function makeFactory() {
     });
 }
 
+// Every test in this file drives createWebViewAdapter() against a FakeWebView injected via
+// the factory parameter — none ever touches the real Bun.WebView/WebKit engine, on any OS.
+// The adapter's platform precheck (webview-adapter.ts, ensureView) rejects backend:'webkit'
+// on non-darwin BEFORE the factory is called, so without this stub every test using the
+// (webkit) defaultConfig runs only on real macOS despite asserting nothing platform-
+// specific. Stub process.platform to 'darwin' file-wide so these fake-based unit tests are
+// platform-independent. The 'platform precheck' describe below overrides this per-test to
+// exercise both branches of the real check; hook nesting (outer beforeEach first, outer
+// afterEach last) means its own capture/restore composes correctly inside this stub.
+let realPlatform: string;
+
+beforeEach(() => {
+    realPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin', writable: true });
+});
+
+afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, writable: true });
+});
+
 // ---------------------------------------------------------------------------
 // Lazy init
 // ---------------------------------------------------------------------------

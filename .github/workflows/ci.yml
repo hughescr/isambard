@@ -5,25 +5,195 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Manual trigger: re-run all gates on the current tip. The mutate job diffs against
+  # the cached baseline exactly like any other trusted run.
+  workflow_dispatch:
 
 jobs:
-  validate:
+  # Fast platform-agnostic gates: full test suite + static checks, each as its own step so
+  # a failure is visible per-gate in the Actions UI (the old `test:full` semicolon chain
+  # swallowed everything except mutate's exit code).
+  test-linux:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15   # observed full job ~3 min including the llama.cpp CPU build; generous headroom
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Unit tests
+        run: bun run test
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck
+      - name: ast-grep
+        run: bun run check:ast-grep
 
+  # Authoritative run of the full test suite on the production platform (macOS), including
+  # the from-source node-llama-cpp/llama.cpp postinstall build — a load-bearing workaround
+  # that this job is the ONLY CI validation of on Darwin. Honest scoping note: the
+  # webview-adapter tests themselves are OS-independent (fully faked; see the platform stub
+  # in tests/unit/agent/browser/webview-adapter.test.ts), so this job's value is the
+  # real-Darwin install + runtime environment, not webview-specific coverage. No test in
+  # the repo exercises a real Bun.WebView; that gap predates this change and is tracked
+  # separately, not hidden.
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30   # PLACEHOLDER: macOS native-build time unmeasured; tighten after first real run
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies (includes from-source llama.cpp build)
+        run: bun install --frozen-lockfile
+      - name: Unit tests
+        run: bun run test
+
+  # Mutation gate: the FULL mutate glob (src/**/*.ts minus src/index.ts, tools/**/*.ts),
+  # incremental against a baseline in actions/cache. Stryker's own incremental differ
+  # decides what re-executes — CI no longer second-guesses it with hand-rolled
+  # changed-files scoping (tools/ci-mutate-scope.sh is deleted: it re-implemented the
+  # differ outside Stryker, test→src import mapping and all). Test-only changes are
+  # handled BY the differ: with real perTest coverage a newly added test is seen as
+  # 'added' and its covered mutants re-execute. That soundness requires
+  # @hughescr/stryker-bun-runner >= 1.3.1 — earlier versions promoted multi-test-covered
+  # mutants to static coverage (observable as a hard coveredBy cap of 6 in pre-fix
+  # reports), blinding the differ to added tests. Do not run this job design on <= 1.3.0.
+  #
+  # Honesty invariants:
+  #   - ALL-GREEN BASELINES: the save step runs only on success(), and break=100 means
+  #     success implies zero Survived/NoCoverage in the report. So every Survived this
+  #     job ever reports was executed fresh in that same run; a stale or nuked cache
+  #     degrades to more work or an honest red (timeout / cold-start), never a false
+  #     green and never a stale false-survivor red. (Load-bearing coupling: this holds
+  #     only while thresholds.break stays 100 AND the save step stays gated on
+  #     success() — change either and the scrub question in the runbook reopens.)
+  #   - Known residual differ gap (upstream, being filed): a Survived mutant with ONLY
+  #     static coverage is never invalidated by an added test. Unreachable in CI (no
+  #     saved baseline contains Survived — see above). It IS live for the LOCAL
+  #     gitignored baseline, where red runs do write Survived — see triage step 3.
+  #     No automated scrub in CI: there is nothing to scrub.
+  #   - PRs restore but never save — a fork cannot poison the baseline trusted runs use.
+  #   - Toolchain fingerprint (runner OS + bun version + bun.lock hash) partitions the
+  #     key space: verdicts never cross a toolchain change (the differ itself has no
+  #     toolchain awareness). Stated cost: any bun release (bun-version: latest floats)
+  #     or dependency bump orphans the baseline — expect the fail-fast cold-start red
+  #     below, then re-seed.
+  #   - Cold start is an EXPLICIT red with instructions, not a doomed run: full-glob
+  #     fresh is 13,591 mutants ≈ 12h at concurrency 2 (measured 61m58s at
+  #     concurrency 12 locally, ~3.3 s/mutant/worker; the ~3.2 s/mutant CI wall rate
+  #     is an ASSUMPTION — recalibrate from the bootstrap pilot shard's real duration)
+  #     vs the 6-hour hosted cap.
+  #
+  # RUNBOOK (ops):
+  #   Nuke the baseline cache:
+  #     gh cache list --key stryker-incremental-v1- --limit 100 --json id --jq '.[].id' \
+  #       | xargs -n1 gh cache delete
+  #     (or bump the -v1- segment in BOTH this file and
+  #     mutation-baseline-bootstrap.yml; LRU + 7-day idle eviction reap the orphans)
+  #   Re-seed (first-time, after a nuke, after any bun/bun.lock bump):
+  #     gh workflow run mutation-baseline-bootstrap.yml --ref develop
+  #     (~13h across 6 serialized shard jobs, smallest first — the first is a ~30 min
+  #     calibration pilot; check its wall time before the multi-hour shards burn time.
+  #     mutate runs during that window may go red on a partial baseline — re-run them
+  #     once bootstrap finishes.)
+  #   Stuck-red triage:
+  #     1. Real survivor? Every CI Survived is fresh, not cached. Reproduce under CI
+  #        config without touching the local baseline:
+  #          GITHUB_SHA=smoke bun mutate -- --mutate <file> \
+  #            --reporters clear-text,progress --incrementalFile "$TMPDIR/smoke.json"
+  #        and kill it with a test.
+  #     2. Timeout red? Diff too large for its budget, or partial/cold baseline —
+  #        gate locally or re-seed; do not raise the budget.
+  #     3. LOCAL stuck red on a static-coverage mutant after a genuine fix (the differ
+  #        gap above; local baselines DO contain Survived because local red runs write
+  #        the incremental file). Surgical — drop static/uncovered Survived entries so
+  #        only those re-execute:
+  #          jq '.files |= map_values(.mutants |= map(select((.status == "Survived" and ((.static == true) or ((.coveredBy // []) | length == 0))) | not)))' \
+  #            reports/stryker-incremental.json > reports/stryker-incremental.scrubbed.json \
+  #            && mv reports/stryker-incremental.scrubbed.json reports/stryker-incremental.json
+  #        Nuclear: rm reports/stryker-incremental.json && bun mutate (~2.5-3h rebuild).
+  mutate:
+    needs: test-linux
+    runs-on: ubuntu-latest
+    # Serialize same-ref runs (queue, never cancel a running gate): each run then
+    # restores its predecessor's save instead of racing it. Not a soundness need —
+    # concurrent runs save under distinct keys and the differ absorbs a stale restore
+    # as extra work — purely keeps the warm path warm. Distinct PRs have distinct
+    # refs, so PRs never queue behind each other.
+    concurrency:
+      group: mutate-${{ github.ref }}
+      cancel-in-progress: false
+    # Warm-cache typical: install ~3 min + dry run + differ + a handful of mutants,
+    # well under 15 min. Budgets from the ASSUMED ~3.2 s/mutant CI wall rate
+    # (recalibrate from the bootstrap pilot shard's real duration): PR 60 min ≈
+    # ~1,000 fresh mutants (an entire mid-size subsystem in one PR); push/dispatch
+    # 120 min ≈ ~2,150 (merge batches, plus the save). A diff that exceeds its
+    # budget goes honestly red: gate it locally or split it.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 60 || 120 }}
+    steps:
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
+      # Fingerprint and baseline check run BEFORE the ~3 min install so a cold start
+      # fails in seconds. bun --version needs only setup-bun; hashFiles needs checkout.
+      - name: Compute toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=${{ runner.os }}-bun$(bun --version)-lock${{ hashFiles('bun.lock') }}" >> "$GITHUB_OUTPUT"
+
+      # Restore always, PRs included. base_ref||ref_name: PRs restore their base
+      # branch's lineage, pushes/dispatches their own; then any branch on the same
+      # fingerprint (GitHub's cache isolation already scopes what a PR may read).
+      # The sha-prefixed restore-key serves re-runs of an already-saved commit.
+      - name: Restore mutation baseline
+        id: baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.base_ref || github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.base_ref || github.ref_name }}-${{ github.sha }}-
+            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.base_ref || github.ref_name }}-
+            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-
+
+      - name: Require a baseline (cold start fails fast, loudly)
+        env:
+          FINGERPRINT: ${{ steps.toolchain.outputs.fingerprint }}
+          MATCHED: ${{ steps.baseline.outputs.cache-matched-key }}
+        run: |
+          if [ ! -f reports/stryker-incremental.json ]; then
+            MSG="No mutation baseline cached for toolchain fingerprint '$FINGERPRINT'. A fresh full-glob run (~12h at concurrency 2) cannot fit this job, so failing now instead of at the timeout. Seed one: gh workflow run mutation-baseline-bootstrap.yml --ref develop — then re-run this job. (Expected after a bun/dependency bump or a cache nuke.)"
+            echo "$MSG"; echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Baseline restored from: $MATCHED" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run tests
-        run: bun run test
-
-      - name: Full validation (lint, typecheck, mutation)
-        run: bun run test:full
+      # Full mutate glob from stryker.conf.mjs; the differ works out the delta.
+      # Dashboard: the merged incremental report is cumulative whole-repo state, so a
+      # green upload is a true 100 for the whole codebase, not a partial-scope number.
+      # (A missing key on fork PRs is safe: the dashboard reporter catches and logs.)
+      - name: Mutation testing (incremental, full glob)
         env:
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+        run: bun run mutate
+
+      # Trusted, green runs only — this gate is what makes ALL-GREEN BASELINES an
+      # invariant, which the honesty story above rests on. sha+run_id+attempt suffix
+      # means saves never collide (run_id matters: two dispatches of the same commit
+      # both have run_attempt=1, and actions/cache silently skips a duplicate key).
+      # ~32 MB each vs the 10 GB repo cap; LRU + 7-day idle eviction handle buildup.
+      - name: Save mutation baseline (trusted, green runs only)
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

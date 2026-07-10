@@ -3,6 +3,16 @@
 # to prevent concurrent runs from corrupting the incremental cache.
 set -e
 
+# CI path (GITHUB_SHA is set — the same isCI signal stryker.conf.mjs uses): run stryker directly.
+#  - `op` (1Password CLI) does not exist on GitHub-hosted runners, and the token it fetches
+#    is only consumed by the LLM mutator, which stryker.conf.mjs disables in CI.
+#  - The lock protects a developer machine from concurrent `bun mutate` runs; a CI job is an
+#    isolated ephemeral VM with nothing to contend with (and `lockf` is BSD/macOS-only anyway).
+#  - No nice/ionice: a single-tenant runner gains nothing from deprioritization.
+if [ -n "${GITHUB_SHA:-}" ]; then
+  exec stryker run "$@"
+fi
+
 LOCKFILE="reports/.stryker.lock"
 CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Private/Anthropic/Isambard API Key")
 export CLAUDE_CODE_OAUTH_TOKEN
