@@ -891,6 +891,18 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(shape.threadName).toBeDefined();
         });
 
+        test.each([
+            ['a single file path string', 'attachment.png'],
+            ['an array of file path strings', ['attachment1.png', 'attachment2.png']],
+        ])('should accept %s for the files field', (_description, value) => {
+            const server = createServer();
+            const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendDiscordMessage;
+
+            const result = tool.inputSchema.shape.files.unwrap().safeParse(value);
+
+            expect(result.success).toBe(true);
+        });
+
         test('should send message successfully', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
@@ -2825,6 +2837,18 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
     });
 
     describe('addReaction tool', () => {
+        test.each([
+            ['a single emoji string', '👍'],
+            ['an array of emoji strings', ['👍', '❤️']],
+        ])('should accept %s for the emoji field', (_description, value) => {
+            const server = createServer();
+            const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.addReaction;
+
+            const result = tool.inputSchema.shape.emoji.safeParse(value);
+
+            expect(result.success).toBe(true);
+        });
+
         test('should add single emoji reaction', async () => {
             const mockMessage = {
                 id:    'message-123',

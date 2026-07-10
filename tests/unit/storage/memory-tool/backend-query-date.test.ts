@@ -631,6 +631,21 @@ describe('MemoryToolBackend - Date Filtering', () => {
             expect(calls[0].args[0].input.Limit).toBe(5);
         });
 
+        test('divides limit across all layers when no layer specified (does not multiply)', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+            // 3 layers, limit 6: division gives ceil(6/3) = 2 per layer.
+            // Multiplication (the ArithmeticOperator mutant) would give 6*3 = 18 per layer,
+            // which is observably different and would fail this assertion.
+            await backend.searchSince('2024-01-01T00:00:00.000Z', undefined, { limit: 6 });
+
+            const calls = ddbMock.commandCalls(QueryCommand);
+            expect(calls).toHaveLength(3);
+            for(const call of calls) {
+                expect(call.args[0].input.Limit).toBe(2);
+            }
+        });
+
         test('queries all three layers when no layer specified and multi-layer merges correctly', async () => {
             const identityItem: MemoryToolItem = {
                 PK:          'DIR#/identity',

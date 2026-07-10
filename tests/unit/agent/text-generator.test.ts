@@ -441,6 +441,7 @@ describe('getTmpDir cached-rejection behavior', () => {
         mockFsPromises.mkdtemp.mockImplementation(async (prefix: string) => `${prefix}first`);
         await generateText('Test prompt');
         expect(mockFsPromises.mkdtemp).toHaveBeenCalledTimes(1);
+        expect(mockFsPromises.mkdtemp).toHaveBeenCalledWith(expect.stringContaining('isambard-textgen-'));
 
         // After resetting, mkdtemp should be called again on the next generateText call
         resetTmpDirForTesting();

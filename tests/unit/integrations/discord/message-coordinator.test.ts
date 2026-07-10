@@ -292,6 +292,61 @@ describe('MessageCoordinator', () => {
             expect(callCount).toBe(2);
         });
 
+        it('should NOT pass resumeContext to the resumed call when interrupted stream had zero progress', async () => {
+            // Mirrors 'should capture partial work from stream tracker on interrupt' but with a
+            // zero-progress StreamTracker on the interrupted first call. Kills the mutant that
+            // changes `if(result.streamTracker.hasMeaningfulProgress())` to `if(true)`: under the
+            // mutant, state.partialWork would be set to result.streamTracker.getProgress() (a
+            // truthy object, even with empty fields) regardless of hasMeaningfulProgress(), so the
+            // very next processWithResume call would receive a non-null resumeContext instead of null.
+            // The resumeContext is captured into an outer variable and asserted after the promise
+            // chain settles (rather than inside the processor callback) because the processing IIFE
+            // wraps processor calls in a catch-all safety net that would otherwise swallow a thrown
+            // assertion failure.
+            let callCount = 0;
+            let resumeContextOnSecondCall: ResumeContext | null | undefined;
+            const zeroProgressProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+                callCount++;
+                if(callCount === 1) {
+                    // First call - interrupted with zero progress
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 200);
+                    });
+                    return {
+                        response:       null,
+                        wasInterrupted: abortSignal.aborted,
+                        streamTracker:  new StreamTracker(), // zero progress
+                    };
+                } else {
+                    // Second call (immediately resumed after interrupt) - must NOT have resume context
+                    resumeContextOnSecondCall = resumeContext;
+                    return {
+                        response:       'Resumed response',
+                        wasInterrupted: false,
+                        streamTracker:  new StreamTracker(),
+                    };
+                }
+            };
+            processorMock.mockImplementation(zeroProgressProcessor);
+
+            // Start first message
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+
+            // Interrupt with second message (starts debounce timer)
+            const secondContext = { ...mockContext, messageId: 'msg-002', content: 'New message' };
+            const secondMessage = { ...mockMessage, id: 'msg-002', content: 'New message' } as unknown as Message;
+            coordinator.handleMessage(secondContext, secondMessage);
+
+            // Wait for debounce (100ms) to trigger interruption + first call completion (200ms) + second processing
+            jest.advanceTimersByTime(400);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(callCount).toBe(2);
+            expect(resumeContextOnSecondCall).toBeNull();
+        });
+
         it('should NOT store partialWork when interrupted with zero progress (startProcessing)', async () => {
             // Processor that is interrupted but returns a fresh StreamTracker (zero progress)
             let callCount = 0;
