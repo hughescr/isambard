@@ -40,7 +40,7 @@
     "@aws-sdk/client-dynamodb": "^3.1078.0",
     "@aws-sdk/lib-dynamodb": "^3.1078.0",
     "@discordjs/builders": "^1.14.1",
-    "@hughescr/logger": "^2.10.0",
+    "@hughescr/logger": "^2.10.1",
     "@sapphire/snowflake": "^3.5.5",
     "@smithy/node-http-handler": "^4.9.2",
     "cron-parser": "^5.6.1",
