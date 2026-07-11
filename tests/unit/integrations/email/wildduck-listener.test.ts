@@ -106,6 +106,94 @@ async function flushAsync(): Promise<void> {
     }
 }
 
+/**
+ * Wait until predicate() becomes true, polling one microtask tick at a time. Unlike a fixed
+ * tick-count flush, this ties test progression to a real observable completion signal, so it
+ * remains correct no matter how many microtask turns the underlying JS engine happens to need
+ * for a given async chain to settle — a hazard that showed up as platform-dependent (Linux vs
+ * macOS) mutation-testing survivors when this file relied on flushAsync()'s fixed tick count to
+ * gate assertions.
+ */
+async function waitFor(predicate: () => boolean, description: string): Promise<void> {
+    const maxTicks = 5000;
+    for(let i = 0; i < maxTicks; i++) {
+        if(predicate()) {
+            return;
+        }
+        // eslint-disable-next-line no-await-in-loop -- sequential: must poll microtasks one tick at a time until predicate settles
+        await Promise.resolve();
+    }
+    throw new Error(`waitFor timed out after ${maxTicks} ticks: ${description}`);
+}
+
+interface PollableListener {
+    poll: () => Promise<void>
+}
+
+interface FetchingListener {
+    fetchAndProcess: () => Promise<boolean>
+}
+
+/**
+ * Patch a WildDuckListener instance's private poll() so tests can deterministically await each
+ * fire-and-forget invocation triggered by the fallback-poll timer, instead of guessing how many
+ * microtask ticks are needed for it to settle. Stryker's per-test mutation coverage tracking is
+ * keyed off "the currently running test" — a test that returns while an orphaned poll() promise
+ * chain is still executing risks that chain's mutant coverage being attributed to whichever test
+ * happens to run next (which is platform-dependent, since it hinges on microtask interleaving).
+ * This closes that window by giving the test a handle on the real promise instead of a guess.
+ *
+ * Call this AFTER any setup (e.g. start()) that itself synchronously awaits its own work, so only
+ * later, timer-triggered invocations end up queued.
+ */
+function trackPoll(listener: WildDuckListener): { nextPoll: () => Promise<void> } {
+    const pending: Promise<void>[] = [];
+    const target   = listener as unknown as PollableListener;
+    const original = target.poll.bind(listener);
+    target.poll = () => {
+        const result = original();
+        pending.push(result);
+        return result;
+    };
+    return {
+        nextPoll: async () => {
+            const result = pending.shift();
+            if(result === undefined) {
+                throw new Error('trackPoll: nextPoll() called with no pending poll() invocation — did you forget jest.advanceTimersByTime()?');
+            }
+            await result;
+        },
+    };
+}
+
+/**
+ * Same rationale as trackPoll(), but for fetchAndProcess() — also invoked fire-and-forget, this
+ * time by the SSE 'message' event handler (`void this.fetchAndProcess()`).
+ *
+ * Call this AFTER start(), which synchronously awaits its own fetchAndProcess() call during
+ * backlog drain; patching before start() would queue that already-settled call first, and the
+ * next nextFetch() would resolve immediately instead of waiting for the real trigger under test.
+ */
+function trackFetchAndProcess(listener: WildDuckListener): { nextFetch: () => Promise<void> } {
+    const pending: Promise<boolean>[] = [];
+    const target   = listener as unknown as FetchingListener;
+    const original = target.fetchAndProcess.bind(listener);
+    target.fetchAndProcess = () => {
+        const result = original();
+        pending.push(result);
+        return result;
+    };
+    return {
+        nextFetch: async () => {
+            const result = pending.shift();
+            if(result === undefined) {
+                throw new Error('trackFetchAndProcess: nextFetch() called with no pending fetchAndProcess() invocation');
+            }
+            await result;
+        },
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Default config
 // ---------------------------------------------------------------------------
@@ -540,9 +628,10 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start(); // listCount=1
+            const { nextPoll } = trackPoll(listener);
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // listCount=2
+            await nextPoll(); // listCount=2, poll cycle fully settled (including reschedule)
 
             expect(listCount).toBe(2);
 
@@ -565,10 +654,11 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start(); // listCount=1
+            const { nextPoll } = trackPoll(listener);
 
             // Advance timer to trigger poll()
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // listCount=2 — throws inside poll()
+            await nextPoll(); // listCount=2 — throws inside poll(), fully settled (catch + reschedule)
 
             expect(listCount).toBe(2);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -593,9 +683,10 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start();
+            const { nextPoll } = trackPoll(listener);
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync();
+            await nextPoll();
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg:   'Poll cycle failed, will retry',
@@ -616,14 +707,15 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start(); // listCount=1, timer scheduled
+            const { nextPoll } = trackPoll(listener);
 
             // Advance timer once — triggers first poll
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // listCount=2, second timer scheduled
+            await nextPoll(); // listCount=2, second timer scheduled
 
             // Advance timer again — triggers second poll, proving rescheduling happened
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // listCount=3
+            await nextPoll(); // listCount=3
 
             expect(listCount).toBe(3);
 
@@ -649,16 +741,20 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start();
+            const { nextPoll } = trackPoll(listener);
 
-            // Fire poll timer
+            // Fire poll timer — poll() begins and blocks on the second (paused) listMessages() call
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync();
+            const pollSettled = nextPoll();
+
+            // Wait until the blocked listMessages() call has actually started before stopping
+            await waitFor(() => callCount === 2, 'poll() has begun its second (blocking) listMessages() call');
 
             // Stop while poll is awaiting
             const stopPromise = listener.stop();
             resolveFetch();
             await stopPromise;
-            await flushAsync();
+            await pollSettled; // deterministically wait for poll()'s in-flight cycle to fully finish
 
             expect(jest.getTimerCount()).toBe(0);
 
@@ -724,7 +820,7 @@ describe('WildDuckListener', () => {
             const event = new MessageEvent('message', { data: '{not valid json}' });
             sseSource!.dispatchEvent(event);
 
-            await flushAsync();
+            await waitFor(() => mockLogger.warn.mock.calls.length > 0, 'warn logged for malformed SSE message data');
 
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'Failed to parse SSE message data',
@@ -743,6 +839,7 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start();
+            const { nextFetch } = trackFetchAndProcess(listener);
 
             // Startup call
             expect(listMessages).toHaveBeenCalledTimes(1);
@@ -754,7 +851,7 @@ describe('WildDuckListener', () => {
             const event = new MessageEvent('message', { data: JSON.stringify({ command: 'EXISTS' }) });
             sseSource!.dispatchEvent(event);
 
-            await flushAsync();
+            await nextFetch(); // deterministically wait for the SSE-triggered fetchAndProcess() to settle
 
             // Should trigger another fetch
             expect(listMessages).toHaveBeenCalledTimes(2);
@@ -783,9 +880,10 @@ describe('WildDuckListener', () => {
             // No health registry in config
             const listener = new WildDuckListener(client, processor, DEFAULT_CONFIG);
             await listener.start();
+            const { nextPoll } = trackPoll(listener);
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync();
+            await nextPoll();
 
             // The poll failure path ran (recordPollFailure returns early with no
             // registry) — proven by the warn log — and no health event was emitted
@@ -807,9 +905,10 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start();
+            const { nextPoll } = trackPoll(listener);
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync();
+            await nextPoll();
 
             // Should NOT emit CONNECT_SUCCESS when already online (no consecutive failures)
             expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
@@ -833,13 +932,14 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start(); // listCount=1
+            const { nextPoll } = trackPoll(listener);
 
             // Trigger 2 failing polls — not yet at threshold
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // listCount=2 (fails)
+            await nextPoll(); // listCount=2 (fails)
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // listCount=3 (fails)
+            await nextPoll(); // listCount=3 (fails)
 
             expect(sendEvent).not.toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
 
@@ -862,16 +962,17 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start(); // listCount=1
+            const { nextPoll } = trackPoll(listener);
 
             // Trigger 3 failing polls to hit threshold
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // failure 1
+            await nextPoll(); // failure 1
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // failure 2
+            await nextPoll(); // failure 2
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // failure 3 — threshold hit
+            await nextPoll(); // failure 3 — threshold hit
 
             expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.objectContaining({
                 error: 'Network error',
@@ -899,16 +1000,17 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start(); // listCount=1
+            const { nextPoll } = trackPoll(listener);
 
             // 3 failing polls
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // failure 1
+            await nextPoll(); // failure 1
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // failure 2
+            await nextPoll(); // failure 2
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // failure 3 — threshold hit, CONNECTION_LOST emitted
+            await nextPoll(); // failure 3 — threshold hit, CONNECTION_LOST emitted
 
             expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECTION_LOST', expect.anything());
             const connectLostCallCount = (sendEvent.mock.calls as unknown[][]).filter(
@@ -918,7 +1020,7 @@ describe('WildDuckListener', () => {
 
             // Successful poll — recovery
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync();
+            await nextPoll();
 
             expect(sendEvent).toHaveBeenCalledWith('email', 'CONNECT_SUCCESS');
 
@@ -944,20 +1046,21 @@ describe('WildDuckListener', () => {
 
             const listener = new WildDuckListener(client, processor, config);
             await listener.start();
+            const { nextPoll } = trackPoll(listener);
 
             // 3 failing polls
             for(let i = 0; i < 3; i++) {
                 jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-                // eslint-disable-next-line no-await-in-loop -- sequential: must flush microtasks one tick at a time
-                await flushAsync();
+                // eslint-disable-next-line no-await-in-loop -- sequential: must await each poll cycle before triggering the next
+                await nextPoll();
             }
 
             // Two successful polls
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // first success — CONNECT_SUCCESS
+            await nextPoll(); // first success — CONNECT_SUCCESS
 
             jest.advanceTimersByTime(DEFAULT_CONFIG.pollFallbackMs);
-            await flushAsync(); // second success — no extra CONNECT_SUCCESS
+            await nextPoll(); // second success — no extra CONNECT_SUCCESS
 
             const connectSuccessCalls = (sendEvent.mock.calls as unknown[][]).filter(
                 c => c[1] === 'CONNECT_SUCCESS'
@@ -1050,14 +1153,14 @@ describe('WildDuckListener', () => {
             // Trigger error before open — ReconnectionLoop should schedule retry after 1000ms
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
             fakeEventSourceInstances[0]!.emit('error');
-            await flushAsync();
+            await waitFor(() => jest.getTimerCount() >= 2, 'SSE retry backoff timer scheduled after error before open');
 
             // Timer should be pending (backoff delay)
             expect(jest.getTimerCount()).toBeGreaterThanOrEqual(2); // poll timer + SSE retry timer
 
             // Advance past SSE retry delay (2× to tolerate jitter) — second EventSource should be created
             jest.advanceTimersByTime(2000);
-            await flushAsync();
+            await waitFor(() => fakeEventSourceInstances.length === 2, 'second EventSource created after backoff delay');
 
             expect(fakeEventSourceInstances).toHaveLength(2);
 
@@ -1077,7 +1180,7 @@ describe('WildDuckListener', () => {
             // Trigger SSE error so the loop schedules a retry
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
             fakeEventSourceInstances[0]!.emit('error');
-            await flushAsync();
+            await waitFor(() => jest.getTimerCount() >= 2, 'SSE retry backoff timer scheduled after error');
 
             // Stop the listener — should cancel the pending SSE retry timer
             await listener.stop();
@@ -1108,7 +1211,7 @@ describe('WildDuckListener', () => {
             // creating a new EventSource synchronously
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; same index accessed after open
             fakeEventSourceInstances[0]!.emit('error');
-            await flushAsync();
+            await waitFor(() => fakeEventSourceInstances.length === 2, 'second EventSource created immediately after error-after-open');
 
             // A second EventSource should have been created immediately (no delay needed)
             expect(fakeEventSourceInstances).toHaveLength(2);
@@ -1156,12 +1259,12 @@ describe('WildDuckListener', () => {
             await listener.start();
 
             // First attempt threw — loop should have scheduled retry
-            await flushAsync();
+            await waitFor(() => callCount === 1, 'first EventSource construction attempt');
             expect(callCount).toBe(1);
 
             // Advance past backoff delay (2× to tolerate jitter) — second attempt should proceed without throwing
             jest.advanceTimersByTime(2000);
-            await flushAsync();
+            await waitFor(() => callCount === 2, 'second EventSource construction attempt after backoff');
 
             expect(callCount).toBe(2);
             expect(fakeEventSourceInstances).toHaveLength(1); // second call succeeded
@@ -1182,7 +1285,7 @@ describe('WildDuckListener', () => {
             // Trigger error to begin backoff
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
             fakeEventSourceInstances[0]!.emit('error');
-            await flushAsync();
+            await waitFor(() => jest.getTimerCount() >= 2, 'SSE retry backoff timer scheduled after error');
 
             // Stop before the retry fires
             await listener.stop();
@@ -1225,7 +1328,7 @@ describe('WildDuckListener', () => {
             // Trigger SSE error to create a pending retry timer in the loop
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- assertion required for noUncheckedIndexedAccess in tsconfig.src.json; length checked above
             fakeEventSourceInstances[0]!.emit('error');
-            await flushAsync();
+            await waitFor(() => jest.getTimerCount() >= 2, 'SSE retry backoff timer scheduled after error');
 
             // There should be timers pending (poll + SSE retry)
             expect(jest.getTimerCount()).toBeGreaterThanOrEqual(2);
