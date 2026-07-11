@@ -92,7 +92,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
-            expect(create(mockBackend, {
+            await expect(create(mockBackend, {
                 path:      'no-leading-slash',
                 file_text: 'content',
             })).rejects.toThrow(InvalidPathError);
@@ -104,9 +104,9 @@ describe('Memory Tool Handlers', () => {
                 file_text: 'content',
             });
 
-            expect(promise).rejects.toThrow(InvalidPathError);
-            expect(promise).rejects.toThrow('invalid//path');
-            expect(promise).rejects.toThrow('must start with /');
+            await expect(promise).rejects.toThrow(InvalidPathError);
+            await expect(promise).rejects.toThrow('invalid//path');
+            await expect(promise).rejects.toThrow('must start with /');
         });
 
         it('should extract and join multiple ZodError messages with comma separator', async () => {
@@ -116,11 +116,11 @@ describe('Memory Tool Handlers', () => {
                 file_text: 'content',
             });
 
-            expect(promise).rejects.toThrow(InvalidPathError);
+            await expect(promise).rejects.toThrow(InvalidPathError);
             // Should contain both error messages joined with ', '
-            expect(promise).rejects.toThrow('must start with /');
-            expect(promise).rejects.toThrow('cannot contain double slashes');
-            expect(promise).rejects.toThrow(', ');
+            await expect(promise).rejects.toThrow('must start with /');
+            await expect(promise).rejects.toThrow('cannot contain double slashes');
+            await expect(promise).rejects.toThrow(', ');
         });
 
         it('should propagate non-ZodError from schema validation', async () => {
@@ -137,8 +137,8 @@ describe('Memory Tool Handlers', () => {
                 });
 
                 // Should propagate the non-ZodError as-is, not wrap it in InvalidPathError
-                expect(promise).rejects.toThrow(customError);
-                expect(promise).rejects.not.toThrow(InvalidPathError);
+                await expect(promise).rejects.toThrow(customError);
+                await expect(promise).rejects.not.toThrow(InvalidPathError);
             } finally {
                 parseSpy.mockRestore();
             }
@@ -149,7 +149,7 @@ describe('Memory Tool Handlers', () => {
                 throw new PathAlreadyExistsError('/test/file.md');
             });
 
-            expect(create(mockBackend, {
+            await expect(create(mockBackend, {
                 path:      '/test/file.md',
                 file_text: 'content',
             })).rejects.toThrow(PathAlreadyExistsError);
@@ -166,7 +166,7 @@ describe('Memory Tool Handlers', () => {
 
         it('should throw ContentTooLargeError for content at 350,001 bytes', async () => {
             const content = 'a'.repeat(350_001);
-            expect(create(mockBackend, {
+            await expect(create(mockBackend, {
                 path:      '/test/file.md',
                 file_text: content,
             })).rejects.toThrow(ContentTooLargeError);
@@ -257,7 +257,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
-            expect(insert(mockBackend, {
+            await expect(insert(mockBackend, {
                 path:        '/test/file.md',
                 insert_line: lineNum,
                 insert_text: 'Text',
@@ -267,7 +267,7 @@ describe('Memory Tool Handlers', () => {
         it('should throw PathNotFoundError when path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 
-            expect(insert(mockBackend, {
+            await expect(insert(mockBackend, {
                 path:        '/nonexistent',
                 insert_line: 1,
                 insert_text: 'Text',
@@ -275,7 +275,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
-            expect(insert(mockBackend, {
+            await expect(insert(mockBackend, {
                 path:        'bad//path',
                 insert_line: 1,
                 insert_text: 'Text',
@@ -314,7 +314,7 @@ describe('Memory Tool Handlers', () => {
                 createdAt:   '2025-01-01T00:00:00.000Z',
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
-            expect(insert(mockBackend, {
+            await expect(insert(mockBackend, {
                 path:        '/test/file.md',
                 insert_line: 0,
                 insert_text: insertText,
@@ -366,7 +366,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
-            expect(strReplace(mockBackend, {
+            await expect(strReplace(mockBackend, {
                 path:    '/test/file.md',
                 old_str: 'Not Found',
                 new_str: 'Replacement',
@@ -384,7 +384,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
-            expect(strReplace(mockBackend, {
+            await expect(strReplace(mockBackend, {
                 path:    '/test/file.md',
                 old_str: 'Hello World',
                 new_str: 'Replacement',
@@ -394,7 +394,7 @@ describe('Memory Tool Handlers', () => {
         it('should throw PathNotFoundError when path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 
-            expect(strReplace(mockBackend, {
+            await expect(strReplace(mockBackend, {
                 path:    '/nonexistent',
                 old_str: 'text',
                 new_str: 'replacement',
@@ -402,7 +402,7 @@ describe('Memory Tool Handlers', () => {
         });
 
         it('should throw InvalidPathError for invalid paths', async () => {
-            expect(strReplace(mockBackend, {
+            await expect(strReplace(mockBackend, {
                 path:    'invalid',
                 old_str: 'text',
                 new_str: 'replacement',
@@ -440,7 +440,7 @@ describe('Memory Tool Handlers', () => {
                 createdAt:   '2025-01-01T00:00:00.000Z',
                 updatedAt:   '2025-01-01T00:00:00.000Z',
             }));
-            expect(strReplace(mockBackend, {
+            await expect(strReplace(mockBackend, {
                 path:    '/test/file.md',
                 old_str: placeholder,
                 new_str: newStr,
@@ -664,7 +664,7 @@ describe('Memory Tool Handlers', () => {
         it('should throw PathNotFoundError when source path does not exist', async () => {
             mockBackend.get = mock(async () => undefined);
 
-            expect(rename(mockBackend, {
+            await expect(rename(mockBackend, {
                 path:     '/nonexistent',
                 new_path: '/test/new.md',
             })).rejects.toThrow(PathNotFoundError);
@@ -681,14 +681,14 @@ describe('Memory Tool Handlers', () => {
                 updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
-            expect(rename(mockBackend, {
+            await expect(rename(mockBackend, {
                 path:     '/test/old.md',
                 new_path: '/test/existing.md',
             })).rejects.toThrow(PathAlreadyExistsError);
         });
 
         it('should throw InvalidPathError for invalid source path', async () => {
-            expect(rename(mockBackend, {
+            await expect(rename(mockBackend, {
                 path:     'bad-path',
                 new_path: '/test/new.md',
             })).rejects.toThrow(InvalidPathError);
@@ -705,7 +705,7 @@ describe('Memory Tool Handlers', () => {
                 updatedAt: '2025-01-01T00:00:00.000Z',
             }));
 
-            expect(rename(mockBackend, {
+            await expect(rename(mockBackend, {
                 path:     '/test/old.md',
                 new_path: 'bad-path',
             })).rejects.toThrow(InvalidPathError);

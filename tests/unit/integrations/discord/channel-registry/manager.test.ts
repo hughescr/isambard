@@ -934,7 +934,7 @@ describe('ChannelRegistryManager', () => {
             backend.muteChannel = mock(() => Promise.reject(error));
 
             // Attempt to mute should fail and invalidate cache
-            expect(manager.muteChannel(channel.channelId)).rejects.toThrow('Backend failure');
+            await expect(manager.muteChannel(channel.channelId)).rejects.toThrow('Backend failure');
 
             // Verify cache was invalidated by checking for backend fallback
             backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId: channel.channelId, guildId: channel.guildId, isMuted: channel.isMuted, isWellKnown: channel.isWellKnown })));
@@ -951,7 +951,7 @@ describe('ChannelRegistryManager', () => {
             backend.muteChannel = mock(() => Promise.reject(error));
 
             // Error should be re-thrown
-            expect(manager.muteChannel(channel.channelId)).rejects.toThrow('DynamoDB timeout');
+            await expect(manager.muteChannel(channel.channelId)).rejects.toThrow('DynamoDB timeout');
         });
 
         it('should ensure next getChannel() fetches fresh data after error', async () => {
@@ -962,7 +962,7 @@ describe('ChannelRegistryManager', () => {
             backend.muteChannel = mock(() => Promise.reject(new Error('Timeout')));
 
             // Attempt to mute fails
-            expect(manager.muteChannel(channel.channelId)).rejects.toThrow('Timeout');
+            await expect(manager.muteChannel(channel.channelId)).rejects.toThrow('Timeout');
 
             // Next getChannel should fetch from backend (cache invalidated)
             const freshChannelRecord = createMockStorageRecord({ channelId: channel.channelId, guildId: channel.guildId, isMuted: false }); // Still unmuted in DynamoDB
@@ -1018,7 +1018,7 @@ describe('ChannelRegistryManager', () => {
             backend.unmuteChannel = mock(() => Promise.reject(error));
 
             // Attempt to unmute should fail and invalidate cache
-            expect(manager.unmuteChannel(channel.channelId)).rejects.toThrow('Backend failure');
+            await expect(manager.unmuteChannel(channel.channelId)).rejects.toThrow('Backend failure');
 
             // Verify cache was invalidated by checking for backend fallback
             backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId: channel.channelId, guildId: channel.guildId, isMuted: channel.isMuted, isWellKnown: channel.isWellKnown })));
@@ -1035,7 +1035,7 @@ describe('ChannelRegistryManager', () => {
             backend.unmuteChannel = mock(() => Promise.reject(error));
 
             // Error should be re-thrown
-            expect(manager.unmuteChannel(channel.channelId)).rejects.toThrow('DynamoDB timeout');
+            await expect(manager.unmuteChannel(channel.channelId)).rejects.toThrow('DynamoDB timeout');
         });
 
         it('should ensure next getChannel() fetches fresh data after error', async () => {
@@ -1046,7 +1046,7 @@ describe('ChannelRegistryManager', () => {
             backend.unmuteChannel = mock(() => Promise.reject(new Error('Timeout')));
 
             // Attempt to unmute fails
-            expect(manager.unmuteChannel(channel.channelId)).rejects.toThrow('Timeout');
+            await expect(manager.unmuteChannel(channel.channelId)).rejects.toThrow('Timeout');
 
             // Next getChannel should fetch from backend (cache invalidated)
             const freshChannelRecord = createMockStorageRecord({ channelId: channel.channelId, guildId: channel.guildId, isMuted: true }); // Still muted in DynamoDB
@@ -1160,7 +1160,7 @@ describe('ChannelRegistryManager', () => {
             backend.unmarkAsWellKnown = mock(() => Promise.reject(error));
 
             // Attempt to unmark should fail and invalidate cache
-            expect(manager.unmarkAsWellKnown(channel.channelId)).rejects.toThrow('Backend failure');
+            await expect(manager.unmarkAsWellKnown(channel.channelId)).rejects.toThrow('Backend failure');
 
             // Verify cache was invalidated by checking for backend fallback
             backend.getChannel = mock(() => Promise.resolve(createMockStorageRecord({ channelId: channel.channelId, guildId: channel.guildId, isMuted: channel.isMuted, isWellKnown: channel.isWellKnown })));
@@ -1177,7 +1177,7 @@ describe('ChannelRegistryManager', () => {
             backend.unmarkAsWellKnown = mock(() => Promise.reject(error));
 
             // Error should be re-thrown
-            expect(manager.unmarkAsWellKnown(channel.channelId)).rejects.toThrow('DynamoDB timeout');
+            await expect(manager.unmarkAsWellKnown(channel.channelId)).rejects.toThrow('DynamoDB timeout');
         });
     });
 

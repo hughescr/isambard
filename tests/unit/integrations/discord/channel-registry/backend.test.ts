@@ -143,7 +143,7 @@ describe('ChannelRegistryBackend', () => {
                 updatedAt: '2025-01-01T00:00:00.000Z',
             };
 
-            expect(backend.upsertChannel(invalidRecord as ChannelStorageRecord)).rejects.toThrow(ValidationError);
+            await expect(backend.upsertChannel(invalidRecord as ChannelStorageRecord)).rejects.toThrow(ValidationError);
             expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
         });
     });
@@ -473,14 +473,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            expect(backend.muteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
+            await expect(backend.muteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            expect(backend.muteChannel(channelId)).rejects.toThrow('Network error');
+            await expect(backend.muteChannel(channelId)).rejects.toThrow('Network error');
         });
     });
 
@@ -515,14 +515,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            expect(backend.unmuteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
+            await expect(backend.unmuteChannel(channelId)).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            expect(backend.unmuteChannel(channelId)).rejects.toThrow('Network error');
+            await expect(backend.unmuteChannel(channelId)).rejects.toThrow('Network error');
         });
     });
 
@@ -561,14 +561,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow(ItemNotFoundError);
+            await expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow('Network error');
+            await expect(backend.markAsWellKnown(channelId, 'general')).rejects.toThrow('Network error');
         });
     });
 
@@ -613,14 +613,14 @@ describe('ChannelRegistryBackend', () => {
             (conditionalCheckError as { name: string }).name = 'ConditionalCheckFailedException';
             ddbMock.on(UpdateCommand).rejects(conditionalCheckError);
 
-            expect(backend.unmarkAsWellKnown(channelId)).rejects.toThrow(ItemNotFoundError);
+            await expect(backend.unmarkAsWellKnown(channelId)).rejects.toThrow(ItemNotFoundError);
         });
 
         test('should propagate other errors', async () => {
             const otherError = new Error('Network error');
             ddbMock.on(UpdateCommand).rejects(otherError);
 
-            expect(backend.unmarkAsWellKnown(channelId)).rejects.toThrow('Network error');
+            await expect(backend.unmarkAsWellKnown(channelId)).rejects.toThrow('Network error');
         });
 
         test('should include updatedAt timestamp', async () => {
@@ -665,7 +665,7 @@ describe('ChannelRegistryBackend', () => {
         test('should not throw error when channel does not exist', async () => {
             ddbMock.on(DeleteCommand).resolves({});
 
-            expect(backend.deleteChannel(channelId)).resolves.toBeUndefined();
+            await expect(backend.deleteChannel(channelId)).resolves.toBeUndefined();
         });
     });
 

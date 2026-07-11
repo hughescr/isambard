@@ -119,7 +119,6 @@ describe('initializeChannelRegistry', () => {
         );
 
         // Call and immediately check: if the function were async, result would be a Promise
-        // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- explicitly testing that the return value is void/undefined
         const result: void = initializeChannelRegistry(client, registry, makeResponseRouter());
         expect(result).toBeUndefined();
     });

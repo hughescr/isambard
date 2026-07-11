@@ -119,9 +119,21 @@ const eslintConfig = [
         },
         rules: {
             // Bun's expect().rejects is thenable at runtime but types don't declare PromiseLike
-            '@typescript-eslint/await-thenable': 'off',
+            '@typescript-eslint/await-thenable':               'off',
+            // bun-types declares matcher methods (toThrow, toBeInstanceOf, etc.) as returning
+            // `void`, even under `.rejects`/`.resolves` where they are actually async at runtime
+            // (see await-thenable override above). `no-confusing-void-expression` has no option
+            // that exempts a void-typed expression used as the operand of `await` — every
+            // ancestor branch it special-cases (arrow shorthand, void operator, return statement)
+            // is inapplicable here, so `await expect(p).rejects.toThrow(x)` is flagged as if the
+            // void value were misused, when awaiting it is in fact required: leaving the
+            // assertion unawaited lets the test finish before the rejection settles, so a failed
+            // expectation can report AFTER the test body returns (bun then reports an anonymous
+            // "1 tests failed") — see commit 7deb751 for the mechanism. Disabled for test files
+            // only; production code has no reason to await a void-returning call.
+            '@typescript-eslint/no-confusing-void-expression': 'off',
             // bun:* is a builtin under Bun but classified as external under Node; force it to builtin
-            'import-x/order':                    ['warn', {
+            'import-x/order':                                  ['warn', {
                 groups:                        ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
                 pathGroups:                    [{ pattern: 'bun:*', group: 'builtin' }],
                 pathGroupsExcludedImportTypes: [],

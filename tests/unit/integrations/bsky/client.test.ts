@@ -349,19 +349,19 @@ describe.concurrent('BlueskyClient', () => {
         test('resolves successfully on valid credentials', async () => {
             mockLogin.mockResolvedValueOnce({ data: { did: 'did:plc:user123' } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.login()).resolves.toBeUndefined();
+            await expect(client.login()).resolves.toBeUndefined();
         });
 
         test('throws BskyAuthError on authentication failure (401)', async () => {
             mockLogin.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired', 'Invalid credentials'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.login()).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.login()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on rate limit (429)', async () => {
             mockLogin.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded', 'Too many requests'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.login()).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.login()).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         describe('rate limit header parsing (extractRateLimitRetryAfterMs)', () => {
@@ -373,7 +373,7 @@ describe.concurrent('BlueskyClient', () => {
                 jest.useRealTimers();
             });
 
-            test('sets retryAfterMs when valid ratelimit-reset header is present', () => {
+            test('sets retryAfterMs when valid ratelimit-reset header is present', async () => {
                 // Set current time to a known value: Unix epoch 1_000_000 sec
                 jest.setSystemTime(new Date(1_000_000_000));
                 // Reset time is 30 seconds in the future: epoch 1_000_030 sec
@@ -386,12 +386,12 @@ describe.concurrent('BlueskyClient', () => {
                 mockLogin.mockRejectedValueOnce(errWithHeaders);
                 const client = new BlueskyClient(CLIENT_OPTIONS);
 
-                expect(client.login()).rejects.toMatchObject({
+                await expect(client.login()).rejects.toMatchObject({
                     context: expect.objectContaining({ retryAfterMs: 30_000 }),
                 });
             });
 
-            test('sets retryAfterMs to 0 when reset time is in the past', () => {
+            test('sets retryAfterMs to 0 when reset time is in the past', async () => {
                 jest.setSystemTime(new Date(1_000_000_000));
                 // Reset time is 10 seconds in the PAST
                 const resetEpoch = Math.floor(Date.now() / 1000) - 10;
@@ -404,12 +404,12 @@ describe.concurrent('BlueskyClient', () => {
                 const client = new BlueskyClient(CLIENT_OPTIONS);
 
                 // Negative delay is clamped to 0
-                expect(client.login()).rejects.toMatchObject({
+                await expect(client.login()).rejects.toMatchObject({
                     context: expect.objectContaining({ retryAfterMs: 0 }),
                 });
             });
 
-            test('caps retryAfterMs to 300_000ms when reset is far in the future', () => {
+            test('caps retryAfterMs to 300_000ms when reset is far in the future', async () => {
                 jest.setSystemTime(new Date(1_000_000_000));
                 // Reset time is 10 minutes (600s) in the future — above 300s cap
                 const resetEpoch = Math.floor(Date.now() / 1000) + 600;
@@ -422,12 +422,12 @@ describe.concurrent('BlueskyClient', () => {
                 const client = new BlueskyClient(CLIENT_OPTIONS);
 
                 // Capped to 300s = 300_000ms
-                expect(client.login()).rejects.toMatchObject({
+                await expect(client.login()).rejects.toMatchObject({
                     context: expect.objectContaining({ retryAfterMs: 300_000 }),
                 });
             });
 
-            test('omits retryAfterMs when ratelimit-reset header value is not a finite number', () => {
+            test('omits retryAfterMs when ratelimit-reset header value is not a finite number', async () => {
                 const errWithHeaders = Object.assign(new Error('Rate limited'), {
                     status:  429,
                     error:   'RateLimitExceeded',
@@ -436,7 +436,7 @@ describe.concurrent('BlueskyClient', () => {
                 mockLogin.mockRejectedValueOnce(errWithHeaders);
                 const client = new BlueskyClient(CLIENT_OPTIONS);
 
-                expect(client.login()).rejects.not.toMatchObject({
+                await expect(client.login()).rejects.not.toMatchObject({
                     context: expect.objectContaining({ retryAfterMs: expect.anything() }),
                 });
             });
@@ -445,19 +445,19 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyError on generic XRPC failure', async () => {
             mockLogin.mockRejectedValueOnce(makeXRPCError(500, 'InternalError', 'Server error'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.login()).rejects.toBeInstanceOf(BskyError);
+            await expect(client.login()).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on plain Error', async () => {
             mockLogin.mockRejectedValueOnce(new Error('Network timeout'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.login()).rejects.toBeInstanceOf(BskyError);
+            await expect(client.login()).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on unknown non-Error value', async () => {
             mockLogin.mockRejectedValueOnce('string error');
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.login()).rejects.toBeInstanceOf(BskyError);
+            await expect(client.login()).rejects.toBeInstanceOf(BskyError);
         });
 
         test('configures chat proxy after successful login', async () => {
@@ -466,29 +466,29 @@ describe.concurrent('BlueskyClient', () => {
             expect(mockWithProxy).toHaveBeenCalledWith('bsky_chat', 'did:web:api.bsky.chat');
         });
 
-        test('throws BskyError when chat method called before login', () => {
+        test('throws BskyError when chat method called before login', async () => {
             const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
-            expect(uninitializedClient.listConversations()).rejects.toThrow('Chat not available');
+            await expect(uninitializedClient.listConversations()).rejects.toThrow('Chat not available');
         });
 
-        test('getConversationForMembers re-throws BskyError unchanged when called before login', () => {
+        test('getConversationForMembers re-throws BskyError unchanged when called before login', async () => {
             const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
-            expect(uninitializedClient.getConversationForMembers(['did:plc:test'])).rejects.toThrow('Chat not available');
+            await expect(uninitializedClient.getConversationForMembers(['did:plc:test'])).rejects.toThrow('Chat not available');
         });
 
-        test('getMessages re-throws BskyError unchanged when called before login', () => {
+        test('getMessages re-throws BskyError unchanged when called before login', async () => {
             const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
-            expect(uninitializedClient.getMessages('convo-id')).rejects.toThrow('Chat not available');
+            await expect(uninitializedClient.getMessages('convo-id')).rejects.toThrow('Chat not available');
         });
 
-        test('sendDirectMessage re-throws BskyError unchanged when called before login', () => {
+        test('sendDirectMessage re-throws BskyError unchanged when called before login', async () => {
             const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
-            expect(uninitializedClient.sendDirectMessage('convo-id', 'hello')).rejects.toThrow('Chat not available');
+            await expect(uninitializedClient.sendDirectMessage('convo-id', 'hello')).rejects.toThrow('Chat not available');
         });
 
-        test('markConversationRead re-throws BskyError unchanged when called before login', () => {
+        test('markConversationRead re-throws BskyError unchanged when called before login', async () => {
             const uninitializedClient = new BlueskyClient({ handle: 'test.bsky.social', appPassword: 'test-password' });
-            expect(uninitializedClient.markConversationRead('convo-id')).rejects.toThrow('Chat not available');
+            await expect(uninitializedClient.markConversationRead('convo-id')).rejects.toThrow('Chat not available');
         });
     });
 
@@ -707,20 +707,20 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockGetTimeline.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyError);
         });
 
         test('includes status in context for generic XRPC errors', async () => {
@@ -771,26 +771,26 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockGetAuthorFeed.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockGetAuthorFeed.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic XRPC failure', async () => {
             mockGetAuthorFeed.mockRejectedValueOnce(makeXRPCError(503, 'Unavailable'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on plain Error', async () => {
             mockGetAuthorFeed.mockRejectedValueOnce(new Error('Connection error'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getAuthorFeed('actor')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -811,7 +811,7 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyError when post not found (empty array)', async () => {
             mockGetPosts.mockResolvedValueOnce({ data: { posts: [] } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getPost('at://missing/post')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getPost('at://missing/post')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('not-found error context includes uri', async () => {
@@ -829,20 +829,20 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401 from API', async () => {
             mockGetPosts.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockGetPosts.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic API error', async () => {
             mockGetPosts.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getPost('at://uri')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('returns replyRef when post record has a reply field', async () => {
@@ -941,20 +941,20 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockListNotifications.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getNotifications()).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.getNotifications()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockListNotifications.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getNotifications()).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.getNotifications()).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockListNotifications.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getNotifications()).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getNotifications()).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1024,26 +1024,26 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockGetProfile.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on plain Error', async () => {
             mockGetProfile.mockRejectedValueOnce(new Error('DNS lookup failed'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.getProfile('actor')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1081,20 +1081,20 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockSearchPosts.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 after exhausting retries', async () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockSearchPosts.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockSearchPosts.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.searchPosts('q')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1113,37 +1113,37 @@ describe.concurrent('BlueskyClient', () => {
         test('resolves to void on success', async () => {
             mockLike.mockResolvedValueOnce({ uri: 'at://like/uri', cid: 'like-cid' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid123')).resolves.toBeUndefined();
+            await expect(client.likePost('at://uri', 'cid123')).resolves.toBeUndefined();
         });
 
         test('throws BskyAuthError on 401', async () => {
             mockLike.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockLike.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockLike.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on plain Error', async () => {
             mockLike.mockRejectedValueOnce(new Error('Socket closed'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on unknown non-Error', async () => {
             mockLike.mockRejectedValueOnce({ code: 'UNKNOWN' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1186,19 +1186,19 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.follow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1239,19 +1239,19 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockGetProfile.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.unfollow('target.bsky.social')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1398,35 +1398,35 @@ describe.concurrent('BlueskyClient', () => {
             mockRichTextState.graphemeLength = 300;
             mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.sendPost('x'.repeat(300))).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
+            await expect(client.sendPost('x'.repeat(300))).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
         });
 
         test('throws BskyAuthError on 401 from agent.post', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429 from agent.post', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic Error from agent.post', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce(new Error('Socket closed'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on non-Error value from agent.post', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce({ code: 'UNKNOWN' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyError);
+            await expect(client.sendPost('Hello!')).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1500,35 +1500,35 @@ describe.concurrent('BlueskyClient', () => {
             mockRichTextState.graphemeLength = 300;
             mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.replyToPost('x'.repeat(300), PARENT_URI, PARENT_CID)).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
+            await expect(client.replyToPost('x'.repeat(300), PARENT_URI, PARENT_CID)).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
         });
 
         test('throws BskyAuthError on 401', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic Error', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce(new Error('Network error'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyError);
+            await expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on non-Error value', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockAgentPost.mockRejectedValueOnce('raw error');
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyError);
+            await expect(client.replyToPost('Text', PARENT_URI, PARENT_CID)).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -1554,19 +1554,19 @@ describe.concurrent('BlueskyClient', () => {
         test('throws BskyAuthError on 401', async () => {
             mockUpdateSeen.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockUpdateSeen.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyRateLimitError);
+            await expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic failure', async () => {
             mockUpdateSeen.mockRejectedValueOnce(makeXRPCError(500, 'InternalError'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyError);
+            await expect(client.updateNotificationsSeen()).rejects.toBeInstanceOf(BskyError);
         });
     });
 
@@ -2764,8 +2764,7 @@ describe.concurrent('BlueskyClient', () => {
             const healthRegistry   = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Token expired'));
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
-            await Promise.resolve();
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
             expect(mockSendEvent).toHaveBeenCalledWith('bluesky', 'CONNECTION_LOST', expect.objectContaining({ error: expect.any(String) }));
         });
 
@@ -2775,8 +2774,7 @@ describe.concurrent('BlueskyClient', () => {
             // Read methods retry on 429 (up to BSKY_READ_MAX_ATTEMPTS=3); mock persistent failure
             mockGetTimeline.mockRejectedValue(makeXRPCError(429, 'RateLimitExceeded', 'Too many requests'));
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
-            await Promise.resolve();
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyRateLimitError);
             expect(mockSendEvent).not.toHaveBeenCalled();
         });
 
@@ -2785,8 +2783,7 @@ describe.concurrent('BlueskyClient', () => {
             const healthRegistry = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(500, 'InternalError', 'Server error'));
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyError);
-            await Promise.resolve();
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyError);
             expect(mockSendEvent).not.toHaveBeenCalled();
         });
 
@@ -2794,7 +2791,7 @@ describe.concurrent('BlueskyClient', () => {
             mockGetTimeline.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Token expired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             // Should not throw from missing registry
-            expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
+            await expect(client.getFeed()).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('does not send CONNECTION_LOST on login 401 (handled by reconnection loop)', async () => {
@@ -2802,8 +2799,7 @@ describe.concurrent('BlueskyClient', () => {
             const healthRegistry = { sendEvent: mockSendEvent } as unknown as ServiceHealthRegistry;
             mockLogin.mockRejectedValueOnce(makeXRPCError(401, 'AuthRequired', 'Invalid credentials'));
             const client = new BlueskyClient({ ...CLIENT_OPTIONS, healthRegistry });
-            expect(client.login()).rejects.toBeInstanceOf(BskyAuthError);
-            await Promise.resolve();
+            await expect(client.login()).rejects.toBeInstanceOf(BskyAuthError);
             expect(mockSendEvent).not.toHaveBeenCalled();
         });
     });
@@ -2832,6 +2828,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
         mockUpdateRead.mockReset();
         mockWithProxy.mockReset();
         mockGetConvoForMembers.mockReset();
+        mockDetectFacets.mockReset();
         mockWithProxy.mockImplementation(() => ({
             chat: {
                 bsky: {
@@ -2846,6 +2843,9 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             },
         }));
         mockLogin.mockResolvedValue({});
+        mockRichTextState.graphemeLength = 10;
+        mockRichTextState.text           = 'Hello Bluesky!';
+        mockRichTextState.facets         = undefined;
         mockLogger.error.mockClear();
     });
 
@@ -2955,8 +2955,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
         test('likePost does not retry on 429 (called exactly once)', async () => {
             mockLike.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyRateLimitError);
-            await Promise.resolve();
+            await expect(client.likePost('at://uri', 'cid')).rejects.toBeInstanceOf(BskyRateLimitError);
             expect(mockLike).toHaveBeenCalledTimes(1);
         });
 
@@ -2965,8 +2964,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             mockSendMessage.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await client.login();
-            expect(client.sendDirectMessage('convo-123', 'hello')).rejects.toBeInstanceOf(BskyRateLimitError);
-            await Promise.resolve();
+            await expect(client.sendDirectMessage('convo-123', 'hello')).rejects.toBeInstanceOf(BskyRateLimitError);
             expect(mockSendMessage).toHaveBeenCalledTimes(1);
         });
 
@@ -2974,8 +2972,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             mockUpdateRead.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await client.login();
-            expect(client.markConversationRead('convo-123')).rejects.toBeInstanceOf(BskyRateLimitError);
-            await Promise.resolve();
+            await expect(client.markConversationRead('convo-123')).rejects.toBeInstanceOf(BskyRateLimitError);
             expect(mockUpdateRead).toHaveBeenCalledTimes(1);
         });
     });

@@ -362,7 +362,6 @@ describe('Bot Lifecycle Integration', () => {
 
             // Discord startup failure is now non-fatal: app.start() resolves and starts
             // a reconnection loop in the background instead of throwing.
-            // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- awaiting .resolves assertion is intentional; ensures the promise is settled before proceeding
             await expect(app.start()).resolves.toBeUndefined();
 
             // Clean up

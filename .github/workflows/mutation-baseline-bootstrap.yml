@@ -140,7 +140,21 @@ jobs:
         env:
           MUTATE_GLOBS: ${{ matrix.globs }}
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
-        run: bun run mutate -- --mutate "$MUTATE_GLOBS"
+        run: |
+          set -o pipefail
+          bun run mutate -- --mutate "$MUTATE_GLOBS" 2>&1 | tee mutate.log
+
+      # TEMPORARY, remove after stryker-bun-runner 1.3.3: the runner's inspector
+      # stream can silently truncate mid-run and still exit 0 with a
+      # plausible-looking score. "no inspector test found" is that truncation's
+      # signature — turn it into an explicit red naming the cause instead of a
+      # quiet false-green (which a saved shard baseline would then propagate).
+      - name: Detect silent inspector-stream truncation
+        run: |
+          if grep -q "no inspector test found" mutate.log; then
+            echo "::error::Stryker inspector stream truncated mid-run (stryker-bun-runner bug, fixed in 1.3.3) — the mutation score above is not trustworthy."
+            exit 1
+          fi
 
       - name: Save accumulated baseline (green shards only)
         if: success()

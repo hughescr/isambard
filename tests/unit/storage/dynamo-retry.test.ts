@@ -106,8 +106,8 @@ describe('withDynamoTimeout', () => {
             // Advance past timeout
             jest.advanceTimersByTime(1001);
 
-            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
-            expect(resultPromise).rejects.toThrow("DynamoDB operation 'PutItem' timed out after 1000ms");
+            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            await expect(resultPromise).rejects.toThrow("DynamoDB operation 'PutItem' timed out after 1000ms");
         });
 
         it('should log error when timeout occurs', async () => {
@@ -123,7 +123,7 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(2001);
 
-            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
             expect(mockLogger.error).toHaveBeenCalledWith({
                 operation: 'UpdateItem',
@@ -169,7 +169,7 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(1001);
 
-            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
             // Should not have called logger (it wasn't provided)
             expect(mockLogger.error).not.toHaveBeenCalled();
@@ -203,7 +203,7 @@ describe('withDynamoTimeout', () => {
 
             jest.advanceTimersByTime(1501);
 
-            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
     });
 
@@ -229,8 +229,8 @@ describe('withDynamoTimeout', () => {
             jest.advanceTimersByTime(1001);
 
             // Fast should succeed, slow should timeout
-            expect(slow).rejects.toThrow(DynamoTimeoutError);
-            expect(fast).resolves.toBe('fast');
+            await expect(slow).rejects.toThrow(DynamoTimeoutError);
+            await expect(fast).resolves.toBe('fast');
         });
     });
 
@@ -247,8 +247,8 @@ describe('withDynamoTimeout', () => {
                 logger:    mockLogger,
             });
 
-            expect(resultPromise).rejects.toThrow('DynamoDB validation error');
-            expect(resultPromise).rejects.not.toThrow(DynamoTimeoutError);
+            await expect(resultPromise).rejects.toThrow('DynamoDB validation error');
+            await expect(resultPromise).rejects.not.toThrow(DynamoTimeoutError);
 
             // Should not log timeout error (different error type)
             expect(mockLogger.error).not.toHaveBeenCalled();
@@ -274,7 +274,7 @@ describe('withDynamoTimeout', () => {
             jest.advanceTimersByTime(501);
 
             // Should get timeout error (race winner)
-            expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
         });
     });
 });
@@ -306,13 +306,7 @@ describe('setDynamoHealthNotifier / health notifier integration', () => {
 
         jest.advanceTimersByTime(1001);
 
-        expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
-        // Allow rejection to propagate
-        try {
-            await resultPromise;
-        } catch{
-            // expected
-        }
+        await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
 
         expect(notifier).toHaveBeenCalledTimes(1);
         expect(notifier.mock.calls[0][0]).toBeInstanceOf(DynamoTimeoutError);
@@ -379,13 +373,7 @@ describe('setDynamoHealthNotifier / health notifier integration', () => {
 
         // With no notifier set, withDynamoTimeout must skip the notifier branch and
         // still re-throw the original network error unchanged (it does not crash).
-        expect(resultPromise).rejects.toBe(networkError);
-
-        try {
-            await resultPromise;
-        } catch{
-            // expected — just verifying it doesn't crash without a notifier
-        }
+        await expect(resultPromise).rejects.toBe(networkError);
     });
 
     it('should NOT call notifier for non-network errors (e.g. validation error)', async () => {
