@@ -21,17 +21,14 @@ import type { ModelQuant, ModelSlug } from './types.js';
 export function cacheDir(): string {
     const home = homedir();
     // macOS
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: platform branch — darwin and Linux paths are both correct; Linux branch is not exercised in macOS CI
     if(process.platform === 'darwin') {
         // macOS: ~/Library/Caches/llama.cpp (shared with homebrew llama-cli)
         return path.join(home, 'Library', 'Caches', 'llama.cpp');
     }
-    // Linux (XDG or fallback) — not exercised in macOS CI; mutations here cannot be detected
-    // Stryker disable LogicalOperator,StringLiteral: Linux-only branch — XDG fallback and path strings cannot be tested on macOS where all tests run
+    // Linux (XDG or fallback)
     const xdgCache = process.env.XDG_CACHE_HOME;
     const cacheBase = xdgCache ?? path.join(home, '.cache');
     return path.join(cacheBase, 'llama.cpp');
-    // Stryker restore LogicalOperator,StringLiteral
 }
 
 /**

@@ -1,12 +1,27 @@
 /**
  * Tests for paths.ts — cache-dir resolution + GGUF filename construction
  */
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { cacheDir, ggufFilename, ggufPath } from '@/storage/memory-vec/paths';
 
 describe('cacheDir', () => {
+    // Stub process.platform directly (writable data property) rather than mock.module, matching
+    // the established pattern in tests/unit/agent/browser/webview-adapter.test.ts. This lets both
+    // the darwin and non-darwin branches run deterministically on any host OS, so CI on
+    // ubuntu-latest actually exercises (and can kill mutants in) the darwin branch, and macOS runs
+    // actually exercise the Linux/XDG branch — neither was true before this change.
+    let realPlatform: string;
+
+    beforeEach(() => {
+        realPlatform = process.platform;
+    });
+
+    afterEach(() => {
+        Object.defineProperty(process, 'platform', { value: realPlatform, writable: true });
+    });
+
     it('returns path inside homedir', () => {
         const result = cacheDir();
         expect(result.startsWith(homedir())).toBe(true);
@@ -17,37 +32,55 @@ describe('cacheDir', () => {
         expect(result).toContain('llama.cpp');
     });
 
-    it('on darwin returns the Library/Caches/llama.cpp path', () => {
-        if(process.platform === 'darwin') {
+    describe('on darwin', () => {
+        beforeEach(() => {
+            Object.defineProperty(process, 'platform', { value: 'darwin', writable: true });
+        });
+
+        it('returns the Library/Caches/llama.cpp path', () => {
             const result = cacheDir();
             const expected = path.join(homedir(), 'Library', 'Caches', 'llama.cpp');
             expect(result).toBe(expected);
-        }
-    });
+        });
 
-    it('on darwin path contains "Library" segment', () => {
-        if(process.platform === 'darwin') {
-            const result = cacheDir();
-            expect(result).toContain('Library');
-        }
-    });
-
-    it('on darwin path contains "Caches" segment', () => {
-        if(process.platform === 'darwin') {
-            const result = cacheDir();
-            expect(result).toContain('Caches');
-        }
-    });
-
-    it('on darwin path has Library before Caches before llama.cpp', () => {
-        if(process.platform === 'darwin') {
+        it('path has Library before Caches before llama.cpp', () => {
             const result = cacheDir();
             const libIdx = result.indexOf('Library');
             const cachesIdx = result.indexOf('Caches');
             const llamaIdx = result.indexOf('llama.cpp');
             expect(libIdx).toBeLessThan(cachesIdx);
             expect(cachesIdx).toBeLessThan(llamaIdx);
-        }
+        });
+    });
+
+    describe('on linux', () => {
+        let originalXdgCacheHome: string | undefined;
+
+        beforeEach(() => {
+            Object.defineProperty(process, 'platform', { value: 'linux', writable: true });
+            originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+        });
+
+        afterEach(() => {
+            if(originalXdgCacheHome === undefined) {
+                delete process.env.XDG_CACHE_HOME;
+            } else {
+                process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+            }
+        });
+
+        it('falls back to ~/.cache/llama.cpp when XDG_CACHE_HOME is unset', () => {
+            delete process.env.XDG_CACHE_HOME;
+            const result = cacheDir();
+            const expected = path.join(homedir(), '.cache', 'llama.cpp');
+            expect(result).toBe(expected);
+        });
+
+        it('uses XDG_CACHE_HOME when set', () => {
+            process.env.XDG_CACHE_HOME = '/custom/xdg-cache';
+            const result = cacheDir();
+            expect(result).toBe(path.join('/custom/xdg-cache', 'llama.cpp'));
+        });
     });
 });
 
