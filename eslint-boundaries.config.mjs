@@ -5,13 +5,12 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  * Architectural Boundary Configuration
  *
  * Extracted from eslint.config.mjs for maintainability.
- * Protected by PreToolUse hook to prevent accidental modification.
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
  *    Note: utils/path-validator.ts, utils/media/**, and
  *    utils/assert-never.ts are allowed to import from errors (throw typed errors).
- *    This is scoped via internalPath.
+ *    This is scoped via fileInternalPath.
  * 2. errors     - Error types, minimal dependencies
  * 3. config     - Configuration loading, minimal dependencies
  * 4. storage    - Data layer, independent of application/agent
@@ -22,8 +21,20 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *    bsky       - Bluesky integration, depends on agent
  *    caldav     - CalDAV calendar integration, independent of agent
  * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together
+ *
+ * Written against eslint-plugin-boundaries v7. Three things differ from the v6 shape:
+ * `rules` is now `policies`; a bare `{ type }` is an ELEMENT selector and must be wrapped
+ * in an ENTITY selector as `{ element: { type } }`; and `internalPath` on an element
+ * selector is now `fileInternalPath` (plain `internalPath` survives only inside a `module`
+ * sub-selector, for external packages).
  */
 
+/**
+ * The module hierarchy, as folders plus the composition-root entry file.
+ *
+ * This is also consumed by @hughescr/module-boundaries in eslint.config.mjs, which
+ * classifies by path prefix and does want the entry file listed here.
+ */
 export const boundaryElements = [
     { type: 'utils',   pattern: 'src/utils/**' },
     { type: 'errors',  pattern: 'src/errors/**' },
@@ -38,6 +49,24 @@ export const boundaryElements = [
     { type: 'app',     pattern: ['src/index.ts', 'src/app/**'] },
 ];
 
+/**
+ * `boundaries/elements` classifies FOLDERS, and v7 warns about any element pattern that
+ * looks like a single file. So the entry file is stripped out here and classified through
+ * `boundaries/files` instead; the ENTRY_POINT_CATEGORY policy below restores its
+ * permissions verbatim. boundaryElements itself keeps the entry file because the
+ * @hughescr/module-boundaries rules consume that array and do not share this constraint.
+ */
+const elementDescriptors = boundaryElements.map(element => (
+    element.type === 'app'
+        ? { ...element, pattern: 'src/app/**' }
+        : element
+));
+
+const ENTRY_POINT_CATEGORY = 'entrypoint';
+
+// What the composition root may reach: everything except itself.
+const APP_MAY_IMPORT = ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav'];
+
 export const boundariesConfig = {
     files:   ['src/**/*.ts', 'src/**/*.tsx'],
     plugins: {
@@ -50,8 +79,11 @@ export const boundariesConfig = {
                 project:        './tsconfig.json'
             }
         },
-        'boundaries/elements': boundaryElements,
-        'boundaries/ignore':   [
+        'boundaries/elements': elementDescriptors,
+        'boundaries/files':    [
+            { category: ENTRY_POINT_CATEGORY, pattern: 'src/index.ts' }
+        ],
+        'boundaries/ignore': [
             'src/**/*.test.ts',
             'src/**/*.spec.ts'
         ]
@@ -59,26 +91,36 @@ export const boundariesConfig = {
     rules: {
         'boundaries/dependencies': ['error', {
             'default': 'disallow',
-            rules:     [
-                { from: { type: 'utils', internalPath: 'path-validator.ts' }, allow: { to: { type: ['errors'] } } },
-                { from: { type: 'utils', internalPath: 'media/**' }, allow: { to: { type: ['errors'] } } },
-                { from: { type: 'utils', internalPath: 'assert-never.ts' }, allow: { to: { type: ['errors'] } } },
-                { from: { type: 'errors' },  allow: { to: { type: ['utils'] } } },
-                { from: { type: 'config' },  allow: { to: { type: ['utils', 'errors'] } } },
-                { from: { type: 'storage' },  allow: { to: { type: ['utils', 'errors', 'config'] } } },
-                { from: { type: 'services' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage'] } } },
-                { from: { type: 'agent' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'email', 'bsky', 'caldav'] } } },
-                { from: { type: 'email' },   allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } },
-                { from: { type: 'bsky' },    allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } },
-                { from: { type: 'caldav' },  allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services'] } } },
-                { from: { type: 'discord' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'email', 'bsky', 'caldav'] } } },
-                { from: { type: 'app' },     allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav'] } } },
+            policies:  [
+                { from: { element: { type: 'utils', fileInternalPath: 'path-validator.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
+                { from: { element: { type: 'utils', fileInternalPath: 'media/**' } }, allow: { to: { element: { type: ['errors'] } } } },
+                { from: { element: { type: 'utils', fileInternalPath: 'assert-never.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
+                { from: { element: { type: 'errors' } },  allow: { to: { element: { type: ['utils'] } } } },
+                { from: { element: { type: 'config' } },  allow: { to: { element: { type: ['utils', 'errors'] } } } },
+                { from: { element: { type: 'storage' } },  allow: { to: { element: { type: ['utils', 'errors', 'config'] } } } },
+                { from: { element: { type: 'services' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage'] } } } },
+                { from: { element: { type: 'agent' } },    allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'email', 'bsky', 'caldav'] } } } },
+                { from: { element: { type: 'email' } },   allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } } },
+                { from: { element: { type: 'bsky' } },    allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } } },
+                { from: { element: { type: 'caldav' } },  allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services'] } } } },
+                { from: { element: { type: 'discord' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'email', 'bsky', 'caldav'] } } } },
+                { from: { element: { type: 'app' } },     allow: { to: { element: { type: APP_MAY_IMPORT } } } },
+                // src/index.ts is the other half of the composition root. It is classified as a
+                // file category rather than an element (see elementDescriptors above), so it needs
+                // its own policy. Note the extra 'app': under v6 the entry file and src/app/**
+                // were one element type, so `import ... from '@/app'` was an intra-type import and
+                // never consulted a policy. Splitting them makes that edge visible, and it has to
+                // be allowed explicitly or the composition root cannot reach its own layers. The
+                // entry-point policy below still restricts it to the '@/app' barrel.
+                { from: { file: { categories: ENTRY_POINT_CATEGORY } }, allow: { to: { element: { type: [...APP_MAY_IMPORT, 'app'] } } } },
                 // Entry-point enforcement (merged from boundaries/entry-point)
                 {
                     disallow: {
                         to: {
-                            type:         ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'app'],
-                            internalPath: '!index.ts'
+                            element: {
+                                type:             ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'app'],
+                                fileInternalPath: '!index.ts'
+                            }
                         }
                     }
                 },
