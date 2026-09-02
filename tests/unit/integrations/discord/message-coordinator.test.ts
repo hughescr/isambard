@@ -1849,30 +1849,73 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
         });
 
-        it('should never pass a sessionId through to the processor, even after a prior result returned one', async () => {
-            // SessionId is no longer stored in ChannelState or passed to the processor.
-            // partialWork/resumeContext tests in the Interruption Handling section cover resume behavior.
-            // The default processorMock resolves with sessionId: 'session-123' - confirm it never
-            // leaks into the context objects or resumeContext of a later call.
+        it('should never leak a sessionId into the resume context handed to the processor', async () => {
+            // The path that could actually leak is processWithResume(), which builds a REAL
+            // resume context out of state.partialWork. startProcessing() passes a literal
+            // `null`, so asserting that a completed-path call got null proves nothing at all.
+            // This drives a genuine interruption so the resumed call receives a populated
+            // resume context, then checks nothing session-shaped rides along with it.
+            const trackerWithProgress = new StreamTracker();
+            trackerWithProgress.update({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'text', text: 'Partial response...' }
+                    ]
+                }
+            });
+
+            let callCount = 0;
+            let resumedContext: ResumeContext | null = null;
+
+            const interruptingProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+                callCount++;
+                if(callCount === 1) {
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 200);
+                    });
+                    return {
+                        response:       null,
+                        sessionId:      'session-123',
+                        wasInterrupted: abortSignal.aborted,
+                        streamTracker:  trackerWithProgress,
+                    };
+                }
+                resumedContext = resumeContext;
+                return {
+                    response:       'Resumed response',
+                    sessionId:      'session-123',
+                    wasInterrupted: false,
+                    streamTracker:  new StreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(interruptingProcessor);
+
+            // Start first message
             coordinator.handleMessage(mockContext, mockMessage);
-            jest.advanceTimersByTime(100);
-            await Promise.resolve(); // Flush microtasks
-            await Promise.resolve();
+            jest.advanceTimersByTime(10);
 
-            const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
-            const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
+            // Interrupt with a second message (starts debounce timer)
+            const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'New message' };
+            const msg2 = { ...mockMessage, id: 'msg-002', content: 'New message' } as unknown as Message;
             coordinator.handleMessage(msg2Context, msg2);
-            jest.advanceTimersByTime(100);
-            await Promise.resolve(); // Flush microtasks
+
+            // Debounce (100ms) triggers the interruption, first call completes (200ms), resume runs
+            jest.advanceTimersByTime(400);
+            await Promise.resolve();
             await Promise.resolve();
 
-            expect(processorMock).toHaveBeenCalledTimes(2);
-            const secondCallArgs = processorMock.mock.calls[1] as unknown[];
-            const secondContexts = secondCallArgs[0] as DiscordMessageContext[];
-            const secondResumeContext = secondCallArgs[1] as ResumeContext | null;
-            expect(secondResumeContext).toBeNull();
-            expect(secondContexts.every(ctx => !('sessionId' in ctx))).toBe(true);
-            expect(JSON.stringify(secondCallArgs)).not.toContain('session-123');
+            expect(callCount).toBe(2);
+            const resumedCallArgs = processorMock.mock.calls[1] as unknown[];
+
+            // The resumed call must genuinely carry resume state - otherwise this test has
+            // fallen back to the vacuous startProcessing path and is asserting nothing.
+            expect(resumedContext).not.toBeNull();
+            expect(resumedContext!.partialWork.text).toBe('Partial response...');
+
+            // ...and it must carry no session identity of any kind.
+            expect('sessionId' in resumedContext!).toBe(false);
+            expect(JSON.stringify(resumedCallArgs)).not.toContain('session-123');
         });
     });
 
@@ -1921,7 +1964,12 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
         });
 
-        it('should keep resumeContext null across a run of completed messages, never seeded from a prior sessionId', async () => {
+        // NOTE: this covers the INITIAL processing path only, where startProcessing() passes a
+        // literal `null` as the resume context. It therefore cannot detect a sessionId being
+        // threaded across turns - that invariant is covered by 'should never leak a sessionId
+        // into the resume context handed to the processor', which drives processWithResume()
+        // and inspects a genuinely populated resume context.
+        it('should pass a null resume context on every initial (non-resumed) processing call', async () => {
             coordinator.handleMessage(mockContext, mockMessage);
             jest.advanceTimersByTime(100);
             await Promise.resolve(); // Flush microtasks

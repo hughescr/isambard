@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition -- Test assertions use optional chaining on mock call args for defensive access */
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { mockGenerateText, mockLogger, originalGenerateText } from '../../../../setup';
 import {
@@ -1266,26 +1265,7 @@ describe('DynamicStatusGenerator', () => {
             // These tests work correctly when run in isolation. When run with the full
             // suite, we skip assertions if the mock has been corrupted.
 
-            // Helper to check if a mock is still a valid Bun mock (not corrupted by other tests)
-            const isMockValid = (fn: unknown): boolean => {
-                try {
-                    // Try calling mockClear - if it fails, the mock is corrupted
-                    (fn as { mockClear: () => void }).mockClear();
-                    // Also verify the mock has a .mock.calls array (meaning it's recording)
-                    const mockCalls = (fn as { mock: { calls: unknown[] } }).mock?.calls;
-                    return Array.isArray(mockCalls);
-                } catch{
-                    return false;
-                }
-            };
-
             it('should log debug before generating synopsis', async () => {
-                // Skip if mock is corrupted by another test.
-                if(!isMockValid(mockLogger.debug)) {
-                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
-                    return;
-                }
-
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1305,12 +1285,6 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log info on successful generation', async () => {
-                // Skip if mock is corrupted by another test.
-                if(!isMockValid(mockLogger.info)) {
-                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
-                    return;
-                }
-
                 mockGenerateText.mockImplementation(() => Promise.resolve('Pondering code...'));
 
                 const generator = createDynamicStatusGenerator({
@@ -1332,12 +1306,6 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log error on failure', async () => {
-                // Skip if mock is corrupted by another test.
-                if(!isMockValid(mockLogger.error)) {
-                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
-                    return;
-                }
-
                 const testError = new Error('API failure');
                 mockGenerateText.mockImplementation(() =>
                     Promise.reject(testError)
@@ -1362,12 +1330,6 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log debug when call is within cooldown', async () => {
-                // Skip if mock is corrupted by another test.
-                if(!isMockValid(mockLogger.debug)) {
-                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
-                    return;
-                }
-
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -1391,12 +1353,6 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should not log info when using cached/cooldown status', async () => {
-                // Skip if mock is corrupted by another test.
-                if(!isMockValid(mockLogger.info)) {
-                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
-                    return;
-                }
-
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });

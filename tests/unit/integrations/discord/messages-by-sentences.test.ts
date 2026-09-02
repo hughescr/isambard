@@ -123,6 +123,37 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 100);
                 expect(result).toEqual(['Test.']);
             });
+
+            describe('no text loss when punctuation is not a sentence boundary', () => {
+            // A '.' followed by a non-space character (URLs, version strings, filenames)
+            // is punctuation INSIDE a sentence, not a sentence boundary. Text around it
+            // must survive the split.
+                test('should not drop a URL containing a dot', () => {
+                    const message = 'See https://example.com/docs/a.b for details. Next sentence here.';
+                    const result = splitMessage(message, 30);
+                    expect(result.join(' ')).toContain('https://example.com/docs/a.b');
+                });
+
+                test('should not drop a version string containing dots', () => {
+                    const message = 'Release v1.2.3 shipped today. Next sentence here.';
+                    const result = splitMessage(message, 25);
+                    expect(result.join(' ')).toContain('v1.2.3');
+                });
+
+                test('should preserve every non-whitespace character when splitting', () => {
+                    const filler = 'This is a sentence of ordinary prose that pads the paragraph out. ';
+                    const message = `${filler.repeat(28)}See https://example.com/docs/a.b for the v1.2.3 notes. ${filler.repeat(4)}`;
+                    const result = splitMessage(message);
+                    const strip = (t: string): string => t.replaceAll(/\s+/g, '');
+                    expect(result.map(chunk => strip(chunk)).join('')).toBe(strip(message));
+                });
+
+                test('should keep leading text before an interior dot', () => {
+                    const message = 'a.b. c';
+                    const result = splitMessage(message, 4);
+                    expect(result.join(' ')).toContain('a.b.');
+                });
+            });
         });
     });
 });

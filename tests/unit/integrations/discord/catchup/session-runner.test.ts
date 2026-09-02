@@ -837,6 +837,33 @@ describe('CatchUpSessionRunner', () => {
             expect(mockStateManager.goIdle).toHaveBeenCalled();
         });
 
+        it('should return the state manager to idle when the resumed session throws', async () => {
+            // The non-AbortError branch of the catch in runCatchUpSession() falls through to
+            // completeCatchUp(0, 0), which calls stateManager.goIdle(). Without this the bot
+            // would stay stuck in catching_up after a failed resume.
+            mockInboxManager.getUnreadOverview = mock().mockReturnValue({
+                totalUnread: 3,
+                channels:    [{ channelId: createChannelId('123'), channelName: 'general', unreadCount: 3 }],
+            });
+            mockRunAgentSession.mockRejectedValue(new Error('resume blew up'));
+
+            const runner = createCatchUpSessionRunner(deps);
+
+            mockMode = 'catching_up';
+            runner.suspend({
+                channelId:   createChannelId('123'),
+                author:      'TestUser',
+                channelName: 'general',
+                content:     'Message',
+            });
+
+            await runner.resumeAfterSuspension();
+
+            expect(mockRunAgentSession).toHaveBeenCalled();
+            expect(mockStateManager.goIdle).toHaveBeenCalled();
+            expect(mockDeleteInProgressSignal).toHaveBeenCalled();
+        });
+
         it('should use buildCatchUpResumedPrompt with viewed channels and suspending message', async () => {
             // Set up state as catching_up
             mockMode = 'catching_up';

@@ -126,25 +126,35 @@ function extractSentences(text: string): string[] {
         return [];
     }
 
-    // Stryker disable next-line Regex: Equivalent - remaining text handler (lines 122-128) catches unmatched sentences
-    // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- KNOWN QUADRATIC, suppressed pending a decision, NOT because the input is safe. Measured on a long run with no sentence break: 20k chars ~215ms, 80k ~3.4s. The previous justification here claimed the input was a length-bounded inbound Discord message; that was wrong in both halves. extractSentences is reached only from splitMessage(), which early-returns unless the text EXCEEDS DISCORD_SAFE_LENGTH, and its callers (response-sender.ts, discord-mcp-server.ts, index.ts) all pass outbound agent-generated text of unbounded length. Not attacker-controlled, so this is an event-loop stall risk rather than a DoS, but a model response containing a URL or version string inside a long unbroken run does trigger it.
-    const sentencePattern = /[^.!?]*[.!?](?:\s|$)/g;
+    // A sentence boundary is terminal punctuation followed by whitespace or end of text.
+    // Matched with a LOOKAHEAD so the scan stays linear: every position tests one character
+    // plus a one-character lookahead and never backtracks.
+    //
+    // The previous pattern, /[^.!?]*[.!?](?:\s|$)/g, was quadratic (20k chars ~215ms,
+    // 80k ~3.4s) and, worse, silently DROPPED text: [^.!?]* cannot cross interior
+    // punctuation, so when a '.' was not a boundary the regex engine restarted past it and
+    // everything before it was never emitted. A 2167-char message containing a URL lost 42
+    // characters, the URL and version string among them. Sentences are now taken by slicing
+    // between boundaries, so no input can be skipped.
+    // Stryker disable next-line Regex: Equivalent - remaining text handler below catches unmatched sentences
+    const sentenceBoundary = /[.!?](?=\s|$)/g;
     const sentences: string[] = [];
     let match;
-    let lastIndex = 0;
+    let sentenceStart = 0;
 
     // Stryker disable all: extractSentences has intentionally redundant logic for robustness
-    while((match = sentencePattern.exec(text)) !== null) {
-        const trimmed = match[0].trim();
+    while((match = sentenceBoundary.exec(text)) !== null) {
+        const boundaryEnd = match.index + 1;
+        const trimmed = text.slice(sentenceStart, boundaryEnd).trim();
         if(trimmed) {
             sentences.push(trimmed);
         }
-        lastIndex = sentencePattern.lastIndex;
+        sentenceStart = boundaryEnd;
     }
 
     // Handle any remaining text after the last sentence
-    if(lastIndex < text.length) {
-        const remaining = text.slice(lastIndex).trim();
+    if(sentenceStart < text.length) {
+        const remaining = text.slice(sentenceStart).trim();
         if(remaining) {
             sentences.push(remaining);
         }

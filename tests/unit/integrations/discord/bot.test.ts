@@ -1599,54 +1599,6 @@ describe('createDiscordBot', () => {
             expect(stopIdx).toBeLessThan(listenerIdx);
         });
     });
-
-    describe('Resume Error Handling', () => {
-        test('should reset botStateManager to idle when catch-up resume fails', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Create a real botStateManager so we can verify state transitions
-            const realBotStateManager = new BotStateManagerImpl({
-                logger: mockLogger,
-            });
-
-            // Track goIdle calls
-            const originalGoIdle = realBotStateManager.goIdle;
-            realBotStateManager.goIdle = () => {
-                originalGoIdle.call(realBotStateManager);
-            };
-
-            const bot = createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-                botStateManager: realBotStateManager,
-            });
-
-            // Verify botStateManager starts idle
-            expect(realBotStateManager.getMode()).toBe('idle');
-
-            // NOTE: despite its name, this test does not drive a catch-up resume
-            // failure. Nothing here creates a catchUpSessionRunner or injects a
-            // failure, and the goIdle()-on-resume-failure logic lives in
-            // src/integrations/discord/catchup/session-runner.ts, which this test
-            // never touches. The only claim it can actually support is that
-            // stop() completes its client cleanup.
-            await bot.stop();
-
-            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
-        });
-    });
-
     describe('Channel Cleanup Events', () => {
         test('should call coordinator.removeChannel() on channelDelete event', async () => {
             const mockRemoveChannel = mock(() => undefined);
