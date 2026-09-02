@@ -27,7 +27,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // Tests: if(lastIndex < text.length) and remaining text handling
                 const message = 'Sentence. trailing text without punctuation';
                 const result = splitMessage(message, 100);
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
                 const text = result[0];
                 expect(text).toContain('Sentence.');
                 expect(text).toContain('trailing text without punctuation');
@@ -47,7 +47,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'line1\nline2\n\npara2';
                 const result = splitMessage(message, 100);
                 // Single newline should NOT cause split
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
                 expect(result[0]).toBe('line1\nline2\n\npara2');
             });
 
@@ -57,7 +57,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'para1\n\n\npara2';
                 const result = splitMessage(message, 100);
                 // The result preserves input when it fits
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
                 expect(result[0]).toContain('para1');
                 expect(result[0]).toContain('para2');
             });
@@ -70,7 +70,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `${para1}\n\n\n\n\n\n${para2}`;
                 const result = splitMessage(message, 80);
                 // Should only have 2 paragraphs, not empty ones
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
             });
 
             test('should differentiate single vs double newlines when paragraph splitting needed', () => {
@@ -118,7 +118,7 @@ describe.concurrent('Discord Message Splitting', () => {
                     expect(allText).toContain(expected);
                 }
                 if(expectedTotalLength) {
-                    expect(result.join('').length).toBe(expectedTotalLength);
+                    expect(result.join('')).toHaveLength(expectedTotalLength);
                 }
             });
         });
@@ -135,7 +135,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `${word1}    ${word2}`; // 4 spaces (total: 64 chars)
                 const result = splitMessage(message, 35);
                 // Must split into 2 chunks, one word each
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(word1);
                 expect(result[1]).toBe(word2);
             });
@@ -159,7 +159,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `${word1}\t\t${word2}`; // tabs between (total: 64 chars)
                 const result = splitMessage(message, 35);
                 // Should split at word boundary
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(word1);
                 expect(result[1]).toBe(word2);
             });
@@ -171,7 +171,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'line1\nline2\nline3';
                 const result = splitMessage(message, 100);
                 // Single newlines should NOT be paragraph breaks
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
                 expect(result[0]).toBe('line1\nline2\nline3');
             });
 
@@ -363,7 +363,7 @@ describe.concurrent('Discord Message Splitting', () => {
                     const message = `Hi\n\n${'x'.repeat(100)}`;
                     const result = splitMessage(message, 50);
                     expect(result[0]).toBe('Hi');
-                    expect(result.length).toBe(3);
+                    expect(result).toHaveLength(3);
                 });
 
                 test('should NOT push empty string when consecutive long paragraphs occur', () => {
@@ -435,7 +435,7 @@ describe.concurrent('Discord Message Splitting', () => {
                     expect(result[0]).toBe(expectedFirst);
                 }
                 if(expectedLength) {
-                    expect(result.length).toBe(expectedLength);
+                    expect(result).toHaveLength(expectedLength);
                     expect(result).not.toContain('');
                 }
                 if(noLeadingSpace) {

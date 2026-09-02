@@ -41,7 +41,6 @@ describe.concurrent('PerchSlotSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('pre-dawn');
-            expect(result.data === 'pre-dawn').toBe(true);
         }
     });
 
@@ -50,7 +49,6 @@ describe.concurrent('PerchSlotSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('evening');
-            expect(result.data === 'evening').toBe(true);
         }
     });
 
@@ -59,7 +57,6 @@ describe.concurrent('PerchSlotSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('late-night');
-            expect(result.data === 'late-night').toBe(true);
         }
     });
 
@@ -68,7 +65,6 @@ describe.concurrent('PerchSlotSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('afternoon');
-            expect(result.data === 'afternoon').toBe(true);
         }
     });
 
@@ -77,7 +73,6 @@ describe.concurrent('PerchSlotSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('mid-morning');
-            expect(result.data === 'mid-morning').toBe(true);
         }
     });
 
@@ -86,7 +81,6 @@ describe.concurrent('PerchSlotSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('unscheduled');
-            expect(result.data === 'unscheduled').toBe(true);
         }
     });
 });
@@ -123,7 +117,6 @@ describe.concurrent('SuggestionLevelSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('open');
-            expect(result.data === 'open').toBe(true);
         }
     });
 
@@ -132,7 +125,6 @@ describe.concurrent('SuggestionLevelSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('light_touch');
-            expect(result.data === 'light_touch').toBe(true);
         }
     });
 
@@ -141,7 +133,6 @@ describe.concurrent('SuggestionLevelSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('strongly_suggestive');
-            expect(result.data === 'strongly_suggestive').toBe(true);
         }
     });
 
@@ -150,7 +141,6 @@ describe.concurrent('SuggestionLevelSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data).toBe('moderate');
-            expect(result.data === 'moderate').toBe(true);
         }
     });
 });

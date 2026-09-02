@@ -48,7 +48,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 const result = splitMessage(message, 150);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(paragraph1);
                 expect(result[1]).toBe(paragraph2);
             });
@@ -68,7 +68,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 const result = splitMessage(message, 110);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(`${paragraph1}\n\n${paragraph2}`);
                 expect(result[1]).toBe(paragraph3);
             });
@@ -81,7 +81,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 const result = splitMessage(message, 40);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(`${para1}\n\n${para2}`);
                 expect(result[1]).toBe(para3);
             });
@@ -95,7 +95,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 const result = splitMessage(message, 100);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(sentence1);
                 expect(result[1]).toBe(sentence2);
             });
@@ -107,7 +107,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 const result = splitMessage(message, 100);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(sentence1);
                 expect(result[1]).toBe(sentence2);
             });
@@ -119,7 +119,7 @@ describe.concurrent('Discord Message Splitting', () => {
 
                 const result = splitMessage(message, 100);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(sentence1);
                 expect(result[1]).toBe(sentence2);
             });
@@ -135,7 +135,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'First sentence. Second sentence.';
                 const result = splitMessage(message, 20);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe('First sentence.');
                 expect(result[1]).toBe('Second sentence.');
             });

@@ -10,7 +10,7 @@ import type { PendingQuestion } from '@/agent/question-registry';
  * 4. Default to unrelated (if not @mentioned) or interruption (if @mentioned)
  */
 export class AnswerClassifier {
-    private readonly classifyWithLLM?: ClassifierConfig['classifyWithLLM'];
+    private readonly classifyWithLLM?: NonNullable<ClassifierConfig['classifyWithLLM']>;
 
     constructor(config?: ClassifierConfig) {
         this.classifyWithLLM = config?.classifyWithLLM;

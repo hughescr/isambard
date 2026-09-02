@@ -4,6 +4,7 @@
  * This file is kept as a placeholder to avoid test runner configuration issues.
  */
 import { describe, test, expect } from 'bun:test';
+import { AllowlistCommandHandler, buildAllowlistCommand } from '@/integrations/discord/allowlist-commands';
 
 describe('allowlist-commands (email module)', () => {
     test('AllowlistCommandHandler has moved to discord module', () => {
@@ -11,6 +12,7 @@ describe('allowlist-commands (email module)', () => {
         // src/integrations/discord/allowlist-commands.ts
         // Tests for the new implementation are in:
         // tests/unit/integrations/discord/allowlist-commands.test.ts
-        expect(true).toBe(true);
+        expect(typeof AllowlistCommandHandler).toBe('function');
+        expect(typeof buildAllowlistCommand).toBe('function');
     });
 });

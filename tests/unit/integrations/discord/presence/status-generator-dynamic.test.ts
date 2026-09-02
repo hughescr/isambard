@@ -18,7 +18,7 @@ describe('truncateToWordBoundary', () => {
 
         it('should return text unchanged if exactly at maxLength', () => {
             const text = 'Exactly ten';
-            expect(text.length).toBe(11);
+            expect(text).toHaveLength(11);
             const result = truncateToWordBoundary(text, 11);
             expect(result).toBe('Exactly ten');
         });
@@ -51,14 +51,14 @@ describe('truncateToWordBoundary', () => {
             const result = truncateToWordBoundary('Supercalifragilisticexpialidocious', 10);
             // No space found, so hard truncate at 9 chars + ellipsis
             expect(result).toBe('Supercali\u2026');
-            expect(result.length).toBe(10);
+            expect(result).toHaveLength(10);
         });
 
         it('should hard truncate when first word is too long', () => {
             const result = truncateToWordBoundary('Pneumonoultramicroscopicsilicovolcanoconiosis is a word', 20);
             // The first space is at position 45, which is > 20, so no valid space
             expect(result).toBe('Pneumonoultramicros\u2026');
-            expect(result.length).toBe(20);
+            expect(result).toHaveLength(20);
         });
     });
 
@@ -95,7 +95,7 @@ describe('truncateToWordBoundary', () => {
             // Last space within range is at position 0, but we don't want to truncate there
             // (would result in empty string + ellipsis). Instead hard truncate at position 4.
             expect(result).toBe(' Nos\u2026');
-            expect(result.length).toBe(5);
+            expect(result).toHaveLength(5);
         });
     });
 
@@ -1280,8 +1280,9 @@ describe('DynamicStatusGenerator', () => {
             };
 
             it('should log debug before generating synopsis', async () => {
-                // Skip if mock is corrupted by another test
+                // Skip if mock is corrupted by another test.
                 if(!isMockValid(mockLogger.debug)) {
+                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
                     return;
                 }
 
@@ -1304,8 +1305,9 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log info on successful generation', async () => {
-                // Skip if mock is corrupted by another test
+                // Skip if mock is corrupted by another test.
                 if(!isMockValid(mockLogger.info)) {
+                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
                     return;
                 }
 
@@ -1330,8 +1332,9 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log error on failure', async () => {
-                // Skip if mock is corrupted by another test
+                // Skip if mock is corrupted by another test.
                 if(!isMockValid(mockLogger.error)) {
+                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
                     return;
                 }
 
@@ -1359,8 +1362,9 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log debug when call is within cooldown', async () => {
-                // Skip if mock is corrupted by another test
+                // Skip if mock is corrupted by another test.
                 if(!isMockValid(mockLogger.debug)) {
+                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
                     return;
                 }
 
@@ -1387,8 +1391,9 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should not log info when using cached/cooldown status', async () => {
-                // Skip if mock is corrupted by another test
+                // Skip if mock is corrupted by another test.
                 if(!isMockValid(mockLogger.info)) {
+                    // eslint-disable-next-line sonarjs/explicit-test-skip -- lifting this to it.skipIf() would move the condition out of the test body, but this repo's pinned eslint-plugin-jest@29.16.6 does not recognize Bun's `it.skipIf()` chain as a valid test-call shape, so it would then misreport the expect() below as jest/no-standalone-expect; keeping the in-body guard avoids trading one required-clean rule for another.
                     return;
                 }
 
@@ -1569,7 +1574,7 @@ describe('DynamicStatusGenerator', () => {
                 // {"data":"..."} is 11 chars for the wrapper, so we need 189 x's
                 const exactInput = { data: 'x'.repeat(189) };
                 const json = JSON.stringify(exactInput);
-                expect(json.length).toBe(200); // Verify our test setup is correct
+                expect(json).toHaveLength(200); // Verify our test setup is correct
 
                 const context: SynopsisContext = {
                     phase:       'using_tool',

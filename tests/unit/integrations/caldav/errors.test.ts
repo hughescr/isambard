@@ -144,42 +144,42 @@ describe.concurrent('CaldavTimeoutError', () => {
 describe.concurrent('Error instanceof cross-checks', () => {
     test('CaldavAuthError is not CaldavFetchError', () => {
         const error = new CaldavAuthError('Auth failed');
-        expect(error instanceof CaldavFetchError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavFetchError);
     });
 
     test('CaldavFetchError is not CaldavAuthError', () => {
         const error = new CaldavFetchError('Fetch failed');
-        expect(error instanceof CaldavAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavAuthError);
     });
 
     test('CaldavError is not CaldavAuthError', () => {
         const error = new CaldavError('Base error');
-        expect(error instanceof CaldavAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavAuthError);
     });
 
     test('CaldavError is not CaldavFetchError', () => {
         const error = new CaldavError('Base error');
-        expect(error instanceof CaldavFetchError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavFetchError);
     });
 
     test('CaldavTimeoutError is not CaldavAuthError', () => {
         const error = new CaldavTimeoutError('Timed out');
-        expect(error instanceof CaldavAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavAuthError);
     });
 
     test('CaldavTimeoutError is not CaldavFetchError', () => {
         const error = new CaldavTimeoutError('Timed out');
-        expect(error instanceof CaldavFetchError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavFetchError);
     });
 
     test('CaldavAuthError is not CaldavTimeoutError', () => {
         const error = new CaldavAuthError('Auth failed');
-        expect(error instanceof CaldavTimeoutError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavTimeoutError);
     });
 
     test('CaldavFetchError is not CaldavTimeoutError', () => {
         const error = new CaldavFetchError('Fetch failed');
-        expect(error instanceof CaldavTimeoutError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavTimeoutError);
     });
 });
 
@@ -242,7 +242,7 @@ describe.concurrent('AmbiguousCalendarMatchError', () => {
 
     test('should not be instanceof CaldavAuthError', () => {
         const error = new AmbiguousCalendarMatchError('server', 'x', []);
-        expect(error instanceof CaldavAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(CaldavAuthError);
     });
 });
 

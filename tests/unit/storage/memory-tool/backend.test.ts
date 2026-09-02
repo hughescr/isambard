@@ -242,7 +242,7 @@ describe('MemoryToolBackend', () => {
 
             const calls = ddbMock.commandCalls(PutCommand);
             // After refactor: only 1 PutCommand (main item), no version snapshot
-            expect(calls.length).toBe(1);
+            expect(calls).toHaveLength(1);
             const item = calls[0].args[0].input.Item as MemoryToolItem;
             // Tag index items are created separately via BatchWriteCommand
             expect(item.PK).toBe('DIR#/test');
@@ -370,7 +370,7 @@ describe('MemoryToolBackend', () => {
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 const mainItem = putCalls[0].args[0].input.Item;
                 expect(mainItem?.contentPreview).toBe(char.repeat(expectedLength));
-                expect((mainItem?.contentPreview as string).length).toBe(expectedLength);
+                expect(mainItem?.contentPreview as string).toHaveLength(expectedLength);
             } else {
                 const item = await backend.create({
                     path:        '/state/long-preview' as MemoryPath,
@@ -416,7 +416,7 @@ describe('MemoryToolBackend', () => {
 
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 // Should have: 1) main item only (tags via BatchWriteCommand)
-                expect(putCalls.length).toBe(1);
+                expect(putCalls).toHaveLength(1);
 
                 // Verify BatchWriteCommand was called for tag index items
                 const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -503,7 +503,7 @@ describe('MemoryToolBackend', () => {
                 // Verify tag index operations
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 // Should have: 1) main item only
-                expect(putCalls.length).toBe(1);
+                expect(putCalls).toHaveLength(1);
 
                 // Should have BatchWriteCommand for both deletes (old tags) and puts (new tags)
                 const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -525,7 +525,7 @@ describe('MemoryToolBackend', () => {
                 // Should refresh tag index with new content preview
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 // Should have: 1) main item only
-                expect(putCalls.length).toBe(1);
+                expect(putCalls).toHaveLength(1);
 
                 // Should have BatchWriteCommand to refresh tag index items
                 const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
@@ -547,15 +547,15 @@ describe('MemoryToolBackend', () => {
 
                 // Should have: 1) main item only - no tag index operations
                 const putCalls = ddbMock.commandCalls(PutCommand);
-                expect(putCalls.length).toBe(1);
+                expect(putCalls).toHaveLength(1);
 
                 // Should NOT have any BatchWriteCommand (tag index writes)
                 const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
-                expect(batchWriteCalls.length).toBe(0);
+                expect(batchWriteCalls).toHaveLength(0);
 
                 // Should NOT have any UpdateCommand (tag count changes)
                 const updateCalls = ddbMock.commandCalls(UpdateCommand);
-                expect(updateCalls.length).toBe(0);
+                expect(updateCalls).toHaveLength(0);
             });
 
             test('should log warning but not fail if tag index update fails', async () => {
@@ -608,7 +608,7 @@ describe('MemoryToolBackend', () => {
 
                 const deleteCalls = ddbMock.commandCalls(DeleteCommand);
                 // Should have deleted main item only
-                expect(deleteCalls.length).toBe(1);
+                expect(deleteCalls).toHaveLength(1);
 
                 // Tag deletes via BatchWriteCommand
                 const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);

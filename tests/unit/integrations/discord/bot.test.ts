@@ -726,7 +726,7 @@ describe('createDiscordBot', () => {
             // Verify it was NOT registered with once()
             const onceCalls = (mockClient.once as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (...args: unknown[]) => void][];
             const clientReadyOnceCalls = onceCalls.filter(([event]) => event === 'clientReady');
-            expect(clientReadyOnceCalls.length).toBe(0);
+            expect(clientReadyOnceCalls).toHaveLength(0);
         });
 
         test('should verify clientReady handler uses initialized flag to prevent duplicate setup on reconnect', async () => {
@@ -1386,8 +1386,8 @@ describe('createDiscordBot', () => {
             }
 
             // startHydration should have been called; warmCache should NOT have been called directly
-            expect((registry.startHydration as ReturnType<typeof mock>).mock.calls.length).toBe(1);
-            expect((registry.warmCache as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+            expect((registry.startHydration as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+            expect((registry.warmCache as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
         });
 
         test('channelRegistry.stop() is called during bot shutdown', async () => {
@@ -1401,7 +1401,7 @@ describe('createDiscordBot', () => {
 
             await bot.stop();
 
-            expect((registry.stop as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((registry.stop as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
         });
 
         test('discovery runs and logs info after hydration succeeds', async () => {
@@ -1483,9 +1483,10 @@ describe('createDiscordBot', () => {
                 await Promise.resolve(readyHandler(mockClient));
             }
 
-            // Bot should still be stoppable without error
+            // Bot should still be stoppable without error, and stop() should actually
+            // run its client cleanup (removeAllListeners + destroy) rather than short-circuit.
             await bot.stop();
-            expect(true).toBe(true);
+            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
         });
 
         test('should handle notification send failure gracefully', async () => {
@@ -1545,9 +1546,9 @@ describe('createDiscordBot', () => {
                 msg: 'Failed to send channel registry error notification to owner',
             }));
 
-            // Bot should still be running
+            // Bot should still be running, and stop() should complete its client cleanup.
             await bot.stop();
-            expect(true).toBe(true);
+            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -1634,14 +1635,15 @@ describe('createDiscordBot', () => {
             // Verify botStateManager starts idle
             expect(realBotStateManager.getMode()).toBe('idle');
 
-            // The test verifies that the fix is in place
-            // The actual resume failure triggering is tested in integration tests
-            // Here we verify goIdle is correctly hooked up
-
+            // NOTE: despite its name, this test does not drive a catch-up resume
+            // failure. Nothing here creates a catchUpSessionRunner or injects a
+            // failure, and the goIdle()-on-resume-failure logic lives in
+            // src/integrations/discord/catchup/session-runner.ts, which this test
+            // never touches. The only claim it can actually support is that
+            // stop() completes its client cleanup.
             await bot.stop();
 
-            // Test passes - the fix ensures goIdle() is called in catch handlers
-            expect(true).toBe(true);
+            expect(mockClient.destroy).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -1965,8 +1967,13 @@ describe('createDiscordBot', () => {
                 rest:               null,
             } as unknown as Client;
 
+            // Spy on the coordinator constructor so we can prove it was never invoked,
+            // i.e. that "coordinator is not created" is actually true for this test.
+            const coordinatorConstructorSpy = spyOn(messageCoordinatorModule, 'MessageCoordinator');
+
             // Mock channel registry functions
             spies.push(
+                coordinatorConstructorSpy,
                 spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient),
                 spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
                     discovered: 0,
@@ -1999,8 +2006,9 @@ describe('createDiscordBot', () => {
             // Call the handler - it should not throw even without a coordinator
             guildDeleteHandler!({ id: guildId });
             await Promise.resolve();
-            // If we get here without throwing, the test passes
-            expect(true).toBe(true);
+            // Coordinator was genuinely never created, so removeGuildChannels() had no
+            // instance to be called on.
+            expect(coordinatorConstructorSpy).not.toHaveBeenCalled();
         });
     });
 

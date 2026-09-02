@@ -111,22 +111,22 @@ describe.concurrent('BskyRateLimitError', () => {
 describe.concurrent('Error instanceof cross-checks', () => {
     test('BskyAuthError is not BskyRateLimitError', () => {
         const error = new BskyAuthError('Auth failed');
-        expect(error instanceof BskyRateLimitError).toBe(false);
+        expect(error).not.toBeInstanceOf(BskyRateLimitError);
     });
 
     test('BskyRateLimitError is not BskyAuthError', () => {
         const error = new BskyRateLimitError('Rate limited');
-        expect(error instanceof BskyAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(BskyAuthError);
     });
 
     test('BskyError is not BskyAuthError', () => {
         const error = new BskyError('Base error');
-        expect(error instanceof BskyAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(BskyAuthError);
     });
 
     test('BskyError is not BskyRateLimitError', () => {
         const error = new BskyError('Base error');
-        expect(error instanceof BskyRateLimitError).toBe(false);
+        expect(error).not.toBeInstanceOf(BskyRateLimitError);
     });
 });
 
@@ -158,7 +158,7 @@ describe.concurrent('BskyValidationError', () => {
 
     test('BskyValidationError is not BskyAuthError', () => {
         const error = new BskyValidationError('Validation failed');
-        expect(error instanceof BskyAuthError).toBe(false);
+        expect(error).not.toBeInstanceOf(BskyAuthError);
     });
 });
 

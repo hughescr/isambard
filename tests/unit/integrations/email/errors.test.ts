@@ -110,22 +110,22 @@ describe.concurrent('EmailProcessingError', () => {
 describe.concurrent('Error instanceof cross-checks', () => {
     test('ClassifierError is not EmailProcessingError', () => {
         const error = new ClassifierError('Classification failed');
-        expect(error instanceof EmailProcessingError).toBe(false);
+        expect(error).not.toBeInstanceOf(EmailProcessingError);
     });
 
     test('EmailProcessingError is not ClassifierError', () => {
         const error = new EmailProcessingError('Processing failed');
-        expect(error instanceof ClassifierError).toBe(false);
+        expect(error).not.toBeInstanceOf(ClassifierError);
     });
 
     test('EmailError is not ClassifierError', () => {
         const error = new EmailError('Base error');
-        expect(error instanceof ClassifierError).toBe(false);
+        expect(error).not.toBeInstanceOf(ClassifierError);
     });
 
     test('EmailError is not EmailProcessingError', () => {
         const error = new EmailError('Base error');
-        expect(error instanceof EmailProcessingError).toBe(false);
+        expect(error).not.toBeInstanceOf(EmailProcessingError);
     });
 });
 

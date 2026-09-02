@@ -24,7 +24,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 15);
 
                 // Should split at paragraph, not at sentence within paragraph
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(para1);
                 expect(result[1]).toBe(para2);
             });
@@ -34,7 +34,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 100);
 
                 // Multiple newlines should be treated as paragraph break
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
             });
         });
 
@@ -80,8 +80,8 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'a'.repeat(150);
                 const result = splitMessage(message, 100);
 
-                expect(result.length).toBe(2);
-                expect(result[0].length).toBe(100);
+                expect(result).toHaveLength(2);
+                expect(result[0]).toHaveLength(100);
             });
 
             test('should handle max length of 1', () => {
@@ -126,7 +126,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const text = '日'.repeat(100);
                 const result = splitMessage(text, 50);
 
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 for(const chunk of result) {
                     expect(chunk.length).toBeLessThanOrEqual(50);
                 }
@@ -137,7 +137,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'Hello 👨‍👩‍👧‍👦 Family';
                 const result = splitMessage(message, 100);
 
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
                 expect(result[0]).toContain('👨‍👩‍👧‍👦');
             });
         });

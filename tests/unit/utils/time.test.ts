@@ -88,9 +88,9 @@ describe('relative time formatting boundary conditions', () => {
             desc:          '364 days as months (days < 365)',
             now:           new Date('2024-12-30T12:00:00Z'),
             date:          new Date('2024-01-01T12:00:00Z'),
-            // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
+            // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
             expectedLong:  /\d+ months ago/,
-            // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
+            // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- simple digit match in test data, not production code
             expectedShort: /\d+mo ago/
         },
         {

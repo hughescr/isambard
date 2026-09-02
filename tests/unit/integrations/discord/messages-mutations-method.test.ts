@@ -53,7 +53,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'Complete sentence.';
                 const result = splitMessage(message, 100);
                 expect(result).toEqual(['Complete sentence.']);
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
             });
 
             test('should track lastIndex correctly for remaining text', () => {
@@ -81,7 +81,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `abc ${'x'.repeat(60)}`;
                 const result = splitMessage(message, 50);
                 expect(result[0]).toBe('abc');
-                expect(result.length).toBe(3);
+                expect(result).toHaveLength(3);
             });
 
             test('should not add extra empty chunk when starting with long word', () => {
@@ -90,9 +90,9 @@ describe.concurrent('Discord Message Splitting', () => {
                 const longWord = 'x'.repeat(100);
                 const result = splitMessage(longWord, 50);
                 // Should be exactly 2 chunks, no leading empty
-                expect(result.length).toBe(2);
-                expect(result[0].length).toBe(50);
-                expect(result[1].length).toBe(50);
+                expect(result).toHaveLength(2);
+                expect(result[0]).toHaveLength(50);
+                expect(result[1]).toHaveLength(50);
             });
         });
 
@@ -116,7 +116,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `${s1}   ${s2}`; // Extra spaces
                 const result = splitMessage(message, 50);
                 // Both sentences should be found
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(s1);
                 expect(result[1]).toBe(s2);
             });
@@ -127,7 +127,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const s2 = `${'y'.repeat(45)}.`;
                 const message = `${s1} ${s2}`;
                 const result = splitMessage(message, 50);
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
             });
         });
     });

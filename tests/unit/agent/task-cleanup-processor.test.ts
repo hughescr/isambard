@@ -1286,7 +1286,7 @@ describe('processTaskDirectory', () => {
             });
 
             // Should only evaluate D once due to memoization
-            expect(taskDCalls.length).toBe(1);
+            expect(taskDCalls).toHaveLength(1);
         });
     });
 });

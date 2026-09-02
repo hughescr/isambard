@@ -278,7 +278,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
 
             expect(result.content).toBeDefined();
 
-            expect(result.content.length).toBe(1);
+            expect(result.content).toHaveLength(1);
 
             expect(result.content[0].type).toBe('text');
 
@@ -1009,11 +1009,11 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toBeInstanceOf(Array);
-            expect(parsed.messageIds.length).toBe(2);
+            expect(parsed.messageIds).toHaveLength(2);
             expect(parsed.chunksCount).toBe(2);
 
             // Verify multiple sends occurred
-            expect(sentMessages.length).toBe(2);
+            expect(sentMessages).toHaveLength(2);
         });
 
         test('should only apply reply to first chunk when splitting', async () => {
@@ -1404,7 +1404,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
                         // Verify files are included in options and are absolute paths
                         expect(options.files).toBeDefined();
                         expect(Array.isArray(options.files)).toBe(true);
-                        expect((options.files as string[]).length).toBe(2);
+                        expect(options.files as string[]).toHaveLength(2);
                         // Files should be absolute paths after validation
                         for(const file of options.files as string[]) {
                             expect(file.startsWith('/')).toBe(true);

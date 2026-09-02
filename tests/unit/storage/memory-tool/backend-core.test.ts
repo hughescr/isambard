@@ -152,7 +152,7 @@ describe('MemoryToolBackendCore', () => {
             const mainItem = putCalls[0].args[0].input.Item as MemoryToolItemData;
 
             expect(mainItem.contentPreview).toBe('x'.repeat(100));
-            expect((mainItem.contentPreview!).length).toBe(100);
+            expect(mainItem.contentPreview!).toHaveLength(100);
         });
 
         test('should preserve original updatedAt when preserveUpdatedAt is true', async () => {

@@ -573,7 +573,7 @@ describe('cleanupSession', () => {
             const logObj = call[0] as { msg?: string };
             return logObj.msg?.includes('SDK projects directory not found') ?? false;
         });
-        expect(sdkWarnings.length).toBe(0);
+        expect(sdkWarnings).toHaveLength(0);
     });
 
     test('should skip sub-agent scan when skipSubAgentScan option is true', async () => {

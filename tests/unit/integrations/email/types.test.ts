@@ -78,7 +78,7 @@ describe.concurrent('classifierVerdictSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.verdict).toBe('safe');
-            expect(result.data.confidence).toBe(0.95);
+            expect(result.data.confidence).toBeCloseTo(0.95, 2);
             expect(result.data.reason).toBe('Message passed all checks');
             expect(result.data.category).toBeUndefined();
         }

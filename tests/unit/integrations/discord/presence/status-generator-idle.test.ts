@@ -109,7 +109,7 @@ describe('IdleStatusGenerator', () => {
             // maxLength = 128 - 3 (emojiPrefix.length) = 125
             // No spaces in repeated-char text → slice(0, 124) + '…' = 125 chars
             // Final with "💤 " (3 code units): 3 + 125 = 128 code units (Discord's limit)
-            expect(result.name.length).toBe(128); // Discord's limit is based on .length
+            expect(result.name).toHaveLength(128); // Discord's limit is based on .length
             expect(result.name).toBe(`💤 ${char.repeat(124)}\u2026`);
             // Verify correct truncation for edge cases
             if(len > 125) {
@@ -706,7 +706,7 @@ describe('IdleStatusGenerator', () => {
             expect(Array.isArray(systemPromptArg)).toBe(true);
             const parts = systemPromptArg as string[];
             // Array must have exactly 3 elements: static prefix, instructions, boundary sentinel
-            expect(parts.length).toBe(3);
+            expect(parts).toHaveLength(3);
             // BOUNDARY must be the LAST element so everything before it is fully cacheable
             expect(parts[parts.length - 1]).toBe(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
         });

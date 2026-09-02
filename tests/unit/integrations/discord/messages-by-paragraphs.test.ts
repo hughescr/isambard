@@ -33,7 +33,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = `${para1}\n\n\n\n\n\n${para2}`;
                 const result = splitMessage(message, 80);
                 // Should have exactly 2 chunks, not more (empty paragraphs filtered)
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe(para1);
                 expect(result[1]).toBe(para2);
             });
@@ -64,7 +64,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // Tests > boundary
                 const para = 'x'.repeat(51);
                 const result = splitMessage(para, 50);
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
             });
 
             test('should flush non-empty currentChunk before splitting long paragraph', () => {
@@ -81,7 +81,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const longPara = 'x'.repeat(100);
                 const result = splitMessage(longPara, 50);
                 expect(result).not.toContain('');
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
             });
 
             test('should reset currentChunk after flushing for long paragraph', () => {
@@ -107,7 +107,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // 47 + 2 (separator) + 3 = 52 > 50, should split
                 const message = `${para1}\n\n${para2}`;
                 const result = splitMessage(message, 50);
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
             });
 
             test('should push final chunk when not empty', () => {

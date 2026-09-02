@@ -267,7 +267,7 @@ describe('buildUnsafeAlert', () => {
         // The truncated body portion is exactly 500 chars (lodash truncate at 500)
         // The full description is the prefix + 500-char truncated body
         const prefix = '**Reason:** Phish\n\n';
-        expect(data.description!.length).toBe(prefix.length + 500);
+        expect(data.description!).toHaveLength(prefix.length + 500);
     });
 });
 

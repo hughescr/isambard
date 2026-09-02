@@ -115,8 +115,8 @@ describe('redactSensitiveArgs', () => {
         expect(redactSensitiveArgs('string')).toBe('string');
         expect(redactSensitiveArgs(123)).toBe(123);
         expect(redactSensitiveArgs(true)).toBe(true);
-        expect(redactSensitiveArgs(null)).toBe(null);
-        expect(redactSensitiveArgs(undefined)).toBe(undefined);
+        expect(redactSensitiveArgs(null)).toBeNull();
+        expect(redactSensitiveArgs(undefined)).toBeUndefined();
     });
 
     test('should handle empty collections', () => {
@@ -523,7 +523,7 @@ describe('createClaudeAgent', () => {
 
             // Verify Explore agent tools array is not empty (kills ArrayDeclaration mutant on line 62)
             expect(exploreTools).toBeDefined();
-            expect(exploreTools.length).toBe(3);
+            expect(exploreTools).toHaveLength(3);
 
             // Verify each tool individually (kills StringLiteral mutants on line 62)
             expect(exploreTools).toContain('Read');
@@ -546,7 +546,7 @@ describe('createClaudeAgent', () => {
 
             // Verify Plan agent tools array is defined
             expect(planTools).toBeDefined();
-            expect(planTools.length).toBe(5);
+            expect(planTools).toHaveLength(5);
 
             // Verify each tool individually (kills StringLiteral mutants on line 70)
             expect(planTools).toContain('Read');

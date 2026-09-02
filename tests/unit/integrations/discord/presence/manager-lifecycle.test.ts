@@ -134,7 +134,7 @@ describe('PresenceManager Lifecycle', () => {
             await Promise.resolve();
 
             // Idle generator should not have been called again
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialIdleCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialIdleCount);
 
             clearIntervalSpy.mockRestore();
         });
@@ -278,7 +278,7 @@ describe('PresenceManager Lifecycle', () => {
             await Promise.resolve();
 
             // Idle refresh should not have happened again (cleared by stop)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialIdleCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialIdleCount);
         });
     });
 
@@ -716,7 +716,7 @@ describe('PresenceManager Lifecycle', () => {
             // Verify idle refresh has stopped (no more calls after interval)
             jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
             await Promise.resolve();
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleGenCallCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleGenCallCount);
 
             clearIntervalSpy.mockRestore();
         });
@@ -801,7 +801,7 @@ describe('PresenceManager Lifecycle', () => {
             // Verify idle refresh is actually stopped
             jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
             await Promise.resolve();
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallsAfterStart);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallsAfterStart);
 
             clearIntervalSpy.mockRestore();
         });
@@ -822,7 +822,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // First update - goes through immediately (leading-edge)
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(1);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(1);
 
             // Advance time by EXACTLY throttleMs (100ms)
             jest.advanceTimersByTime(100);
@@ -834,7 +834,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // If the mutant survives, the second update would be skipped
             // If the test kills the mutant, the second update goes through
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(2);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(2);
         });
 
         it('should exit refreshIdleStatus early when phase is no longer idle (kills guard mutants)', async () => {
@@ -877,7 +877,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // The idle generator should NOT have been called again
             // because stopIdleRefresh cleared the interval
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallsAfterFirst);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallsAfterFirst);
         });
 
         it('should not call generate when interval fires but phase is no longer idle (guards interval callback)', async () => {
@@ -896,13 +896,13 @@ describe('PresenceManager Lifecycle', () => {
 
             // Go idle - first refresh happens immediately
             await manager.updatePhase({ type: 'idle', since: new Date() });
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(1);
 
             // Wait for one interval to trigger second refresh
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
             await Promise.resolve();
             await Promise.resolve();
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(2);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(2);
 
             // Now transition to active
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
@@ -914,7 +914,7 @@ describe('PresenceManager Lifecycle', () => {
             await Promise.resolve();
 
             // Should NOT have called generate() again (interval was cleared)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(countAfterTransition);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(countAfterTransition);
         });
 
         it('should not create any intervals when start() is called (new behavior)', async () => {
@@ -1101,7 +1101,7 @@ describe('PresenceManager Lifecycle', () => {
             // refreshIdleStatus -> applyPresenceUpdate: now=1000, lastUpdateTime=0
             // timeSinceLastUpdate = 1000, 1000 < 100 = false, update ALLOWED
             // lastUpdateTime = 1000, setActivity called
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(1);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(1);
 
             // Transition to active (stops idle interval, schedules debounced active update)
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
@@ -1113,7 +1113,7 @@ describe('PresenceManager Lifecycle', () => {
             // Active debounced update fires: now=1100, lastUpdateTime=1000
             // timeSinceLastUpdate = 100, 100 < 100 = false, update ALLOWED
             // lastUpdateTime = 1100, setActivity called
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(2);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(2);
 
             // Now advance by EXACTLY 100ms more to t=1200
             // When we go idle, timeSinceLastUpdate = 1200 - 1100 = 100
@@ -1127,7 +1127,7 @@ describe('PresenceManager Lifecycle', () => {
             // With <=: 100 <= 100 = true, update SKIPPED (count stays at 2)
 
             // The key assertion: with < operator, we get 3 calls. With <=, only 2.
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(3);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(3);
         });
 
         it('should verify refreshIdleStatus guard by testing interval callback behavior (line 135 mutants)', async () => {
@@ -1159,13 +1159,13 @@ describe('PresenceManager Lifecycle', () => {
 
             // Go idle - first refresh happens immediately
             await manager.updatePhase({ type: 'idle', since: new Date() });
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(1);
 
             // Wait for interval to fire - guard passes (still idle)
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
             await Promise.resolve();
             await Promise.resolve();
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(2);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(2);
 
             // Transition to active - interval is cleared
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
@@ -1179,7 +1179,7 @@ describe('PresenceManager Lifecycle', () => {
             // If guard mutant survived (if(false)), the interval would still be running
             // and generate() would be called. Since stopIdleRefresh clears it, we verify
             // that no additional calls happened.
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(countAfterTransition);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(countAfterTransition);
         });
 
         it('should never call activeStatusGenerator when transitioning idle->idle (line 199 if(true) mutant)', async () => {
@@ -1257,7 +1257,7 @@ describe('PresenceManager Lifecycle', () => {
 
             // Also verify no 'Started idle status refresh' log
             const idleRefreshLogs = (mockLogger.debug as ReturnType<typeof mock>).mock.calls.filter(call => call[1] === 'Started idle status refresh');
-            expect(idleRefreshLogs.length).toBe(0);
+            expect(idleRefreshLogs).toHaveLength(0);
 
             setIntervalSpy.mockRestore();
         });
@@ -1299,14 +1299,14 @@ describe('PresenceManager Lifecycle', () => {
 
             // First update - goes through immediately
             await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(1);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(1);
 
             // Advance past throttle cooldown
             jest.advanceTimersByTime(101);
 
             // Second update should work (proving lastActiveUpdateTime was updated)
             await manager.updatePhase({ type: 'responding', startedAt: new Date() });
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(2);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(2);
         });
 
         it('should properly track currentPhase transitions', async () => {
@@ -1340,7 +1340,7 @@ describe('PresenceManager Lifecycle', () => {
             await Promise.resolve();
 
             // Idle should not have been called again (proves currentPhase was updated)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCount);
         });
     });
 });

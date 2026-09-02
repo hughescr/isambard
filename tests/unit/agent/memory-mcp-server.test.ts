@@ -156,7 +156,7 @@ describe.concurrent('createMemoryMCPServer', () => {
             const result = await handler({ path: '/memories/test.md' });
 
             expect(result.content).toBeDefined();
-            expect(result.content.length).toBe(1);
+            expect(result.content).toHaveLength(1);
             expect(result.content[0].type).toBe('text');
             expect(textContent(result.content[0])).toBe('Test content');
             expect(result.isError).toBeUndefined();

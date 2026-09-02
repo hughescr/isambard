@@ -87,7 +87,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBe(0.95);
+            expect(result.confidence).toBeCloseTo(0.95, 2);
             expect(result.reason).toBe('Legitimate email from known sender');
         });
 
@@ -103,7 +103,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail({ subject: 'BIG SALE 50% OFF' }));
 
             expect(result.verdict).toBe('spam');
-            expect(result.confidence).toBe(0.88);
+            expect(result.confidence).toBeCloseTo(0.88, 2);
             expect(result.category).toBe('newsletter');
         });
 
@@ -211,7 +211,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBe(0.9);
+            expect(result.confidence).toBeCloseTo(0.9, 2);
         });
 
         test('extracts embedded JSON when response has surrounding text', async () => {
@@ -223,7 +223,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBe(0.85);
+            expect(result.confidence).toBeCloseTo(0.85, 2);
         });
 
         test('extracts embedded JSON with internal whitespace when surrounded by text', async () => {
@@ -236,7 +236,7 @@ describe('EmailClassifier', () => {
             const result = await classifier.classify(makeEmail());
 
             expect(result.verdict).toBe('safe');
-            expect(result.confidence).toBe(0.9);
+            expect(result.confidence).toBeCloseTo(0.9, 2);
         });
 
         test('returns uncertain when JSON is embedded but invalid', async () => {

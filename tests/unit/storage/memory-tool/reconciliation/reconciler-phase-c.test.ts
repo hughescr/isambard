@@ -167,7 +167,7 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
 
         // Verify DeleteCommand was called with correct key
         const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-        expect(deleteCalls.length).toBe(1);
+        expect(deleteCalls).toHaveLength(1);
         expect(deleteCalls[0].args[0].input.Key).toEqual({
             PK: 'TAG#orphan',
             SK: 'META_COUNT',
@@ -468,6 +468,6 @@ describe('runReconciliation - Phase C (META_COUNT verification)', () => {
             KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
             ExpressionAttributeValues: { ':pk': 'TAG#large-tag', ':skPrefix': 'PATH#' },
         });
-        expect(queryCalls.length).toBe(2);
+        expect(queryCalls).toHaveLength(2);
     });
 });

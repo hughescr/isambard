@@ -1293,7 +1293,7 @@ describe('runReconciliation', () => {
                 expect.objectContaining({ metadata: { someOtherKey: 'preserved' } })
             );
             // No GetCommand should have been issued for tag checking
-            expect(ddbMock.commandCalls(GetCommand).length).toBe(0);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
         });
 
         test('should use GetItem per old tag (not TAG_COUNTS) when previouslyKnownAsTags is present', async () => {
@@ -1363,7 +1363,7 @@ describe('runReconciliation', () => {
             expect(getItemCalls.length).toBeGreaterThanOrEqual(2);
             // Phase B (getAllTagNames) + Phase C (listTagCounts) = exactly 2 GSI2 calls
             // If Phase A also called GSI2, it would be 3+ — this confirms the fast path is used
-            expect(gsi2CheckCalls.length).toBe(2);
+            expect(gsi2CheckCalls).toHaveLength(2);
         });
 
         test('should check multiple old tags in parallel (Promise.all) when previouslyKnownAsTags present', async () => {
@@ -2060,7 +2060,7 @@ describe('runReconciliation', () => {
 
             // Verify DeleteCommand was called with correct key
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
-            expect(deleteCalls.length).toBe(1);
+            expect(deleteCalls).toHaveLength(1);
             expect(deleteCalls[0].args[0].input.Key).toEqual({
                 PK: 'TAG#orphan',
                 SK: 'META_COUNT',

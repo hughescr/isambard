@@ -1,6 +1,6 @@
 import { query, type McpServerConfig, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
-import { chain, isPlainObject, toPairs } from 'lodash-es';
+import { chain, isPlainObject } from 'lodash-es';
 import { createRetryableQuery } from './claude-retry';
 import type { ContextBuilder } from './context-builder';
 import { createCompactionHooks, type CompactionStateManager } from './hooks/compaction';
@@ -227,7 +227,7 @@ export function redactSensitiveArgs(input: unknown): unknown {
     // Handle objects - check keys and recurse
     if(isPlainObject(input)) {
         const result: Record<string, unknown> = {};
-        for(const [key, value] of toPairs(input as Record<string, unknown>)) {
+        for(const [key, value] of Object.entries(input as Record<string, unknown>)) {
             result[key] = isSensitiveKey(key) ? '[REDACTED]' : redactSensitiveArgs(value);
         }
         return result;

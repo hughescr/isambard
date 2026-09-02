@@ -50,7 +50,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const longWord = 'a'.repeat(200);
                 const result = splitMessage(longWord, 50);
 
-                expect(result.length).toBe(4);
+                expect(result).toHaveLength(4);
                 for(const chunk of result) {
                     expect(chunk.length).toBeLessThanOrEqual(50);
                 }
@@ -72,9 +72,9 @@ describe.concurrent('Discord Message Splitting', () => {
                 const longWord = 'z'.repeat(75);
                 const result = splitMessage(longWord, 50);
 
-                expect(result.length).toBe(2);
-                expect(result[0].length).toBe(50);
-                expect(result[1].length).toBe(25);
+                expect(result).toHaveLength(2);
+                expect(result[0]).toHaveLength(50);
+                expect(result[1]).toHaveLength(25);
             });
         });
 
@@ -105,7 +105,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const word = 'x'.repeat(10);
                 const result = splitMessage(word, 5);
                 expect(result).toEqual(['xxxxx', 'xxxxx']);
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 // Ensure no empty strings
                 for(const chunk of result) {
                     expect(chunk.length).toBeGreaterThan(0);

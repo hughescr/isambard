@@ -195,13 +195,13 @@ describe('Embedder.encode', () => {
         expect(result.vectorBytes).toBe(128);
         expect(result.vectorBits).toBe(1024);
         expect(result.shape).toEqual([1, 128]);
-        expect(result.data.length).toBe(128);
+        expect(result.data).toHaveLength(128);
     });
 
     it('returns EmbedResult with correct shape for 3 texts', async () => {
         const result = await embedder.encode(['a', 'b', 'c']);
         expect(result.shape).toEqual([3, 128]);
-        expect(result.data.length).toBe(384);
+        expect(result.data).toHaveLength(384);
     });
 
     it('returns Uint8Array for data', async () => {

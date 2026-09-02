@@ -383,7 +383,7 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
     }
 
     // Normalize path by removing trailing slashes
-    // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- test-only regex; path strings are short and well-controlled, no DoS risk
+    // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- test-only regex; path strings are short and well-controlled, no DoS risk
     const normalizedPath = path.replace(/\/+$/, '');
 
     // Find all direct children of this directory

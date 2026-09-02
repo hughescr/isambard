@@ -112,7 +112,7 @@ export class EmailClassifier {
             return JSON.parse(trimmed);
         } catch{
             // Try to find a JSON object in the text
-            // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- bounded by trimmed LLM response; not user-controlled adversarial input
+            // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- bounded by trimmed LLM response; not user-controlled adversarial input
             const match = /\{[\s\S]*\}/.exec(trimmed);
             if(match) {
                 try {

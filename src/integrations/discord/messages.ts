@@ -127,7 +127,7 @@ function extractSentences(text: string): string[] {
     }
 
     // Stryker disable next-line Regex: Equivalent - remaining text handler (lines 122-128) catches unmatched sentences
-    // eslint-disable-next-line sonarjs/slow-regex, regexp/no-super-linear-move -- sentence-splitting pattern; inputs are Discord messages (bounded length), not user-controlled adversarial strings
+    // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- KNOWN QUADRATIC, suppressed pending a decision, NOT because the input is safe. Measured on a long run with no sentence break: 20k chars ~215ms, 80k ~3.4s. The previous justification here claimed the input was a length-bounded inbound Discord message; that was wrong in both halves. extractSentences is reached only from splitMessage(), which early-returns unless the text EXCEEDS DISCORD_SAFE_LENGTH, and its callers (response-sender.ts, discord-mcp-server.ts, index.ts) all pass outbound agent-generated text of unbounded length. Not attacker-controlled, so this is an event-loop stall risk rather than a DoS, but a model response containing a URL or version string inside a long unbroken run does trigger it.
     const sentencePattern = /[^.!?]*[.!?](?:\s|$)/g;
     const sentences: string[] = [];
     let match;

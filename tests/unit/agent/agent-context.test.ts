@@ -637,7 +637,7 @@ describe('createClaudeAgent context integration', () => {
                 events.push(event);
             } });
 
-            expect(events.length).toBe(3);
+            expect(events).toHaveLength(3);
             expect(events[0].type).toBe('assistant');
             expect(events[1].type).toBe('tool_progress');
             expect(events[2].type).toBe('result');
@@ -902,7 +902,7 @@ describe('createClaudeAgent context integration', () => {
 
             // Should only have stream event log, not tool call log
             const toolCallCalls = mockLogger.debug.mock.calls.filter(call => call[0] && typeof call[0] === 'object' && 'toolName' in call[0]);
-            expect(toolCallCalls.length).toBe(0);
+            expect(toolCallCalls).toHaveLength(0);
         });
     });
 

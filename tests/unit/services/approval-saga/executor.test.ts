@@ -554,12 +554,12 @@ describe('createSagaExecutor', () => {
             // Next tick should NOT fire at base interval (1000ms more = 2000ms total)
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Next tick SHOULD fire at doubled interval (2000ms more = 3000ms total)
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             executor.stop();
         });
@@ -575,23 +575,23 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Second tick at 3000ms (1000 + 2000)
             jest.advanceTimersByTime(2000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             // Third tick should NOT fire at 6999ms (3000 + 3999 < 3000 + 4000)
             jest.advanceTimersByTime(3999);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             // Third tick fires at 7000ms (3000 + 4000)
             jest.advanceTimersByTime(1);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
             executor.stop();
         });
@@ -607,27 +607,27 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(base);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Doubled would be 400_000ms but cap is 300_000ms (5 min)
             // Should NOT fire at 299_999ms more
             jest.advanceTimersByTime(299_999);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Should fire at 300_000ms more (the cap)
             jest.advanceTimersByTime(1);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             // Another empty — should still use cap (300_000ms), not double further
             jest.advanceTimersByTime(299_999);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             jest.advanceTimersByTime(1);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
             executor.stop();
         });
@@ -651,22 +651,22 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Second tick at 3000ms — non-empty → resets interval to 1000
             jest.advanceTimersByTime(2000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             // Third tick should fire at 1000ms after (not 2000ms), i.e. 4000ms total
             jest.advanceTimersByTime(999);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             jest.advanceTimersByTime(1);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
             executor.stop();
         });
@@ -700,17 +700,17 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
             // Tick 4 should NOT fire at 1000ms after tick 3 (5000ms total)
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
             // Tick 4 SHOULD fire at 2000ms after tick 3 (6000ms total)
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(4);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(4);
 
             executor.stop();
         });
@@ -723,7 +723,7 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Stop mid-backoff
             executor.stop();
@@ -731,7 +731,7 @@ describe('createSagaExecutor', () => {
             // Advance past where the next backoff tick would have fired
             jest.advanceTimersByTime(3000);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
         });
 
         test('non-empty result (failed sagas) also resets interval to base', async () => {
@@ -755,22 +755,22 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             // Second tick at 3000ms — failed saga → reset to base (1000)
             jest.advanceTimersByTime(2000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             // Third tick should fire at 1000ms (base) not 2000ms
             jest.advanceTimersByTime(999);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             jest.advanceTimersByTime(1);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(3);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
 
             executor.stop();
         });
@@ -795,7 +795,7 @@ describe('createSagaExecutor', () => {
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
             expect(logger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({ error: 'DynamoDB unavailable' }),
                 expect.stringContaining('Saga poll tick threw')
@@ -804,11 +804,11 @@ describe('createSagaExecutor', () => {
             // Next tick should still fire at base interval (not doubled — rejection doesn't backoff)
             jest.advanceTimersByTime(999);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
 
             jest.advanceTimersByTime(1);
             await Promise.resolve();
-            expect((backend.listByState as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+            expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
 
             executor.stop();
         });

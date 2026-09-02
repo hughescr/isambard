@@ -44,7 +44,7 @@ describe('Discord Event Handlers', () => {
             expect(mockLogger.info).toHaveBeenCalled();
             const lastCall = mockLogger.info.mock.calls[mockLogger.info.mock.calls.length - 1];
             const message = lastCall[0] as string;
-            expect(message.includes('TestBot#1234')).toBe(true);
+            expect(message).toContain('TestBot#1234');
         });
 
         it('should log "ready" or "logged in" message', () => {
@@ -1476,7 +1476,7 @@ describe('Discord Event Handlers', () => {
             expect(result).toHaveLength(1);
             expect(result[0].filename).toBe('unknown');
             // Verify exact string match
-            expect(result[0].filename === 'unknown').toBe(true);
+            expect(result[0].filename).toBe('unknown');
             // ContentType should use Discord's value (image/png)
             expect(result[0].contentType).toBe('image/png');
         });

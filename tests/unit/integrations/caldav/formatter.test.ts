@@ -420,7 +420,7 @@ describe.concurrent('formatCalendarContext', () => {
         expect(result).toContain('(17:00–18:00 UTC)');
         // Event line should have exactly one parenthetical (the UTC suffix only)
         const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
-        expect((eventLine.match(/\(/g) ?? []).length).toBe(1);
+        expect(eventLine.match(/\(/g) ?? []).toHaveLength(1);
     });
 
     it('shows local + event TZ + UTC when event has a different source timezone', () => {
@@ -456,7 +456,7 @@ describe.concurrent('formatCalendarContext', () => {
         expect(result).toContain('(17:00–18:00 UTC)');
         // Event line should have exactly one parenthetical (UTC only, no event TZ duplicate)
         const eventLine = result.split('\n').find(l => l.startsWith('- ')) ?? '';
-        expect((eventLine.match(/\(/g) ?? []).length).toBe(1);
+        expect(eventLine.match(/\(/g) ?? []).toHaveLength(1);
         // No duplicate PST in parens
         expect(result).not.toContain('(09:00');
     });

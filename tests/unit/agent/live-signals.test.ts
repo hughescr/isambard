@@ -635,7 +635,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const signals = await ls.snapshot();
             // getFeed should have been called only once (the first snapshot)
             const getFeedMock = client.getFeed as ReturnType<typeof mock>;
-            expect(getFeedMock.mock.calls.filter(args => args[0] === 'discover').length).toBe(1);
+            expect(getFeedMock.mock.calls.filter(args => args[0] === 'discover')).toHaveLength(1);
             // Signal kind and label are correct from fresh cache path
             const discover = signals.filter(s => s.kind === 'bsky-discover');
             expect(discover).toHaveLength(1);
@@ -740,7 +740,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             const signals = await ls.snapshot();
             expect(signals.filter(s => s.kind === 'bsky-discover')).toHaveLength(0);
             const getFeedMock = client.getFeed as ReturnType<typeof mock>;
-            expect(getFeedMock.mock.calls.filter(args => args[0] === 'discover').length).toBe(0);
+            expect(getFeedMock.mock.calls.filter(args => args[0] === 'discover')).toHaveLength(0);
         });
 
         test('missing bskyClient: bsky-discover signals are skipped without errors', async () => {
@@ -891,7 +891,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             nowMs += 60_000;
             const signals = await ls.snapshot();
             const getFeedMock = client.getFeed as ReturnType<typeof mock>;
-            expect(getFeedMock.mock.calls.filter(args => args[0] === 'for-you').length).toBe(1);
+            expect(getFeedMock.mock.calls.filter(args => args[0] === 'for-you')).toHaveLength(1);
             // Signal kind and label are correct from fresh cache path
             const forYou = signals.filter(s => s.kind === 'bsky-foryou');
             expect(forYou).toHaveLength(1);
@@ -1061,7 +1061,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             nowMs += 60_000;
             await ls.snapshot();
             const getNotifMock = client.getNotifications as ReturnType<typeof mock>;
-            expect(getNotifMock.mock.calls.length).toBe(1);
+            expect(getNotifMock.mock.calls).toHaveLength(1);
         });
 
         test('feature flag off: notifications signal is skipped', async () => {

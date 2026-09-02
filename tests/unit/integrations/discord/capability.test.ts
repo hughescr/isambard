@@ -207,7 +207,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
 
         await cap.sendToChannel('my-channel-42', 'Test content');
         const calls  = (outbox.enqueue as ReturnType<typeof mock>).mock.calls;
-        expect(calls.length).toBe(1);
+        expect(calls).toHaveLength(1);
         const item   = calls[0][0] as OutboxItem;
         expect(item.service).toBe('discord');
         expect(item.destination).toBe('my-channel-42');

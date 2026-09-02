@@ -210,7 +210,7 @@ describe('StreamEventHandler', () => {
             // Verify it was NOT called with 'responding' phase (due to early return)
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             const respondingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
-            expect(respondingCalls.length).toBe(0);
+            expect(respondingCalls).toHaveLength(0);
         });
     });
 
@@ -247,7 +247,7 @@ describe('StreamEventHandler', () => {
 
             const calls = mockBotStateManager.updateActivityPhase.mock.calls;
             const thinkingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'thinking');
-            expect(thinkingCalls.length).toBe(0);
+            expect(thinkingCalls).toHaveLength(0);
         });
 
         it('should verify early return happens before responding phase detection', async () => {
@@ -279,7 +279,7 @@ describe('StreamEventHandler', () => {
             expect((calls[0]?.[0] as { type?: string })?.type).toBe('using_tool');
 
             const respondingCalls = calls.filter((call: unknown[]) => (call[0] as { type?: string })?.type === 'responding');
-            expect(respondingCalls.length).toBe(0);
+            expect(respondingCalls).toHaveLength(0);
         });
     });
 
@@ -538,7 +538,7 @@ describe('StreamEventHandler', () => {
 
             const toolContext = capturedContexts.find(ctx => ctx.phase === 'using_tool');
             expect(toolContext?.accumulatedText).toBeDefined();
-            expect(toolContext!.accumulatedText!.length).toBe(200);
+            expect(toolContext!.accumulatedText!).toHaveLength(200);
             // Should end with most recent text
             expect(toolContext!.accumulatedText!.endsWith('Y'.repeat(60))).toBe(true);
         });

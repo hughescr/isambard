@@ -1731,12 +1731,12 @@ describe('MessageCoordinator', () => {
             await Promise.resolve(); // Flush again to ensure completion
 
             // Should have both original and new message contexts
-            expect(receivedContexts.length).toBe(2);
+            expect(receivedContexts).toHaveLength(2);
             expect(receivedContexts[0].messageId).toBe('msg-001'); // Original
             expect(receivedContexts[1].messageId).toBe('msg-002'); // New
 
             // Resume context should have only the new message
-            expect(resumeContextReceived!.newMessages.length).toBe(1);
+            expect(resumeContextReceived!.newMessages).toHaveLength(1);
             expect(resumeContextReceived!.newMessages[0].messageId).toBe('msg-002');
         });
 
@@ -1849,16 +1849,66 @@ describe('MessageCoordinator', () => {
             coordinator.setProcessor(processorMock);
         });
 
-        it('PLACEHOLDER - section removed; verify no sessionId pass-through', () => {
+        it('should never pass a sessionId through to the processor, even after a prior result returned one', async () => {
             // SessionId is no longer stored in ChannelState or passed to the processor.
             // partialWork/resumeContext tests in the Interruption Handling section cover resume behavior.
-            expect(true).toBe(true);
+            // The default processorMock resolves with sessionId: 'session-123' - confirm it never
+            // leaks into the context objects or resumeContext of a later call.
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            expect(processorMock).toHaveBeenCalledTimes(2);
+            const secondCallArgs = processorMock.mock.calls[1] as unknown[];
+            const secondContexts = secondCallArgs[0] as DiscordMessageContext[];
+            const secondResumeContext = secondCallArgs[1] as ResumeContext | null;
+            expect(secondResumeContext).toBeNull();
+            expect(secondContexts.every(ctx => !('sessionId' in ctx))).toBe(true);
+            expect(JSON.stringify(secondCallArgs)).not.toContain('session-123');
         });
     });
 
     describe('Mutant Testing - _REMOVED_placeholder', () => {
-        it('placeholder - sessionId undefined handling tests removed (sessionId no longer passed to processor)', () => {
-            expect(true).toBe(true);
+        beforeEach(() => {
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(processorMock);
+        });
+
+        it('should keep processing later messages when a ProcessResult omits sessionId entirely', async () => {
+            // sessionId is optional on ProcessResult and is no longer read by the coordinator,
+            // so an undefined sessionId must not break subsequent message handling.
+            let callCount = 0;
+            const noSessionIdProcessor: MessageProcessor = async () => {
+                callCount++;
+                return {
+                    response:       'Response without sessionId',
+                    wasInterrupted: false,
+                    streamTracker:  new StreamTracker(),
+                };
+            };
+            coordinator.setProcessor(noSessionIdProcessor);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            expect(callCount).toBe(2);
         });
     });
 
@@ -1866,8 +1916,37 @@ describe('MessageCoordinator', () => {
         // These tests were removed because sessionId is no longer passed to the processor.
         // Sessions are always fresh (no SDK session resume). partialWork/resumeContext carries context.
         // The 'if(result.sessionId)' guard and state.sessionId field were removed from handleProcessingResult/ChannelState.
-        it('sessionId pass-through tests removed - sessions are always fresh', () => {
-            expect(true).toBe(true);
+        beforeEach(() => {
+            coordinator = new MessageCoordinator({ debounceMs: 100 });
+            coordinator.setProcessor(processorMock);
+        });
+
+        it('should keep resumeContext null across a run of completed messages, never seeded from a prior sessionId', async () => {
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            const msg3Context = { ...mockContext, messageId: 'msg-003', content: 'Third' };
+            const msg3 = { ...mockMessage, id: 'msg-003', content: 'Third' } as unknown as Message;
+            coordinator.handleMessage(msg3Context, msg3);
+            jest.advanceTimersByTime(100);
+            await Promise.resolve(); // Flush microtasks
+            await Promise.resolve();
+
+            expect(processorMock).toHaveBeenCalledTimes(3);
+            const allCalls = processorMock.mock.calls as unknown[][];
+            expect(allCalls[0][1] as ResumeContext | null).toBeNull();
+            expect(allCalls[1][1] as ResumeContext | null).toBeNull();
+            expect(allCalls[2][1] as ResumeContext | null).toBeNull();
+            expect(JSON.stringify(allCalls)).not.toContain('session-123');
         });
     });
 

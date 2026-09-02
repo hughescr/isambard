@@ -157,10 +157,9 @@ describe('createReconnectionLoop', () => {
             const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
 
             loop.start();
-            // The attempt promise (internal to loop) returns true on success — verify via triggerNow reuse
-            // Await the result via Promise.resolve to flush the async connectFn
-            await Promise.resolve();
-            const result = true; // connectFn resolved without throwing (verified by no CONNECT_FAIL event)
+            // start() has already kicked off an in-flight attempt; triggerNow() should
+            // reuse that same in-flight promise rather than starting a second connect.
+            const result = await loop.triggerNow();
 
             expect(connectFn).toHaveBeenCalledTimes(1);
             expect(result).toBe(true);
@@ -422,7 +421,7 @@ describe('createReconnectionLoop', () => {
             // Timer should be cleared immediately by triggerNow
             expect(jest.getTimerCount()).toBe(0);
             // connectFn should have been invoked immediately (not waiting for timer)
-            expect(connectFn.mock.calls.length).toBe(callsBefore + 1);
+            expect(connectFn.mock.calls).toHaveLength(callsBefore + 1);
 
             // RECONNECT_ATTEMPT should have been sent by triggerNow
             const reconnectCalls = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
@@ -472,7 +471,7 @@ describe('createReconnectionLoop', () => {
             const p2 = loop.triggerNow();
 
             // No new events emitted — the in-flight promise was returned directly
-            expect(sendEventMock.mock.calls.length).toBe(eventsBefore);
+            expect(sendEventMock.mock.calls).toHaveLength(eventsBefore);
             expect(connectFn).toHaveBeenCalledTimes(1);
 
             resolveConnect();
@@ -696,7 +695,7 @@ describe('createReconnectionLoop', () => {
             loop.restart();
 
             const attempts = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
-            expect(attempts.length).toBe(1);
+            expect(attempts).toHaveLength(1);
 
             loop.stop();
         });
@@ -746,7 +745,7 @@ describe('createReconnectionLoop', () => {
             // Should not have started a parallel connectFn
             expect(callCount).toBe(1);
             // Should not have emitted a RECONNECT_ATTEMPT event (restart is a full no-op when in-flight)
-            expect(sendEventMock.mock.calls.length).toBe(eventsBefore);
+            expect(sendEventMock.mock.calls).toHaveLength(eventsBefore);
 
             resolveConnect();
             await Promise.resolve();
@@ -860,7 +859,7 @@ describe('createReconnectionLoop', () => {
 
             const sendEventMock = registry.sendEvent as Mock<typeof registry.sendEvent>;
             const attempts = sendEventMock.mock.calls.filter(c => c[1] === 'RECONNECT_ATTEMPT');
-            expect(attempts.length).toBe(1);
+            expect(attempts).toHaveLength(1);
             loop.stop();
         });
     });

@@ -96,7 +96,7 @@ describe('extractMetadata', () => {
 
     it('parses full metadata with video and audio streams', async () => {
         const metadata = await extractMetadata('/test/video.mp4', makeRunner(FULL_FFPROBE_OUTPUT));
-        expect(metadata.duration).toBe(154.3);
+        expect(metadata.duration).toBeCloseTo(154.3, 1);
         expect(metadata.width).toBe(1920);
         expect(metadata.height).toBe(1080);
         expect(metadata.videoCodec).toBe('h264');

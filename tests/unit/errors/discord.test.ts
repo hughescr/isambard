@@ -219,17 +219,17 @@ describe.concurrent('TransitionError', () => {
 describe.concurrent('Error instanceof cross-checks', () => {
     test('ChannelNotFoundByNameError is not ChannelNotFoundByIdError', () => {
         const error = new ChannelNotFoundByNameError('test');
-        expect(error instanceof ChannelNotFoundByIdError).toBe(false);
+        expect(error).not.toBeInstanceOf(ChannelNotFoundByIdError);
     });
 
     test('ChannelNotFoundByIdError is not ChannelRegistryError', () => {
         const error = new ChannelNotFoundByIdError('123');
-        expect(error instanceof ChannelRegistryError).toBe(false);
+        expect(error).not.toBeInstanceOf(ChannelRegistryError);
     });
 
     test('AmbiguousChannelError is not ChannelNotFoundByNameError', () => {
         const error = new AmbiguousChannelError('test', 2);
-        expect(error instanceof ChannelNotFoundByNameError).toBe(false);
+        expect(error).not.toBeInstanceOf(ChannelNotFoundByNameError);
     });
 });
 

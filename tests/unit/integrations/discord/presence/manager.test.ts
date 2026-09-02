@@ -192,7 +192,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Idle generator should not have been called again
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
         });
     });
 
@@ -452,8 +452,8 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'idle', since: new Date() });
 
             // Should not call generate again (no new start)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(firstIdleCallCount);
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(firstSetActivityCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(firstIdleCallCount);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(firstSetActivityCount);
         });
 
         it('should handle active→active transition with throttle', async () => {
@@ -497,7 +497,7 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'idle', since: new Date() });
 
             // Should not have called generate again
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(firstIdleCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(firstIdleCount);
         });
 
         it('should properly stop idle refresh when transitioning from idle', async () => {
@@ -524,7 +524,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Idle generator should not have been called again
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialIdleCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialIdleCount);
         });
 
         it('should handle stop when interval is null (no error)', async () => {
@@ -569,14 +569,14 @@ describe('PresenceManager', () => {
             await Promise.resolve();
             await Promise.resolve(); // Extra tick for async
 
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialCount + 1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialCount + 1);
 
             // Wait for another interval - third refresh
             jest.advanceTimersByTime(config.idleRefreshIntervalMs);
             await Promise.resolve();
             await Promise.resolve();
 
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialCount + 2);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialCount + 2);
         });
     });
 
@@ -615,7 +615,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // No new idle refreshes should have occurred
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCountAfterActive);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCountAfterActive);
         });
     });
 
@@ -663,7 +663,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // No additional calls to idle generator
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(callCountAfterEntry);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(callCountAfterEntry);
         });
 
         it('should update active phase status immediately when catch-up mode changes', async () => {
@@ -684,7 +684,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should have updated status
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(initialSetActivityCount + 1);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(initialSetActivityCount + 1);
             expect(mockActiveGenerator.generate).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'thinking' }),
                 'catching_up'
@@ -754,7 +754,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Complete the first generation (entering catch-up while idle)
-            expect(idleGeneratePromises.length).toBe(1);
+            expect(idleGeneratePromises).toHaveLength(1);
             idleGeneratePromises[0].resolve({
                 name: 'Initial catch-up idle status',
                 type: ActivityType.Custom,
@@ -770,7 +770,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Idle generator should have been called for the second time (async generation started)
-            expect(idleGeneratePromises.length).toBe(2);
+            expect(idleGeneratePromises).toHaveLength(2);
 
             // NOW change the mode WHILE the generation is still in progress
             // This will also trigger another generation (entering catch-up while idle)
@@ -778,7 +778,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Complete the third generation (re-entering catch-up)
-            expect(idleGeneratePromises.length).toBe(3);
+            expect(idleGeneratePromises).toHaveLength(3);
             idleGeneratePromises[2].resolve({
                 name: 'Re-entered catch-up idle status',
                 type: ActivityType.Custom,
@@ -798,7 +798,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // The stale result should have been DISCARDED (no additional setActivity call)
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(setActivityCountBeforeStale);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(setActivityCountBeforeStale);
 
             // Should have logged that stale status was discarded
             expect(mockLogger.debug).toHaveBeenCalledWith(
@@ -826,7 +826,7 @@ describe('PresenceManager', () => {
             await manager.updatePhase({ type: 'idle', since: new Date() });
 
             // Should not have triggered another idle refresh
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(firstIdleCallCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(firstIdleCallCount);
 
             // Verify log message
             expect(mockLogger.debug).toHaveBeenCalledWith('Already idle, skipping duplicate idle transition');
@@ -915,7 +915,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should have called idle generator (fallback)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(initialCallCount + 1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(initialCallCount + 1);
             expect(mockIdleGenerator.generate).toHaveBeenCalled();
         });
 
@@ -985,7 +985,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should have triggered refreshIdleStatus
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(callCountAfterIdle + 1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(callCountAfterIdle + 1);
             // Should have been called (no arguments expected)
             const lastCall = mockIdleGenerator.generate.mock.calls[mockIdleGenerator.generate.mock.calls.length - 1];
             expect(lastCall).toEqual([]);
@@ -1009,7 +1009,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should have updated status immediately (synchronous, no async wait needed)
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(initialSetActivityCount + 1);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(initialSetActivityCount + 1);
             expect(mockActiveGenerator.generate).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'thinking' }),
                 'catching_up'
@@ -1080,7 +1080,7 @@ describe('PresenceManager', () => {
             // Should have called dynamic generator
             expect(mockDynamicGenerator.generateCatchUpSynopsis).toHaveBeenCalledWith(catchUpContext);
             // Should have fallen back to idle generator since dynamic returned null
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore + 1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore + 1);
             // Should NOT have called formatStatus (null result means skip active status path)
             expect(mockActiveGenerator.formatStatus).not.toHaveBeenCalled();
         });
@@ -1191,7 +1191,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should update status with new mode
-            expect(mockClient.user.setActivity.mock.calls.length).toBe(initialCallCount + 1);
+            expect(mockClient.user.setActivity.mock.calls).toHaveLength(initialCallCount + 1);
             expect(mockActiveGenerator.generate).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'responding' }),
                 'processing_message'
@@ -1262,7 +1262,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should not have called idle generator again (enteringCatchUp is false)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore);
         });
 
         it('should NOT refresh idle status when exiting to none from processing_message (not from catch-up)', async () => {
@@ -1288,7 +1288,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should not have triggered refreshIdleStatus (exitingCatchUp is false)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore);
         });
 
         it('should refresh idle status when exiting catch-up mode to none (exitingCatchUp true)', async () => {
@@ -1315,7 +1315,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should have called idle generator (exitingCatchUp is true)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore + 1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore + 1);
         });
 
         it('should NOT refresh idle status when mode is none but previousMode is not catch-up', async () => {
@@ -1340,7 +1340,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should NOT trigger refreshIdleStatus (previousMode is not catching_up)
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore);
         });
 
         it('should NOT refresh idle status when transitioning from catch-up to processing_message (mode is not none)', async () => {
@@ -1367,7 +1367,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Should NOT trigger refreshIdleStatus (mode is not 'none')
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCountBefore);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCountBefore);
         });
     });
 
@@ -1394,7 +1394,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // No new idle refreshes should have occurred
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
         });
 
         it('should stop idle refresh when entering processing_message mode', async () => {
@@ -1419,7 +1419,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // No new idle refreshes should have occurred
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
         });
 
         it('should stop idle refresh when entering catching_up mode', async () => {
@@ -1445,7 +1445,7 @@ describe('PresenceManager', () => {
             await Promise.resolve();
 
             // Only +1 from the enteringCatchUp async generation, not from the refresh loop
-            expect(mockIdleGenerator.generate.mock.calls.length).toBe(idleCallCount + 1);
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount + 1);
         });
 
         it('should not error when entering perching mode without prior idle refresh', async () => {

@@ -564,7 +564,7 @@ describe('createTaskListReader', () => {
         expect(result).toContain('...');
         const truncatedSubject = result!.replace('Working on: ', '');
         expect(truncatedSubject).toBe('12345678901234567890123456789012345678901234567...');
-        expect(truncatedSubject.length).toBe(50);
+        expect(truncatedSubject).toHaveLength(50);
     });
 
     test('should return undefined on error', async () => {

@@ -343,7 +343,7 @@ describe('buildContactApprovalEmbed()', () => {
         const { actionRow }                    = buildContactApprovalEmbed(request);
         const json                             = actionRow.toJSON();
         // ActionRow has components (buttons)
-        expect(json.components.length).toBe(2);
+        expect(json.components).toHaveLength(2);
         const ids = json.components.map(c => (c as unknown as { custom_id?: string }).custom_id ?? '');
         expect(ids.some((id: string) => id.startsWith('contact-approve:'))).toBe(true);
         expect(ids.some((id: string) => id.startsWith('contact-reject:'))).toBe(true);
@@ -1295,7 +1295,7 @@ describe('buildDeleteConfirmationEmbed()', () => {
         const uuid          = 'my-test-uuid';
         const { actionRow } = buildDeleteConfirmationEmbed(SAMPLE_CONTACT, uuid);
         const json          = actionRow.toJSON();
-        expect(json.components.length).toBe(2);
+        expect(json.components).toHaveLength(2);
         const components = json.components as unknown as { custom_id?: string }[];
         expect(components.some(c => c.custom_id === `contact-delete-confirm:${uuid}`)).toBe(true);
         expect(components.some(c => c.custom_id === `contact-delete-cancel:${uuid}`)).toBe(true);

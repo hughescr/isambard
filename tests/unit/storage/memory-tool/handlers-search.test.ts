@@ -616,7 +616,7 @@ describe('Memory Tool Handlers - Search Operations', () => {
                 expect(result).not.toContain('events:');
                 // Verify result doesn't contain multiple empty sections
                 const sections = result.split('\n\n');
-                expect(sections.length).toBe(1); // Only identity section
+                expect(sections).toHaveLength(1); // Only identity section
             });
         });
     });

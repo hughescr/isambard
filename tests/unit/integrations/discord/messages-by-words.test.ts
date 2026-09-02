@@ -11,7 +11,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage('     ', 100);
                 expect(result).toEqual(['']);
                 expect(result[0]).toBe('');
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
             });
 
             test('should return exactly empty string array element, not Stryker string', () => {
@@ -19,7 +19,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage('   \t\n   ', 100);
                 expect(result).toHaveLength(1);
                 expect(result[0]).toBe('');
-                expect(result[0].length).toBe(0);
+                expect(result[0]).toHaveLength(0);
             });
 
             test('should handle filter condition for zero-length words', () => {
@@ -57,7 +57,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // With \s+: words = ['aaa', 'bbb'], joined with single space = 'aaa bbb'
                 // With \s: words = ['aaa', '', '', 'bbb'], filtered to ['aaa', 'bbb'], same result
                 // So the filter makes this equivalent - we need different test
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
                 expect(result[0]).toBe('aaa bbb');
             });
 

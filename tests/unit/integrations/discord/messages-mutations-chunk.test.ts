@@ -15,7 +15,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 50);
 
                 // First two chunks should be parts of the long word
-                expect(result.length).toBe(3);
+                expect(result).toHaveLength(3);
                 expect(result[0]).toBe('a'.repeat(50));
                 expect(result[1]).toBe('a'.repeat(10));
                 expect(result[2]).toBe('short');
@@ -53,7 +53,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 50);
 
                 // Should properly handle both long words
-                expect(result.length).toBe(4); // Two words, each split into 2 parts
+                expect(result).toHaveLength(4); // Two words, each split into 2 parts
                 expect(result[0]).toBe('a'.repeat(50));
                 expect(result[1]).toBe('a'.repeat(10));
                 expect(result[2]).toBe('b'.repeat(50));
@@ -93,7 +93,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // At i=length, slice returns empty string
                 const word = 'x'.repeat(100);
                 const result = splitMessage(word, 50);
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
                 expect(result[0]).toBe('x'.repeat(50));
                 expect(result[1]).toBe('x'.repeat(50));
                 // No empty chunks
@@ -106,10 +106,10 @@ describe.concurrent('Discord Message Splitting', () => {
                 // 20 chars split by 5 = exactly 4 chunks
                 const word = 'abcde'.repeat(4); // 20 chars
                 const result = splitMessage(word, 5);
-                expect(result.length).toBe(4);
+                expect(result).toHaveLength(4);
                 // Each chunk should have exactly 5 chars
                 for(const chunk of result) {
-                    expect(chunk.length).toBe(5);
+                    expect(chunk).toHaveLength(5);
                 }
             });
         });
@@ -135,7 +135,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 // Use explicit maxLength to avoid processing 1900+ chars
                 const text = 'x'.repeat(101);
                 const result = splitMessage(text, 100);
-                expect(result.length).toBe(2);
+                expect(result).toHaveLength(2);
             });
 
             test('should produce non-empty result for any non-whitespace input', () => {

@@ -8,13 +8,13 @@ describe('packSignBits', () => {
     it('produces output length of (batchSize * dim / 8) bytes', () => {
         const input = new Float32Array(1024).fill(1); // all positive
         const result = packSignBits(input, 1, 1024);
-        expect(result.length).toBe(128);
+        expect(result).toHaveLength(128);
     });
 
     it('produces output length of (batchSize * dim / 8) bytes for batch size 2', () => {
         const input = new Float32Array(2048).fill(1); // 2 batches of 1024
         const result = packSignBits(input, 2, 1024);
-        expect(result.length).toBe(256);
+        expect(result).toHaveLength(256);
     });
 
     it('returns all 0xFF bytes when all input values are positive', () => {
@@ -46,7 +46,7 @@ describe('packSignBits', () => {
         input[6] = 1;   // bit 1 = 1
         input[7] = -1;  // bit 0 (LSB) = 0
         const result = packSignBits(input, 1, 8);
-        expect(result.length).toBe(1);
+        expect(result).toHaveLength(1);
         expect(result[0]).toBe(0xAA);
     });
 
@@ -77,7 +77,7 @@ describe('packSignBits', () => {
         input.fill(1, 0, 8);   // first 8 = positive
         input.fill(-1, 8, 16); // next 8 = negative
         const result = packSignBits(input, 1, 16);
-        expect(result.length).toBe(2);
+        expect(result).toHaveLength(2);
         expect(result[0]).toBe(0xFF);
         expect(result[1]).toBe(0x00);
     });
@@ -89,7 +89,7 @@ describe('packSignBits', () => {
         input.fill(1, 0, 8);    // batch 0, dim=8 → 1 byte = 0xFF
         input.fill(-1, 8, 16);  // batch 1, dim=8 → 1 byte = 0x00
         const result = packSignBits(input, 2, 8);
-        expect(result.length).toBe(2);
+        expect(result).toHaveLength(2);
         expect(result[0]).toBe(0xFF);
         expect(result[1]).toBe(0x00);
     });
@@ -101,7 +101,7 @@ describe('packSignBits', () => {
         input.fill(-1, 0, 1024);   // batch 0: all negative → 0x00
         input.fill(1, 1024, 2048); // batch 1: all positive → 0xFF
         const result = packSignBits(input, 2, 1024);
-        expect(result.length).toBe(256);
+        expect(result).toHaveLength(256);
         // batch 0 bytes (indices 0..127)
         for(let i = 0; i < 128; i++) {
             expect(result[i]).toBe(0x00);
@@ -119,7 +119,7 @@ describe('packSignBits', () => {
         input.fill(-1, 0, 2048);   // batches 0+1: all negative → 0x00
         input.fill(1, 2048, 3072); // batch 2: all positive → 0xFF
         const result = packSignBits(input, 3, 1024);
-        expect(result.length).toBe(384);
+        expect(result).toHaveLength(384);
         // batch 2 bytes must be at indices 256..383, NOT at 64..191
         for(let i = 256; i < 384; i++) {
             expect(result[i]).toBe(0xFF);

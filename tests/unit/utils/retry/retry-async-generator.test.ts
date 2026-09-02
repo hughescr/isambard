@@ -503,7 +503,7 @@ describe('retryAsyncGenerator', () => {
             }
 
             // Gets all 100 values from first attempt, then 1 value from second attempt
-            expect(results.length).toBe(101);
+            expect(results).toHaveLength(101);
             expect(results.slice(0, 100)).toEqual(Array.from({ length: 100 }, (_, i) => i));
             expect(results[100]).toBe(200);
         });

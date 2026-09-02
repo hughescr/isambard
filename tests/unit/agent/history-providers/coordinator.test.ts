@@ -252,7 +252,7 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const result   = await coord.getPersonHistory('craig', { maxCharacters: 200 });
 
             expect(result.history).toBeDefined();
-            expect(result.history!.length).toBe(200);
+            expect(result.history!).toHaveLength(200);
         });
 
         test('does not truncate when output is shorter than maxCharacters', async () => {
@@ -688,7 +688,7 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             const result = await coord.getChannelLocalHistory('ch-123', undefined, { maxCharacters: 300 });
 
             expect(result).toBeDefined();
-            expect(result!.length).toBe(300);
+            expect(result!).toHaveLength(300);
         });
 
         test('does not truncate when output is shorter than maxCharacters', async () => {

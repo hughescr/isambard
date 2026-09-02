@@ -421,7 +421,7 @@ describe.concurrent('buildPerchResumedPrompt', () => {
         // Should not contain specific event paths (only the interrupting message)
         const lines = prompt.split('\n');
         const eventLines = lines.filter(line => line.startsWith('- /'));
-        expect(eventLines.length).toBe(0);
+        expect(eventLines).toHaveLength(0);
     });
 
     test('should include TaskList reminder', () => {

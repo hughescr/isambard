@@ -54,9 +54,9 @@ describe.concurrent('Discord Message Splitting', () => {
                 const result = splitMessage(message, 5);
                 const allText = result.join(' ');
                 // Should not have duplicated content
-                expect((allText.match(/A\./g) ?? []).length).toBe(1);
-                expect((allText.match(/B\./g) ?? []).length).toBe(1);
-                expect((allText.match(/C\./g) ?? []).length).toBe(1);
+                expect(allText.match(/A\./g) ?? []).toHaveLength(1);
+                expect(allText.match(/B\./g) ?? []).toHaveLength(1);
+                expect(allText.match(/C\./g) ?? []).toHaveLength(1);
                 expect(result).not.toContain('');
             });
 
@@ -73,7 +73,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'First. second';
                 const result = splitMessage(message, 100);
                 expect(result).toEqual(['First. second']);
-                expect((result[0].match(/First/g) ?? []).length).toBe(1);
+                expect(result[0].match(/First/g) ?? []).toHaveLength(1);
             });
 
             test('should filter empty remaining text (kills if(remaining) -> if(true))', () => {
@@ -228,7 +228,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 expect(result).toEqual(['']);
                 expect(result[0]).toBe('');
                 expect(result).toHaveLength(1);
-                expect(result[0].length).toBe(0);
+                expect(result[0]).toHaveLength(0);
             });
 
             test('should produce different output for sentence vs word split (critical for while(false) kill)', () => {

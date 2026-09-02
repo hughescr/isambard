@@ -166,7 +166,7 @@ describe.concurrent('reconciliationStateSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.isRunning).toBe(false);
-            expect(result.data.currentPhase).toBe(null);
+            expect(result.data.currentPhase).toBeNull();
             expect(result.data.runStartedAt).toBeUndefined();
             expect(result.data.lastCompletedAt).toBeUndefined();
         }

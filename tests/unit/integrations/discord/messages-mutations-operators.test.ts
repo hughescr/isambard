@@ -128,7 +128,7 @@ describe.concurrent('Discord Message Splitting', () => {
                 const message = 'test';
                 const result = splitMessage(message, 100);
                 expect(result).toEqual(['test']);
-                expect(result.length).toBe(1);
+                expect(result).toHaveLength(1);
             });
 
             test('should filter out empty chunks from final result', () => {

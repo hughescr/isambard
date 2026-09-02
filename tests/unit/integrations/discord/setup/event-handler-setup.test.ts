@@ -86,8 +86,8 @@ describe('initializeChannelRegistry', () => {
 
         initializeChannelRegistry(client, registry, makeResponseRouter());
 
-        expect((registry.startHydration as ReturnType<typeof mock>).mock.calls.length).toBe(1);
-        expect((registry.warmCache as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+        expect((registry.startHydration as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
+        expect((registry.warmCache as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
     });
 
     test('startHydration receives a ReconnectionLoop-shaped object', () => {
