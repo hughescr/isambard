@@ -42,8 +42,6 @@ export type { OperationalMode } from '@/agent/types';
  *   `resumeAfterSuspension()` in `src/agent/perch/session-runner.ts`. Exited
  *   to idle via `goIdle()` on normal completion, timeout wrap-up, error, or
  *   suspension. Downstream effects when mode is `'perching'`:
- *   - `agent-context-builder.ts` injects `PERCHING_PREAMBLE` system prompt and
- *     enables memory + discord MCP servers (inbox disabled).
  *   - `agent.ts` passes `specialMode: 'perching'` to `handleInput`, which
  *     selects the perch prompt instead of a normal user message.
  *   - `response-sender.ts` / `response-router.ts` route agent output to the

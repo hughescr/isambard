@@ -1,4 +1,4 @@
-import { query, type McpServerConfig, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
+import { query, type McpServerConfig, type Options, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { chain, isPlainObject } from 'lodash-es';
 import { createRetryableQuery } from './claude-retry';
@@ -8,7 +8,7 @@ import { mergeHookMaps } from './hooks/index';
 import { createLifecycleHooks, type StopCallback, type StopFailureCallback } from './hooks/lifecycle';
 import { createTaskTrackingHooks } from './hooks/task-tracking';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
-import { buildSystemPrompt, COMPACTION_SUMMARY_PROMPT } from './prompts/index.js';
+import { buildSystemPrompt } from './prompts/index.js';
 import { type ResumeContext, buildResumePrompt  } from './resume-prompt-builder';
 import { cleanupSession, extractSessionId } from './session-cleanup';
 import { StreamTracker } from './stream-tracker';
@@ -1005,18 +1005,10 @@ function buildQueryOptions(
             excludedCommands:         ['git'],
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
-        allowedTools:      buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, options?.specialMode),
+        allowedTools:           buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, options?.specialMode),
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Thinking/effort configuration - mutations don't change behavior
-        thinking:          { type: 'adaptive' as const },
-        effort:            'high' as const,
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Configuration values - mutations don't change behavior
-        compactionControl: {
-            enabled:               true,
-            contextTokenThreshold: 800_000,
-            model:                 'haiku',
-            summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
-        },
+        thinking:               { type: 'adaptive' as const },
+        effort:                 'high' as const,
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
         // 'project' is what discovers Izzy's agents and skills in scratch/.claude. It would also pull in CLAUDE.md files;
         // see CLAUDE_CODE_DISABLE_CLAUDE_MDS in env below.
@@ -1059,7 +1051,7 @@ function buildQueryOptions(
             }
         },
         // Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,LogicalOperator,BlockStatement
-    };
+    } satisfies Options;
 }
 
 /**
