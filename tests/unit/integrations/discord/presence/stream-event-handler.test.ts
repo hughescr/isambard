@@ -778,6 +778,91 @@ describe('StreamEventHandler', () => {
             expect(progressContext?.subagentSummary).toBe('Analyzing code');
         });
 
+        it('should ignore task_progress whose summary matches the stored one', async () => {
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' });
+            await flushPromises();
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
+
+            // The SDK re-stamps the same summary on every per-tool-call progress event
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' });
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' });
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
+        });
+
+        it('should ignore a summary-less task_progress after a summary has been stored', async () => {
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' });
+            await flushPromises();
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(1);
+
+            // Missing summary must not clear the stored one or trigger another update
+            onStreamEvent({ type: 'system', subtype: 'task_progress' });
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(1);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(1);
+        });
+
+        it('should dedupe per task so interleaved subagents do not thrash', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            // Two parallel subagents each re-stamp their own unchanged summary
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'A', summary: 'alpha' });
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'B', summary: 'beta' });
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'A', summary: 'alpha' });
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'B', summary: 'beta' });
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(2);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(2);
+            expect(capturedContexts.map(ctx => ctx.subagentSummary)).toEqual(['alpha', 'beta']);
+
+            // A changed summary for one task is still accepted
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'A', summary: 'alpha-2' });
+            await flushPromises();
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(3);
+        });
+
+        it('should forget per-task summaries on result so a new run is not deduped against the old one', async () => {
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'A', summary: 'alpha' });
+            onStreamEvent({ type: 'result' });
+            onStreamEvent({ type: 'system', subtype: 'task_progress', task_id: 'A', summary: 'alpha' });
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(2);
+        });
+
+        it('should process task_progress when the summary changes', async () => {
+            const capturedContexts: SynopsisContext[] = [];
+            mockDynamicStatusGenerator.generateSynopsis = mock(async (ctx) => {
+                capturedContexts.push(ctx);
+                return 'Generated synopsis';
+            });
+            const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
+
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Analyzing code' });
+            onStreamEvent({ type: 'system', subtype: 'task_progress', summary: 'Writing tests' });
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledTimes(2);
+            expect(capturedContexts.map(ctx => ctx.subagentSummary)).toEqual(['Analyzing code', 'Writing tests']);
+            expect(mockBotStateManager.updateActivityPhase).toHaveBeenCalledTimes(2);
+        });
+
         it('should ignore task_progress without summary', async () => {
             const { onStreamEvent } = createStreamEventHandler({ ...baseDeps, botStateManager: mockBotStateManager as unknown as BotStateManager });
 

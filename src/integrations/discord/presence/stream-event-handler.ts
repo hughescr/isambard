@@ -163,6 +163,9 @@ export function createStreamEventHandler(
     // Stryker disable next-line ArrayDeclaration: initial empty array — mutating to non-empty changes initial state, causes test timeout (stale tool calls appear in presence)
     const recentToolCalls: string[] = [];
     let latestSubagentSummary: string | undefined;
+    // Last summary seen per subagent task, for deduplication. Keyed by task_id so
+    // interleaved events from parallel subagents (A, B, A, B...) don't defeat the check.
+    const lastSummaryByTask = new Map<string, string>();
     // Stryker disable next-line ArithmeticOperator: Configuration constant
     const MAX_THINKING_CONTENT_LENGTH = 1500;
     const MAX_RECENT_TOOLS = 3;
@@ -424,6 +427,7 @@ export function createStreamEventHandler(
             case 'result': {
             // Processing complete, go idle
                 latestSubagentSummary = undefined;
+                lastSummaryByTask.clear();
                 void safeUpdatePhase({
                     type:  'idle',
                     since: new Date(),
@@ -440,8 +444,18 @@ export function createStreamEventHandler(
                 // Handle task_progress events from subagents.
                 // Note: these are PROGRESS UPDATES from a running subagent (intermediate status
                 // summaries the subagent emits mid-task), NOT lifecycle signals.
+                // The SDK emits task_progress roughly once per subagent tool call, but only
+                // regenerates `summary` every ~30s — the same string is re-stamped on every
+                // event in between. Skip repeats so each unchanged summary costs one phase
+                // update and at most one synopsis call, not one per tool call.
                 // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator: Subtype guard for task_progress events
                 if(event.subtype === 'task_progress' && event.summary) {
+                    // Stryker disable next-line StringLiteral: fallback key when the SDK omits task_id — any constant works
+                    const taskKey = event.task_id ?? '';
+                    if(lastSummaryByTask.get(taskKey) === event.summary) {
+                        break; // Same summary re-stamped on a per-tool-call progress event
+                    }
+                    lastSummaryByTask.set(taskKey, event.summary);
                     latestSubagentSummary = event.summary;
 
                     // Collapse phase to thinking or responding — 'using_tool' lacks required toolName/toolInput/toolDescription fields
