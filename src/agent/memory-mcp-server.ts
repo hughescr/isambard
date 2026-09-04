@@ -77,7 +77,8 @@ export function createMemoryMCPServer(
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     limit: z.number().int().positive().default(5).describe('Maximum number of results to return (default: 5)'),
                 },
-                async (args): Promise<CallToolResult> => {
+                // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 (Stryker's instrumenter) cannot parse a typed async arrow directly inside a ternary branch; the parens make it parse
+                (async (args): Promise<CallToolResult> => {
                     // At this point options.vectorIndex and options.embedder are guaranteed non-null
                     // because this tool is only registered when both are present.
                     const vectorIndex = options.vectorIndex!;
@@ -150,7 +151,7 @@ export function createMemoryMCPServer(
                             isError: true,
                         };
                     }
-                },
+                }),
                 // Tool annotations: semantic_search is read-only, non-destructive, non-idempotent (results vary by index state), closed-world
                 // Stryker disable next-line ObjectLiteral: Tool annotations outer object is MCP server configuration
                 {

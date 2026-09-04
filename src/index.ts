@@ -652,7 +652,8 @@ export async function createApp(): Promise<App> {
     // Stryker disable BlockStatement: Composition root — optional contact approval callback, not unit-testable
     const emailConfig = config.email;
     const sendContactApprovalRequest = emailConfig
-        ? async (action: 'create' | 'update', details: ContactChangeRequest): Promise<void> => {
+        // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 (Stryker's instrumenter) cannot parse a typed async arrow directly inside a ternary branch; the parens make it parse
+        ? (async (action: 'create' | 'update', details: ContactChangeRequest): Promise<void> => {
             const uuid = crypto.randomUUID();
             contactApprovalHandler.storePendingRequest(uuid, details);
             const { embed, actionRow } = buildContactApprovalEmbed(details, uuid);
@@ -663,7 +664,7 @@ export async function createApp(): Promise<App> {
                 { priority: 'high', type: 'contact_approval' }
             );
             // Stryker restore BlockStatement,StringLiteral,ObjectLiteral
-        }
+        })
         : undefined;
     // Stryker restore BlockStatement
 
