@@ -167,9 +167,11 @@ export function createMemoryMCPServer(
         : [];
 
     return createSdkMcpServer({
-        name:    'memory',
-        version: '1.0.0',
-        tools:   [
+        name:       'memory',
+        version:    '1.0.0',
+        // Memory tools are used on every turn: never defer them behind ToolSearch.
+        alwaysLoad: true,
+        tools:      [
             tool(
                 'view',
                 'View memory by path',

@@ -431,8 +431,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Skill',
             ]);
         });
@@ -460,8 +463,11 @@ describe('createClaudeAgent', () => {
             expect(tools).toContain('TaskUpdate');
             expect(tools).toContain('TaskGet');
             expect(tools).toContain('TaskList');
-            expect(tools).toContain('EnterPlanMode');
-            expect(tools).toContain('ExitPlanMode');
+            expect(tools).toContain('SendMessage');
+            expect(tools).toContain('ListAgents');
+            expect(tools).toContain('Workflow');
+            expect(tools).toContain('Monitor');
+            expect(tools).toContain('ToolSearch');
             expect(tools).toContain('Skill');
 
             // Verify none are empty strings
@@ -475,29 +481,13 @@ describe('createClaudeAgent', () => {
             const queryParams = querySpy.mock.calls[0][0];
             const agents = queryParams.options.agents;
 
-            // Verify exact agent structure
-            expect(Object.keys(agents).toSorted((a, b) => a.localeCompare(b))).toEqual(['Explore', 'Plan', 'general-purpose'].toSorted((a, b) => a.localeCompare(b)));
+            // Only general-purpose is overridden; the SDK's built-in Explore and Plan agents are left intact.
+            expect(Object.keys(agents)).toEqual(['general-purpose']);
 
             // Verify general-purpose agent with exact values
             expect(agents['general-purpose']).toEqual({
                 description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
                 prompt:      'You are a general-purpose assistant helping with software engineering tasks.',
-                model:       'sonnet',
-            });
-
-            // Verify Explore agent with exact values
-            expect(agents.Explore).toEqual({
-                description: 'Fast agent specialized for exploring codebases. Use for finding files, searching code, or answering questions about the codebase.',
-                prompt:      'You are a codebase exploration specialist. Focus on finding relevant files and understanding code structure.',
-                tools:       ['Read', 'Glob', 'Grep'],
-                model:       'haiku',
-            });
-
-            // Verify Plan agent with exact values
-            expect(agents.Plan).toEqual({
-                description: 'Software architect agent for designing implementation plans.',
-                prompt:      'You are a software architect. Analyze requirements and design implementation approaches.',
-                tools:       ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
                 model:       'sonnet',
             });
         });
@@ -514,52 +504,26 @@ describe('createClaudeAgent', () => {
             expect(agents).not.toEqual({});
         });
 
-        test('should include exact tools array for Explore agent', async () => {
+        test('should ignore MCP config from outside the query options', async () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
             const queryParams = querySpy.mock.calls[0][0];
-            const exploreTools = queryParams.options.agents.Explore.tools;
-
-            // Verify Explore agent tools array is not empty (kills ArrayDeclaration mutant on line 62)
-            expect(exploreTools).toBeDefined();
-            expect(exploreTools).toHaveLength(3);
-
-            // Verify each tool individually (kills StringLiteral mutants on line 62)
-            expect(exploreTools).toContain('Read');
-            expect(exploreTools).toContain('Glob');
-            expect(exploreTools).toContain('Grep');
-
-            // Verify exact order and values
-            expect(exploreTools).toEqual(['Read', 'Glob', 'Grep']);
-
-            // Verify none are empty strings
-            expect(exploreTools.every((tool: string) => tool !== '')).toBe(true);
+            expect(queryParams.options.strictMcpConfig).toBe(true);
         });
 
-        test('should include exact tools array for Plan agent', async () => {
+        test('should enable deferred tool loading, block CLAUDE.md discovery, and drop the obsolete task-system flag', async () => {
             const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
             const queryParams = querySpy.mock.calls[0][0];
-            const planTools = queryParams.options.agents.Plan.tools;
-
-            // Verify Plan agent tools array is defined
-            expect(planTools).toBeDefined();
-            expect(planTools).toHaveLength(5);
-
-            // Verify each tool individually (kills StringLiteral mutants on line 70)
-            expect(planTools).toContain('Read');
-            expect(planTools).toContain('Glob');
-            expect(planTools).toContain('Grep');
-            expect(planTools).toContain('WebFetch');
-            expect(planTools).toContain('WebSearch');
-
-            // Verify exact order and values
-            expect(planTools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
-
-            // Verify none are empty strings
-            expect(planTools.every((tool: string) => tool !== '')).toBe(true);
+            expect(queryParams.options.env.ENABLE_TOOL_SEARCH).toBe('auto');
+            expect(queryParams.options.env).not.toHaveProperty('CLAUDE_CODE_ENABLE_TASKS');
+            // settingSources ['project'] also walks up to ~/.claude/CLAUDE.md and the isambard repo's .claude/CLAUDE.md;
+            // this flag keeps agents/skills discovery while dropping every CLAUDE.md.
+            expect(queryParams.options.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe('1');
+            // Auto-memory would read and write ~/.claude/projects/<cwd>/memory: Izzy's memory lives in DynamoDB.
+            expect(queryParams.options.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('1');
         });
     });
 
@@ -796,8 +760,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Task',
                 'TaskOutput',
                 'TaskStop',
@@ -833,8 +800,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Task',
                 'TaskOutput',
                 'TaskStop',
@@ -871,8 +841,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Task',
                 'TaskOutput',
                 'TaskStop',
@@ -909,8 +882,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Task',
                 'TaskOutput',
                 'TaskStop',
@@ -947,8 +923,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Task',
                 'TaskOutput',
                 'TaskStop',
@@ -996,8 +975,11 @@ describe('createClaudeAgent', () => {
                 'TaskUpdate',
                 'TaskGet',
                 'TaskList',
-                'EnterPlanMode',
-                'ExitPlanMode',
+                'SendMessage',
+                'ListAgents',
+                'Workflow',
+                'Monitor',
+                'ToolSearch',
                 'Task',
                 'TaskOutput',
                 'TaskStop',

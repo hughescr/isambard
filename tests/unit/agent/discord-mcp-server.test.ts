@@ -14,6 +14,7 @@ interface ZodShapeEntry {
     unwrap:    () => { safeParse: (v: unknown) => { success: boolean } }
 }
 interface RegisteredTool {
+    _meta?:      Record<string, unknown>
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
     inputSchema: { shape: Record<string, ZodShapeEntry> }
@@ -251,6 +252,16 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
             // Server should be created successfully with timezone parameter
             expect(server).toBeDefined();
             expect(server.name).toBe('discord');
+        });
+
+        test('should mark every Discord tool as always loaded so tool search never defers it', () => {
+            const server = createServer();
+            const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+            const names = Object.keys(registered);
+            expect(names.length).toBeGreaterThan(0);
+            for(const name of names) {
+                expect(registered[name]._meta).toEqual({ 'anthropic/alwaysLoad': true });
+            }
         });
     });
 

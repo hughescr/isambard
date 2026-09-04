@@ -9,6 +9,7 @@ interface SafeParseResult { success: boolean }
 interface UnwrappedSchema { safeParse: (v: unknown) => SafeParseResult }
 interface ToolInputSchema { shape: Record<string, { safeParse: (v: unknown) => SafeParseResult, unwrap: () => UnwrappedSchema }> }
 interface RegisteredTool {
+    _meta?:      Record<string, unknown>
     handler:     (...args: unknown[]) => Promise<CallToolResult>
     description: string
     inputSchema: ToolInputSchema
@@ -75,6 +76,16 @@ describe.concurrent('createMemoryMCPServer', () => {
             expect(server.instance).toBeDefined();
             expect(server.type).toBe('sdk');
             expect((server.instance as unknown as RegisteredToolInstance).server._serverInfo.version).toBe('1.0.0');
+        });
+
+        test('should mark every memory tool as always loaded so tool search never defers it', () => {
+            const server = createMemoryMCPServer(mockBackend);
+            const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
+            const names = Object.keys(registered);
+            expect(names.length).toBeGreaterThan(0);
+            for(const name of names) {
+                expect(registered[name]._meta).toEqual({ 'anthropic/alwaysLoad': true });
+            }
         });
 
         test.each([

@@ -21,9 +21,10 @@ import { formatLocalDateTime, resolveTimezone, type RetryDeps } from '@/utils';
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
 /**
- * Explicit list of tools available to Isambard.
+ * Explicit list of built-in tools available to Isambard.
  * Excludes NotebookEdit (not useful for Discord bot) and AskUserQuestion
- * (Izzy decides autonomously based on context and memories).
+ * (Izzy decides autonomously based on context and memories). EnterPlanMode/ExitPlanMode
+ * are not exposed by the SDK in non-interactive mode, so they are not listed.
  * Memory tools are added via mcpServers configuration.
  */
 const EXPLICIT_TOOLS = [
@@ -50,34 +51,30 @@ const EXPLICIT_TOOLS = [
     'TaskUpdate',
     'TaskGet',
     'TaskList',
-    // Plan mode
-    'EnterPlanMode',
-    'ExitPlanMode',
+    // Sub-agent coordination: message a named running sub-agent, list them
+    'SendMessage',
+    'ListAgents',
+    // Dynamic workflows: scripted fan-out of sub-agents
+    'Workflow',
+    // Event watching: stream stdout lines or websocket frames as events
+    'Monitor',
+    // Deferred tool loading: fetch a deferred tool's schema on demand
+    'ToolSearch',
     // Skills
     'Skill',
 ];
 
 /**
  * Explicit sub-agent definitions.
- * Excludes statusline-setup (useless for Discord bot, saves context tokens).
+ * Only general-purpose is overridden (to pin its model). The SDK's built-in Explore and Plan
+ * agents are stronger than any one-line override, so they are left as shipped. The built-in
+ * `claude` and `statusline-setup` agents cannot be removed via this option.
  * Agent description/prompt strings are configuration - correctness validated by integration tests.
  */
 const EXPLICIT_AGENTS = {
     'general-purpose': {
         description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
         prompt:      'You are a general-purpose assistant helping with software engineering tasks.',
-        model:       'sonnet' as const,
-    },
-    Explore: {
-        description: 'Fast agent specialized for exploring codebases. Use for finding files, searching code, or answering questions about the codebase.',
-        prompt:      'You are a codebase exploration specialist. Focus on finding relevant files and understanding code structure.',
-        tools:       ['Read', 'Glob', 'Grep'],
-        model:       'haiku' as const,
-    },
-    Plan: {
-        description: 'Software architect agent for designing implementation plans.',
-        prompt:      'You are a software architect. Analyze requirements and design implementation approaches.',
-        tools:       ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
         model:       'sonnet' as const,
     },
 };
@@ -422,8 +419,11 @@ function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: 
         'TaskUpdate',
         'TaskGet',
         'TaskList',
-        'EnterPlanMode',
-        'ExitPlanMode',
+        'SendMessage',
+        'ListAgents',
+        'Workflow',
+        'Monitor',
+        'ToolSearch',
         // Still required post-Phase-1 hook cutover — agent invokes these to collect/halt background tasks.
         'Task',
         'TaskOutput',
@@ -988,16 +988,18 @@ function buildQueryOptions(
     fallbackModel?: string
 ) {
     return {
-        model:          mainModel,
+        model:           mainModel,
         fallbackModel,
         systemPrompt,
-        tools:          EXPLICIT_TOOLS,
-        agents:         EXPLICIT_AGENTS,
-        mcpServers:     buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, options?.specialMode),
-        plugins:        plugins && plugins.length > 0 ? plugins : undefined,
-        permissionMode: 'acceptEdits' as const,
+        tools:           EXPLICIT_TOOLS,
+        agents:          EXPLICIT_AGENTS,
+        mcpServers:      buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, options?.specialMode),
+        plugins:         plugins && plugins.length > 0 ? plugins : undefined,
+        permissionMode:  'acceptEdits' as const,
+        // Only the MCP servers passed above: ignore .mcp.json, user settings, plugin and claude.ai-connector MCP.
+        strictMcpConfig: true,
         // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
-        sandbox:        {
+        sandbox:         {
             enabled:                  true,
             autoAllowBashIfSandboxed: true,
             excludedCommands:         ['git'],
@@ -1016,6 +1018,8 @@ function buildQueryOptions(
             summaryPrompt:         COMPACTION_SUMMARY_PROMPT,
         },
         // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
+        // 'project' is what discovers Izzy's agents and skills in scratch/.claude. It would also pull in CLAUDE.md files;
+        // see CLAUDE_CODE_DISABLE_CLAUDE_MDS in env below.
         settingSources:         ['project'] as SettingSource[],
         // Stryker disable next-line BooleanLiteral: Configuration flag
         agentProgressSummaries: true,
@@ -1031,7 +1035,14 @@ function buildQueryOptions(
         // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
         env: {
             ...process.env,
-            CLAUDE_CODE_ENABLE_TASKS: 'true',
+            // Defer rarely-used tool schemas behind ToolSearch once the tool set is large enough (SDK default threshold).
+            ENABLE_TOOL_SEARCH:              'auto',
+            // settingSources ['project'] is needed for Izzy's own agents/skills under scratch/.claude, but it also loads
+            // ~/.claude/CLAUDE.md and the parent repo's .claude/CLAUDE.md (verified 2026-09-04). Those are Craig's
+            // instructions for Claude Code, not Izzy's: drop every CLAUDE.md while keeping discovery.
+            CLAUDE_CODE_DISABLE_CLAUDE_MDS:  '1',
+            // Auto-memory would read and write ~/.claude/projects/<cwd>/memory. Izzy's memory is DynamoDB; keep ~/.claude out of it.
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
         },
         // Stryker restore StringLiteral,ObjectLiteral
         // Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,LogicalOperator,BlockStatement: Observability - stderr logging doesn't affect behavior

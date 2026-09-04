@@ -176,6 +176,11 @@ export const ToolDescriptions: Record<string, string> = {
     WebFetch:                     'Fetching a webpage',
     Bash:                         'Running a command',
     Task:                         'Delegating to a sub-agent',
+    SendMessage:                  'Messaging a sub-agent',
+    ListAgents:                   'Checking on sub-agents',
+    Workflow:                     'Orchestrating a multi-agent workflow',
+    Monitor:                      'Watching for events',
+    ToolSearch:                   'Looking up a tool',
 };
 
 /**

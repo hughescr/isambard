@@ -36,8 +36,16 @@ describe.concurrent('types.ts', () => {
             expect(ToolDescriptions.Task).toBe('Delegating to a sub-agent');
         });
 
+        test('should contain descriptions for delegation and orchestration tools', () => {
+            expect(ToolDescriptions.SendMessage).toBe('Messaging a sub-agent');
+            expect(ToolDescriptions.ListAgents).toBe('Checking on sub-agents');
+            expect(ToolDescriptions.Workflow).toBe('Orchestrating a multi-agent workflow');
+            expect(ToolDescriptions.Monitor).toBe('Watching for events');
+            expect(ToolDescriptions.ToolSearch).toBe('Looking up a tool');
+        });
+
         test('should have the correct number of tool descriptions', () => {
-            expect(Object.keys(ToolDescriptions)).toHaveLength(13);
+            expect(Object.keys(ToolDescriptions)).toHaveLength(18);
         });
     });
 

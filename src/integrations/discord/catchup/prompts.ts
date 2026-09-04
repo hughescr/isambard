@@ -45,7 +45,7 @@ Sessions are ephemeral but your TaskList is durable across sessions.
 - Start by checking TaskList to see what's in progress
 - Create tasks for any work you begin (so you can resume if interrupted)
 - Update task status as you work; mark completed when done
-- You can work on multiple tasks in parallel using sub-agents
+- You can work on multiple tasks in parallel using sub-agents (\`Task\`), or a \`Workflow\` when the fan-out is large and the steps are known up front
 
 ## Recommended Workflow
 1. Start with getUnreadOverview to see the landscape

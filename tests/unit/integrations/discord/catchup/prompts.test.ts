@@ -28,6 +28,7 @@ describe('buildCatchUpPrompt', () => {
         expect(prompt).toContain('Recommended Workflow');
         expect(prompt).toContain('Mark as read LAST');
         expect(prompt).toContain('Task Tracking');
+        expect(prompt).toContain('`Workflow`');
     });
 
     it('should handle singular counts', () => {

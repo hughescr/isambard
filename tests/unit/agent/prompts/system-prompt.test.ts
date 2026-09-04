@@ -17,6 +17,31 @@ describe.concurrent('system-prompt', () => {
             expect(BASE_SYSTEM_PROMPT).toContain('[Current state]');
         });
 
+        test('BASE_SYSTEM_PROMPT should describe delegation tools accurately', () => {
+            expect(BASE_SYSTEM_PROMPT).toContain('## Delegation and Parallel Work');
+            expect(BASE_SYSTEM_PROMPT).toContain('`Task`');
+            expect(BASE_SYSTEM_PROMPT).toContain('`SendMessage`');
+            expect(BASE_SYSTEM_PROMPT).toContain('`ListAgents`');
+            expect(BASE_SYSTEM_PROMPT).toContain('`TaskOutput`');
+            expect(BASE_SYSTEM_PROMPT).toContain('`Monitor`');
+            expect(BASE_SYSTEM_PROMPT).toContain('`ToolSearch`');
+            expect(BASE_SYSTEM_PROMPT).toContain('elenchus');
+            expect(BASE_SYSTEM_PROMPT).toContain('memory-archivist');
+            expect(BASE_SYSTEM_PROMPT).toContain('memory-curator');
+        });
+
+        test('BASE_SYSTEM_PROMPT should say when a Workflow is and is not appropriate', () => {
+            expect(BASE_SYSTEM_PROMPT).toContain('### When to use `Workflow`');
+            expect(BASE_SYSTEM_PROMPT).toContain('Use `Workflow` when');
+            expect(BASE_SYSTEM_PROMPT).toContain('Do not use `Workflow` when');
+            expect(BASE_SYSTEM_PROMPT).toContain('workflow-authoring');
+        });
+
+        test('BASE_SYSTEM_PROMPT should describe the sandboxed Bash permission correctly', () => {
+            expect(BASE_SYSTEM_PROMPT).not.toContain('Bash commands are not available');
+            expect(BASE_SYSTEM_PROMPT).toContain('sandbox');
+        });
+
         test('DISCORD_CHANNEL_CONTEXT should be defined and non-empty', () => {
             expect(DISCORD_CHANNEL_CONTEXT).toBeDefined();
             expect(DISCORD_CHANNEL_CONTEXT.length).toBeGreaterThan(0);

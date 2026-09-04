@@ -499,9 +499,11 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
     const { searchService, client, questionRegistry, channelRegistry, dmTracker, messageSplitter, buttonBuilder, retryHelper, timezone } = options;
 
     return createSdkMcpServer({
-        name:    'discord',
-        version: '1.0.0',
-        tools:   [
+        name:       'discord',
+        version:    '1.0.0',
+        // The system prompt names Discord tools directly: never defer them behind ToolSearch.
+        alwaysLoad: true,
+        tools:      [
             tool(
                 'searchMessages',
                 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.',
