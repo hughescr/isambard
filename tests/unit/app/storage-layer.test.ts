@@ -9,6 +9,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn, mock, jest } from
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { mockLogger } from '../../setup';
+import * as staticAgentSessionModule from '@/agent';
 import type { TaskCleanupProcessor } from '@/agent/task-cleanup-processor';
 import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
 import type { TaskDirectoryCopier } from '@/agent/task-directory-copier';
@@ -24,6 +25,8 @@ import * as staticMemoryToolModule from '@/storage/memory-tool';
 import * as staticReconciliationModule from '@/storage/memory-tool/reconciliation';
 import type { ReconciliationScheduler } from '@/storage/memory-tool/reconciliation/scheduler';
 import * as staticVecStoreModule from '@/storage/memory-vec-store';
+import type { SessionJournalBackend } from '@/storage/session-journal';
+import * as staticSessionJournalModule from '@/storage/session-journal';
 import * as staticTaskSessionModule from '@/storage/task-session';
 
 describe('createStorageLayer', () => {
@@ -98,6 +101,12 @@ describe('createStorageLayer', () => {
         const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => mockTaskSessionBackend);
         spies.push(TaskSessionBackendSpy);
 
+        // Mock the P8 session journal backend
+        const mockSessionJournalBackend = {} as unknown as SessionJournalBackend;
+        // @ts-expect-error - Mocking constructor
+        const SessionJournalBackendSpy = spyOn(staticSessionJournalModule, 'SessionJournalBackend').mockImplementation(() => mockSessionJournalBackend);
+        spies.push(SessionJournalBackendSpy);
+
         const mockTaskCleanupProcessor = {} as unknown as TaskCleanupProcessor;
         const createTaskCleanupProcessorSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue(mockTaskCleanupProcessor);
         spies.push(createTaskCleanupProcessorSpy);
@@ -120,6 +129,9 @@ describe('createStorageLayer', () => {
         expect(result).toHaveProperty('memoryBackend');
         expect(result).toHaveProperty('taskPersistenceCoordinator');
         expect(result).toHaveProperty('reconciliationScheduler');
+        expect(result).toHaveProperty('sessionJournalBackend');
+        expect(result).toHaveProperty('createJournal');
+        expect(result).toHaveProperty('createResumeStore');
 
         // Verify values
         expect(result.holder).toBeDefined();
@@ -129,6 +141,82 @@ describe('createStorageLayer', () => {
         expect(result.memoryBackend).toBeDefined();
         expect(result.taskPersistenceCoordinator).toBeDefined();
         expect(result.reconciliationScheduler).toBeDefined();
+        expect(result.sessionJournalBackend).toBe(mockSessionJournalBackend);
+        expect(typeof result.createJournal).toBe('function');
+        expect(typeof result.createResumeStore).toBe('function');
+    });
+
+    describe('P8: sessionJournalBackend, createJournal, createResumeStore', () => {
+        function mockCommonDeps(): void {
+            const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    {} as unknown as DynamoDBClient,
+                docClient: {} as unknown as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            });
+            spies.push(createClientSpy);
+
+            const mockMemoryBackend = {
+                getTagIndexBackend: mock(() => ({})),
+                get:                mock(async () => undefined),
+                updateMetadataOnly: mock(async () => ({})),
+            };
+            // @ts-expect-error - Mocking constructor
+            const memoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend);
+            // @ts-expect-error - Mocking constructor
+            const taskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({}));
+            const taskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as TaskCleanupProcessor);
+            const taskDirectoryCopierSpy = spyOn(staticTaskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as TaskDirectoryCopier);
+            const taskPersistenceCoordinatorSpy = spyOn(staticTaskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as TaskPersistenceCoordinator);
+            spies.push(memoryToolBackendSpy, taskSessionBackendSpy, taskCleanupSpy, taskDirectoryCopierSpy, taskPersistenceCoordinatorSpy);
+        }
+
+        test('sessionJournalBackend is constructed with the holder and tableName', async () => {
+            mockCommonDeps();
+            const mockSessionJournalBackend = {} as unknown as SessionJournalBackend;
+            // @ts-expect-error - Mocking constructor
+            const SessionJournalBackendSpy = spyOn(staticSessionJournalModule, 'SessionJournalBackend').mockImplementation(() => mockSessionJournalBackend);
+            spies.push(SessionJournalBackendSpy);
+
+            const result = await staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig);
+
+            expect(SessionJournalBackendSpy).toHaveBeenCalledTimes(1);
+            const constructorArgs = SessionJournalBackendSpy.mock.calls[0] as unknown as [unknown, string];
+            expect(constructorArgs[1]).toBe('TestTable');
+            expect(result.sessionJournalBackend).toBe(mockSessionJournalBackend);
+        });
+
+        test('createJournal(role, clock) builds a SessionJournal bound to that role over sessionJournalBackend', async () => {
+            mockCommonDeps();
+            const mockSessionJournalBackend = {} as unknown as SessionJournalBackend;
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(staticSessionJournalModule, 'SessionJournalBackend').mockImplementation(() => mockSessionJournalBackend));
+            const mockJournal = { append: mock(() => undefined), flush: mock(async () => undefined), readSince: mock(async () => []) };
+            const createSessionJournalSpy = spyOn(staticAgentSessionModule, 'createSessionJournal').mockReturnValue(mockJournal);
+            spies.push(createSessionJournalSpy);
+            const fakeClock = { now: () => 0, setTimer: () => ({}) as never, clearTimer: () => undefined };
+
+            const result = await staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig);
+            const journal = result.createJournal('conversation', fakeClock);
+
+            expect(createSessionJournalSpy).toHaveBeenCalledWith(expect.objectContaining({ backend: mockSessionJournalBackend, role: 'conversation', clock: fakeClock }));
+            expect(journal).toBe(mockJournal);
+        });
+
+        test('createResumeStore(role) builds a resume store bound to that role over taskSessionBackend', async () => {
+            mockCommonDeps();
+            const mockTaskSessionBackend = {};
+            // @ts-expect-error - Mocking constructor
+            spies.push(spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => mockTaskSessionBackend));
+            const mockResumeStore = { load: mock(async () => undefined), save: mock(async () => undefined), clear: mock(async () => undefined) };
+            const createResumeStoreSpy = spyOn(staticAgentSessionModule, 'createResumeStore').mockReturnValue(mockResumeStore);
+            spies.push(createResumeStoreSpy);
+
+            const result = await staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig);
+            const store = result.createResumeStore('perch');
+
+            expect(createResumeStoreSpy).toHaveBeenCalledWith(mockTaskSessionBackend, 'perch');
+            expect(store).toBe(mockResumeStore);
+        });
     });
 
     test('should pass dynamoDBConfig to createDynamoDBClient', async () => {

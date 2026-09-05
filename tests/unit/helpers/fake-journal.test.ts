@@ -60,6 +60,24 @@ describe('FakeJournal', () => {
         await expect(journal.readSince(0)).resolves.toEqual([]);
     });
 
+    it('scriptReadSinceRejection() makes the next readSince() reject', async () => {
+        const journal = new FakeJournal();
+        const failure = new Error('DynamoDB throttled');
+        journal.scriptReadSinceRejection(failure);
+
+        await expect(journal.readSince(0)).rejects.toBe(failure);
+    });
+
+    it('scriptReadSinceRejection(undefined) clears a scripted rejection so readSince() resolves again', async () => {
+        const journal = new FakeJournal();
+        journal.scriptReadSinceRejection(new Error('down'));
+        journal.scriptReadSinceRejection(undefined);
+        const scripted: JournalEntry[] = [sessionOpened(new Date(500), { sessionId: 'sess-0' })];
+        journal.scriptReadSince(scripted);
+
+        await expect(journal.readSince(0)).resolves.toEqual(scripted);
+    });
+
     it('flush() resolves and counts the call in flushCount', async () => {
         const journal = new FakeJournal();
 

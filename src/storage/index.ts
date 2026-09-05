@@ -13,6 +13,9 @@ export { BaseRepository } from './repositories/base';
 // Task Session
 export { TaskSessionBackend, createSessionId, type SessionId } from './task-session';
 
+// Session Journal
+export { SessionJournalBackend, journalEntrySchema, type SessionJournalItem } from './session-journal';
+
 // Memory Tool
 export * from './memory-tool';
 

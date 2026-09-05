@@ -18,6 +18,7 @@ import * as staticInboxMcpModule from '@/agent/inbox-mcp-server';
 import * as staticMemoryMcpModule from '@/agent/memory-mcp-server';
 import * as staticPluginLoaderModule from '@/agent/plugin-loader';
 import * as staticQuestionRegistryModule from '@/agent/question-registry';
+import * as staticSessionCleanupModule from '@/agent/session-cleanup';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
 import * as staticTaskCopierModule from '@/agent/task-directory-copier';
@@ -55,6 +56,130 @@ const sessionConfig: SessionConfig = {
     transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
     debounceMs:              250,
 };
+
+/**
+ * Wires the same full happy-path mock set the "Plugin loading path" test uses — storage layer
+ * constructed for real against a mocked docClient, everything Discord/agent/email-side stubbed —
+ * so `createApp()` can run to completion. Used by the P8 stale-session-cleanup tests, which need
+ * `createApp()` to actually reach (and complete) the cleanup step it re-orders below `loadConfig`
+ * and storage creation. `sessionOverrides` lets each test pick `session.mode`; the returned
+ * `getSessionIdForRole` mock lets the conductor-mode test control what the two role-keyed
+ * `TASK_SESSION#<role>` rows resolve to.
+ */
+function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}): {
+    cleanupAllStaleSessionsSpy: ReturnType<typeof spyOn>
+    pruneStaleSessionsSpy:      ReturnType<typeof spyOn>
+    getSessionIdForRole:        ReturnType<typeof mock>
+} {
+    const mockDocClient = {} as unknown as DynamoDBDocumentClient;
+    const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
+    const cleanupAllStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'cleanupAllStaleSessions').mockResolvedValue(undefined);
+    const pruneStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'pruneStaleSessions').mockResolvedValue(undefined);
+
+    spies.push(
+        spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+            client: {} as unknown as DynamoDBClient, docClient: mockDocClient, tableName: 'IsambardMemory',
+        }),
+        spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]),
+        spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
+            handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+        }),
+        spyOn(staticCompactionModule, 'createBotStateCompactionSink'),
+        spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+            start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+        }),
+        spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>),
+        spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>),
+        spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>),
+        spyOn(staticMessageFetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as ReturnType<typeof staticMessageFetcherModule.createMessageFetcher>),
+        spyOn(staticMessageSummarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSummarizerModule.createMessageSummarizer>),
+        spyOn(staticMessageSearchModule, 'createMessageSearchService').mockReturnValue({} as unknown as ReturnType<typeof staticMessageSearchModule.createMessageSearchService>),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticQuestionRegistryModule, 'QuestionRegistry').mockImplementation(() => ({} as unknown as InstanceType<typeof staticQuestionRegistryModule.QuestionRegistry>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticMemoryToolModule.MemoryToolBackend>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticPersonAllowlistModule, 'PersonAllowlist').mockImplementation(() => ({
+            load: mock(async () => {}),
+        } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>)),
+        spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>),
+        spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticCheckpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.CheckpointManager>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({
+            getSessionIdForRole, setSessionIdForRole: mock(async () => undefined), clearSessionIdForRole: mock(async () => undefined),
+        } as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>)),
+        spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>),
+        spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>),
+        spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticChannelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryManager>)),
+        // @ts-expect-error - Mocking constructor
+        spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
+            init: mock(async () => {}),
+        } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>)),
+        spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+            listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+            reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+            emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+            outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+            wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+            allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+            adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+            sendApprovalRequest:          mock(async () => {}),
+            createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
+        }),
+        spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
+            app: {
+                nodeEnv:  'development',
+                logLevel: 'info',
+                port:     3000,
+            },
+            agent: {
+                oauthToken:    'test-oauth-token-123',
+                mainModel:     'sonnet',
+                fallbackModel: 'sonnet',
+            },
+            session: { ...sessionConfig, ...sessionOverrides },
+            email:   {
+                user:                           'user@example.com',
+                password:                       'emailpass',
+                pollFallbackMs:                 300_000,
+                sseReconnectDelayMs:            5000,
+                maxBodySizeBytes:               50_000,
+                adminDiscordChannelId:          '987654321098765432',
+                wildDuckApiUrl:                 'https://wildduck.example.com',
+                sendReservoirCapacity:          24,
+                sendReservoirRefillRatePerHour: 1,
+            },
+            discord: {
+                botToken:      'bot-token-123',
+                applicationId: 'app-id-456',
+                homeGuildId:   createGuildId('home-guild-123'),
+                presence:      {
+                    updateThrottleMs:      2000,
+                    idleTimeoutMs:         60_000,
+                    idleRefreshIntervalMs: 300_000,
+                },
+            },
+            adminDiscordUserId: '423276934781468692',
+        }),
+        spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
+            tableName: 'IsambardMemory',
+        }),
+        cleanupAllStaleSessionsSpy,
+        pruneStaleSessionsSpy
+    );
+
+    return { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole };
+}
 
 describe('createApp', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -393,6 +518,44 @@ describe('createApp', () => {
             expect(agentCallOptions).toHaveProperty('compactionSink');
             const builtSink: unknown = createBotStateCompactionSinkSpy.mock.results[0]?.value;
             expect((agentCallOptions as { compactionSink?: unknown }).compactionSink).toBe(builtSink);
+        });
+    });
+
+    describe('Stale session cleanup ordering (P8)', () => {
+        test('oneshot mode: cleanupAllStaleSessions runs (after loadConfig and storage creation); pruneStaleSessions does not', async () => {
+            const { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy } = wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(cleanupAllStaleSessionsSpy).toHaveBeenCalledTimes(1);
+            expect(pruneStaleSessionsSpy).not.toHaveBeenCalled();
+        });
+
+        test('conductor mode: pruneStaleSessions runs with the two stored role ids and the configured retention; cleanupAllStaleSessions does not run', async () => {
+            const { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            getSessionIdForRole.mockImplementation(async (role: 'conversation' | 'perch') => (role === 'conversation' ? 'conv-id' : 'perch-id'));
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(pruneStaleSessionsSpy).toHaveBeenCalledWith({
+                keepSessionIds: new Set(['conv-id', 'perch-id']),
+                maxAgeMs:       7 * 24 * 60 * 60 * 1000,
+            });
+            expect(cleanupAllStaleSessionsSpy).not.toHaveBeenCalled();
+        });
+
+        test('conductor mode: a role-id lookup failure is logged and pruning is skipped, not run with an empty keep set', async () => {
+            const { pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const lookupFailure = new Error('DynamoDB throttled');
+            getSessionIdForRole.mockImplementation(() => Promise.reject(lookupFailure));
+
+            const { createApp } = staticIndexModule;
+            await expect(createApp()).resolves.toBeDefined();
+
+            expect(pruneStaleSessionsSpy).not.toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: lookupFailure }), expect.any(String));
         });
     });
 

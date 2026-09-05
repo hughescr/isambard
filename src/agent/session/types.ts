@@ -120,14 +120,22 @@ export type TurnKind = EnvelopeKind;
  * mid-turn can be replayed on restart. Every member carries `at: Date`.
  */
 export type JournalEntry
-    = | { type: 'envelope_submitted', at: Date, envelopeId: string, kind: EnvelopeKind }
-      | { type: 'response_delivered', at: Date, envelopeId: string }
-      | { type: 'turn_completed', at: Date, envelopeId: string, kind: EnvelopeKind }
+    /** channelId identifies the requesting Discord channel, when the envelope came from one — carried so P8 crash recovery can attribute an undelivered response to its destination channel. */
+    = | { type: 'envelope_submitted', at: Date, envelopeId: string, kind: EnvelopeKind, channelId?: string }
+      /** channelId/messageIds identify where the response landed, for the P8 delivery guard's crash-recovery replay. */
+      | { type: 'response_delivered', at: Date, envelopeId: string, channelId: string, messageIds: string[] }
+      /** responseText (present when the host observed one) seeds P8 recovery's undelivered-envelope replay; `truncated` marks a text capped before storage. */
+      | { type: 'turn_completed', at: Date, envelopeId: string, kind: EnvelopeKind, responseText?: string, truncated?: boolean }
       | { type: 'turn_failed', at: Date, envelopeId: string, kind: EnvelopeKind, error: string }
       | { type: 'task_started', at: Date, taskId: string, description: string }
       | { type: 'task_completed', at: Date, taskId: string, description?: string }
       | { type: 'task_lost', at: Date, taskId: string, description?: string }
       | { type: 'compaction_started', at: Date, trigger?: 'manual' | 'auto' }
-      | { type: 'compaction_completed', at: Date }
+      /** summaryPath is the memory-tool path {@link import('./compaction-log').logCompactionSummary} wrote the PostCompact summary to (P8), when one was logged. */
+      | { type: 'compaction_completed', at: Date, summaryPath?: string }
       | { type: 'compaction_failed', at: Date, error: string }
-      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, resumed: boolean, fallback?: boolean };
+      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, resumed: boolean, fallback?: boolean }
+      /** The counterpart to session_opened, journaled by the P7 shutdown sequence. */
+      | { type: 'session_ended', at: Date, sessionId: string }
+      /** Journaled last, after session_ended, once the P7 shutdown sequence has flushed the journal. */
+      | { type: 'shutdown', at: Date };

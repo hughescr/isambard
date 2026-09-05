@@ -37,7 +37,7 @@ export * from './perch';
 export * from './session';
 
 // Session Cleanup
-export { cleanupAllStaleSessions } from './session-cleanup';
+export { cleanupAllStaleSessions, pruneStaleSessions, type PruneStaleSessionsParams } from './session-cleanup';
 
 // Skill/Agent Loader
 export { syncAgentsAndSkills } from './skill-agent-loader';

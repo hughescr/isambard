@@ -1,7 +1,14 @@
 import { logger } from '@hughescr/logger';
-import { createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator  } from '@/agent';
+import {
+    createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator,
+    createSessionJournal, createResumeStore, type RoleResumeStore, type SessionJournal,
+    type Clock, type SessionRole
+} from '@/agent';
 import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig, VectorIndexConfig } from '@/config';
-import { DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike  } from '@/storage';
+import {
+    DynamoDBClientHolder, type ReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, TaskSessionBackend, createReconciliationScheduler, runReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
+    SessionJournalBackend
+} from '@/storage';
 
 /**
  * Wrap an abort reason in a proper AbortError-shaped DOMException.
@@ -42,6 +49,12 @@ export interface StorageLayer {
     memoryBackend:                   MemoryToolBackend
     contactBackend:                  ContactBackend
     taskPersistenceCoordinator:      TaskPersistenceCoordinator
+    /** Write-through backend for the SESSION_JOURNAL#<role> partition (P8). Prefer {@link createJournal} over constructing a {@link SessionJournal} against this directly. */
+    sessionJournalBackend:           SessionJournalBackend
+    /** Builds a {@link SessionJournal} bound to `role`, backed by {@link sessionJournalBackend}. */
+    createJournal:                   (role: SessionRole, clock: Clock) => SessionJournal
+    /** Builds a role-bound resume store over the shared `taskSessionBackend`'s TASK_SESSION#<role> rows. */
+    createResumeStore:               (role: SessionRole) => RoleResumeStore
     reconciliationScheduler?:        ReconciliationScheduler
     contactReconciliationScheduler?: ContactReconciliationScheduler
     /**
@@ -177,6 +190,12 @@ export async function createStorageLayer(
 
     // Create task persistence system
     const taskSessionBackend = new TaskSessionBackend(holder, tableName);
+    // P8: write-through session journal (SESSION_JOURNAL#<role> partition) and its role-bound convenience factories
+    const sessionJournalBackend = new SessionJournalBackend(holder, tableName);
+    const createJournal = (role: SessionRole, clock: Clock): SessionJournal => createSessionJournal({
+        backend: sessionJournalBackend, role, clock, logger,
+    });
+    const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(taskSessionBackend, role);
     const taskCleanupProcessor = createTaskCleanupProcessor({ logger });
     const taskDirectoryCopier = createTaskDirectoryCopier({
         logger,
@@ -197,6 +216,9 @@ export async function createStorageLayer(
         memoryBackend,
         contactBackend,
         taskPersistenceCoordinator,
+        sessionJournalBackend,
+        createJournal,
+        createResumeStore: createResumeStoreForRole,
         reconciliationScheduler,
         contactReconciliationScheduler,
         vectorIndex,

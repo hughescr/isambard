@@ -6,7 +6,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
+import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -50,13 +50,6 @@ export interface App {
  */
 // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- createApp is a composition root; branching is inherent — wires email, bsky, and all optional integrations
 export async function createApp(): Promise<App> {
-    // Clean up stale session files from previous hot reloads
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Cleaning up stale sessions...');
-    await cleanupAllStaleSessions();
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Stale sessions cleaned up');
-
     // Load configuration (required)
 
     const config = loadConfig(Resource);
@@ -115,6 +108,33 @@ export async function createApp(): Promise<App> {
         embedder,
         onIdentityWrite
     );
+
+    // Clean up stale session files (P8: below loadConfig/storage creation so config.session.mode
+    // can be consulted). The one-shot path keeps its unconditional wipe; the conductor path
+    // instead ages entries out, sparing whichever of the two role-keyed sessions are still live.
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Cleaning up stale sessions...');
+    if(config.session.mode === 'conductor') {
+        // The role-id lookup and the prune itself can each reject (a DynamoDB blip/throttle at
+        // startup, or a hand-edited/legacy row that fails session-id validation) — a rejection
+        // here must not abort createApp() the way the one-shot branch's cleanupAllStaleSessions()
+        // never could. Skip pruning entirely on failure rather than falling back to an empty
+        // keepSessionIds, which would delete the live role transcripts.
+        try {
+            const [conversationSessionId, perchSessionId] = await Promise.all([
+                storage.createResumeStore('conversation').load(),
+                storage.createResumeStore('perch').load(),
+            ]);
+            const keepSessionIds = new Set([conversationSessionId, perchSessionId].filter((id): id is string => id !== undefined));
+            await pruneStaleSessions({ keepSessionIds, maxAgeMs: config.session.transcriptRetentionMs });
+        } catch (error) {
+            logger.warn({ error }, 'Conductor session-id lookup or transcript pruning failed; skipping retention this run');
+        }
+    } else {
+        await cleanupAllStaleSessions();
+    }
+    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+    logger.info('Stale sessions cleaned up');
 
     // Wire DynamoDB health monitoring.
     // DynamoDB is a required dependency — we probe it with DescribeTable to detect

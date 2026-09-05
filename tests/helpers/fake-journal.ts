@@ -2,7 +2,8 @@
  * In-memory double for the {@link SessionJournal} port (src/agent/session/ports.ts): `append()`
  * records synchronously (the real port's `append` is fire-and-forget, returning `void`),
  * `entries()`/`byKind()` read back what was recorded, `flushCount` counts calls to `flush()`, and
- * `scriptFlushRejection()`/`scriptReadSince()` script `flush()`/`readSince()`'s outcome.
+ * `scriptFlushRejection()`/`scriptReadSince()`/`scriptReadSinceRejection()` script
+ * `flush()`/`readSince()`'s outcome.
  *
  * @module tests/helpers/fake-journal
  */
@@ -11,9 +12,10 @@ import type { JournalEntry } from '@/agent/session/types';
 
 /** Scriptable double of the session's write-ahead journal port. */
 export class FakeJournal implements SessionJournal {
-    private readonly recorded:      JournalEntry[] = [];
-    private scriptedReadSince:      JournalEntry[] = [];
-    private scriptedFlushRejection: Error | undefined;
+    private readonly recorded:          JournalEntry[] = [];
+    private scriptedReadSince:          JournalEntry[] = [];
+    private scriptedReadSinceRejection: Error | undefined;
+    private scriptedFlushRejection:     Error | undefined;
 
     /** Number of times {@link flush} has been called (whether it resolved or rejected). */
     flushCount = 0;
@@ -52,8 +54,16 @@ export class FakeJournal implements SessionJournal {
         this.scriptedReadSince = entries;
     }
 
-    /** Resolves with whatever {@link scriptReadSince} last set (`[]` if never scripted). */
+    /** Make every subsequent {@link readSince} call reject with `error`, until cleared with `undefined`. */
+    scriptReadSinceRejection(error: Error | undefined): void {
+        this.scriptedReadSinceRejection = error;
+    }
+
+    /** Resolves with whatever {@link scriptReadSince} last set (`[]` if never scripted), or rejects with whatever {@link scriptReadSinceRejection} last set. */
     readSince(_sinceMs: number): Promise<JournalEntry[]> {
+        if(this.scriptedReadSinceRejection !== undefined) {
+            return Promise.reject(this.scriptedReadSinceRejection);
+        }
         return Promise.resolve(this.scriptedReadSince);
     }
 }

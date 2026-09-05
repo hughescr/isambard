@@ -11,7 +11,7 @@ import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import * as mcpServersModule from '@/app/mcp-servers';
 import * as configLoader from '@/config/loader';
-import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/config/schemas';
+import { sessionConfigSchema, type DiscordConfig, type DynamoDBConfig, type AgentConfig, type Config, type SessionConfig } from '@/config/schemas';
 import { createApp, type App } from '@/index';
 import * as discordBot from '@/integrations/discord/bot';
 import type { DiscordBot } from '@/integrations/discord/bot';
@@ -36,6 +36,7 @@ describe('Bot Lifecycle Integration', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
     let mockDiscordConfig: DiscordConfig;
     let mockAgentConfig: AgentConfig;
+    let mockSessionConfig: SessionConfig;
     let mockDynamoDBConfig: DynamoDBConfig;
     let mockDiscordBot: DiscordBot;
     let mockClaudeAgent: ClaudeAgent;
@@ -59,6 +60,10 @@ describe('Bot Lifecycle Integration', () => {
             mainModel:     'sonnet',
             fallbackModel: 'sonnet',
         };
+
+        // Mock Session configuration (P8: config.session.mode is read early in createApp, right
+        // after storage creation, to decide the stale-session cleanup strategy)
+        mockSessionConfig = sessionConfigSchema.parse({});
 
         // Mock DynamoDB configuration
         mockDynamoDBConfig = {
@@ -145,6 +150,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -162,6 +168,7 @@ describe('Bot Lifecycle Integration', () => {
             const loadConfigSpy = spyOn(configLoader, 'loadConfig').mockReturnValue({
                 discord: mockDiscordConfig,
                 agent:   mockAgentConfig,
+                session: mockSessionConfig,
             } as unknown as Config);
             spies.push(
                 loadConfigSpy,
@@ -181,6 +188,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -198,6 +206,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -215,6 +224,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
             );
@@ -231,6 +241,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent)
@@ -270,6 +281,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
             );
@@ -325,6 +337,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(dynamoClient, 'createDynamoDBClient').mockImplementation(() => {
@@ -345,6 +358,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -371,6 +385,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -394,6 +409,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -412,6 +428,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -436,6 +453,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -458,6 +476,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
             );

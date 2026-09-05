@@ -12,6 +12,10 @@
  * after {@link Conductor.open} resolves, and drives the guard from every raw frame it observes,
  * which already covers every frame-observable release path (`compact_boundary`, the `/compact`
  * turn's own result, the `error-compacting-conversation` notification, and the clock ceiling).
+ * {@link Conductor.recordCompactionSummary} is the one exception: it is a public entry point this
+ * module exposes so P9's PostCompact hook wiring has somewhere to hand the SDK's raw
+ * `compact_summary` text, since the summary itself never arrives on a stream frame this module
+ * can observe.
  *
  * @module agent/session/conductor
  */
@@ -21,7 +25,10 @@ import { classifyClaudeError } from '../claude-retry';
 import { buildResumeNote } from '../resume-prompt-builder';
 import { StreamTracker, type StreamProgress  } from '../stream-tracker';
 import type { AgentStreamEvent } from '../types';
+import type { BuildBootBundleInput } from './boot-bundle';
 import { createCompactionGuard, type CompactionGuard } from './compaction-guard';
+import { logCompactionSummary, type LogCompactionSummaryDeps } from './compaction-log';
+import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 import {
     buildBootEnvelope,
     buildCompactEnvelope,
@@ -32,6 +39,7 @@ import { InputQueue } from './input-queue';
 import { createInterruptFlag } from './interrupt-flag';
 import type { Ledger, LedgerEvent, LedgerStore } from './ledger';
 import type { SessionJournal, ResumeStore } from './ports';
+import { computeRecovery } from './recovery';
 import { resultFrameToError } from './result-frame-error';
 import { openSession, type SessionHandle } from './session';
 import type {
@@ -48,6 +56,23 @@ import { InvariantViolationError } from '@/errors';
 import type { ErrorClassification, RetryPolicy } from '@/utils';
 
 type ResultFrame = Extract<SDKMessage, { type: 'result' }>;
+
+/**
+ * How far back {@link createConductor}'s boot-time recovery reads the journal (P8). Deliberately
+ * much shorter than the journal's 30-day TTL retention: `readSince` pages the whole
+ * `SESSION_JOURNAL#<role>` partition with no `Limit`, and the base table is provisioned at the
+ * AWS-free-tier floor (5 RCU) — a 30-day window on a long-lived conductor session (several rows
+ * per turn) would mean tens of thousands of rows read on every boot, saturating that capacity on
+ * every restart. Recovery only actually needs facts from the crashed session's own lifetime (the
+ * one journaled `session_opened` right before the crash) — 24 hours comfortably covers that for
+ * any realistic outage, while an outage longer than 24 hours degrades to an empty-seeded recovery
+ * (logged) rather than never starting the conductor at all (see {@link runBootRecovery}'s
+ * try/catch).
+ */
+const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Caps `turn_completed.responseText` (P8) so an unusually long assistant reply cannot bloat one journal row; `truncated: true` is set when the cap bit. */
+const TURN_RESPONSE_TEXT_CAP = 200_000;
 
 /** Priority the host queues an envelope at: `'human'` before `'other'` (design section 6). */
 export type SubmitPriority = 'human' | 'other';
@@ -97,36 +122,83 @@ export interface ConductorStatus {
 
 /** Dependencies and configuration for {@link createConductor}. */
 export interface CreateConductorParams {
-    role:           SessionRole
-    queryFn:        SessionQueryFn
+    role:             SessionRole
+    queryFn:          SessionQueryFn
     /** Builds full Agent SDK `Options` for a fresh (`undefined`) or resumed (session id) open. */
-    buildOptions:   (resume?: string) => Options
-    clock:          Clock
+    buildOptions:     (resume?: string) => Options
+    clock:            Clock
     /** Reads the process's current resident set size, in bytes. */
-    readRss:        () => number
-    ledgerStore:    LedgerStore
-    config:         SessionConfig
+    readRss:          () => number
+    ledgerStore:      LedgerStore
+    config:           SessionConfig
     /** `config.retry.claude` — drives `is_error` resubmission, on the injected `clock`. */
-    retryPolicy:    RetryPolicy
-    journal:        SessionJournal
-    resumeStore:    ResumeStore
-    /** Pre-formatted boot bundle text, pushed once as a `boot`-kind envelope right after `open()` succeeds. */
-    bootBundle?:    string
-    logger:         Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    retryPolicy:      RetryPolicy
+    journal:          SessionJournal
+    resumeStore:      ResumeStore
+    /**
+     * Pre-formatted boot bundle text, pushed once as a `boot`-kind envelope right after
+     * `open()` succeeds. Ignored when {@link buildBootBundle} is provided.
+     */
+    bootBundle?:      string
+    /**
+     * Builds the boot bundle text from boot-time crash recovery (P8): `open()` reads the
+     * journal window ending now, computes {@link import('./recovery').computeRecovery}, and
+     * (when this is provided) calls it with the recovery-derived lost-task and
+     * undelivered-envelope descriptions — the same shape P6's boot-bundle builder input takes —
+     * to produce the text pushed as the boot envelope, taking precedence over the static
+     * {@link bootBundle} string.
+     */
+    buildBootBundle?: (input: Pick<BuildBootBundleInput, 'lostTasks' | 'undelivered'>) => string | Promise<string>
+    /**
+     * Backs {@link Conductor.recordCompactionSummary} (P8, design 3.3): when provided, a PostCompact
+     * summary reported through that method is logged to `/events/compaction/<ts>` via
+     * {@link import('./compaction-log').logCompactionSummary}, and the returned path rides the next
+     * `compaction_completed` journal entry. Wiring an actual PostCompact hook to call
+     * `recordCompactionSummary` is P9's job (see the module doc); omitted, `compaction_completed`
+     * carries no `summaryPath`.
+     */
+    memoryBackend?:   LogCompactionSummaryDeps['memoryBackend']
+    logger:           Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
     /** Observes every raw frame alongside {@link Conductor.subscribeTurn} subscribers. */
-    onTurnFrame?:   (turnId: string, frame: SDKMessage) => void
+    onTurnFrame?:     (turnId: string, frame: SDKMessage) => void
     /** Classifies an `is_error` result's adapted error. Defaults to `classifyClaudeError`. */
-    classifyError?: (error: unknown) => ErrorClassification
+    classifyError?:   (error: unknown) => ErrorClassification
+}
+
+/** The outcome of a {@link Conductor.deliver} call. */
+export interface DeliverResult {
+    /** `false` when the envelope was already delivered (seeded at boot or marked earlier this process) and `send` was never called. */
+    delivered: boolean
 }
 
 /** The long-lived session conductor returned by {@link createConductor}. */
 export interface Conductor {
-    open:             () => Promise<{ sessionId: string, resumed: boolean }>
-    submit:           (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
-    interruptCurrent: (options?: InterruptCurrentOptions) => Promise<void>
-    subscribeTurn:    (handler: (turnId: string, frame: SDKMessage) => void) => () => void
-    status:           () => ConductorStatus
-    shutdown:         (options: ShutdownOptions) => Promise<void>
+    open:                    () => Promise<{ sessionId: string, resumed: boolean }>
+    submit:                  (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
+    /**
+     * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
+     * this id, `send` is skipped entirely; otherwise `send` runs, `response_delivered` is
+     * journaled and the journal is flushed (awaiting the write's durability, not just its
+     * issuance) before the id is marked delivered and this call resolves — so a crash between
+     * `send` resolving and the flush settling is the sole re-send window, and even that window is
+     * closed by the journal itself: {@link import('./recovery').computeRecovery} at the next boot
+     * replays `response_delivered` rows into a fresh guard, so a `response_delivered` row that
+     * did land is never re-sent even if this call never got to return.
+     */
+    deliver:                 (envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => Promise<DeliverResult>
+    /**
+     * Reports a just-finished compaction's PostCompact summary (design 3.3, P8): logs it via
+     * {@link import('./compaction-log').logCompactionSummary} when {@link CreateConductorParams.memoryBackend}
+     * was provided, and stashes the returned path so the next `compaction_completed` journal
+     * entry carries it. A no-op (logged) when `memoryBackend` was not provided. The caller
+     * (P9's hook wiring — see the module doc) is responsible for calling this from an actual
+     * PostCompact hook with the SDK's `compact_summary`.
+     */
+    recordCompactionSummary: (summary: string) => Promise<void>
+    interruptCurrent:        (options?: InterruptCurrentOptions) => Promise<void>
+    subscribeTurn:           (handler: (turnId: string, frame: SDKMessage) => void) => () => void
+    status:                  () => ConductorStatus
+    shutdown:                (options: ShutdownOptions) => Promise<void>
 }
 
 /** How a caller's `submit()` promise is settled once its turn is resolved one way or another. */
@@ -186,12 +258,18 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
 export function createConductor(params: CreateConductorParams): Conductor {
     const {
         role, queryFn, buildOptions, clock, readRss, ledgerStore, config, retryPolicy,
-        journal, resumeStore, bootBundle, logger, onTurnFrame,
+        journal, resumeStore, bootBundle, buildBootBundle, memoryBackend, logger, onTurnFrame,
     } = params;
     const classifyError = params.classifyError ?? classifyClaudeError;
 
     let opened = false;
     let shuttingDown = false;
+    /** Populated once by {@link runBootRecovery} at the start of {@link open}; guards {@link deliver} against re-sending an envelope a prior process already delivered. */
+    let deliveryGuard: DeliveryGuard | undefined;
+    /** Set by {@link recordCompactionSummary} when it successfully logs a summary; consumed (and cleared) the next time {@link journalCompactionOutcome} journals a successful `compaction_completed`. */
+    let pendingCompactionSummaryPath: string | undefined;
+    /** The text {@link pushBootBundle} pushes — the static {@link bootBundle} until {@link runBootRecovery} replaces it with {@link buildBootBundle}'s output, when provided. */
+    let resolvedBootBundle = bootBundle;
     /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely. Gates {@link processQueue} and {@link submitCompact} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
     let reopening = false;
     let currentSessionId: string | undefined;
@@ -284,7 +362,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
             }
             return;
         }
-        journal.append({ type: 'compaction_completed', at: now() });
+        journal.append({
+            type: 'compaction_completed', at: now(), ...(pendingCompactionSummaryPath === undefined ? {} : { summaryPath: pendingCompactionSummaryPath }),
+        });
+        pendingCompactionSummaryPath = undefined;
     }
 
     /**
@@ -360,7 +441,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
         };
         const meta: EnvelopeMeta = { id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId };
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
-        journal.append({ type: 'envelope_submitted', at, envelopeId: item.envelope.id, kind: item.envelope.kind });
+        journal.append({
+            type: 'envelope_submitted', at, envelopeId: item.envelope.id, kind: item.envelope.kind, ...(item.envelope.channelId === undefined ? {} : { channelId: item.envelope.channelId }),
+        });
         queue.push(toSdkUserMessage(item.envelope));
     }
 
@@ -492,8 +575,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return;
         }
 
-        journal.append({ type: 'turn_completed', at: now(), envelopeId: item.envelope.id, kind: turn.kind });
         const response = !wasInterrupted && frame.subtype === 'success' ? frame.result : null;
+        const truncated = response !== null && response.length > TURN_RESPONSE_TEXT_CAP;
+        journal.append({
+            type: 'turn_completed', at: now(), envelopeId: item.envelope.id, kind: turn.kind,
+            ...(response === null ? {} : { responseText: truncated ? response.slice(0, TURN_RESPONSE_TEXT_CAP) : response }),
+            ...(truncated ? { truncated: true } : {}),
+        });
         item.deferred.resolve({ envelopeId: item.envelope.id, response, wasInterrupted, partialWork: progress, sessionId: currentSessionId, isError: false });
     }
 
@@ -587,10 +675,50 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function pushBootBundle(): void {
-        if(bootBundle === undefined || bootBundle === '' || currentQueue === undefined) {
+        if(resolvedBootBundle === undefined || resolvedBootBundle === '' || currentQueue === undefined) {
             return;
         }
-        currentQueue.push(toSdkUserMessage(buildBootEnvelope(bootBundle, now())));
+        currentQueue.push(toSdkUserMessage(buildBootEnvelope(resolvedBootBundle, now())));
+    }
+
+    /**
+     * Boot-time crash recovery (P8), run once at the start of {@link open}: reads the journal
+     * window ending now, derives {@link import('./recovery').computeRecovery}'s lost tasks and
+     * undelivered envelopes, journals a `task_lost` entry for each lost task (the process that
+     * started them never got to), seeds {@link deliveryGuard} from the recovered
+     * `deliveredEnvelopeIds` so {@link deliver} cannot re-send anything a prior process already
+     * confirmed sent, and — when {@link buildBootBundle} is provided — resolves
+     * {@link resolvedBootBundle} from the recovered lost-task/undelivered descriptions.
+     *
+     * Never rejects: a `journal.readSince` failure (DynamoDB throttled/unavailable) is logged and
+     * degrades to an empty-seeded {@link deliveryGuard} and the static {@link bootBundle} — the
+     * conductor still opens rather than never starting at all. The accepted risk is a possible
+     * double-send for whatever the crashed process had already delivered; that is far preferable
+     * to `open()` never resolving.
+     */
+    async function runBootRecovery(): Promise<void> {
+        try {
+            const entries = await journal.readSince(clock.now() - RECOVERY_WINDOW_MS);
+            const recovery = computeRecovery(entries);
+
+            for(const lostTask of recovery.lostTasks) {
+                journal.append({
+                    type: 'task_lost', at: now(), taskId: lostTask.taskId, description: lostTask.description,
+                });
+            }
+
+            deliveryGuard = createDeliveryGuard(recovery.deliveredEnvelopeIds);
+
+            if(buildBootBundle !== undefined) {
+                resolvedBootBundle = await buildBootBundle({
+                    lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
+                    undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+                });
+            }
+        } catch (error) {
+            logger.error({ error }, 'Conductor boot recovery failed; opening with an empty-seeded delivery guard');
+            deliveryGuard = createDeliveryGuard([]);
+        }
     }
 
     /** Rejects and drains every item still waiting in `pendingQueue`, in queue order. */
@@ -667,6 +795,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     async function open(): Promise<{ sessionId: string, resumed: boolean }> {
+        await runBootRecovery();
         const stored = await resumeStore.load(role);
         if(stored !== undefined) {
             try {
@@ -701,6 +830,35 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 envelope, priority: options.priority, requestingChannelId: options.requestingChannelId, attempts: 1, deferred: { resolve, reject },
             });
         });
+    }
+
+    async function deliver(envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>): Promise<DeliverResult> {
+        if(deliveryGuard === undefined) {
+            throw new InvariantViolationError('conductor.deliver', 'called before open() completed its boot recovery, which initialises the delivery guard');
+        }
+        if(deliveryGuard.alreadyDelivered(envelopeId)) {
+            logger.info({ envelopeId }, 'Conductor.deliver: envelope already delivered; skipping send');
+            return { delivered: false };
+        }
+        const { channelId, messageIds } = await send();
+        journal.append({
+            type: 'response_delivered', at: now(), envelopeId, channelId, messageIds,
+        });
+        // Awaited so the response_delivered row is durable (not merely issued) before this call
+        // reports the envelope done — closing the crash window between an unawaited fire-and-forget
+        // append and its DynamoDB write actually landing.
+        await journal.flush();
+        deliveryGuard.markDelivered(envelopeId);
+        return { delivered: true };
+    }
+
+    async function recordCompactionSummary(summary: string): Promise<void> {
+        if(memoryBackend === undefined) {
+            logger.warn({ role }, 'Conductor.recordCompactionSummary: no memoryBackend configured; summary dropped');
+            return;
+        }
+        const path = await logCompactionSummary({ memoryBackend, clock }, { role, summary });
+        pendingCompactionSummaryPath = path;
     }
 
     async function interruptCurrent(options: InterruptCurrentOptions = {}): Promise<void> {
@@ -767,6 +925,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
                     await interruptCurrentTurnInternal('shutdown turn-wait elapsed');
                 }
             }
+            if(currentSessionId !== undefined) {
+                journal.append({ type: 'session_ended', at: now(), sessionId: currentSessionId });
+            }
+            journal.append({ type: 'shutdown', at: now() });
             try {
                 await journal.flush();
             } catch (error) {
@@ -785,6 +947,6 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, deliver, recordCompactionSummary, interruptCurrent, subscribeTurn, status, shutdown,
     };
 }

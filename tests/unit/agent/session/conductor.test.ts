@@ -16,6 +16,7 @@ import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import type { Envelope } from '@/agent/session/types';
 import { DEFAULT_RETRY_CONFIG } from '@/config/retry-config';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
+import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { ErrorClassification, RetryPolicy } from '@/utils';
 
 /** Flushes enough microtask ticks for the conductor's promise chains (reader loop, guard.onTurnEnd, retry scheduling) to settle. */
@@ -316,7 +317,9 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.journal.byKind('envelope_submitted')).toEqual([
-                { type: 'envelope_submitted', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord' },
+                {
+                    type: 'envelope_submitted', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord', channelId: 'chan-1',
+                },
             ]);
             expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'discord', channelId: 'chan-1' });
 
@@ -327,8 +330,60 @@ describe('createConductor', () => {
                 envelopeId: envelope.id, response: 'LAUNCHED', wasInterrupted: false, partialWork: expect.any(Object), sessionId: 'sess-1', isError: false,
             });
             expect(h.journal.byKind('turn_completed')).toEqual([
-                { type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord' },
+                {
+                    type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord', responseText: 'LAUNCHED',
+                },
             ]);
+        });
+
+        it('turn_completed carries a response exactly at the 200_000-char cap in full, with no truncated flag', async () => {
+            const h = build();
+            await openWith(h);
+            const exactCapText = 'x'.repeat(200_000);
+
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: exactCapText }));
+            await resultPromise;
+
+            const [entry] = h.journal.byKind('turn_completed');
+            expect(entry.responseText).toBe(exactCapText);
+            expect(entry.responseText).toHaveLength(200_000);
+            expect(entry.truncated).toBeUndefined();
+        });
+
+        it('turn_completed truncates a response one character past the 200_000-char cap and sets truncated: true', async () => {
+            const h = build();
+            await openWith(h);
+            const overCapText = `${'x'.repeat(200_000)}y`;
+
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: overCapText }));
+            await resultPromise;
+
+            const [entry] = h.journal.byKind('turn_completed');
+            expect(entry.responseText).toHaveLength(200_000);
+            expect(entry.responseText).toBe('x'.repeat(200_000));
+            expect(entry.truncated).toBe(true);
+        });
+
+        it('an interrupted turn journals turn_completed with no responseText', async () => {
+            const h = build();
+            await openWith(h);
+
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            const interruptPromise = h.conductor.interruptCurrent({ requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].resolveInterrupt();
+            await interruptPromise;
+            h.instances[0].emit(frames.resultInterrupted());
+            await resultPromise;
+
+            const [entry] = h.journal.byKind('turn_completed');
+            expect(entry.responseText).toBeUndefined();
+            expect(entry.truncated).toBeUndefined();
         });
 
         it('process_tick (readRss) is dispatched on every result', async () => {
@@ -883,6 +938,44 @@ describe('createConductor', () => {
         });
     });
 
+    describe('recordCompactionSummary()', () => {
+        it('logs the summary via the memoryBackend and threads the returned path onto the next compaction_completed', async () => {
+            const create = jest.fn(async (input: { path: string }) => ({ path: input.path }));
+            const memoryBackend = { create } as unknown as MemoryToolBackend;
+            const h = build({ memoryBackend });
+            await openWith(h);
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
+            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await firstResult;
+            await flush();
+            expect(h.journal.byKind('compaction_started')).toHaveLength(1);
+
+            await h.conductor.recordCompactionSummary('compacted the last 40 turns');
+
+            expect(create).toHaveBeenCalledTimes(1);
+            const loggedPath = create.mock.calls[0][0].path;
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
+            h.instances[0].emit(frames.compactBoundary());
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            const [entry] = h.journal.byKind('compaction_completed');
+            expect(entry.summaryPath).toBe(loggedPath);
+        });
+
+        it('is a no-op (logged) when no memoryBackend was configured', async () => {
+            const h = build();
+            await openWith(h);
+
+            await expect(h.conductor.recordCompactionSummary('a summary')).resolves.toBeUndefined();
+
+            expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ role: 'conversation' }), expect.any(String));
+        });
+    });
+
     describe('is_error retry via retryPolicy', () => {
         it('a transient error is resubmitted, and exhausting retryPolicy.maxAttempts journals turn_failed', async () => {
             const h = build();
@@ -1307,6 +1400,175 @@ describe('createConductor', () => {
             expect(h.journal.flushCount).toBe(1);
             expect(h.instances[0].closeCalls).toBe(1);
             expect(h.logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.stringContaining('flush'));
+        });
+
+        it('journals session_ended then shutdown, before flush()', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            await h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+
+            const kinds = h.journal.entries().map(entry => entry.type);
+            expect(kinds.indexOf('session_ended')).toBeGreaterThanOrEqual(0);
+            expect(kinds.indexOf('session_ended')).toBeLessThan(kinds.indexOf('shutdown'));
+            expect(h.journal.byKind('session_ended')).toEqual([{ type: 'session_ended', at: expect.any(Date), sessionId: 'sess-1' }]);
+            expect(h.journal.byKind('shutdown')).toEqual([{ type: 'shutdown', at: expect.any(Date) }]);
+            // Both entries were appended before shutdown() resolved, which is exactly when flush() was awaited.
+            expect(h.journal.flushCount).toBe(1);
+        });
+
+        it('does not journal session_ended when shutdown() is called before the session ever opened', async () => {
+            const h = build();
+
+            await h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
+
+            expect(h.journal.byKind('session_ended')).toEqual([]);
+            expect(h.journal.byKind('shutdown')).toEqual([{ type: 'shutdown', at: expect.any(Date) }]);
+        });
+    });
+
+    describe('deliver()', () => {
+        it('throws an InvariantViolationError when called before open() has run its boot recovery', async () => {
+            const h = build();
+
+            await expect(h.conductor.deliver('env-1', () => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] })))
+                .rejects.toThrow('called before open()');
+        });
+
+        it('sends, journals response_delivered, and awaits flush() before resolving, then marks the envelope delivered', async () => {
+            const h = build();
+            await openWith(h);
+            const order: string[] = [];
+            const send = jest.fn(async () => {
+                order.push('send');
+                return { channelId: 'chan-1', messageIds: ['msg-1'] };
+            });
+            const originalFlush = h.journal.flush.bind(h.journal);
+            const flushSpy = jest.spyOn(h.journal, 'flush').mockImplementation(async () => {
+                order.push('flush');
+                return originalFlush();
+            });
+
+            const result = await h.conductor.deliver('env-1', send);
+            order.push('resolved');
+
+            expect(send).toHaveBeenCalledTimes(1);
+            expect(flushSpy).toHaveBeenCalledTimes(1);
+            expect(result).toEqual({ delivered: true });
+            expect(h.journal.byKind('response_delivered')).toEqual([
+                { type: 'response_delivered', at: expect.any(Date), envelopeId: 'env-1', channelId: 'chan-1', messageIds: ['msg-1'] },
+            ]);
+            expect(order).toEqual(['send', 'flush', 'resolved']);
+        });
+
+        it('a second deliver() call for the same envelope id skips the send and does not journal again', async () => {
+            const h = build();
+            await openWith(h);
+            const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+
+            await h.conductor.deliver('env-1', send);
+            const second = await h.conductor.deliver('env-1', send);
+
+            expect(send).toHaveBeenCalledTimes(1);
+            expect(second).toEqual({ delivered: false });
+            expect(h.journal.byKind('response_delivered')).toHaveLength(1);
+        });
+    });
+
+    describe('boot recovery', () => {
+        it('reads a bounded window (24h, not the 30-day journal TTL) so boot recovery cannot scan the whole free-tier-provisioned partition', async () => {
+            const h = build();
+            const readSinceSpy = jest.spyOn(h.journal, 'readSince');
+
+            await openWith(h);
+
+            expect(readSinceSpy).toHaveBeenCalledWith(0 - 24 * 60 * 60 * 1000);
+        });
+
+        it('a readSince() rejection is logged and degrades to an empty-seeded delivery guard rather than rejecting open()', async () => {
+            const h = build();
+            h.journal.scriptReadSinceRejection(new Error('DynamoDB throttled'));
+
+            await expect(openWith(h)).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
+
+            expect(h.logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
+            const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            const result = await h.conductor.deliver('env-unseen', send);
+            expect(result).toEqual({ delivered: true });
+        });
+
+        it('journals task_lost at boot for a task_started with no resolution in the journal window', async () => {
+            const h = build();
+            h.journal.scriptReadSince([
+                { type: 'task_started', at: new Date(0), taskId: 'task-1', description: 'abandoned before restart' },
+            ]);
+
+            await openWith(h);
+
+            expect(h.journal.byKind('task_lost')).toEqual([
+                { type: 'task_lost', at: expect.any(Date), taskId: 'task-1', description: 'abandoned before restart' },
+            ]);
+        });
+
+        it('seeds the delivery guard from deliveredEnvelopeIds so deliver() refuses to redeliver', async () => {
+            const h = build();
+            h.journal.scriptReadSince([
+                {
+                    type: 'response_delivered', at: new Date(0), envelopeId: 'env-1', channelId: 'chan-1', messageIds: ['msg-1'],
+                },
+            ]);
+
+            await openWith(h);
+            const send = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-2'] }));
+
+            const result = await h.conductor.deliver('env-1', send);
+
+            expect(result).toEqual({ delivered: false });
+            expect(send).not.toHaveBeenCalled();
+        });
+
+        it('feeds recovery-derived lost task and undelivered-envelope descriptions to buildBootBundle', async () => {
+            const h = build({
+                buildBootBundle: jest.fn(input => `lost:${input.lostTasks.join(',')}|undelivered:${input.undelivered.join(',')}`),
+            });
+            h.journal.scriptReadSince([
+                { type: 'task_started', at: new Date(0), taskId: 'task-1', description: 'abandoned task' },
+                { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-1', kind: 'discord' },
+                { type: 'turn_completed', at: new Date(0), envelopeId: 'env-1', kind: 'discord' },
+            ]);
+
+            await openWith(h);
+
+            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('lost:abandoned task');
+            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('undelivered:');
+        });
+
+        it('crash-and-restart: a conductor rebuilt over the same journal refuses to redeliver what the crashed one already sent, and reports its unfinished task as lost', async () => {
+            const sharedJournal = new FakeJournal();
+            const a = build({ journal: sharedJournal });
+            await openWith(a, 'sess-a');
+            a.instances[0].emit(frames.taskStarted({ task_id: 'task-1', description: 'started by A' }));
+            await flush();
+            const sendFromA = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-1'] }));
+            await a.conductor.deliver('env-E', sendFromA);
+
+            // A crashes here: discarded without ever calling shutdown()/flush(). FakeJournal.append
+            // is synchronous, so everything A wrote is already in `sharedJournal` regardless.
+            sharedJournal.scriptReadSince(sharedJournal.entries());
+
+            const b = build({ journal: sharedJournal });
+            await openWith(b, 'sess-b');
+
+            expect(sharedJournal.byKind('task_lost')).toEqual([
+                { type: 'task_lost', at: expect.any(Date), taskId: 'task-1', description: 'started by A' },
+            ]);
+
+            const sendFromB = jest.fn(() => Promise.resolve({ channelId: 'chan-1', messageIds: ['msg-2'] }));
+            const result = await b.conductor.deliver('env-E', sendFromB);
+
+            expect(result).toEqual({ delivered: false });
+            expect(sendFromB).not.toHaveBeenCalled();
         });
     });
 

@@ -17,8 +17,10 @@ import type { JournalEntry, SessionRole } from './types';
  * sequence, before closing the query).
  */
 export interface SessionJournal {
-    append: (entry: JournalEntry) => void
-    flush:  () => Promise<void>
+    append:    (entry: JournalEntry) => void
+    flush:     () => Promise<void>
+    /** Every entry appended since `sinceMs` (inclusive), ascending. Backs P8 crash recovery (computeRecovery). */
+    readSince: (sinceMs: number) => Promise<JournalEntry[]>
 }
 
 /** Role-keyed store for the one resumable session id per {@link SessionRole}. */

@@ -77,6 +77,20 @@ export { buildCatchupText, type CatchupSummary } from './catchup-text';
 
 export type { SessionJournal, ResumeStore } from './ports';
 
+export { createSessionJournal, type CreateSessionJournalParams } from './journal';
+
+export {
+    logCompactionSummary,
+    type LogCompactionSummaryDeps,
+    type LogCompactionSummaryInput
+} from './compaction-log';
+
+export { createResumeStore, type RoleResumeStore } from './resume-store';
+
+export { computeRecovery, type LostTask, type UndeliveredEnvelope, type RecoveryResult } from './recovery';
+
+export { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
+
 export { resultFrameToError } from './result-frame-error';
 
 export {

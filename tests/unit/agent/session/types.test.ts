@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { EnvelopeMeta, SessionQuery } from '../../../../src/agent/session/types';
+import type { EnvelopeMeta, JournalEntry, SessionQuery } from '../../../../src/agent/session/types';
 import type { SystemEvent } from '../../../../src/agent/types';
 import { FakeQuery } from '../../../helpers/fake-query';
 
@@ -39,6 +39,46 @@ describe('EnvelopeMeta', () => {
         };
 
         expect(meta.perch?.slot).toBe('evening');
+    });
+});
+
+describe('JournalEntry', () => {
+    it('carries session_ended{sessionId} and shutdown{} members (P8 gap)', () => {
+        const ended: JournalEntry = { type: 'session_ended', at: new Date('2026-09-05T00:00:00Z'), sessionId: 'sess-1' };
+        const shutdown: JournalEntry = { type: 'shutdown', at: new Date('2026-09-05T00:00:01Z') };
+
+        expect([ended.type, shutdown.type]).toEqual(['session_ended', 'shutdown']);
+    });
+
+    it('lets envelope_submitted carry an optional channelId', () => {
+        const withChannel: JournalEntry = {
+            type: 'envelope_submitted', at: new Date('2026-09-05T00:00:00Z'), envelopeId: 'e1', kind: 'discord', channelId: 'chan-1',
+        };
+        const withoutChannel: JournalEntry = { type: 'envelope_submitted', at: new Date('2026-09-05T00:00:00Z'), envelopeId: 'e2', kind: 'boot' };
+
+        expect([withChannel.channelId, withoutChannel.channelId]).toEqual(['chan-1', undefined]);
+    });
+
+    it('lets turn_completed carry an optional responseText with a truncated flag', () => {
+        const entry: JournalEntry = {
+            type: 'turn_completed', at: new Date('2026-09-05T00:00:00Z'), envelopeId: 'e1', kind: 'discord', responseText: 'hi', truncated: false,
+        };
+
+        expect(entry.responseText).toBe('hi');
+    });
+
+    it('lets response_delivered carry channelId and messageIds', () => {
+        const entry: JournalEntry = {
+            type: 'response_delivered', at: new Date('2026-09-05T00:00:00Z'), envelopeId: 'e1', channelId: 'chan-1', messageIds: ['m1', 'm2'],
+        };
+
+        expect(entry.messageIds).toEqual(['m1', 'm2']);
+    });
+
+    it('lets compaction_completed carry an optional summaryPath', () => {
+        const entry: JournalEntry = { type: 'compaction_completed', at: new Date('2026-09-05T00:00:00Z'), summaryPath: '/events/compaction/2026-09-05' };
+
+        expect(entry.summaryPath).toBe('/events/compaction/2026-09-05');
     });
 });
 
