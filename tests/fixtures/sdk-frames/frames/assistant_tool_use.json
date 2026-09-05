@@ -1,0 +1,829 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "assistant_tool_use",
+    "frames": [
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_0119SvWTxK2fEsZBDg84z4j3",
+                        "name": "Agent",
+                        "input": {
+                            "description": "Run sleep and echo command",
+                            "subagent_type": "general-purpose",
+                            "prompt": "Run the shell command `sleep 30 && echo SPIKE-TASK-DONE-7731` with Bash and report its output verbatim.",
+                            "run_in_background": true
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 17570,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 17570
+                    },
+                    "output_tokens": 3,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDNuHnDf87P1bxJVhec"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01Vv6ZUZq56SQhWpGQpu8WGZ",
+                        "name": "Bash",
+                        "input": {
+                            "command": "sleep 30 && echo SPIKE-TASK-DONE-7731",
+                            "description": "Run sleep 30 and echo task completion marker"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 12891,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 12891,
+                        "ephemeral_1h_input_tokens": 0
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": "toolu_0119SvWTxK2fEsZBDg84z4j3",
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDPhzewcBr3cYongv4e",
+            "subagent_type": "general-purpose",
+            "task_description": "Run sleep and echo command"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01Lu1mZQH9czHgd8tzuX9KCL",
+                        "name": "Bash",
+                        "input": {
+                            "command": "sleep 30 && echo SPIKE-TASK-DONE-7731",
+                            "description": "Run sleep 30 and echo task completion marker",
+                            "run_in_background": true
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 8,
+                    "cache_creation_input_tokens": 1615,
+                    "cache_read_input_tokens": 12891,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 1615,
+                        "ephemeral_1h_input_tokens": 0
+                    },
+                    "output_tokens": 1,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": "toolu_0119SvWTxK2fEsZBDg84z4j3",
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDPsYdpTE2jW24bgWXV",
+            "subagent_type": "general-purpose",
+            "task_description": "Run sleep and echo command"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01NxmpgPw9BpCWEctyA4fbQp",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/private/tmp/claude-501/-private-var-folders-1j-l769161n2xb6qfm9hm9gw1tw0000gn-T-izzy-spike-TT6BzT/dc5ccb5b-8257-42a4-9b18-3bca026fd4bf/tasks/a9e4843edc3bae353.output"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 330,
+                    "cache_read_input_tokens": 19612,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 330
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDQdJAH2iHNyWHepJTA"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_013ZhLLfXGxjFbYHgwakGyeM",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/private/tmp/claude-501/-private-var-folders-1j-l769161n2xb6qfm9hm9gw1tw0000gn-T-izzy-spike-TT6BzT/dc5ccb5b-8257-42a4-9b18-3bca026fd4bf/tasks/b25jkg58j.output"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 8,
+                    "cache_creation_input_tokens": 12607,
+                    "cache_read_input_tokens": 19942,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 12607
+                    },
+                    "output_tokens": 3,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDQzU8W1ePYXp63pNcp"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01XMhsJAdb7GbJsxTkVZzSFH",
+                        "name": "Bash",
+                        "input": {
+                            "command": "cat /private/tmp/claude-501/-private-var-folders-1j-l769161n2xb6qfm9hm9gw1tw0000gn-T-izzy-spike-TT6BzT/dc5ccb5b-8257-42a4-9b18-3bca026fd4bf/tasks/b25jkg58j.output 2>/dev/null || echo \"File not found or empty\"",
+                            "description": "Check the background command output file"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 8,
+                    "cache_creation_input_tokens": 613,
+                    "cache_read_input_tokens": 32549,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 613
+                    },
+                    "output_tokens": 2,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDRTNPo27bRzmYtbY6F"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01VnZ8AyruKJpzhfu8ZjaRmy",
+                        "name": "Bash",
+                        "input": {
+                            "command": "ls -la /private/tmp/claude-501/-private-var-folders-1j-l769161n2xb6qfm9hm9gw1tw0000gn-T-izzy-spike-TT6BzT/dc5ccb5b-8257-42a4-9b18-3bca026fd4bf/tasks/",
+                            "description": "List all files in the tasks directory"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 8,
+                    "cache_creation_input_tokens": 640,
+                    "cache_read_input_tokens": 33162,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 640
+                    },
+                    "output_tokens": 2,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDRygn2xeHZ6mhmL8va"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01BrSJE2GMiY4dq8z9stPx2Y",
+                        "name": "Bash",
+                        "input": {
+                            "command": "ps aux | grep -i \"sleep 30\" | grep -v grep",
+                            "description": "Check if sleep command is still running"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 8,
+                    "cache_creation_input_tokens": 567,
+                    "cache_read_input_tokens": 33802,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 567
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDS9HV7TkdUFGg6aT7C"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01RWMWD3VkMFymCuYoX71Xo3",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/private/tmp/claude-501/-private-var-folders-1j-l769161n2xb6qfm9hm9gw1tw0000gn-T-izzy-spike-TT6BzT/dc5ccb5b-8257-42a4-9b18-3bca026fd4bf/tasks/b25jkg58j.output"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 1255,
+                    "cache_read_input_tokens": 12891,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 1255,
+                        "ephemeral_1h_input_tokens": 0
+                    },
+                    "output_tokens": 2,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": {
+                    "cache_miss_reason": {
+                        "type": "messages_changed",
+                        "cache_missed_input_tokens": 5346
+                    }
+                },
+                "context_management": null
+            },
+            "parent_tool_use_id": "toolu_0119SvWTxK2fEsZBDg84z4j3",
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDSQPaPijKD11mj7ito",
+            "subagent_type": "general-purpose",
+            "task_description": "Run sleep and echo command"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01EYFpRqMi7CCkhn9KCBWUTo",
+                        "name": "Agent",
+                        "input": {
+                            "description": "Run sleep and echo command",
+                            "subagent_type": "general-purpose",
+                            "prompt": "Run `sleep 40 && echo SPIKE-TASK-DONE-9902` with Bash and report its output verbatim.",
+                            "run_in_background": true
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 339,
+                    "cache_read_input_tokens": 35459,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 339
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDSuy4sQASBFdLT4LpC"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01WYzzaxhi5n3BjhjiVgtPT5",
+                        "name": "Bash",
+                        "input": {
+                            "command": "sleep 40 && echo SPIKE-TASK-DONE-9902",
+                            "description": "Run sleep 40 and echo SPIKE-TASK-DONE-9902",
+                            "timeout": 60000
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 4584,
+                    "cache_read_input_tokens": 8304,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 4584,
+                        "ephemeral_1h_input_tokens": 0
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": "toolu_01EYFpRqMi7CCkhn9KCBWUTo",
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDTA7NYavKdQTzrRBsz",
+            "subagent_type": "general-purpose",
+            "task_description": "Run sleep and echo command"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01CgQ9ZnSxn1bDnum6rPz8dK",
+                        "name": "Bash",
+                        "input": {
+                            "command": "sleep 40 && echo SPIKE-TASK-DONE-9902",
+                            "description": "Run sleep 40 and echo SPIKE-TASK-DONE-9902",
+                            "run_in_background": true
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 8,
+                    "cache_creation_input_tokens": 1799,
+                    "cache_read_input_tokens": 12888,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 1799,
+                        "ephemeral_1h_input_tokens": 0
+                    },
+                    "output_tokens": 1,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": "toolu_01EYFpRqMi7CCkhn9KCBWUTo",
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDTTNSqAqk5xseHrE74",
+            "subagent_type": "general-purpose",
+            "task_description": "Run sleep and echo command"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01NS6LGC4q7xuNsLHNWPFANQ",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/var/folders/1j/l769161n2xb6qfm9hm9gw1tw0000gn/T/izzy-spike-TT6BzT/big-0.txt"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 182,
+                    "cache_read_input_tokens": 17502,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 182
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDTynJ36Um4QVRh5Pmx"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01U4dpMZLdwS9cjL7Lu3qkE4",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/var/folders/1j/l769161n2xb6qfm9hm9gw1tw0000gn/T/izzy-spike-TT6BzT/big-1.txt"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 233,
+                    "cache_read_input_tokens": 40458,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 233
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDVPUMFzhxjKDEtRbhk"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01C1pNYygDyoRnT3H8QMiVhN",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/var/folders/1j/l769161n2xb6qfm9hm9gw1tw0000gn/T/izzy-spike-TT6BzT/big-2.txt"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 162,
+                    "cache_read_input_tokens": 63451,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 162
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDWjdaKfnY9P8HYxh2Z"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01QDjc8jdthrVvk3teXCSnwU",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/var/folders/1j/l769161n2xb6qfm9hm9gw1tw0000gn/T/izzy-spike-TT6BzT/big-3.txt"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 157,
+                    "cache_read_input_tokens": 86366,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 157
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDY6D7FosYhiuA9tR21"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_0141B8qn25B1iVJmBnizG6Zr",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/var/folders/1j/l769161n2xb6qfm9hm9gw1tw0000gn/T/izzy-spike-TT6BzT/big-4.txt"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 145,
+                    "cache_read_input_tokens": 109276,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 145
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDZTya95MgF62mZVwCC"
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "<model>",
+                "id": "<message.id>",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01BDwCxLjkiQYEgDiT45cvDt",
+                        "name": "Read",
+                        "input": {
+                            "file_path": "/var/folders/1j/l769161n2xb6qfm9hm9gw1tw0000gn/T/izzy-spike-TT6BzT/big-5.txt"
+                        },
+                        "caller": {
+                            "type": "direct"
+                        }
+                    }
+                ],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_creation_input_tokens": 146,
+                    "cache_read_input_tokens": 132273,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 146
+                    },
+                    "output_tokens": 4,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available"
+                },
+                "diagnostics": null,
+                "context_management": null
+            },
+            "parent_tool_use_id": null,
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "timestamp": "<timestamp>",
+            "request_id": "req_011CekDap1cXpfaTNnJm8qj8"
+        }
+    ]
+}

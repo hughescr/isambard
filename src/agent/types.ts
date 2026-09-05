@@ -193,9 +193,20 @@ interface ToolResultEvent {
  */
 interface ResultEvent {
     type:            'result'
-    subtype?:        'success' | 'error_during_execution' | 'error_max_turns'
+    subtype?:        'success' | 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries'
     duration_ms?:    number
     total_cost_usd?: number
+    /** True when this result reports an API/turn error rather than a completed reply. */
+    is_error?:       boolean
+    /** Main-loop token usage for this turn, when reported. */
+    usage?: {
+        input_tokens?:                number
+        output_tokens?:               number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?:     number
+    }
+    /** User-initiated sends still waiting in the command queue when this result was produced. */
+    queued_turn_count?: number
 }
 
 /**
@@ -216,19 +227,37 @@ interface UserEvent {
  * @internal Constituent of AgentStreamEvent; consumed only within src/agent/.
  */
 export interface SystemEvent {
-    type:            'system'
-    subtype?:        'init' | 'status' | 'compact_boundary' | 'hook_response' | 'task_progress' | 'task_started'
-    session_id?:     string
-    /** Unique task ID — present on task_started and task_progress subtypes */
-    task_id?:        string
+    type:             'system'
+    subtype?:         'init' | 'status' | 'compact_boundary' | 'hook_response' | 'task_progress' | 'task_started' | 'task_notification' | 'background_tasks_changed' | 'hook_started'
+    session_id?:      string
+    /** Unique task ID — present on task_started, task_progress and task_notification subtypes */
+    task_id?:         string
     /** tool_use_id that links this task_started event back to the originating Task tool_use block */
-    tool_use_id?:    string
+    tool_use_id?:     string
     /** AI-generated progress summary for subagent tasks (when agentProgressSummaries enabled) */
-    summary?:        string
+    summary?:         string
     /** Human-readable description of what the subagent is doing */
-    description?:    string
+    description?:     string
     /** Last tool the subagent used */
-    last_tool_name?: string
+    last_tool_name?:  string
+    /** Task type, e.g. 'local_agent' | 'local_workflow' | 'local_bash' — present on task_started */
+    task_type?:       string
+    /** Terminal status of a background task — present on task_notification */
+    status?:          'completed' | 'failed' | 'stopped'
+    /** Whether the task was registered in the background — present on task_started */
+    is_backgrounded?: boolean
+    /** Subagent type for Task-tool subagents — present on task_started */
+    subagent_type?:   string
+    /** Full live background-task set (REPLACE semantics) — present on background_tasks_changed */
+    tasks?:           { task_id: string, task_type: string, description: string, ambient?: boolean }[]
+    /** Housekeeping/ambient task, hidden from user-facing activity indicators */
+    ambient?:         boolean
+    /** Token/tool-call usage for the task — present on task_notification and task_progress */
+    usage?: {
+        total_tokens?: number
+        tool_uses?:    number
+        duration_ms?:  number
+    }
 }
 
 /**

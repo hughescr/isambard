@@ -1,0 +1,64 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "task_notification",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "status": "completed",
+            "output_file": "<output_file>",
+            "summary": "The command is running in the background. I'll wait for it to complete.",
+            "usage": {
+                "total_tokens": 15038,
+                "tool_uses": 2,
+                "duration_ms": 0
+            },
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "status": "completed",
+            "output_file": "<output_file>",
+            "summary": "Background command \"Run sleep 30 and echo task completion marker\" completed (exit code 0)",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "task_id": "<task_id>",
+            "status": "completed",
+            "output_file": "<output_file>",
+            "summary": "The command completed successfully. Here is the output verbatim:\n\n```\nSPIKE-TASK-DONE-7731\n```",
+            "usage": {
+                "total_tokens": 15834,
+                "tool_uses": 3,
+                "duration_ms": 0
+            },
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "status": "completed",
+            "output_file": "<output_file>",
+            "summary": "I've launched the command in the background. It's sleeping for 40 seconds and will then echo the text. I'll wait for the notification that it completes, and then I'll report the output.",
+            "usage": {
+                "total_tokens": 15278,
+                "tool_uses": 2,
+                "duration_ms": 0
+            },
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        }
+    ]
+}

@@ -1,0 +1,121 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "background_tasks_changed",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_agent",
+                    "description": "Run sleep and echo command"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_agent",
+                    "description": "Run sleep and echo command"
+                },
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_bash",
+                    "description": "Run sleep 30 and echo task completion marker"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_bash",
+                    "description": "Run sleep 30 and echo task completion marker"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_agent",
+                    "description": "Run sleep and echo command"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_agent",
+                    "description": "Run sleep and echo command"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_agent",
+                    "description": "Run sleep and echo command"
+                },
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_bash",
+                    "description": "Run sleep 40 and echo SPIKE-TASK-DONE-9902"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "background_tasks_changed",
+            "tasks": [
+                {
+                    "task_id": "<task_id>",
+                    "task_type": "local_bash",
+                    "description": "Run sleep 40 and echo SPIKE-TASK-DONE-9902"
+                }
+            ],
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        }
+    ]
+}

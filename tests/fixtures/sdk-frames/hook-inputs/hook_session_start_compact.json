@@ -1,0 +1,15 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "hook_session_start_compact",
+    "inputs": [
+        {
+            "session_id": "<session_id>",
+            "transcript_path": "<transcript_path>",
+            "cwd": "<cwd>",
+            "prompt_id": "<prompt_id>",
+            "hook_event_name": "SessionStart",
+            "source": "compact",
+            "model": "<model>"
+        }
+    ]
+}

@@ -1,0 +1,15 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "post_compact",
+    "inputs": [
+        {
+            "session_id": "<session_id>",
+            "transcript_path": "<transcript_path>",
+            "cwd": "<cwd>",
+            "prompt_id": "<prompt_id>",
+            "hook_event_name": "PostCompact",
+            "trigger": "manual",
+            "compact_summary": "<compact_summary>"
+        }
+    ]
+}

@@ -1,0 +1,2841 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "init",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "cwd": "<cwd>",
+            "session_id": "<session_id>",
+            "tools": [
+                "<tools>"
+            ],
+            "mcp_servers": [
+                "<mcp_servers>"
+            ],
+            "model": "<model>",
+            "permissionMode": "bypassPermissions",
+            "slash_commands": [
+                "<slash_commands>"
+            ],
+            "terminal_slash_commands": [
+                "doctor",
+                "color"
+            ],
+            "apiKeySource": "none",
+            "claude_code_version": "<claude_code_version>",
+            "output_style": "default",
+            "agents": [
+                "claude",
+                "code-simplifier:code-simplifier",
+                "Explore",
+                "fable-high",
+                "fable-xhigh",
+                "general-purpose",
+                "gpt-luna-low",
+                "gpt-luna-medium",
+                "gpt-sol-high",
+                "gpt-sol-medium",
+                "gpt-sol-xhigh",
+                "gpt-terra-high",
+                "gpt-terra-medium",
+                "haiku-basic",
+                "haiku-summary",
+                "opus-high",
+                "opus-medium",
+                "Plan",
+                "project-steward",
+                "shortcuts-playground:shortcut-builder",
+                "shortcuts-playground:shortcut-remixer",
+                "sonnet-high",
+                "sonnet-medium",
+                "statusline-setup"
+            ],
+            "skills": [
+                "browsing-bluesky",
+                "estimating",
+                "model-selection",
+                "my-writing-style",
+                "plan-review",
+                "review-changes",
+                "deep-research",
+                "ast-grep:ast-grep",
+                "claude-code-setup:claude-automation-recommender",
+                "claude-md-management:claude-md-improver",
+                "learning-opportunities:learning-opportunities",
+                "shortcuts-playground:shortcuts-playground",
+                "skill-development:crafting-instructions",
+                "skill-development:creating-skill",
+                "skill-development:inspecting-skills",
+                "skill-development:installing-skills",
+                "skill-development:optimizing-skills",
+                "skill-development:orchestrating-skills",
+                "skill-development:versioning-skills",
+                "design-sync",
+                "dataviz",
+                "update-config",
+                "verify",
+                "debug",
+                "code-review",
+                "simplify",
+                "batch",
+                "fewer-permission-prompts",
+                "doctor",
+                "loop",
+                "schedule",
+                "claude-api",
+                "workflow-authoring",
+                "run",
+                "run-skill-generator"
+            ],
+            "plugins": [
+                {
+                    "name": "ast-grep",
+                    "path": "<path>",
+                    "source": "ast-grep@ast-grep-marketplace",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "clangd-lsp",
+                    "path": "<path>",
+                    "source": "clangd-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-setup",
+                    "path": "<path>",
+                    "source": "claude-code-setup@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "claude-code-wakatime",
+                    "path": "<path>",
+                    "source": "claude-code-wakatime@wakatime",
+                    "version": "4.1.0"
+                },
+                {
+                    "name": "claude-md-management",
+                    "path": "<path>",
+                    "source": "claude-md-management@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "code-simplifier",
+                    "path": "<path>",
+                    "source": "code-simplifier@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "commit-commands",
+                    "path": "<path>",
+                    "source": "commit-commands@claude-plugins-official"
+                },
+                {
+                    "name": "gopls-lsp",
+                    "path": "<path>",
+                    "source": "gopls-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "learning-opportunities",
+                    "path": "<path>",
+                    "source": "learning-opportunities@learning-opportunities",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "pyright-lsp",
+                    "path": "<path>",
+                    "source": "pyright-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "rust-analyzer-lsp",
+                    "path": "<path>",
+                    "source": "rust-analyzer-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "shortcuts-playground",
+                    "path": "<path>",
+                    "source": "shortcuts-playground@shortcuts-playground",
+                    "version": "1.0.1"
+                },
+                {
+                    "name": "skill-development",
+                    "path": "<path>",
+                    "source": "skill-development@oaustegard-claude-skills",
+                    "version": "2.1.2"
+                },
+                {
+                    "name": "swift-lsp",
+                    "path": "<path>",
+                    "source": "swift-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "typescript-lsp",
+                    "path": "<path>",
+                    "source": "typescript-lsp@claude-plugins-official",
+                    "version": "1.0.0"
+                }
+            ],
+            "capabilities": [
+                "interrupt_receipt_v1",
+                "interrupt_cancel_queued_v1",
+                "msg_lifecycle_v1"
+            ],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "uuid": "<uuid>",
+            "messaging_socket_path": "<messaging_socket_path>",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required"
+        }
+    ]
+}

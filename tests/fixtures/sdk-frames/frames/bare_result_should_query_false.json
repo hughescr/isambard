@@ -1,0 +1,42 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "bare_result_should_query_false",
+    "source": "hand-authored: the `q1,q2,q3 --record` run that produced the sibling frame fixtures never exercised q4 (the shouldQuery:false probe in scripts/spike-long-lived-session.ts), so no bare result frame was ever observed to record. Built to match the shape of the sibling result_success.json/result_interrupted.json fixtures (same field set, real API responses omit usage.fallback_credit despite sdk.d.ts's NonNullableUsage declaring it required), zeroed out for a send that triggered no model call. Re-record (by adding q4 to a --record run) or hand-update this file on every SDK bump.",
+    "frames": [
+        {
+            "type": "result",
+            "subtype": "success",
+            "duration_ms": 0,
+            "duration_api_ms": 0,
+            "is_error": false,
+            "num_turns": 0,
+            "result": "",
+            "stop_reason": null,
+            "total_cost_usd": 0,
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 0,
+                "server_tool_use": {
+                    "web_search_requests": 0,
+                    "web_fetch_requests": 0
+                },
+                "service_tier": "standard",
+                "cache_creation": {
+                    "ephemeral_1h_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0
+                },
+                "inference_geo": "not_available",
+                "speed": "standard"
+            },
+            "modelUsage": {},
+            "permission_denials": [],
+            "terminal_reason": "completed",
+            "api_error_status": null,
+            "uuid": "<uuid>",
+            "session_id": "<session_id>",
+            "queued_turn_count": 0
+        }
+    ]
+}

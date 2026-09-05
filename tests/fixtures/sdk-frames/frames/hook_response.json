@@ -1,0 +1,90 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "hook_response",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_id": "<hook_id>",
+            "hook_name": "SessionStart:startup",
+            "hook_event": "SessionStart",
+            "output": "<output>",
+            "stdout": "<stdout>",
+            "stderr": "",
+            "exit_code": 0,
+            "outcome": "success",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_id": "<hook_id>",
+            "hook_name": "SessionStart:startup",
+            "hook_event": "SessionStart",
+            "output": "<output>",
+            "stdout": "<stdout>",
+            "stderr": "",
+            "exit_code": 0,
+            "outcome": "success",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_id": "<hook_id>",
+            "hook_name": "SessionStart:startup",
+            "hook_event": "SessionStart",
+            "output": "<output>",
+            "stdout": "<stdout>",
+            "stderr": "",
+            "exit_code": 0,
+            "outcome": "success",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_id": "<hook_id>",
+            "hook_name": "SessionStart:startup",
+            "hook_event": "SessionStart",
+            "output": "<output>",
+            "stdout": "<stdout>",
+            "stderr": "",
+            "exit_code": 0,
+            "outcome": "success",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_id": "<hook_id>",
+            "hook_name": "SessionStart:compact",
+            "hook_event": "SessionStart",
+            "output": "<output>",
+            "stdout": "<stdout>",
+            "stderr": "",
+            "exit_code": 0,
+            "outcome": "success",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_id": "<hook_id>",
+            "hook_name": "SessionStart:compact",
+            "hook_event": "SessionStart",
+            "output": "<output>",
+            "stdout": "<stdout>",
+            "stderr": "",
+            "exit_code": 0,
+            "outcome": "success",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        }
+    ]
+}

@@ -1,0 +1,85 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "task_progress",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "description": "Running Run sleep 30 and echo task completion marker",
+            "subagent_type": "general-purpose",
+            "usage": {
+                "total_tokens": 13062,
+                "tool_uses": 1,
+                "duration_ms": 0
+            },
+            "last_tool_name": "Bash",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "description": "Running Run sleep 30 and echo task completion marker",
+            "subagent_type": "general-purpose",
+            "usage": {
+                "total_tokens": 14671,
+                "tool_uses": 2,
+                "duration_ms": 0
+            },
+            "last_tool_name": "Bash",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_id": "<task_id>",
+            "description": "Reading b25jkg58j",
+            "subagent_type": "general-purpose",
+            "usage": {
+                "total_tokens": 14287,
+                "tool_uses": 3,
+                "duration_ms": 0
+            },
+            "last_tool_name": "Read",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "description": "Running Run sleep 40 and echo SPIKE-TASK-DONE-9902",
+            "subagent_type": "general-purpose",
+            "usage": {
+                "total_tokens": 13211,
+                "tool_uses": 1,
+                "duration_ms": 0
+            },
+            "last_tool_name": "Bash",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "description": "Running Run sleep 40 and echo SPIKE-TASK-DONE-9902",
+            "subagent_type": "general-purpose",
+            "usage": {
+                "total_tokens": 14857,
+                "tool_uses": 2,
+                "duration_ms": 0
+            },
+            "last_tool_name": "Bash",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        }
+    ]
+}

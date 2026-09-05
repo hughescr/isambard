@@ -1,0 +1,16 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "hook_session_start_startup",
+    "source": "hand-authored: the `q1,q2,q3 --record` run that produced the sibling hook-input fixtures resumed an existing session id, so no fresh 'startup' SessionStart hook ever fired to record. Built from SessionStartHookInput's declared shape (sdk.d.ts), mirroring hook_session_start_compact.json's field set with source:'startup' and an obviously-placeholder prompt_id (unlike the sibling fixtures, which keep the real prompt_id observed on their run since the normaliser does not redact that field). Re-record (by running --record against a fresh session) or hand-update this file on every SDK bump.",
+    "inputs": [
+        {
+            "session_id": "<session_id>",
+            "transcript_path": "<transcript_path>",
+            "cwd": "<cwd>",
+            "prompt_id": "<prompt_id>",
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+            "model": "<model>"
+        }
+    ]
+}

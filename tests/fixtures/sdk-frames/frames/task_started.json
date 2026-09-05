@@ -1,0 +1,71 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "task_started",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "description": "Run sleep and echo command",
+            "subagent_type": "general-purpose",
+            "is_backgrounded": true,
+            "spawn_depth": 1,
+            "task_type": "local_agent",
+            "prompt": "Run the shell command `sleep 30 && echo SPIKE-TASK-DONE-7731` with Bash and report its output verbatim.",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": "<task_id>",
+            "owned_by_subagent": true,
+            "tool_use_id": "<tool_use_id>",
+            "description": "Run sleep 30 and echo task completion marker",
+            "is_backgrounded": true,
+            "task_type": "local_bash",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": "<task_id>",
+            "description": "Run sleep and echo command",
+            "subagent_type": "general-purpose",
+            "is_backgrounded": true,
+            "spawn_depth": 1,
+            "task_type": "local_agent",
+            "prompt": "<task-notification>\n<task-id>b25jkg58j</task-id>\n<tool-use-id>toolu_01Lu1mZQH9czHgd8tzuX9KCL</tool-use-id>\n<output-file>/private/tmp/claude-501/-private-var-folders-1j-l769161n2xb6qfm9hm9gw1tw0000gn-T-izzy-spike-TT6BzT/dc5ccb5b-8257-42a4-9b18-3bca026fd4bf/tasks/b25jkg58j.output</output-file>\n<status>completed</status>\n<summary>Background command \"Run sleep 30 and echo task completion marker\" completed (exit code 0)</summary>\n</task-notification>",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": "<task_id>",
+            "tool_use_id": "<tool_use_id>",
+            "description": "Run sleep and echo command",
+            "subagent_type": "general-purpose",
+            "is_backgrounded": true,
+            "spawn_depth": 1,
+            "task_type": "local_agent",
+            "prompt": "Run `sleep 40 && echo SPIKE-TASK-DONE-9902` with Bash and report its output verbatim.",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        },
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_id": "<task_id>",
+            "owned_by_subagent": true,
+            "tool_use_id": "<tool_use_id>",
+            "description": "Run sleep 40 and echo SPIKE-TASK-DONE-9902",
+            "is_backgrounded": true,
+            "task_type": "local_bash",
+            "uuid": "<uuid>",
+            "session_id": "<session_id>"
+        }
+    ]
+}

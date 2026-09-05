@@ -3,7 +3,7 @@
  *
  * Runs against the REAL Agent SDK and spends real tokens. Not a test; never run under `bun test`.
  *
- *   env -u ANTHROPIC_BASE_URL bun scripts/spike-long-lived-session.ts [q1,q2,...]
+ *   env -u ANTHROPIC_BASE_URL bun scripts/spike-long-lived-session.ts [q1,q2,...] [--record[=dir]]
  *
  * Questions answered (each prints a VERDICT line):
  *   q1  streaming session: several turns through one process; a background Task launched in
@@ -14,17 +14,194 @@
  *   q4  shouldQuery:false: is the appended message visible in the next real turn?
  *   q5  resume by session id in a fresh process: is the transcript continuous?
  *   q6  two concurrent query() calls sharing ONE in-process MCP server instance vs two instances.
+ *
+ * --record[=dir]: also write committed SDK fixtures (default dir tests/fixtures/sdk-frames/) so
+ * tests/helpers/fake-query.ts and tests/helpers/sdk-frames.ts can replay real frame shapes with
+ * no network access. Two channels: every SDKMessage the iterator yields (<dir>/frames/<label>.json)
+ * and every hook-callback `input` argument (<dir>/hook-inputs/<label>.json). Volatile fields
+ * (ids, timestamps, model/tool lists, transcript paths, compaction summary text — see
+ * normaliseVolatileFields below) are rewritten to stable placeholders before writing so fixtures
+ * diff cleanly across re-recordings. RE-RECORD THESE FIXTURES ON EVERY @anthropic-ai/claude-agent-sdk
+ * BUMP: run `env -u ANTHROPIC_BASE_URL bun scripts/spike-long-lived-session.ts q1,q2,q3 --record`
+ * again and commit the result — the fixture drift guard (tests/unit/helpers/sdk-frames.test.ts)
+ * compares each written `sdkVersion` against the installed SDK version and fails loudly on drift.
+ * Recording never writes unless --record is passed; nothing else about the spike's behaviour changes.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { query, createSdkMcpServer, tool, type Options, type SDKMessage, type SDKUserMessage, type HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
+import { fileURLToPath } from 'node:url';
+import { query, createSdkMcpServer, tool, type Options, type SDKMessage, type SDKUserMessage, type HookCallbackMatcher, type HookInput } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { parseSpikeArgs } from './spike-argv';
 
 // eslint-disable-next-line n/no-sync, sonarjs/publicly-writable-directories -- startup-only fixture creation, per-run mkdtemp under TMPDIR
 const WORKDIR = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), 'izzy-spike-'));
 const MODEL = 'haiku';
-const wanted = new Set((process.argv[2] ?? 'q1,q2,q3,q4,q5,q6').split(','));
+
+// ---------------------------------------------------------------- argv: question list + --record
+const { recording, recordDir: RECORD_DIR, questionArg } = parseSpikeArgs(process.argv.slice(2));
+const wanted = new Set(questionArg.split(','));
+
+// eslint-disable-next-line n/no-sync -- startup-only: read the installed SDK's exact version so recorded fixtures carry real provenance for the drift guard
+const SDK_VERSION = (JSON.parse(readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json'),
+    'utf8'
+)) as { version: string }).version;
+
+// ---------------------------------------------------------------- --record fixture writer
+/** Field names whose string value is replaced wholesale with a `<key>` placeholder. */
+const VOLATILE_STRING_KEYS = new Set([
+    'uuid', 'session_id', 'task_id', 'tool_use_id', 'hook_id', 'output_file',
+    'transcript_path', 'cwd', 'claude_code_version', 'model', 'compact_summary', 'prompt_id',
+    'path', 'messaging_socket_path', 'output', 'stdout',
+]);
+/** Field names whose entire array value carries no fixture-relevant information. */
+const VOLATILE_ARRAY_KEYS = new Set(['tools', 'mcp_servers', 'slash_commands']);
+
+/**
+ * Rewrites volatile fields (ids, timestamps, model/tool lists, paths, compaction summary text)
+ * to stable placeholders so committed fixtures diff cleanly across re-recordings. Walks the
+ * whole structure recursively; `message.id` is handled as a special case since `id` alone is
+ * too common a key to blanket-normalise.
+ */
+function normaliseVolatileFields(node: unknown): unknown {
+    if(Array.isArray(node)) {
+        return node.map(item => normaliseVolatileFields(item));
+    }
+    if(node !== null && typeof node === 'object') {
+        const entries = Object.entries(node as Record<string, unknown>);
+        return Object.fromEntries(entries.map(([key, value]) => [key, normaliseEntry(key, value)]));
+    }
+    return node;
+}
+
+function normaliseEntry(key: string, value: unknown): unknown {
+    if(VOLATILE_STRING_KEYS.has(key) && typeof value === 'string') {
+        return `<${key}>`;
+    }
+    if(VOLATILE_ARRAY_KEYS.has(key) && Array.isArray(value)) {
+        // A placeholder ARRAY, not a string: these fields are declared as string[] on the SDK
+        // types (e.g. SDKSystemMessage.tools), and a placeholder string here would let a consumer
+        // call .map/.filter/.includes on what looks like a string[] and get a TypeError or a
+        // silently wrong answer at runtime instead of a type error at compile time.
+        return [`<${key}>`];
+    }
+    if(key === 'timestamp') {
+        return typeof value === 'number' ? 0 : '<timestamp>';
+    }
+    if(key.endsWith('_ms') && typeof value === 'number') {
+        return 0;
+    }
+    if(key === 'message' && value !== null && typeof value === 'object' && 'id' in (value as Record<string, unknown>)) {
+        return normaliseVolatileFields({ ...(value as Record<string, unknown>), id: '<message.id>' });
+    }
+    return normaliseVolatileFields(value);
+}
+
+const frameRecordings = new Map<string, SDKMessage[]>();
+const hookInputRecordings = new Map<string, HookInput[]>();
+
+/** Iterator channel: append a normalised, deep-cloned copy of `frame` under `label`. */
+function recordFrame(label: string, frame: SDKMessage): void {
+    if(!recording) {
+        return;
+    }
+    const bucket = frameRecordings.get(label) ?? [];
+    bucket.push(normaliseVolatileFields(structuredClone(frame)) as SDKMessage);
+    frameRecordings.set(label, bucket);
+}
+
+/** Hook-callback channel: append a normalised, deep-cloned copy of a hook's `input` under `label`. */
+function recordHookInput(label: string, input: HookInput): void {
+    if(!recording) {
+        return;
+    }
+    const bucket = hookInputRecordings.get(label) ?? [];
+    bucket.push(normaliseVolatileFields(structuredClone(input)) as HookInput);
+    hookInputRecordings.set(label, bucket);
+}
+
+/**
+ * Classifies a streamed SDKMessage into one of the fixed fixture labels, or undefined when the
+ * frame is not one we record. `result_interrupted` and `bare_result_should_query_false` are
+ * positional (the next `result` after an armed session event) and are handled by the caller via
+ * `pendingLabel`, taking priority over this table when set.
+ */
+function classifyFrame(m: SDKMessage, pendingLabel: string | undefined): string | undefined {
+    if(pendingLabel !== undefined) {
+        return pendingLabel;
+    }
+    if(m.type === 'result') {
+        return (m as { subtype?: string }).subtype === 'success' ? 'result_success' : undefined;
+    }
+    if(m.type === 'assistant') {
+        const content = (m as unknown as { message: { content: { type: string, text?: string }[] } }).message.content;
+        if(content.some(b => b.type === 'tool_use')) {
+            return 'assistant_tool_use';
+        }
+        if(content.some(b => b.type === 'text' && (b.text ?? '').length > 0)) {
+            return 'assistant_text';
+        }
+        return undefined;
+    }
+    if(m.type === 'system') {
+        const subtype = (m as { subtype?: string }).subtype;
+        const recordedSystemSubtypes = new Set(['init', 'task_started', 'task_progress', 'task_notification', 'background_tasks_changed', 'compact_boundary', 'hook_started', 'hook_response']);
+        return subtype !== undefined && recordedSystemSubtypes.has(subtype) ? subtype : undefined;
+    }
+    return undefined;
+}
+
+/**
+ * Classifies and records one streamed frame (a no-op when --record is off), returning the
+ * pendingResultLabel value the caller's loop should carry into the next frame — cleared once a
+ * 'result' frame has consumed it, otherwise passed through unchanged.
+ */
+function recordIncomingFrame(m: SDKMessage, pendingResultLabel: string | undefined): string | undefined {
+    const pending = m.type === 'result' ? pendingResultLabel : undefined;
+    const label = classifyFrame(m, pending);
+    if(label !== undefined) {
+        recordFrame(label, m);
+    }
+    return m.type === 'result' ? undefined : pendingResultLabel;
+}
+
+/** Writes every non-empty recorded label as a committed fixture file. Called once, at exit. */
+function writeFixtures(): void {
+    if(!recording) {
+        return;
+    }
+    const framesDir = path.join(RECORD_DIR, 'frames');
+    const hookInputsDir = path.join(RECORD_DIR, 'hook-inputs');
+    // eslint-disable-next-line n/no-sync -- one-shot end-of-run fixture write, not a hot path
+    mkdirSync(framesDir, { recursive: true });
+    // eslint-disable-next-line n/no-sync -- one-shot end-of-run fixture write, not a hot path
+    mkdirSync(hookInputsDir, { recursive: true });
+    for(const [label, frames] of frameRecordings) {
+        if(frames.length === 0) {
+            continue;
+        }
+        // eslint-disable-next-line n/no-sync -- one-shot end-of-run fixture write, not a hot path
+        writeFileSync(path.join(framesDir, `${label}.json`), `${JSON.stringify({ sdkVersion: SDK_VERSION, label, frames }, null, 4)}\n`);
+        log('record', `wrote ${frames.length} frame(s) for label '${label}'`);
+    }
+    for(const [label, inputs] of hookInputRecordings) {
+        if(inputs.length === 0) {
+            continue;
+        }
+        // eslint-disable-next-line n/no-sync -- one-shot end-of-run fixture write, not a hot path
+        writeFileSync(path.join(hookInputsDir, `${label}.json`), `${JSON.stringify({ sdkVersion: SDK_VERSION, label, inputs }, null, 4)}\n`);
+        log('record', `wrote ${inputs.length} hook input(s) for label '${label}'`);
+    }
+    const observed = new Set([...frameRecordings.keys(), ...hookInputRecordings.keys()]);
+    const expected = ['init', 'assistant_text', 'assistant_tool_use', 'result_success', 'result_interrupted', 'bare_result_should_query_false', 'task_started', 'task_progress', 'task_notification', 'background_tasks_changed', 'compact_boundary', 'hook_started', 'hook_response', 'hook_session_start_startup', 'hook_session_start_compact', 'pre_compact', 'post_compact'];
+    for(const label of expected) {
+        if(!observed.has(label)) {
+            log('record', `label '${label}' was NOT observed this run — no fixture written for it`);
+        }
+    }
+}
 
 // ---------------------------------------------------------------- helpers
 function log(tag: string, ...rest: unknown[]): void {
@@ -87,15 +264,17 @@ class Inbox {
 }
 
 interface Session {
-    q:          ReturnType<typeof query>
-    inbox:      Inbox
-    events:     SDKMessage[]
+    q:                           ReturnType<typeof query>
+    inbox:                       Inbox
+    events:                      SDKMessage[]
     /** Wait for the next 'result' message (one turn end). */
-    nextResult: (timeoutMs?: number) => Promise<SDKMessage | undefined>
+    nextResult:                  (timeoutMs?: number) => Promise<SDKMessage | undefined>
     /** Wait until a predicate matches an event, scanning new events as they arrive. */
-    waitFor:    (pred: (m: SDKMessage) => boolean, timeoutMs?: number) => Promise<SDKMessage | undefined>
-    sessionId:  () => string | undefined
-    stop:       () => void
+    waitFor:                     (pred: (m: SDKMessage) => boolean, timeoutMs?: number) => Promise<SDKMessage | undefined>
+    sessionId:                   () => string | undefined
+    stop:                        () => void
+    /** --record only: labels the next 'result' frame observed 'result_interrupted' regardless of its real subtype (recorded as-is). */
+    armInterruptedResultCapture: () => void
 }
 
 function baseOptions(extra: Partial<Options> = {}): Options {
@@ -123,6 +302,18 @@ function openSession(opts: Partial<Options> = {}): Session {
     const events: SDKMessage[] = [];
     const listeners = new Set<(m: SDKMessage) => void>();
     let sid: string | undefined;
+    // --record only: the label the NEXT 'result' frame should carry (positional: armed by an
+    // interrupt() call or a shouldQuery:false send), cleared as soon as a result frame arrives.
+    let pendingResultLabel: string | undefined;
+    if(recording) {
+        const originalPush = inbox.push.bind(inbox);
+        inbox.push = (text: string, extra: Partial<SDKUserMessage> = {}): void => {
+            if(extra.shouldQuery === false) {
+                pendingResultLabel = 'bare_result_should_query_false';
+            }
+            originalPush(text, extra);
+        };
+    }
     const q = query({ prompt: inbox, options: baseOptions(opts) });
     void (async () => {
         try {
@@ -130,6 +321,9 @@ function openSession(opts: Partial<Options> = {}): Session {
                 events.push(m);
                 if('session_id' in m && typeof m.session_id === 'string') {
                     sid = m.session_id;
+                }
+                if(recording) {
+                    pendingResultLabel = recordIncomingFrame(m, pendingResultLabel);
                 }
                 const short = summarise(m);
                 if(short) {
@@ -169,6 +363,11 @@ function openSession(opts: Partial<Options> = {}): Session {
         stop:       () => {
             inbox.close();
             q.close();
+        },
+        armInterruptedResultCapture: () => {
+            if(recording) {
+                pendingResultLabel = 'result_interrupted';
+            }
         },
     };
 }
@@ -295,6 +494,7 @@ async function q1q2(): Promise<void> {
     await s.waitFor(m => m.type === 'assistant', 60_000);
     await sleep(5000);
     const receipt = await s.q.interrupt();
+    s.armInterruptedResultCapture();
     log('q2', 'interrupt receipt:', JSON.stringify(receipt));
     await s.nextResult(30_000);
     const notif2 = await s.waitFor((m) => {
@@ -322,18 +522,21 @@ async function q3(): Promise<void> {
         SessionStart: [{ hooks: [async (input) => {
             const src = (input as { source?: string }).source;
             log('q3', 'SessionStart hook source=', src);
+            recordHookInput(src === 'compact' ? 'hook_session_start_compact' : 'hook_session_start_startup', input);
             if(src === 'compact') {
                 state.compactHookFired = true;
                 return { 'continue': true, hookSpecificOutput: { hookEventName: 'SessionStart' as const, additionalContext: 'BOOT BUNDLE: the codeword for this session is TANGERINE-4410. Remember it.' } };
             }
             return { 'continue': true, hookSpecificOutput: undefined };
         }] }],
-        PreCompact: [{ hooks: [async () => {
+        PreCompact: [{ hooks: [async (input) => {
             log('q3', 'PreCompact fired');
+            recordHookInput('pre_compact', input);
             return { 'continue': true };
         }] }],
         PostCompact: [{ hooks: [async (input) => {
             log('q3', 'PostCompact fired, summary len', String((input as { compact_summary?: string }).compact_summary?.length));
+            recordHookInput('post_compact', input);
             return { 'continue': true };
         }] }],
     };
@@ -439,7 +642,7 @@ async function q6(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- main
-log('spike', 'workdir', WORKDIR, 'model', MODEL, 'questions', [...wanted].join(','));
+log('spike', 'workdir', WORKDIR, 'model', MODEL, 'questions', [...wanted].join(','), 'record', recording ? RECORD_DIR : 'off');
 try {
     if(wanted.has('q1') || wanted.has('q2')) {
         await q1q2();
@@ -456,6 +659,7 @@ try {
 } catch (e) {
     log('spike', 'FAILED', e instanceof Error ? e.stack : String(e));
 }
+writeFixtures();
 log('spike', 'done');
 // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the SDK's child processes keep the event loop alive; exit is deliberate
 process.exit(0);

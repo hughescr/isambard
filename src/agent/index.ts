@@ -29,6 +29,9 @@ export { AnswerClassifier, classifyWithHaiku } from './answer-classifier';
 // Perch
 export * from './perch';
 
+// Long-lived session core
+export * from './session';
+
 // Session Cleanup
 export { cleanupAllStaleSessions } from './session-cleanup';
 

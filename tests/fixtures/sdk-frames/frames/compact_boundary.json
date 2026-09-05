@@ -1,0 +1,36 @@
+{
+    "sdkVersion": "0.3.258",
+    "label": "compact_boundary",
+    "frames": [
+        {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "session_id": "<session_id>",
+            "uuid": "<uuid>",
+            "compact_metadata": {
+                "trigger": "manual",
+                "pre_tokens": 155213,
+                "post_tokens": 4887,
+                "cumulative_dropped_tokens": 150326,
+                "duration_ms": 0,
+                "preserved_segment": {
+                    "head_uuid": "0924cb52-b3b5-4699-b661-e8e4493822e5",
+                    "anchor_uuid": "57a71f68-5f74-425f-a3cc-baef93751c03",
+                    "tail_uuid": "40a00749-d076-4194-98c7-74f002b571a7"
+                },
+                "preserved_messages": {
+                    "anchor_uuid": "57a71f68-5f74-425f-a3cc-baef93751c03",
+                    "uuids": [
+                        "0924cb52-b3b5-4699-b661-e8e4493822e5",
+                        "40a00749-d076-4194-98c7-74f002b571a7"
+                    ],
+                    "all_uuids": [
+                        "0924cb52-b3b5-4699-b661-e8e4493822e5",
+                        "40a00749-d076-4194-98c7-74f002b571a7"
+                    ]
+                }
+            },
+            "logical_parent_uuid": "40a00749-d076-4194-98c7-74f002b571a7"
+        }
+    ]
+}
