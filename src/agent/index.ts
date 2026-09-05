@@ -84,7 +84,7 @@ export { LiveSignals, type Signal, type RecentTool, type RecentChannel, type Liv
 export { StreamTracker, type StreamProgress } from './stream-tracker';
 
 // Resume Prompt Builder
-export { type ResumeContext } from './resume-prompt-builder';
+export { type ResumeContext, buildResumeNote } from './resume-prompt-builder';
 
 // Activity Logger
 export { createActivityLogger, type ActivityLogger } from '@/storage';

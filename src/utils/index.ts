@@ -6,7 +6,8 @@ export {
     formatTimeHeader,
     resolveTimezone,
     formatLocalDateTime,
-    formatTimeSince
+    formatTimeSince,
+    formatEnvelopeStamp
 } from './time';
 
 export {

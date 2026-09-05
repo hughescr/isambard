@@ -9,6 +9,7 @@
  * @module agent/session/types
  */
 import type { Options, Query, SDKControlGetContextUsageResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { PlatformImage } from '../types';
 
 /** Which of the two concurrent sessions a piece of state belongs to. */
 export type SessionRole = 'conversation' | 'perch';
@@ -79,15 +80,30 @@ export interface EnvelopeMeta {
 
 /** A unit of host-driven work submitted to a session's input queue. */
 export interface Envelope {
-    id:          string
-    kind:        EnvelopeKind
-    text:        string
-    images?:     string[]
-    channelId?:  string
-    authorId?:   string
-    priority:    'human' | 'other'
-    shouldQuery: boolean
-    createdAt:   Date
+    id:           string
+    kind:         EnvelopeKind
+    text:         string
+    /**
+     * Widened to {@link PlatformImage} (rather than pre-encoded `string[]`) because
+     * `toSdkUserMessage` (P6, ./envelope.ts) feeds this straight into
+     * `buildMultimodalContent`, which needs each image's media type and base64 data — a plain
+     * string array would force a lossy re-encoding step for no benefit.
+     */
+    images?:      PlatformImage[]
+    channelId?:   string
+    authorId?:    string
+    /** Present only for envelopes that originated from a human message (currently: discord). */
+    origin?:      { kind: 'human' }
+    /**
+     * How the host queues/escalates this envelope: `'human'` interrupts promptly (a direct
+     * message), `'wake'` escalates after a wait (perch, catch-up, resume, a waking
+     * notification), `'accumulate'` queues silently with no escalation (boot, compact, a
+     * non-waking notification). Renamed from the prior 2-way `priority` field (plan amendment
+     * A1 extension) — confirmed unread by any consumer before the rename.
+     */
+    hostPriority: 'human' | 'wake' | 'accumulate'
+    shouldQuery:  boolean
+    createdAt:    Date
 }
 
 /**

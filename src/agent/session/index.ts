@@ -55,3 +55,33 @@ export {
     type SessionState,
     type OpenSessionParams
 } from './session';
+
+export {
+    buildDiscordEnvelope,
+    buildPerchEnvelope,
+    buildNotificationEnvelope,
+    buildCatchupEnvelope,
+    buildWrapUpEnvelope,
+    buildResumeEnvelope,
+    buildBootEnvelope,
+    buildCompactEnvelope,
+    toSdkUserMessage,
+    type BuildDiscordEnvelopeParams,
+    type BuildPerchEnvelopeParams,
+    type BuildNotificationEnvelopeParams,
+    type BuildCatchupEnvelopeParams,
+    type BuildWrapUpEnvelopeParams
+} from './envelope';
+
+export { buildCatchupText, type CatchupSummary } from './catchup-text';
+
+export { createContextPolicy, type ContextPolicy, type CreateContextPolicyParams, type EventsDeltaSource } from './context-policy';
+
+export {
+    createBootBundleBuilder,
+    formatBootBundle,
+    type BootBundleBuilder,
+    type BootBundleParts,
+    type BuildBootBundleInput,
+    type CreateBootBundleBuilderParams
+} from './boot-bundle';

@@ -2,9 +2,26 @@ import { describe, test, expect, mock } from 'bun:test';
 import type { ContextBuilder } from '../../../../src/agent/context-builder';
 import {
     buildSystemPrompt,
+    buildSessionSystemPrompt,
     BASE_SYSTEM_PROMPT,
-    DISCORD_CHANNEL_CONTEXT
+    DISCORD_CHANNEL_CONTEXT,
+    SESSION_BASE_PROMPT,
+    CONVERSATION_ROLE_PROMPT,
+    PERCH_ROLE_PROMPT
 } from '../../../../src/agent/prompts/system-prompt';
+
+/**
+ * Test-local prompt-hygiene check shared by every `buildSessionSystemPrompt` case: no
+ * unresolved `{PLACEHOLDER}` tokens, no trailing whitespace on any line, and no duplicated
+ * (back-to-back) blank lines.
+ */
+function assertPromptHygiene(text: string): void {
+    expect(text).not.toMatch(/\{[A-Z_]+\}/);
+    for(const line of text.split('\n')) {
+        expect(line).not.toMatch(/\s$/);
+    }
+    expect(text).not.toContain('\n\n\n');
+}
 
 describe.concurrent('system-prompt', () => {
     describe('constants', () => {
@@ -280,6 +297,69 @@ describe.concurrent('system-prompt', () => {
                 expect(prompt).toContain('Discord Channel Context');
                 expect(prompt).not.toContain('Who You Are');
             });
+        });
+    });
+
+    describe('buildSessionSystemPrompt', () => {
+        test('conversation role contains "shared transcript" and the identity text', () => {
+            const prompt = buildSessionSystemPrompt({ role: 'conversation', identity: 'I am Isambard, Craig\'s thought partner.' });
+
+            expect(prompt).toContain('shared transcript');
+            expect(prompt).toContain('I am Isambard, Craig\'s thought partner.');
+            assertPromptHygiene(prompt);
+        });
+
+        test('perch role contains "time box" and "perch channel"', () => {
+            const prompt = buildSessionSystemPrompt({ role: 'perch', identity: 'I am Isambard.' });
+
+            expect(prompt).toContain('time box');
+            expect(prompt).toContain('perch channel');
+            assertPromptHygiene(prompt);
+        });
+
+        test('both roles contain working memory, envelope and notification language', () => {
+            const conversation = buildSessionSystemPrompt({ role: 'conversation', identity: 'id' });
+            const perch = buildSessionSystemPrompt({ role: 'perch', identity: 'id' });
+
+            for(const prompt of [conversation, perch]) {
+                expect(prompt).toContain('working memory');
+                expect(prompt).toContain('envelope');
+                expect(prompt).toContain('notification');
+            }
+        });
+
+        test('neither role mentions ephemeral, {CHANNEL_LIST}, or the one-shot channel-visibility line', () => {
+            const conversation = buildSessionSystemPrompt({ role: 'conversation', identity: 'id' });
+            const perch = buildSessionSystemPrompt({ role: 'perch', identity: 'id' });
+
+            for(const prompt of [conversation, perch]) {
+                expect(prompt).not.toContain('ephemeral');
+                expect(prompt).not.toContain('{CHANNEL_LIST}');
+                expect(prompt).not.toContain('Currently visible channels');
+                expect(prompt).not.toContain(DISCORD_CHANNEL_CONTEXT);
+                expect(prompt).not.toContain('[About this user]');
+                expect(prompt).not.toContain('[Recent events]');
+            }
+        });
+
+        test('appends the identity text once under "## Identity", after the role section', () => {
+            const prompt = buildSessionSystemPrompt({ role: 'conversation', identity: 'unique-identity-marker' });
+
+            expect(prompt).toContain('## Identity\nunique-identity-marker');
+            const identityIndex = prompt.indexOf('## Identity');
+            const roleIndex = prompt.indexOf(CONVERSATION_ROLE_PROMPT);
+            expect(roleIndex).toBeGreaterThan(-1);
+            expect(identityIndex).toBeGreaterThan(roleIndex);
+            expect(prompt.split('unique-identity-marker')).toHaveLength(2);
+        });
+
+        test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {
+            expect(SESSION_BASE_PROMPT.length).toBeGreaterThan(0);
+            expect(CONVERSATION_ROLE_PROMPT.length).toBeGreaterThan(0);
+            expect(PERCH_ROLE_PROMPT.length).toBeGreaterThan(0);
+            assertPromptHygiene(SESSION_BASE_PROMPT);
+            assertPromptHygiene(CONVERSATION_ROLE_PROMPT);
+            assertPromptHygiene(PERCH_ROLE_PROMPT);
         });
     });
 });

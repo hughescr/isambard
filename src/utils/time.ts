@@ -333,3 +333,36 @@ export function formatTimeHeader(userTimezone?: string): string {
 
     return lines.join('\n');
 }
+
+/**
+ * Short US timezone abbreviations folded to their one-letter-suffix form for envelope stamps.
+ * Every other `Intl` short zone name (UTC, GMT, JST, GMT+9, ...) passes through verbatim.
+ */
+const ENVELOPE_ZONE_ABBREVIATION_FOLD: Record<string, string> = {
+    PST: 'PT',
+    PDT: 'PT',
+    EST: 'ET',
+    EDT: 'ET',
+    CST: 'CT',
+    CDT: 'CT',
+    MST: 'MT',
+    MDT: 'MT',
+};
+
+/**
+ * Formats the timestamp stamped onto every header-rendering envelope: a `yyyy-MM-dd HH:mm`
+ * local wall-clock time in `timezone`, followed by a short zone label. US zone abbreviations
+ * (PST/PDT, EST/EDT, CST/CDT, MST/MDT) fold to their one-letter form (PT/ET/CT/MT); every
+ * other abbreviation (UTC, GMT, JST, GMT+9, ...) is passed through verbatim.
+ * @param now Envelope creation time
+ * @param timezone IANA timezone string
+ * @returns Stamp like '2026-09-04 14:07 PT'
+ */
+export function formatEnvelopeStamp(now: Date, timezone: string): string {
+    const localStamp = DateTime.fromJSDate(now).setZone(timezone).toFormat('yyyy-MM-dd HH:mm');
+    const zoneParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'short' }).formatToParts(now);
+    const zoneAbbreviation = zoneParts.find(part => part.type === 'timeZoneName')?.value ?? timezone;
+    const zoneLabel = ENVELOPE_ZONE_ABBREVIATION_FOLD[zoneAbbreviation] ?? zoneAbbreviation;
+
+    return `${localStamp} ${zoneLabel}`;
+}

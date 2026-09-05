@@ -1,8 +1,9 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn, afterEach, jest } from 'bun:test';
 import {
     formatRelativeTime,
     formatMemoryTimestamp,
-    formatShortRelativeTime
+    formatShortRelativeTime,
+    formatEnvelopeStamp
 } from '@/utils/time';
 
 describe.concurrent('formatRelativeTime', () => {
@@ -164,5 +165,62 @@ describe('formatShortRelativeTime', () => {
     test('should use current time when now is not provided', () => {
         const recentDate = new Date(Date.now() - 30_000);
         expect(formatShortRelativeTime(recentDate)).toBe('now');
+    });
+});
+
+describe.concurrent('formatEnvelopeStamp', () => {
+    const now = new Date('2026-09-04T22:07:00Z');
+
+    test('formats Pacific time with the PST/PDT->PT fold', () => {
+        expect(formatEnvelopeStamp(now, 'America/Los_Angeles')).toBe('2026-09-04 14:07 PT');
+    });
+
+    test('formats Eastern time with the EST/EDT->ET fold', () => {
+        expect(formatEnvelopeStamp(now, 'America/New_York')).toBe('2026-09-04 17:07 ET');
+    });
+
+    test('passes an unmapped zone abbreviation through verbatim, including a day rollover', () => {
+        expect(formatEnvelopeStamp(now, 'Asia/Tokyo')).toBe('2026-09-05 07:07 JST');
+    });
+
+    test('passes UTC through verbatim', () => {
+        expect(formatEnvelopeStamp(now, 'UTC')).toBe('2026-09-04 22:07 UTC');
+    });
+
+    test('rejects an invalid timezone with a RangeError', () => {
+        expect(() => formatEnvelopeStamp(now, 'Not/AZone')).toThrow(RangeError);
+    });
+});
+
+// Not describe.concurrent: this block spies on the process-global Intl.DateTimeFormat.prototype,
+// which would race the concurrent block above if they overlapped.
+describe('formatEnvelopeStamp — full DST abbreviation fold table', () => {
+    const now = new Date('2026-09-04T22:07:00Z');
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    // Drives every ENVELOPE_ZONE_ABBREVIATION_FOLD entry directly by faking the short
+    // timeZoneName Intl part; the tests/setup.ts Intl mock only ever reports fixed, DST-free
+    // abbreviations (PST/EST/...), so PDT/EDT/CST/CDT/MST/MDT are otherwise unreachable.
+    test.each([
+        ['PDT', 'PT'],
+        ['EDT', 'ET'],
+        ['CST', 'CT'],
+        ['CDT', 'CT'],
+        ['MST', 'MT'],
+        ['MDT', 'MT']
+    ])('folds the %s abbreviation to %s', (rawAbbreviation, foldedLabel) => {
+        const original = Intl.DateTimeFormat.prototype.formatToParts;
+        spyOn(Intl.DateTimeFormat.prototype, 'formatToParts').mockImplementation(function(this: Intl.DateTimeFormat, ...args: Parameters<typeof original>) {
+            const { options } = this as unknown as { options: Intl.DateTimeFormatOptions };
+            if(options.timeZoneName === 'short') {
+                return [{ type: 'timeZoneName', value: rawAbbreviation }] satisfies Intl.DateTimeFormatPart[];
+            }
+            return original.apply(this, args);
+        });
+
+        expect(formatEnvelopeStamp(now, 'UTC')).toBe(`2026-09-04 22:07 ${foldedLabel}`);
     });
 });
