@@ -1,16 +1,18 @@
-import { query, type McpServerConfig, type Options, type SDKUserMessage, type SdkPluginConfig, type SDKCompactBoundaryMessage, type SettingSource  } from '@anthropic-ai/claude-agent-sdk';
+import { query, type McpServerConfig, type Options, type SDKUserMessage, type SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { createRetryableQuery } from './claude-retry';
 import type { ContextBuilder } from './context-builder';
-import { createCompactionHooks, type CompactionStateManager } from './hooks/compaction';
+import { createCompactionHooks, type CompactionSink } from './hooks/compaction';
 import { mergeHookMaps } from './hooks/index';
 import { createLifecycleHooks, type StopCallback, type StopFailureCallback } from './hooks/lifecycle';
 import { createTaskTrackingHooks } from './hooks/task-tracking';
 import { buildMultimodalContent, hasImages } from './multimodal-message-builder';
 import { buildSystemPrompt } from './prompts/index.js';
 import { type ResumeContext, buildResumePrompt  } from './resume-prompt-builder';
+import { buildSessionQueryOptions, type SessionMcpServers } from './session/query-options';
 import { cleanupSession, extractSessionId } from './session-cleanup';
-import { extractAssistantText, extractToolUses, parseToolName, redactSensitiveArgs } from './stream-extractors';
+import { createStreamEventLogger, logResultErrors, logAssistantErrors, logToolUsage } from './stream-event-logger';
+import { extractAssistantText } from './stream-extractors';
 import { StreamTracker } from './stream-tracker';
 import type { TaskPersistenceCoordinator } from './task-persistence-coordinator';
 import { type AgentStreamEvent, type MessageContext, type PlatformImage  } from './types';
@@ -19,65 +21,6 @@ import { InvariantViolationError } from '@/errors';
 import { formatLocalDateTime, resolveTimezone, type RetryDeps } from '@/utils';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
-
-/**
- * Explicit list of built-in tools available to Isambard.
- * Excludes NotebookEdit (not useful for Discord bot) and AskUserQuestion
- * (Izzy decides autonomously based on context and memories). EnterPlanMode/ExitPlanMode
- * are not exposed by the SDK in non-interactive mode, so they are not listed.
- * Memory tools are added via mcpServers configuration.
- */
-const EXPLICIT_TOOLS = [
-    // File operations
-    'Read',
-    'Write',
-    'Edit',
-    // Search
-    'Glob',
-    'Grep',
-    // Web
-    'WebFetch',
-    'WebSearch',
-    // Execution
-    'Bash',
-    // Agent spawning. Still required as agent-invokable tools post-Phase-1 hook cutover.
-    // Hooks tell us *about* Task lifecycle; the agent still needs permission to invoke
-    // TaskOutput/TaskStop to collect/halt background task results.
-    'Task',
-    'TaskOutput',
-    'TaskStop',
-    // Task management (new task system)
-    'TaskCreate',
-    'TaskUpdate',
-    'TaskGet',
-    'TaskList',
-    // Sub-agent coordination: message a named running sub-agent, list them
-    'SendMessage',
-    'ListAgents',
-    // Dynamic workflows: scripted fan-out of sub-agents
-    'Workflow',
-    // Event watching: stream stdout lines or websocket frames as events
-    'Monitor',
-    // Deferred tool loading: fetch a deferred tool's schema on demand
-    'ToolSearch',
-    // Skills
-    'Skill',
-];
-
-/**
- * Explicit sub-agent definitions.
- * Only general-purpose is overridden (to pin its model). The SDK's built-in Explore and Plan
- * agents are stronger than any one-line override, so they are left as shipped. The built-in
- * `claude` and `statusline-setup` agents cannot be removed via this option.
- * Agent description/prompt strings are configuration - correctness validated by integration tests.
- */
-const EXPLICIT_AGENTS = {
-    'general-purpose': {
-        description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
-        prompt:      'You are a general-purpose assistant helping with software engineering tasks.',
-        model:       'sonnet' as const,
-    },
-};
 
 export interface ClaudeAgentOptions {
     /** Context builder for loading memory (core identity + recent context) */
@@ -112,8 +55,8 @@ export interface ClaudeAgentOptions {
     mainModel?:                  string
     /** Fallback model to use when primary model is unavailable (rate limit, overload, 5xx) */
     fallbackModel?:              string
-    /** Optional state manager for compaction phase tracking (PreCompact/PostCompact hooks) */
-    compactionStateManager?:     CompactionStateManager
+    /** Optional compaction lifecycle sink (PreCompact/PostCompact hooks report here) */
+    compactionSink?:             CompactionSink
     /** Retry dependency overrides (sleep/now/logger) for the Claude query retry wrapper — test injection point, defaults to real timers in production */
     retryDeps?:                  Partial<RetryDeps>
 }
@@ -192,354 +135,51 @@ export interface ClaudeAgent {
  * @returns Claude agent instance
  */
 /**
- * Builds the mcpServers configuration object based on provided servers.
+ * Maps the eleven per-server ClaudeAgentOptions fields onto the session core's
+ * `SessionMcpServers` shape (src/agent/session/query-options.ts), keyed by server name.
+ * @param options Claude agent options carrying the per-server MCP configs
+ * @returns MCP servers keyed by session server name
  */
-// eslint-disable-next-line complexity -- mechanical server registration; legitimately returns Record | undefined
-function buildMcpServers(memoryMcpServer?: McpServerConfig, discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, mediaMcpServer?: McpServerConfig, contactsMcpServer?: McpServerConfig, userContextMcpServer?: McpServerConfig, browserMcpServer?: McpServerConfig): Record<string, McpServerConfig> | undefined {
-    if(!memoryMcpServer && !discordMcpServer && !inboxMcpServer && !emailMcpServer && !bskyMcpServer && !caldavMcpServer && !wikipediaMcpServer && !mediaMcpServer && !contactsMcpServer && !userContextMcpServer && !browserMcpServer) {
-        return undefined;
-    }
-
-    const servers: Record<string, McpServerConfig> = {};
-    if(memoryMcpServer) {
-        servers.memory = memoryMcpServer;
-    }
-    if(discordMcpServer) {
-        servers.discord = discordMcpServer;
-    }
-    if(inboxMcpServer) {
-        servers.inbox = inboxMcpServer;
-    }
-    if(emailMcpServer) {
-        servers.email = emailMcpServer;
-    }
-    if(bskyMcpServer) {
-        servers.bsky = bskyMcpServer;
-    }
-    if(caldavMcpServer) {
-        servers.caldav = caldavMcpServer;
-    }
-    if(wikipediaMcpServer) {
-        servers.wikipedia = wikipediaMcpServer;
-    }
-    if(mediaMcpServer) {
-        servers.media = mediaMcpServer;
-    }
-    if(contactsMcpServer) {
-        servers.contacts = contactsMcpServer;
-    }
-    if(userContextMcpServer) {
-        servers['user-context'] = userContextMcpServer;
-    }
-    if(browserMcpServer) {
-        servers.browser = browserMcpServer;
-    }
-    return servers;
+function toSessionMcpServers(options: ClaudeAgentOptions): SessionMcpServers {
+    return {
+        memory:         options.memoryMcpServer,
+        discord:        options.discordMcpServer,
+        inbox:          options.inboxMcpServer,
+        email:          options.emailMcpServer,
+        bsky:           options.bskyMcpServer,
+        caldav:         options.caldavMcpServer,
+        wikipedia:      options.wikipediaMcpServer,
+        media:          options.mediaMcpServer,
+        contacts:       options.contactsMcpServer,
+        'user-context': options.userContextMcpServer,
+        browser:        options.browserMcpServer,
+    };
 }
 
 /**
- * Builds the allowedTools list based on which MCP servers are configured.
+ * Module-level stream-event logger instance for the one-shot path. Owns its own
+ * `pendingToolRequests` correlation state (see ./stream-event-logger.ts); `logStreamEvent` and
+ * `resetLogStreamState` below are thin delegates to it so this file's public surface — and the
+ * existing tests that exercise it via `createClaudeAgent` — are unchanged. `openSession`
+ * (./session/session.ts) creates its own instance per long-lived session instead of using this
+ * one, so the two never share tool-correlation state.
  */
-function buildAllowedTools(discordMcpServer?: McpServerConfig, inboxMcpServer?: McpServerConfig, emailMcpServer?: McpServerConfig, bskyMcpServer?: McpServerConfig, caldavMcpServer?: McpServerConfig, wikipediaMcpServer?: McpServerConfig, mediaMcpServer?: McpServerConfig, contactsMcpServer?: McpServerConfig, userContextMcpServer?: McpServerConfig, browserMcpServer?: McpServerConfig): string[] {
-    const baseTools = [
-        // Memory MCP tools (auto-approved)
-        'mcp__memory__*',
-        // Read-only and safe tools (auto-approved)
-        'Read',
-        'Glob',
-        'Grep',
-        'WebFetch',
-        'WebSearch',
-        // Task management (new task system)
-        'TaskCreate',
-        'TaskUpdate',
-        'TaskGet',
-        'TaskList',
-        'SendMessage',
-        'ListAgents',
-        'Workflow',
-        'Monitor',
-        'ToolSearch',
-        // Still required post-Phase-1 hook cutover — agent invokes these to collect/halt background tasks.
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        // Skills
-        'Skill',
-        // Bash commands (specific safe commands only)
-        'Bash(git:*)',
-        'Bash(bun run:*)',
-        'Bash(bun test:*)',
-        'Bash(bun lint:*)',
-        'Bash(bun typecheck)',
-        'Bash(ls:*)',
-    ];
-
-    const tools = [...baseTools];
-
-    if(discordMcpServer) {
-        tools.push('mcp__discord__*');
-    }
-
-    if(inboxMcpServer) {
-        tools.push('mcp__inbox__*');
-    }
-
-    if(emailMcpServer) {
-        tools.push('mcp__email__*');
-    }
-
-    if(bskyMcpServer) {
-        tools.push('mcp__bsky__*');
-    }
-
-    if(caldavMcpServer) {
-        tools.push('mcp__caldav__*');
-    }
-
-    if(wikipediaMcpServer) {
-        tools.push('mcp__wikipedia__*');
-    }
-
-    if(mediaMcpServer) {
-        tools.push('mcp__media__*');
-    }
-
-    if(contactsMcpServer) {
-        tools.push('mcp__contacts__*');
-    }
-
-    if(userContextMcpServer) {
-        tools.push('mcp__user-context__*');
-    }
-
-    if(browserMcpServer) {
-        tools.push('mcp__browser__*');
-    }
-
-    return tools;
-}
+const streamEventLoggerInstance = createStreamEventLogger();
 
 /**
- * Logs error details from result events in the stream.
- * @param message Stream message to check for errors
+ * Logs stream events with descriptive messages based on event type. Delegates to the
+ * module-level {@link streamEventLoggerInstance}; see ./stream-event-logger.ts for behaviour.
+ * @param message Stream event to log
  */
-// Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement,ArrayDeclaration: Observability - error logging doesn't affect return value
-function logResultErrors(message: { type: string, is_error?: boolean, subtype?: string, errors?: unknown[] }): void {
-    if(message.type === 'result' && 'is_error' in message && message.is_error) {
-        logger.error({
-            subtype: 'subtype' in message ? message.subtype : undefined,
-            errors:  'errors' in message ? message.errors : [],
-            msg:     'Agent SDK returned error result',
-        });
-    }
+export function logStreamEvent(message: AgentStreamEvent): void {
+    streamEventLoggerInstance.logStreamEvent(message);
 }
-// Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement,ArrayDeclaration
-
-/**
- * Logs error details from assistant events in the stream.
- * @param message Stream message to check for errors
- */
-// Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement: Observability - error logging doesn't affect return value
-function logAssistantErrors(message: { type: string, error?: unknown }): void {
-    if(message.type === 'assistant' && 'error' in message && message.error) {
-        logger.error({
-            error: message.error,
-            msg:   'Agent SDK assistant message error',
-        });
-    }
-}
-// Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,EqualityOperator,LogicalOperator,BlockStatement
-
-/**
- * Logs tool usage from assistant messages with redacted sensitive args.
- * @param message Stream message to extract tool uses from
- */
-// Stryker disable StringLiteral,ObjectLiteral: Observability - debug logging doesn't affect return value
-function logToolUsage(message: { type: string, message?: { content?: unknown } }): void {
-    const toolUses = extractToolUses(message);
-    for(const toolUse of toolUses) {
-        const parsed = parseToolName(toolUse.name);
-        logger.debug({
-            module: parsed.module,
-            tool:   parsed.tool,
-            args:   redactSensitiveArgs(toolUse.input),
-        });
-    }
-}
-// Stryker restore StringLiteral,ObjectLiteral
-
-/**
- * Module-level state for tracking pending tool requests by the LLM.
- * Used to correlate user events (tool responses) with the tools that were invoked.
- * Tracks ALL pending tools since multiple tools can be requested in a single turn.
- */
-// Stryker disable next-line ArrayDeclaration: Module initialization - resetLogStreamState() is the tested behavior
-let pendingToolRequests: string[] = [];
 
 /**
  * Resets the log stream event state for testing purposes.
  */
 export function resetLogStreamState(): void {
-    pendingToolRequests = [];
-}
-
-/**
- * Logs user events - either tool responses or normal message sends.
- * @param _message User stream event (unused - logic based on pendingToolRequests state)
- */
-function logUserEvent(_message: AgentStreamEvent): void {
-    if(pendingToolRequests.length > 0) {
-        // Log all pending tool responses
-        for(const toolName of pendingToolRequests) {
-            logger.debug({
-                eventType: 'tool_response',
-                toolName,
-                msg:       `Tool result for LLM: ${toolName}`,
-            });
-        }
-        // Clear pending tools after logging
-        pendingToolRequests = [];
-    } else {
-        logger.debug({
-            eventType: 'user',
-            msg:       'Sending message to Claude LLM',
-        });
-    }
-}
-
-/**
- * Logs assistant events - either tool requests or thinking/responding.
- * @param message Assistant stream event
- */
-function logAssistantEvent(message: AgentStreamEvent): void {
-    const toolUses = extractToolUses(message);
-    if(toolUses.length > 0) {
-        // Log each tool request and track for response correlation
-        for(const toolUse of toolUses) {
-            logger.debug({
-                eventType: 'tool_request',
-                toolName:  toolUse.name,
-                msg:       `LLM requesting tool: ${toolUse.name}`,
-            });
-            // Track ALL pending tools (not just the last one)
-            pendingToolRequests.push(toolUse.name);
-        }
-    } else {
-        // No tool use - log thinking/responding
-        const hasText = Boolean(extractAssistantText(message));
-        logger.debug({
-            eventType: 'assistant',
-            hasText,
-            msg:       hasText ? 'Claude LLM responding' : 'Claude LLM thinking',
-        });
-    }
-}
-
-/**
- * Logs tool progress events.
- * @param message Tool progress stream event
- */
-function logToolProgressEvent(message: AgentStreamEvent & { tool_name?: string }): void {
-    const parsed = parseToolName(message.tool_name);
-    logger.debug({
-        eventType: 'tool_progress',
-        module:    parsed.module,
-        tool:      parsed.tool,
-        msg:       'Tool execution started',
-    });
-}
-
-/**
- * Logs tool result events.
- * @param message Tool result stream event
- */
-function logToolResultEvent(message: AgentStreamEvent & { tool_name?: string }): void {
-    const parsed = parseToolName(message.tool_name);
-    logger.debug({
-        eventType: 'tool_result',
-        module:    parsed.module,
-        tool:      parsed.tool,
-        msg:       'Tool execution complete',
-    });
-}
-
-/**
- * Logs system events, particularly compaction boundaries.
- * @param message System stream event
- */
-function logSystemEvent(message: AgentStreamEvent): void {
-    // Type guard: Only SystemEvent has subtype property
-    // Stryker disable next-line ConditionalExpression: Equivalent mutant - message.type === 'system' is always true here (called from switch case 'system')
-    if(message.type === 'system' && 'subtype' in message && message.subtype === 'compact_boundary') {
-        const compactMessage = message as SDKCompactBoundaryMessage;
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: compact_metadata may be absent in older SDK versions despite types
-        const preTokens = compactMessage.compact_metadata?.pre_tokens;
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: compact_metadata may be absent in older SDK versions despite types
-        const trigger = compactMessage.compact_metadata?.trigger;
-        const tokenInfo = preTokens
-            ? ` (pre-compaction: ${preTokens.toLocaleString()} tokens)`
-            : '';
-        logger.info({
-            eventType: 'compaction',
-            trigger,
-            preTokens,
-            msg:       `Context compaction completed${tokenInfo}`,
-        });
-    }
-}
-
-/**
- * Logs stream events with descriptive messages based on event type.
- *
- * Provides enhanced logging for tool request/response flow:
- * - When assistant event contains tool_use blocks → logs "LLM requesting tool: {toolName}"
- * - When user event arrives after a tool request → logs "Tool result for LLM: {lastToolName}"
- * - Keeps existing thinking/responding distinction for non-tool assistant events
- *
- * @param message Stream event to log
- */
-export function logStreamEvent(message: AgentStreamEvent): void {
-    switch(message.type) {
-        case 'user': {
-            logUserEvent(message);
-            break;
-        }
-
-        case 'assistant': {
-            logAssistantEvent(message);
-            break;
-        }
-
-        case 'tool_progress': {
-            logToolProgressEvent(message);
-            break;
-        }
-
-        case 'tool_result': {
-            logToolResultEvent(message);
-            break;
-        }
-
-        // Stryker disable ConditionalExpression,BlockStatement: Observability - switch case routing and logging don't affect return value
-        case 'result': {
-            const resultMessage = message as { type: 'result', subtype?: 'success' | 'error_during_execution' | 'error_max_turns' };
-            // Stryker disable StringLiteral,ObjectLiteral: Observability - log content doesn't affect return value
-            logger.debug({
-                eventType: 'result',
-                status:    resultMessage.subtype,
-                msg:       'Claude LLM stream complete',
-            });
-            // Stryker restore StringLiteral,ObjectLiteral
-            break;
-        }
-        // Stryker restore ConditionalExpression,BlockStatement
-
-        case 'system': {
-            logSystemEvent(message);
-            break;
-        }
-    }
+    streamEventLoggerInstance.reset();
 }
 
 /**
@@ -786,109 +426,50 @@ async function processStreamEvents(
 }
 
 /**
- * Build query options for Agent SDK.
+ * Build query options for Agent SDK. Delegates the full options shape to
+ * `buildSessionQueryOptions` (src/agent/session/query-options.ts) — the same builder the
+ * long-lived session core uses — and spreads in `abortController`, which has no place in the
+ * session core (sessions interrupt via `SessionQuery.interrupt()`, not an AbortController; this
+ * one-shot path still cancels via AbortController until P13b).
  * @param mainModel Model name to use for this query
  * @param systemPrompt System prompt with core identity
- * @param memoryMcpServer Memory MCP server configuration
- * @param discordMcpServer Discord MCP server configuration
- * @param inboxMcpServer Inbox MCP server configuration
- * @param emailMcpServer Email MCP server configuration
- * @param bskyMcpServer Bluesky MCP server configuration
- * @param caldavMcpServer CalDAV MCP server configuration
- * @param wikipediaMcpServer Wikipedia MCP server configuration
- * @param mediaMcpServer Media MCP server configuration
- * @param contactsMcpServer Contacts MCP server configuration
- * @param browserMcpServer Browser MCP server configuration
+ * @param mcpServers MCP servers configured for this session, by name
  * @param plugins Plugin configurations
+ * @param tracker Stream tracker used to gate the per-task stop affordance
  * @param options Optional batch processing options
+ * @param compactionSink Optional compaction lifecycle sink (PreCompact/PostCompact report here)
+ * @param fallbackModel Fallback model to use when the primary model is unavailable
  * @returns Query options object for Agent SDK
  */
 function buildQueryOptions(
     mainModel: string,
     systemPrompt: string,
-    memoryMcpServer: McpServerConfig | undefined,
-    discordMcpServer: McpServerConfig | undefined,
-    inboxMcpServer: McpServerConfig | undefined,
-    emailMcpServer: McpServerConfig | undefined,
-    bskyMcpServer: McpServerConfig | undefined,
-    caldavMcpServer: McpServerConfig | undefined,
-    wikipediaMcpServer: McpServerConfig | undefined,
-    mediaMcpServer: McpServerConfig | undefined,
-    contactsMcpServer: McpServerConfig | undefined,
-    userContextMcpServer: McpServerConfig | undefined,
-    browserMcpServer: McpServerConfig | undefined,
+    mcpServers: SessionMcpServers,
     plugins: SdkPluginConfig[] | undefined,
     tracker: StreamTracker,
     options?: HandleInputOptions,
-    compactionStateManager?: CompactionStateManager,
+    compactionSink?: CompactionSink,
     fallbackModel?: string
 ) {
     return {
-        model:           mainModel,
-        fallbackModel,
-        systemPrompt,
-        tools:           EXPLICIT_TOOLS,
-        agents:          EXPLICIT_AGENTS,
-        mcpServers:      buildMcpServers(memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer),
-        plugins:         plugins && plugins.length > 0 ? plugins : undefined,
-        permissionMode:  'acceptEdits' as const,
-        // Only the MCP servers passed above: ignore .mcp.json, user settings, plugin and claude.ai-connector MCP.
-        strictMcpConfig: true,
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration: Sandbox configuration values - mutations don't change behavior
-        sandbox:         {
-            enabled:                  true,
-            autoAllowBashIfSandboxed: true,
-            excludedCommands:         ['git'],
-        },
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral,ArrayDeclaration
-        disallowedTools:        ['CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup'],
-        perTaskStopAffordance:  true,
-        allowedTools:           buildAllowedTools(discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer),
-        // Stryker disable ObjectLiteral,StringLiteral,BooleanLiteral: Thinking/effort configuration - mutations don't change behavior
-        thinking:               { type: 'adaptive' as const },
-        effort:                 'high' as const,
-        // Stryker restore ObjectLiteral,StringLiteral,BooleanLiteral
-        // 'project' is what discovers Izzy's agents and skills in scratch/.claude. It would also pull in CLAUDE.md files;
-        // see CLAUDE_CODE_DISABLE_CLAUDE_MDS in env below.
-        settingSources:         ['project'] as SettingSource[],
-        // Stryker disable next-line BooleanLiteral: Configuration flag
-        agentProgressSummaries: true,
-        abortController:        options?.abortController,
-        // Stryker disable ObjectLiteral,ArrayDeclaration: Hook map structure — merging factories, mutations don't change behavior
-        hooks:                  mergeHookMaps(
-            createTaskTrackingHooks(),
-            createLifecycleHooks(() => tracker.hasUncollectedBackgroundTasks(), options?.onStop, options?.onStopFailure),
-            ...(compactionStateManager ? [createCompactionHooks(compactionStateManager)] : [])
-        ),
-        // Stryker restore ObjectLiteral,ArrayDeclaration
-        ...(options?.sessionId && { resume: options.sessionId }),
-        // Stryker disable StringLiteral,ObjectLiteral: Environment config - value doesn't affect test behavior
-        env: {
-            ...process.env,
-            // Defer rarely-used tool schemas behind ToolSearch once the tool set is large enough (SDK default threshold).
-            ENABLE_TOOL_SEARCH:              'auto',
-            // settingSources ['project'] is needed for Izzy's own agents/skills under scratch/.claude, but it also loads
-            // ~/.claude/CLAUDE.md and the parent repo's .claude/CLAUDE.md (verified 2026-09-04). Those are Craig's
-            // instructions for Claude Code, not Izzy's: drop every CLAUDE.md while keeping discovery.
-            CLAUDE_CODE_DISABLE_CLAUDE_MDS:  '1',
-            // Auto-memory would read and write ~/.claude/projects/<cwd>/memory. Izzy's memory is DynamoDB; keep ~/.claude out of it.
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
-        },
-        // Stryker restore StringLiteral,ObjectLiteral
-        // Stryker disable StringLiteral,ObjectLiteral,ConditionalExpression,LogicalOperator,BlockStatement: Observability - stderr logging doesn't affect behavior
-        stderr: (data: string) => {
-            // SDK writes "Operation aborted" + stack trace to stderr during expected abort
-            if(options?.abortController?.signal.aborted && data.includes('Operation aborted')) {
-                logger.debug({ stderr: data }, 'Agent SDK stderr (abort)');
-            } else if(data.includes('Error in hook callback') && data.includes('Stream closed')) {
-                // SDK tries to ack the hook over the control channel after the input pipe closes.
-                // The hook itself succeeded; this is a benign timing race on session stop.
-                logger.debug({ stderr: data }, 'Agent SDK stderr (hook-close race)');
-            } else {
-                logger.error({ stderr: data }, 'Agent SDK stderr');
-            }
-        },
-        // Stryker restore StringLiteral,ObjectLiteral,ConditionalExpression,LogicalOperator,BlockStatement
+        ...buildSessionQueryOptions({
+            role:  'conversation',
+            systemPrompt,
+            mcpServers,
+            plugins,
+            // Stryker disable ObjectLiteral,ArrayDeclaration: Hook map structure — merging factories, mutations don't change behavior
+            hooks: mergeHookMaps(
+                createTaskTrackingHooks(),
+                createLifecycleHooks(() => tracker.hasUncollectedBackgroundTasks(), options?.onStop, options?.onStopFailure),
+                ...(compactionSink ? [createCompactionHooks(compactionSink)] : [])
+            ),
+            // Stryker restore ObjectLiteral,ArrayDeclaration
+            resume:         options?.sessionId,
+            mainModel,
+            fallbackModel,
+            isInterrupting: () => options?.abortController?.signal.aborted ?? false,
+        }),
+        abortController: options?.abortController,
     } satisfies Options;
 }
 
@@ -1102,19 +683,12 @@ async function attemptAutoResume(
  * @param retryableQuery - Retryable query function for Claude API calls
  * @param resolvedModel - Resolved model name for queries
  * @param systemPrompt - System prompt with core identity
- * @param memoryMcpServer - Memory MCP server configuration
- * @param discordMcpServer - Discord MCP server configuration
- * @param inboxMcpServer - Inbox MCP server configuration
- * @param emailMcpServer - Email MCP server configuration
- * @param bskyMcpServer - Bluesky MCP server configuration
- * @param caldavMcpServer - CalDAV MCP server configuration
- * @param wikipediaMcpServer - Wikipedia MCP server configuration
- * @param mediaMcpServer - Media MCP server configuration
- * @param contactsMcpServer - Contacts MCP server configuration
- * @param browserMcpServer - Browser MCP server configuration
+ * @param mcpServers - MCP servers configured for this session, by name
  * @param plugins - Plugin configurations
  * @param options - HandleInput options (including abort controller)
  * @param taskPersistenceCoordinator - Task persistence coordinator if available
+ * @param compactionSink - Optional compaction lifecycle sink
+ * @param fallbackModel - Fallback model to use when the primary model is unavailable
  * @returns Updated lastAssistantText and capturedSessionId
  */
 async function collectBackgroundTasks(
@@ -1125,21 +699,11 @@ async function collectBackgroundTasks(
     retryableQuery: typeof query,
     resolvedModel: string,
     systemPrompt: string,
-    memoryMcpServer: McpServerConfig | undefined,
-    discordMcpServer: McpServerConfig | undefined,
-    inboxMcpServer: McpServerConfig | undefined,
-    emailMcpServer: McpServerConfig | undefined,
-    bskyMcpServer: McpServerConfig | undefined,
-    caldavMcpServer: McpServerConfig | undefined,
-    wikipediaMcpServer: McpServerConfig | undefined,
-    mediaMcpServer: McpServerConfig | undefined,
-    contactsMcpServer: McpServerConfig | undefined,
-    userContextMcpServer: McpServerConfig | undefined,
-    browserMcpServer: McpServerConfig | undefined,
+    mcpServers: SessionMcpServers,
     plugins: SdkPluginConfig[] | undefined,
     options: HandleInputOptions | undefined,
     taskPersistenceCoordinator: TaskPersistenceCoordinator | undefined,
-    compactionStateManager: CompactionStateManager | undefined,
+    compactionSink: CompactionSink | undefined,
     fallbackModel: string | undefined
 ): Promise<{ lastAssistantText: string, capturedSessionId: string | undefined }> {
     if(wasInterrupted || !capturedSessionId) {
@@ -1154,7 +718,7 @@ async function collectBackgroundTasks(
     while(tracker.hasUncollectedBackgroundTasks() && autoResumeAttempts < MAX_AUTO_RESUME_ATTEMPTS) {
         autoResumeAttempts++;
         const uncollectedBefore = tracker.getProgress().uncollectedBackgroundTasks;
-        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, tracker, options, compactionStateManager, fallbackModel);
+        const queryOptions = buildQueryOptions(resolvedModel, systemPrompt, mcpServers, plugins, tracker, options, compactionSink, fallbackModel);
         // eslint-disable-next-line no-await-in-loop -- sequential: each resume attempt depends on prior result
         const resumeResult = await attemptAutoResume(
             tracker, updatedText, updatedSessionId,
@@ -1185,7 +749,8 @@ async function collectBackgroundTasks(
 }
 
 export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
-    const { contextBuilder, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, taskPersistenceCoordinator, mainModel, compactionStateManager, fallbackModel, retryDeps } = options;
+    const { contextBuilder, plugins, taskPersistenceCoordinator, mainModel, compactionSink, fallbackModel, retryDeps } = options;
+    const mcpServers = toSessionMcpServers(options);
     const resolvedModel = mainModel ?? 'sonnet';
 
     // Load retry configuration
@@ -1242,7 +807,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 6. Query with MCP servers, plugins, and sandboxed execution (with retry)
                 const response = retryableQuery({
                     prompt,
-                    options: buildQueryOptions(resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, tracker, handleOptions, compactionStateManager, fallbackModel),
+                    options: buildQueryOptions(resolvedModel, systemPrompt, mcpServers, plugins, tracker, handleOptions, compactionSink, fallbackModel),
                 });
 
                 // 7. Process stream events and track progress
@@ -1254,7 +819,7 @@ export function createClaudeAgent(options: ClaudeAgentOptions): ClaudeAgent {
                 // 8. Auto-resume: collect background tasks
                 const resumeCollected = await collectBackgroundTasks(
                     tracker, lastAssistantText, sessionRef.capturedSessionId, wasInterrupted,
-                    retryableQuery, resolvedModel, systemPrompt, memoryMcpServer, discordMcpServer, inboxMcpServer, emailMcpServer, bskyMcpServer, caldavMcpServer, wikipediaMcpServer, mediaMcpServer, contactsMcpServer, userContextMcpServer, browserMcpServer, plugins, handleOptions, taskPersistenceCoordinator, compactionStateManager, fallbackModel
+                    retryableQuery, resolvedModel, systemPrompt, mcpServers, plugins, handleOptions, taskPersistenceCoordinator, compactionSink, fallbackModel
                 );
                 lastAssistantText = resumeCollected.lastAssistantText;
                 sessionRef.capturedSessionId = resumeCollected.capturedSessionId;

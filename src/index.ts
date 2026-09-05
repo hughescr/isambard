@@ -6,7 +6,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
+import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -752,10 +752,10 @@ export async function createApp(): Promise<App> {
         taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
         mainModel:                  config.agent.mainModel,
         fallbackModel:              config.agent.fallbackModel,
-        // Stryker disable ObjectLiteral: Composition root — wiring BotStateManager to compaction hooks
-        // getCompactionStateManager() returns a properly-typed narrow view of BotStateManagerImpl
-        // (no unsafe cast needed — the method returns CompactionStateManager directly).
-        compactionStateManager:     discordInfra.botStateManager.getCompactionStateManager(),
+        // Stryker disable ObjectLiteral: Composition root — the ONE place createBotStateCompactionSink
+        // adapts BotStateManagerImpl's narrow view onto the sink-style CompactionSink interface
+        // (no unsafe cast needed — getCompactionStateManager() returns CompactionStateManager directly).
+        compactionSink:             createBotStateCompactionSink(discordInfra.botStateManager.getCompactionStateManager()),
         // Stryker restore ObjectLiteral
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting

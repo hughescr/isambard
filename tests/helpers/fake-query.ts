@@ -8,7 +8,7 @@
  *
  * @module tests/helpers/fake-query
  */
-import type { SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ContextUsageSummary, SessionQuery, SessionQueryFn } from '@/agent/session/types';
 
 type QueueItem
@@ -30,13 +30,15 @@ export class FakeQuery implements SessionQuery {
     interruptCalls = 0;
     /** Number of times {@link close} has been called. */
     closeCalls = 0;
+    /** The exact `{ prompt, options }` object this instance's `queryFn` call was invoked with, so tests can assert identity (`toBe`) on either field. Set by {@link fakeQueryFn}. */
+    receivedParams?:           { prompt: AsyncIterable<SDKUserMessage>, options: Options };
 
     /** Resolves once the prompt-capture loop started by {@link fakeQueryFn} has finished draining (or rejects if the prompt iterable throws). Exposed so tests can await/assert the capture directly instead of coupling to a fixed number of microtask ticks. */
     capturePromptDone: Promise<void> = Promise.resolve();
 
     private readonly buffer:           QueueItem[] = [];
     private readonly waitingResolvers: ((item: QueueItem) => void)[] = [];
-    private pendingInterruptResolvers: ((response: SDKControlInterruptResponse) => void)[] = [];
+    private pendingInterrupts:         { resolve: (response: SDKControlInterruptResponse) => void, reject: (error: unknown) => void }[] = [];
     private contextUsageScript:        ContextUsageSummary | Error = { percentage: 0, totalTokens: 0, maxTokens: 0 };
 
     /** Push a frame the fake query "yields" to whatever is iterating it. */
@@ -61,16 +63,25 @@ export class FakeQuery implements SessionQuery {
 
     /** Resolve every {@link interrupt} call still pending, in the order they were made. */
     resolveInterrupt(response: SDKControlInterruptResponse = DEFAULT_INTERRUPT_RESPONSE): void {
-        const resolvers = this.pendingInterruptResolvers;
-        this.pendingInterruptResolvers = [];
-        for(const resolve of resolvers) {
+        const pending = this.pendingInterrupts;
+        this.pendingInterrupts = [];
+        for(const { resolve } of pending) {
             resolve(response);
         }
     }
 
-    interrupt = (): Promise<SDKControlInterruptResponse | undefined> => new Promise((resolve) => {
+    /** Reject every {@link interrupt} call still pending with `error`, in the order they were made. */
+    rejectInterrupt(error: unknown): void {
+        const pending = this.pendingInterrupts;
+        this.pendingInterrupts = [];
+        for(const { reject } of pending) {
+            reject(error);
+        }
+    }
+
+    interrupt = (): Promise<SDKControlInterruptResponse | undefined> => new Promise((resolve, reject) => {
         this.interruptCalls += 1;
-        this.pendingInterruptResolvers.push(resolve);
+        this.pendingInterrupts.push({ resolve, reject });
     });
 
     close = (): void => {
@@ -140,9 +151,10 @@ export class FakeQuery implements SessionQuery {
 /** Build a {@link SessionQueryFn} double: every call constructs and records a fresh {@link FakeQuery}. */
 export function fakeQueryFn(): { queryFn: SessionQueryFn, instances: FakeQuery[] } {
     const instances: FakeQuery[] = [];
-    const queryFn: SessionQueryFn = ({ prompt }) => {
+    const queryFn: SessionQueryFn = (params) => {
         const instance = new FakeQuery();
-        instance.capturePromptDone = instance.capturePrompt(prompt);
+        instance.receivedParams = params;
+        instance.capturePromptDone = instance.capturePrompt(params.prompt);
         // A prompt iterable a test scripts to throw would otherwise reject with nobody awaiting
         // it, surfacing as a cross-test unhandled rejection; capturePromptDone above is the
         // awaitable/assertable surface, this just marks the original promise as handled.

@@ -13,6 +13,7 @@ import { mockLogger, resetMockSstResource } from '../setup';
 import * as staticAgentModule from '@/agent/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
 import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
+import * as staticCompactionModule from '@/agent/hooks/compaction';
 import * as staticInboxMcpModule from '@/agent/inbox-mcp-server';
 import * as staticMemoryMcpModule from '@/agent/memory-mcp-server';
 import * as staticPluginLoaderModule from '@/agent/plugin-loader';
@@ -229,6 +230,12 @@ describe('createApp', () => {
             });
             spies.push(createAgentSpy);
 
+            // P5: compactionSink is built (via createBotStateCompactionSink) from
+            // botStateManager.getCompactionStateManager() at the composition root, not passed
+            // through as the old compactionStateManager option.
+            const createBotStateCompactionSinkSpy = spyOn(staticCompactionModule, 'createBotStateCompactionSink');
+            spies.push(createBotStateCompactionSinkSpy);
+
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
                 stop:           mock(async () => undefined),
@@ -377,6 +384,15 @@ describe('createApp', () => {
             // Kills mutant: Verify loadPlugins was called with absolute path to agents-skills-plugins/plugins
             expect(loadPluginsSpy).toHaveBeenCalledWith(expect.stringMatching(/\/agents-skills-plugins\/plugins$/));
             expect(loadPluginsSpy).toHaveBeenCalledTimes(1);
+
+            // P5: createClaudeAgent receives compactionSink (not compactionStateManager), built
+            // from botStateManager.getCompactionStateManager() via createBotStateCompactionSink.
+            expect(createBotStateCompactionSinkSpy).toHaveBeenCalledTimes(1);
+            const agentCallOptions: unknown = createAgentSpy.mock.calls[0]?.[0];
+            expect(agentCallOptions).not.toHaveProperty('compactionStateManager');
+            expect(agentCallOptions).toHaveProperty('compactionSink');
+            const builtSink: unknown = createBotStateCompactionSinkSpy.mock.results[0]?.value;
+            expect((agentCallOptions as { compactionSink?: unknown }).compactionSink).toBe(builtSink);
         });
     });
 

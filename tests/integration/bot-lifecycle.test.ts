@@ -314,7 +314,7 @@ describe('Bot Lifecycle Integration', () => {
                 browserMcpServer:           undefined,
                 plugins:                    expect.any(Array),
                 taskPersistenceCoordinator: expect.any(Object),
-                compactionStateManager:     expect.any(Object),
+                compactionSink:             expect.any(Object),
                 mainModel:                  'sonnet',
                 fallbackModel:              'sonnet',
             });

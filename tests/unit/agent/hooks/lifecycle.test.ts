@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, spyOn } from 'bun:test';
-import type { HookCallback, SessionEndHookInput, SessionStartHookInput, StopFailureHookInput, StopHookInput } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, HookCallbackMatcher, HookEvent, SessionEndHookInput, SessionStartHookInput, StopFailureHookInput, StopHookInput } from '@anthropic-ai/claude-agent-sdk';
 import * as loggerModule from '@hughescr/logger';
-import { createLifecycleHooks } from '../../../../src/agent/hooks/lifecycle';
+import { createLifecycleHooks, createSessionLifecycleHooks } from '../../../../src/agent/hooks/lifecycle';
 import * as sessionCleanup from '../../../../src/agent/session-cleanup';
 
 const makeSignal = (): AbortSignal => new AbortController().signal;
@@ -12,7 +12,7 @@ const BASE_HOOK_FIELDS = {
     cwd:             '/tmp',
 };
 
-function getHook(hooks: ReturnType<typeof createLifecycleHooks>, event: keyof ReturnType<typeof createLifecycleHooks>): HookCallback {
+function getHook(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>>, event: HookEvent): HookCallback {
     const matchers = hooks[event];
     if(!matchers?.[0]?.hooks[0]) {
         throw new Error(`No hook found for ${String(event)}`);
@@ -266,5 +266,56 @@ describe('createLifecycleHooks', () => {
             warnSpy.mockRestore();
             spy.mockRestore();
         });
+    });
+});
+
+describe('createSessionLifecycleHooks', () => {
+    test('returns an object with only Stop and StopFailure keys', () => {
+        const hooks = createSessionLifecycleHooks({});
+        expect(Object.keys(hooks).toSorted((a, b) => a.localeCompare(b))).toEqual(['Stop', 'StopFailure']);
+    });
+
+    test('Stop hook returns { continue: true } and invokes onStop', async () => {
+        const onStop = mock((_input: StopHookInput) => undefined);
+        const hooks = createSessionLifecycleHooks({ onStop });
+        const fn = getHook(hooks, 'Stop');
+        const input: StopHookInput = {
+            ...BASE_HOOK_FIELDS,
+            hook_event_name:  'Stop',
+            stop_hook_active: false,
+        };
+
+        const result = await fn(input, undefined, { signal: makeSignal() });
+
+        expect(result).toEqual({ 'continue': true });
+        expect(onStop).toHaveBeenCalledWith(input);
+    });
+
+    test('Stop hook works with no onStop callback given', async () => {
+        const hooks = createSessionLifecycleHooks({});
+        const fn = getHook(hooks, 'Stop');
+        const input: StopHookInput = {
+            ...BASE_HOOK_FIELDS,
+            hook_event_name:  'Stop',
+            stop_hook_active: false,
+        };
+
+        await expect(fn(input, undefined, { signal: makeSignal() })).resolves.toEqual({ 'continue': true });
+    });
+
+    test('StopFailure hook returns { continue: true } and invokes onStopFailure', async () => {
+        const onStopFailure = mock((_input: StopFailureHookInput) => undefined);
+        const hooks = createSessionLifecycleHooks({ onStopFailure });
+        const fn = getHook(hooks, 'StopFailure');
+        const input: StopFailureHookInput = {
+            ...BASE_HOOK_FIELDS,
+            hook_event_name: 'StopFailure',
+            error:           'server_error',
+        };
+
+        const result = await fn(input, undefined, { signal: makeSignal() });
+
+        expect(result).toEqual({ 'continue': true });
+        expect(onStopFailure).toHaveBeenCalledWith(input);
     });
 });

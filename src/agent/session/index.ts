@@ -33,3 +33,25 @@ export {
     reduceLedger,
     createLedgerStore
 } from './ledger';
+
+export {
+    buildSessionQueryOptions,
+    buildMcpServers,
+    buildAllowedTools,
+    EXPLICIT_TOOLS,
+    EXPLICIT_AGENTS,
+    type SessionMcpServers,
+    type SessionMcpServerName,
+    type BuildSessionQueryOptionsParams
+} from './query-options';
+
+export { InputQueue } from './input-queue';
+
+export { createInterruptFlag, type InterruptFlag } from './interrupt-flag';
+
+export {
+    openSession,
+    type SessionHandle,
+    type SessionState,
+    type OpenSessionParams
+} from './session';

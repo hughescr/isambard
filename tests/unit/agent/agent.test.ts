@@ -4,6 +4,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import * as loggerModule from '@hughescr/logger';
 import { createClaudeAgent, resetLogStreamState } from '../../../src/agent/agent';
+import * as queryOptionsModule from '../../../src/agent/session/query-options';
 import * as sessionCleanupModule from '../../../src/agent/session-cleanup';
 import { type PlatformImage } from '../../../src/agent/types';
 import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '../../../src/integrations/discord/types';
@@ -3776,6 +3777,64 @@ describe('createClaudeAgent', () => {
                 // Final result should be an error result (null response)
                 expect(result.response).toBeNull();
             });
+        });
+    });
+
+    describe('buildQueryOptions delegates to buildSessionQueryOptions (P5)', () => {
+        let buildSessionQueryOptionsSpy: ReturnType<typeof spyOn>;
+
+        beforeEach(() => {
+            buildSessionQueryOptionsSpy = spyOn(queryOptionsModule, 'buildSessionQueryOptions');
+        });
+
+        afterEach(() => {
+            buildSessionQueryOptionsSpy.mockRestore();
+        });
+
+        test('is called once per query with role "conversation" and mcpServers mapped from the eleven fields', async () => {
+            const mockDiscordServer = { command: 'node', args: ['discord-server.js'] };
+            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
+            const agent = createClaudeAgent({ discordMcpServer: mockDiscordServer, inboxMcpServer: mockInboxServer });
+            await agent.handleInput([mockMessageContext]);
+
+            expect(buildSessionQueryOptionsSpy).toHaveBeenCalledTimes(1);
+            const call = buildSessionQueryOptionsSpy.mock.calls[0][0] as { role: string, mcpServers: Record<string, unknown>, isInterrupting: () => boolean };
+            expect(call.role).toBe('conversation');
+            expect(call.mcpServers.discord).toEqual(mockDiscordServer);
+            expect(call.mcpServers.inbox).toEqual(mockInboxServer);
+            expect(typeof call.isInterrupting).toBe('function');
+        });
+
+        test('resume is options.sessionId when given', async () => {
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext], { sessionId: 'sess-abc' });
+
+            const call = buildSessionQueryOptionsSpy.mock.calls[0][0] as { resume?: string };
+            expect(call.resume).toBe('sess-abc');
+        });
+
+        test('isInterrupting() returns true only after the abortController aborts', async () => {
+            const abortController = new AbortController();
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext], { abortController });
+
+            const call = buildSessionQueryOptionsSpy.mock.calls[0][0] as { isInterrupting: () => boolean };
+            expect(call.isInterrupting()).toBe(false);
+            abortController.abort();
+            expect(call.isInterrupting()).toBe(true);
+        });
+
+        test('the final query options carry every key of buildSessionQueryOptions\' return value by reference, plus abortController', async () => {
+            const abortController = new AbortController();
+            const agent = createClaudeAgent({});
+            await agent.handleInput([mockMessageContext], { abortController });
+
+            const sessionOptions = buildSessionQueryOptionsSpy.mock.results[0]?.value as Record<string, unknown>;
+            const queryParams = querySpy.mock.calls[0][0];
+            for(const key of Object.keys(sessionOptions)) {
+                expect(queryParams.options[key]).toBe(sessionOptions[key]);
+            }
+            expect(queryParams.options.abortController).toBe(abortController);
         });
     });
 });
