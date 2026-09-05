@@ -11,7 +11,7 @@ export { createContextBuilder, type ContextBuilder, type EmailService, type Bsky
 export { EventDeltaTracker } from './event-delta-tracker';
 export { summarizeEventBatches } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
-export { createDiscordMCPServer, setConversationContext, clearConversationContext } from './discord-mcp-server';
+export { createDiscordMCPServer } from './discord-mcp-server';
 export { loadPlugins } from './plugin-loader';
 export type { MessageContext, PlatformImage, AgentStreamEvent, MCPMessageSearchService, MCPChannelRegistry, MCPDMTracker, MCPChannelInfo, ChannelId } from './types';
 

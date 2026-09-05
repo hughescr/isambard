@@ -9,6 +9,7 @@ import type { ContextBuilder } from '@/agent/context-builder';
 import * as memoryMcpServer from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { StreamTracker } from '@/agent/stream-tracker';
+import * as mcpServersModule from '@/app/mcp-servers';
 import * as configLoader from '@/config/loader';
 import type { DiscordConfig, DynamoDBConfig, AgentConfig, Config } from '@/config/schemas';
 import { createApp, type App } from '@/index';
@@ -189,6 +190,24 @@ describe('Bot Lifecycle Integration', () => {
             await createApp();
 
             expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('test-oauth-token-1234567890');
+        });
+
+        it('should call createMcpSharedDeps exactly once during app creation', async () => {
+            const createMcpSharedDepsSpy = spyOn(mcpServersModule, 'createMcpSharedDeps');
+            spies.push(
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
+                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot),
+                createMcpSharedDepsSpy
+            );
+
+            await createApp();
+
+            expect(createMcpSharedDepsSpy).toHaveBeenCalledTimes(1);
         });
 
         it('should create Claude agent with DynamoDB configured', async () => {

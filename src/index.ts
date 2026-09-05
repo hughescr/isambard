@@ -722,6 +722,7 @@ export async function createApp(): Promise<App> {
         browserMaxTextBytes:       config.browser?.maxTextBytes,
         vectorIndex:               storage.vectorIndex,
         embedder,
+        discordAllowlist:          personAllowlist,
     });
     // Stryker restore ObjectLiteral,OptionalChaining
 

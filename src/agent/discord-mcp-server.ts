@@ -6,49 +6,40 @@ import type { Client, TextChannel, GuildTextBasedChannel, Message, MessageCreate
 import { z } from 'zod';
 import { withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
-import { createChannelId, createUserId, type UserId, type ChannelId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
+import { createChannelId, createUserId, type UserId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
 import { InvariantViolationError, PathSecurityError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
+import type { PersonAllowlist } from '@/storage';
 import { validateFilePaths, formatLocalDateTime } from '@/utils';
 
 /**
- * Context for the current Discord conversation.
- * Used to provide conversation-specific information to MCP tools.
- */
-interface DiscordMCPServerContext {
-    /**
-     * User ID of the user who initiated the current conversation.
-     */
-    currentUserId?: UserId
-
-    /**
-     * Channel ID of the current conversation.
-     */
-    currentChannelId?: ChannelId
-}
-
-/**
- * Stored conversation context.
- * Initially empty, updated via setConversationContext.
- */
-let conversationContext: DiscordMCPServerContext = {};
-
-/**
- * Updates the conversation context for MCP tools.
- * Should be called before processing a conversation.
+ * Validates a tool-supplied requestingUserId against the person allowlist.
  *
- * @param context - New conversation context
+ * Returns the validated UserId to use as currentUserId, or undefined to let the
+ * caller fall back to client.user?.id ?? 'system'. Falls back (with a logged
+ * warning) when requestingUserId is set but not allowlisted, rather than trusting
+ * a hallucinated id as the question's triggerUserId. When no allowlist is
+ * configured, any explicitly given requestingUserId is accepted (fail-open,
+ * matching the bsky/email MCP servers' allowlist convention). An empty string is
+ * treated the same as an absent argument (no warning) rather than reaching
+ * createUserId, whose non-empty validation would otherwise throw.
+ *
+ * @param requestingUserId - Raw user id from the tool argument, if given
+ * @param personAllowlist - Optional person allowlist to validate against
  */
-export function setConversationContext(context: DiscordMCPServerContext): void {
-    conversationContext = context;
-}
-
-/**
- * Clears the conversation context.
- * Should be called after processing completes.
- */
-export function clearConversationContext(): void {
-    conversationContext = {};
+function validateRequestingUserId(
+    requestingUserId: string | undefined,
+    personAllowlist: PersonAllowlist | undefined
+): UserId | undefined {
+    if(!requestingUserId) {
+        return undefined;
+    }
+    if(!personAllowlist || personAllowlist.isAllowed('discord', requestingUserId)) {
+        return createUserId(requestingUserId);
+    }
+    // Stryker disable next-line all: Logging for observability
+    logger.warn({ requestingUserId }, 'askUserQuestion requestingUserId not allowlisted; falling back to client user id');
+    return undefined;
 }
 
 /**
@@ -479,6 +470,8 @@ interface DiscordMCPServerOptions {
     healthRegistry?:   ServiceHealthRegistry
     /** Optional reconnection loop to trigger on health check failure */
     reconnectionLoop?: ReconnectionLoop
+    /** Optional person allowlist for validating askUserQuestion's requestingUserId argument */
+    personAllowlist?:  PersonAllowlist
 }
 
 /**
@@ -496,7 +489,7 @@ interface DiscordMCPServerOptions {
  * @param options - All required dependencies for the Discord MCP server
  */
 export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
-    const { searchService, client, questionRegistry, channelRegistry, dmTracker, messageSplitter, buttonBuilder, retryHelper, timezone } = options;
+    const { searchService, client, questionRegistry, channelRegistry, dmTracker, messageSplitter, buttonBuilder, retryHelper, timezone, personAllowlist } = options;
 
     return createSdkMcpServer({
         name:       'discord',
@@ -650,7 +643,9 @@ CRITICAL: Only use channel IDs from:
 4. @username format for DMs (e.g., "@alice" to send a DM)
 5. Default: 1451694737026449581 (#general)
 
-NEVER invent or guess channel IDs. If unsure, use #general.`,
+NEVER invent or guess channel IDs. If unsure, use #general.
+
+The channel must always be given explicitly — there is no ambient conversation context.`,
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     channelId:        z.string().describe('Target channel ID, #channel-name, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
@@ -664,6 +659,8 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                     threadName:       z.string().optional().describe('Thread name (required if createThread is true)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
                     files:            z.union([z.string(), z.array(z.string())]).optional().describe('File path(s) to attach. Must be inside the working directory (no symlinks).'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    requestingUserId: z.string().optional().describe('User id from the envelope/message header, for logging only.'),
                 },
 
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
@@ -753,6 +750,9 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                                 ...(validatedFiles && { filesAttached: validatedFiles.length }),
                             };
 
+                            // Stryker disable next-line all: Logging for observability
+                            logger.info({ requestingUserId: args.requestingUserId, channelId: args.channelId, messageIds: result.messageIds, msg: 'Message sent via MCP tool' });
+
                             return {
                                 content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
                             };
@@ -763,22 +763,24 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
 
             tool(
                 'askUserQuestion',
-                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.',
+                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.',
                 {
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    channelId:      z.string().describe('Channel to ask in - channel ID or #channel-name (e.g., #general)'),
+                    channelId:        z.string().describe('Channel to ask in - channel ID or #channel-name (e.g., #general)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    question:       z.string().describe('Question text'),
+                    question:         z.string().describe('Question text'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    options:        z.array(questionOptionSchema).optional().describe('Optional button choices for the user'),
+                    options:          z.array(questionOptionSchema).optional().describe('Optional button choices for the user'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    timeoutSeconds: z.number().optional().describe('Timeout in seconds (default: 300)'),
+                    timeoutSeconds:   z.number().optional().describe('Timeout in seconds (default: 300)'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    createThread:   z.boolean().optional().describe('Create a thread for this Q&A'),
+                    createThread:     z.boolean().optional().describe('Create a thread for this Q&A'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    threadName:     z.string().optional().describe('Thread name if creating thread'),
+                    threadName:       z.string().optional().describe('Thread name if creating thread'),
                     // Stryker disable next-line StringLiteral: describe() is documentation only
-                    targetUserId:   z.string().optional().describe('Optional user ID to @mention in the question. Advisory only - anyone can answer.'),
+                    targetUserId:     z.string().optional().describe('Optional user ID to @mention in the question. Advisory only - anyone can answer.'),
+                    // Stryker disable next-line StringLiteral: describe() is documentation only
+                    requestingUserId: z.string().optional().describe('User id from the envelope/message header you are answering. Validated against the person allowlist; falls back to the bot user id when missing or not allowlisted.'),
                 },
                 withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
                     // Stryker disable next-line StringLiteral: tool name is used for logging only
@@ -843,7 +845,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`,
                             normalizedChannelId,
                             threadId,
                             sentMessage,
-                            currentUserId:  conversationContext.currentUserId,
+                            currentUserId:  validateRequestingUserId(args.requestingUserId, personAllowlist),
                             clientUser:     client.user,
                             question:       args.question,
                             options:        args.options,

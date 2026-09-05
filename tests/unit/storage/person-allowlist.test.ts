@@ -14,11 +14,12 @@ const ddbMock = mockClient(DynamoDBDocumentClient);
 
 const TABLE_NAME = 'test-table';
 
-function makeContact(personId: string, identifiers: { platform: string, value: string }[]): Contact {
+function makeContact(personId: string, identifiers: { platform: string, value: string }[], internal?: Contact['_internal']): Contact {
     return {
         personId:    createContactId(personId),
         displayName: personId,
         identifiers: identifiers as Contact['identifiers'],
+        _internal:   internal,
         createdAt:   '2025-01-01T00:00:00.000Z',
         updatedAt:   '2025-01-01T00:00:00.000Z',
     };
@@ -220,6 +221,39 @@ describe('PersonAllowlist.isAllowed()', () => {
         // Wrong platform for this value
         expect(allowlist.isAllowed('discord', 'alice@example.com')).toBe(false);
     });
+
+    test('matches a Discord snowflake user id against _internal.discordUserId', async () => {
+        const daveContact = makeContact('dave-jones', [
+            { platform: 'discord', value: 'dave#1234' },
+        ], { discordUserId: '481231231231231234' });
+
+        ddbMock.on(GetCommand).resolves({
+            Item: { personIds: new Set([ALICE_ID]) },
+        });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockImplementation(async (id: unknown) => (id === ALICE_ID ? daveContact : undefined));
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        // Both the username identifier and the internal snowflake id resolve under 'discord'
+        expect(allowlist.isAllowed('discord', 'dave#1234')).toBe(true);
+        expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(true);
+        expect(allowlist.isAllowed('discord', '000000000000000000')).toBe(false);
+    });
+
+    test('does not index a discord identifier when _internal.discordUserId is absent', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: { personIds: new Set([ALICE_ID]) },
+        });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(ALICE_CONTACT);
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(false);
+    });
 });
 
 // ─── isPersonAllowed() ───────────────────────────────────────────────────────
@@ -317,6 +351,20 @@ describe('PersonAllowlist.addPerson()', () => {
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(true);
         // reverseMap has no entries (contact not found)
         expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(false);
+    });
+
+    test('after addPerson, isAllowed returns true for that person\'s _internal.discordUserId', async () => {
+        const daveContact = makeContact('dave-jones', [
+            { platform: 'email', value: 'dave@example.com' },
+        ], { discordUserId: '481231231231231234' });
+        ddbMock.on(TransactWriteCommand).resolves({});
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(daveContact);
+
+        const allowlist = makeAllowlist();
+        await allowlist.addPerson(createContactId('dave-jones'), { addedBy: 'outbound-approval' });
+
+        expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(true);
     });
 });
 
@@ -491,6 +539,27 @@ describe('PersonAllowlist.refreshPerson()', () => {
 
         expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
         expect(allowlist.isAllowed('bsky', '@alice.bsky.social')).toBe(false);
+    });
+
+    test('picks up a newly-added _internal.discordUserId on refresh', async () => {
+        ddbMock.on(GetCommand).resolves({
+            Item: { personIds: new Set([ALICE_ID]) },
+        });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(ALICE_CONTACT);
+
+        const allowlist = makeAllowlist();
+        await allowlist.load();
+
+        expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(false);
+
+        const aliceWithDiscordId = makeContact('alice-smith', ALICE_CONTACT.identifiers, { discordUserId: '481231231231231234' });
+        (mockBackend.getContact as ReturnType<typeof mock>)
+            .mockResolvedValue(aliceWithDiscordId);
+
+        await allowlist.refreshPerson(ALICE_ID);
+
+        expect(allowlist.isAllowed('discord', '481231231231231234')).toBe(true);
     });
 });
 

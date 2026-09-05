@@ -65,6 +65,14 @@ describe.concurrent('system-prompt', () => {
             expect(DISCORD_CHANNEL_CONTEXT).toContain('unmuteChannel');
         });
 
+        test('DISCORD_CHANNEL_CONTEXT should say askUserQuestion/sendDiscordMessage take explicit channelId and requestingUserId from the message header', () => {
+            expect(DISCORD_CHANNEL_CONTEXT).toContain('askUserQuestion');
+            expect(DISCORD_CHANNEL_CONTEXT).toContain('sendDiscordMessage');
+            expect(DISCORD_CHANNEL_CONTEXT).toContain('requestingUserId');
+            expect(DISCORD_CHANNEL_CONTEXT).toContain('Requesting user:');
+            expect(DISCORD_CHANNEL_CONTEXT).toContain('there is no ambient conversation context');
+        });
+
         test('DISCORD_CHANNEL_CONTEXT should have placeholder for channel list', () => {
             expect(DISCORD_CHANNEL_CONTEXT).toContain('{CHANNEL_LIST}');
         });

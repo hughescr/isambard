@@ -13,8 +13,11 @@ import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import * as wikipediaMcpModule from '@/agent/wikipedia-mcp-server';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { MCPServersOptions } from '@/app/mcp-servers';
+import * as bskyCheckpointModule from '@/integrations/bsky/checkpoint';
 import { BskyCheckpointManager } from '@/integrations/bsky/checkpoint/checkpoint-manager';
 import type { BlueskyClient } from '@/integrations/bsky/client';
+import * as channelRegistryModule from '@/integrations/discord/channel-registry';
+import type { DMTracker } from '@/integrations/discord/channel-registry/dm-tracker';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
@@ -184,6 +187,24 @@ describe('createMCPServers', () => {
                 questionRegistry: mockOptions.questionRegistry,
                 timezone:         mockOptions.timezone,
             })
+        );
+    });
+
+    test('should pass discordAllowlist to createDiscordMCPServer as personAllowlist when provided', () => {
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createDiscordMcpServerSpy,
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+        );
+
+        const mockPersonAllowlist = {} as unknown as PersonAllowlist;
+
+        mcpServersModule.createMCPServers({ ...mockOptions, discordAllowlist: mockPersonAllowlist });
+
+        expect(createDiscordMcpServerSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ personAllowlist: mockPersonAllowlist })
         );
     });
 
@@ -457,5 +478,152 @@ describe('createMCPServers', () => {
         expect(result.browserMcpServer).toBeUndefined();
         expect(createBrowserMcpServerSpy).not.toHaveBeenCalled();
         expect(mockLogger.error).not.toHaveBeenCalledWith(expect.stringContaining('browser'));
+    });
+});
+
+describe('createMcpSharedDeps / createMcpServerInstances', () => {
+    let spies: ReturnType<typeof spyOn>[];
+    let mockOptions: MCPServersOptions;
+
+    /** Builds a fresh, distinct mock McpServerConfig-shaped object for identity checks. */
+    function freshServerConfig(name: string): McpServerInstance {
+        return { name, version: '1.0.0' } as unknown as McpServerInstance;
+    }
+
+    beforeEach(() => {
+        spies = [];
+        mockOptions = {
+            memoryBackend:        {} as unknown as MemoryToolBackend,
+            messageSearchService: {} as unknown as MessageSearchService,
+            discordClient:        {} as unknown as Client,
+            questionRegistry:     {} as unknown as QuestionRegistry,
+            channelRegistry:      {} as unknown as ChannelRegistryManager,
+            inboxManager:         {} as unknown as InboxManager,
+            timezone:             'America/New_York',
+        };
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockImplementation(() => freshServerConfig('memory')),
+            spyOn(discordMcpModule, 'createDiscordMCPServer').mockImplementation(() => freshServerConfig('discord')),
+            spyOn(inboxMcpModule, 'createInboxMCPServer').mockImplementation(() => freshServerConfig('inbox')),
+            spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockImplementation(() => freshServerConfig('wikipedia')),
+            spyOn(mediaMcpModule, 'createMediaMCPServer').mockImplementation(() => freshServerConfig('media'))
+        );
+    });
+
+    afterEach(() => {
+        for(const spy of spies) {
+            try {
+                spy.mockRestore();
+            } catch{
+                // Ignore errors - spy may already be restored
+            }
+        }
+        spies.length = 0;
+    });
+
+    test('createMcpSharedDeps constructs DMTracker and BskyCheckpointManager exactly once', () => {
+        const fakeDmTracker = {} as unknown as DMTracker;
+        const fakeCheckpointManager = {} as unknown as BskyCheckpointManager;
+        // Class constructor spies must supply a mockImplementation — bun's default
+        // call-through wrapper drops `new.target`, which throws for real class bodies.
+        // @ts-expect-error - Mocking constructor
+        const dmTrackerSpy = spyOn(channelRegistryModule, 'DMTracker').mockImplementation(() => fakeDmTracker);
+        // @ts-expect-error - Mocking constructor
+        const checkpointSpy = spyOn(bskyCheckpointModule, 'BskyCheckpointManager').mockImplementation(() => fakeCheckpointManager);
+        spies.push(dmTrackerSpy, checkpointSpy);
+
+        const shared = mcpServersModule.createMcpSharedDeps(mockOptions);
+
+        expect(dmTrackerSpy).toHaveBeenCalledTimes(1);
+        expect(checkpointSpy).toHaveBeenCalledTimes(1);
+        expect(shared.dmTracker).toBe(fakeDmTracker);
+        expect(shared.bskyCheckpointManager).toBe(fakeCheckpointManager);
+    });
+
+    test('createMcpServerInstances does not reconstruct DMTracker or BskyCheckpointManager across calls', () => {
+        const fakeDmTracker = {} as unknown as DMTracker;
+        const fakeCheckpointManager = {} as unknown as BskyCheckpointManager;
+        // @ts-expect-error - Mocking constructor
+        const dmTrackerSpy = spyOn(channelRegistryModule, 'DMTracker').mockImplementation(() => fakeDmTracker);
+        // @ts-expect-error - Mocking constructor
+        const checkpointSpy = spyOn(bskyCheckpointModule, 'BskyCheckpointManager').mockImplementation(() => fakeCheckpointManager);
+        spies.push(dmTrackerSpy, checkpointSpy);
+
+        const shared = mcpServersModule.createMcpSharedDeps(mockOptions);
+        expect(dmTrackerSpy).toHaveBeenCalledTimes(1);
+        expect(checkpointSpy).toHaveBeenCalledTimes(1);
+
+        mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+        mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(dmTrackerSpy).toHaveBeenCalledTimes(1);
+        expect(checkpointSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('createMcpServerInstances returns distinct instance objects per server across two calls', () => {
+        const shared = mcpServersModule.createMcpSharedDeps(mockOptions);
+
+        const first = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+        const second = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(first.memoryMcpServer).not.toBe(second.memoryMcpServer);
+        expect(first.discordMcpServer).not.toBe(second.discordMcpServer);
+        expect(first.inboxMcpServer).not.toBe(second.inboxMcpServer);
+        expect(first.wikipediaMcpServer).not.toBe(second.wikipediaMcpServer);
+        expect(first.mediaMcpServer).not.toBe(second.mediaMcpServer);
+    });
+
+    test("role 'perch' has no browserMcpServer even with a browserAdapter", () => {
+        const shared = mcpServersModule.createMcpSharedDeps({
+            ...mockOptions,
+            browserAdapter:            {} as unknown as BrowserAdapter,
+            browserMaxScreenshotBytes: 2_000_000,
+            browserMaxTextBytes:       100_000,
+        });
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+        spies.push(createBrowserMcpServerSpy);
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'perch' });
+
+        expect(result.browserMcpServer).toBeUndefined();
+        expect(createBrowserMcpServerSpy).not.toHaveBeenCalled();
+    });
+
+    test("role 'conversation' creates browserMcpServer when a browserAdapter and byte caps are provided", () => {
+        const shared = mcpServersModule.createMcpSharedDeps({
+            ...mockOptions,
+            browserAdapter:            {} as unknown as BrowserAdapter,
+            browserPolicy:             { allowlist: undefined },
+            browserMaxScreenshotBytes: 2_000_000,
+            browserMaxTextBytes:       100_000,
+        });
+        const mockBrowserMcpServer = freshServerConfig('browser');
+        const createBrowserMcpServerSpy = spyOn(browserMcpModule, 'createBrowserMCPServer').mockReturnValue(mockBrowserMcpServer);
+        spies.push(createBrowserMcpServerSpy);
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(result.browserMcpServer).toBe(mockBrowserMcpServer);
+        expect(createBrowserMcpServerSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('attaches emailServerFactory result as emailMcpServer when provided', () => {
+        const shared = mcpServersModule.createMcpSharedDeps(mockOptions);
+        const mockEmailMcpServer = freshServerConfig('email');
+        const emailServerFactory = mock(() => mockEmailMcpServer);
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation', emailServerFactory });
+
+        expect(result.emailMcpServer).toBe(mockEmailMcpServer);
+        expect(emailServerFactory).toHaveBeenCalledTimes(1);
+    });
+
+    test('emailMcpServer is undefined when emailServerFactory is omitted', () => {
+        const shared = mcpServersModule.createMcpSharedDeps(mockOptions);
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(result.emailMcpServer).toBeUndefined();
     });
 });

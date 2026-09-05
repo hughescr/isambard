@@ -76,17 +76,26 @@ export interface EmailSetupOptions {
 }
 
 export interface EmailSetupResult {
-    listener:                WildDuckListener
-    reviewHandler:           ReviewHandler
-    emailMcpServer:          McpServerConfig
-    outboundApprovalHandler: OutboundApprovalHandler
-    wildDuckClient:          WildDuckClient
+    listener:                     WildDuckListener
+    reviewHandler:                ReviewHandler
+    emailMcpServer:               McpServerConfig
+    outboundApprovalHandler:      OutboundApprovalHandler
+    wildDuckClient:               WildDuckClient
     /** The person allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
-    allowlist:               PersonAllowlist
+    allowlist:                    PersonAllowlist
     /** Discord channel ID for the admin email channel, used to auto-mute it at startup */
-    adminChannelId:          ChannelId
+    adminChannelId:               ChannelId
     /** sendApprovalRequest callback — exposed for testing the isSendableChannel type guard */
-    sendApprovalRequest:     (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    sendApprovalRequest:          (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    /**
+     * Builds a fresh email MCP server instance, closing over this setup's shared
+     * dependencies (wildDuckClient, rateLimiter, allowlist, sendApprovalRequest).
+     * Each call returns a brand-new `McpServerConfig` — an underlying SDK MCP server
+     * instance can only be connected to one session at a time, so a second session
+     * (e.g. the perch session) needing an email MCP server calls this again rather
+     * than reusing `emailMcpServer`, which is simply the result of the first call.
+     */
+    createEmailMcpServerInstance: () => McpServerConfig
 }
 
 // ---------------------------------------------------------------------------
@@ -264,9 +273,12 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         allowlistInteractionHandler: options.allowlistInteractionHandler,
     });
 
-    // Create email MCP server for Claude agent
+    // Create email MCP server for Claude agent. Wrapped in a factory (rather than a bare
+    // object literal) so a second session's server set can build its own fresh instance —
+    // see EmailSetupResult.createEmailMcpServerInstance — from the exact same closed-over
+    // dependencies; emailMcpServer below is simply the first invocation.
     // Stryker disable ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration: MCP server options and admin notification callback are integration wiring - not unit testable
-    const emailMcpServer = createEmailMCPServer({
+    const createEmailMcpServerInstance = (): McpServerConfig => createEmailMCPServer({
         sendAdminNotification: async ({ mailboxName, uid, reference }) => {
             const { embed, actionRow } = buildRestrictedAccessEmbed(mailboxName, uid, reference);
             await sendToAdminChannel(
@@ -286,6 +298,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     });
     // Stryker restore ObjectLiteral,BlockStatement,StringLiteral,ArrayDeclaration
 
+    const emailMcpServer = createEmailMcpServerInstance();
+
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
     logger.info({ msg: 'Email integration initialized' });
 
@@ -299,6 +313,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         allowlist,
         adminChannelId: createChannelId(emailConfig.adminDiscordChannelId),
         sendApprovalRequest,
+        createEmailMcpServerInstance,
     };
 }
 

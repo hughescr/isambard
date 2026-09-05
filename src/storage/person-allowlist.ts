@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from './client-holder';
-import { type ContactBackend, type ContactId, type PlatformType, createContactId } from '@/storage/contacts';
+import { type Contact, type ContactBackend, type ContactId, type PlatformType, createContactId } from '@/storage/contacts';
 
 const PK = 'PERSON#ALLOWLIST';
 const SK_INDEX  = 'INDEX';
@@ -48,6 +48,21 @@ export class PersonAllowlist {
     }
 
     /**
+     * Add reverse map entries for one contact: every platform+value identifier,
+     * plus (when present) the Discord snowflake user id from `_internal.discordUserId`
+     * indexed under the 'discord' platform alongside the username-keyed identifier.
+     * This lets `isAllowed('discord', <id-or-username>)` match either space.
+     */
+    private indexContact(contact: Contact, personId: ContactId): void {
+        for(const identifier of contact.identifiers) {
+            this.reverseMap.set(this.reverseKey(identifier.platform, identifier.value), personId);
+        }
+        if(contact._internal?.discordUserId) {
+            this.reverseMap.set(this.reverseKey('discord', contact._internal.discordUserId), personId);
+        }
+    }
+
+    /**
      * Load personIds from DynamoDB INDEX item and build reverse map from contacts.
      * Orphaned personIds (no contact found) are logged and skipped.
      */
@@ -80,9 +95,7 @@ export class PersonAllowlist {
                 logger.warn({ personId, msg: 'PersonAllowlist: orphaned personId — no contact found, skipping' });
                 continue;
             }
-            for(const identifier of contact.identifiers) {
-                this.reverseMap.set(this.reverseKey(identifier.platform, identifier.value), personId);
-            }
+            this.indexContact(contact, personId);
         }
 
         // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
@@ -152,9 +165,7 @@ export class PersonAllowlist {
 
         const contact = await this.contactBackend.getContact(personId);
         if(contact) {
-            for(const identifier of contact.identifiers) {
-                this.reverseMap.set(this.reverseKey(identifier.platform, identifier.value), personId);
-            }
+            this.indexContact(contact, personId);
         }
 
         // Stryker disable next-line ObjectLiteral,StringLiteral: log message content is not behavior-affecting
@@ -210,9 +221,7 @@ export class PersonAllowlist {
 
         const contact = await this.contactBackend.getContact(personId);
         if(contact) {
-            for(const identifier of contact.identifiers) {
-                this.reverseMap.set(this.reverseKey(identifier.platform, identifier.value), personId);
-            }
+            this.indexContact(contact, personId);
         }
     }
 

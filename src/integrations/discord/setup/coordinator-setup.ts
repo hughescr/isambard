@@ -19,7 +19,7 @@ import { sendResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
 import { createPresenceStreamHandler, type PresenceStreamHandler } from './presence-stream-handler';
-import { type ClaudeAgent, setConversationContext, clearConversationContext, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
+import { type ClaudeAgent, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
 
 /**
  * Result of processing Discord message attachments
@@ -165,6 +165,23 @@ function toMessageContext(context: DiscordMessageContext): MessageContext {
  */
 function toMessageContexts(contexts: DiscordMessageContext[]): MessageContext[] {
     return contexts.map(ctx => toMessageContext(ctx));
+}
+
+/**
+ * Prepends a 'Requesting user: <userId> (<username>)' line to the first context's
+ * content. There is no ambient conversation context for MCP tools any more
+ * (see discord-mcp-server.ts's explicit requestingUserId argument), so Izzy must
+ * be told who is asking directly in the batch text she reads.
+ */
+function prependRequestingUserLine(contexts: DiscordMessageContext[]): DiscordMessageContext[] {
+    const first = contexts[0];
+    if(!first) {
+        return contexts;
+    }
+
+    const label = `Requesting user: ${first.userId} (${first.username ?? 'unknown'})`;
+
+    return contexts.map((ctx, idx) => (idx === 0 ? { ...ctx, content: `${label}\n${ctx.content}` } : ctx));
 }
 
 /**
@@ -342,125 +359,116 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         // Update presence to show processing message if not in catch-up mode
         updatePresenceForMessageStart(contexts[0]);
 
-        // Set conversation context for MCP tools
-        setConversationContext({
-            currentUserId:    contexts[0]?.userId,
-            currentChannelId: contexts[0]?.channelId,
+        // Create abort controller from signal
+        const abortController = new AbortController();
+        abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+
+        // Process attachments from all contexts
+        const { images, contentAdditions } = await processAttachments(contexts);
+
+        // Modify contexts to include attachment file paths in content, then prepend the
+        // requesting-user line so Izzy knows who she's answering (there is no ambient
+        // conversation context for MCP tools any more).
+        const modifiedContexts = prependRequestingUserLine(addAttachmentInfoToContexts(contexts, contentAdditions));
+
+        // Extract user message from first context for synopsis generation
+        const userMessage = contexts[0]?.content ?? '';
+
+        // Create stream event handler for presence updates if presenceManager available
+        const streamEventHandler = await createPresenceStreamHandler(
+            presenceManager,
+            dynamicStatusGenerator,
+            userMessage,
+            botStateManager,
+            params.onThinkingContentUpdate
+        );
+
+        // Get unmuted channels and format for system prompt
+        const registry = params.channelRegistry;
+        const client = params.readyClient;
+        const unmutedChannels = await registry.getUnmutedChannels();
+        const channelList = unmutedChannels.map((channel: ChannelMetadata) => {
+            // Get guild name for disambiguation
+            let guildName: string | undefined;
+            if(channel.guildId !== 'DM') {
+                try {
+                    const guild = client.guilds.cache.get(channel.guildId);
+                    guildName = guild?.name;
+                } catch{
+                    // Silent: guilds.cache.get() can throw on edge cases (stale cache entry,
+                    // guild object corruption). Guild name is cosmetic disambiguation only —
+                    // the channel list still renders without it.
+                }
+            }
+
+            // Format: "channelName (guildName) [well-known: type]" or "channelName [well-known: type]"
+            let formatted = channel.channelName;
+            if(guildName) {
+                formatted += ` (${guildName})`;
+            }
+            if(channel.isWellKnown) {
+                formatted += ` [well-known: ${channel.isWellKnown}]`;
+            }
+            return formatted;
         });
 
-        try {
-            // Create abort controller from signal
-            const abortController = new AbortController();
-            abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
-
-            // Process attachments from all contexts
-            const { images, contentAdditions } = await processAttachments(contexts);
-
-            // Modify contexts to include attachment file paths in content
-            const modifiedContexts = addAttachmentInfoToContexts(contexts, contentAdditions);
-
-            // Extract user message from first context for synopsis generation
-            const userMessage = contexts[0]?.content ?? '';
-
-            // Create stream event handler for presence updates if presenceManager available
-            const streamEventHandler = await createPresenceStreamHandler(
-                presenceManager,
-                dynamicStatusGenerator,
-                userMessage,
-                botStateManager,
-                params.onThinkingContentUpdate
-            );
-
-            // Get unmuted channels and format for system prompt
-            const registry = params.channelRegistry;
-            const client = params.readyClient;
-            const unmutedChannels = await registry.getUnmutedChannels();
-            const channelList = unmutedChannels.map((channel: ChannelMetadata) => {
-                // Get guild name for disambiguation
-                let guildName: string | undefined;
-                if(channel.guildId !== 'DM') {
-                    try {
-                        const guild = client.guilds.cache.get(channel.guildId);
-                        guildName = guild?.name;
-                    } catch{
-                        // Silent: guilds.cache.get() can throw on edge cases (stale cache entry,
-                        // guild object corruption). Guild name is cosmetic disambiguation only —
-                        // the channel list still renders without it.
-                    }
-                }
-
-                // Format: "channelName (guildName) [well-known: type]" or "channelName [well-known: type]"
-                let formatted = channel.channelName;
-                if(guildName) {
-                    formatted += ` (${guildName})`;
-                }
-                if(channel.isWellKnown) {
-                    formatted += ` [well-known: ${channel.isWellKnown}]`;
-                }
-                return formatted;
-            });
-
-            // Build context note for suspended sessions
-            let contextNote: string | undefined;
-            if(perchSessionRunner?.isSuspended()) {
-                contextNote = 'Note: This message arrived during perch-time, which has been paused. Respond normally to the user. Perch-time will resume after this conversation.';
-            } else if(catchUpSessionRunner?.isSuspended()) {
-                contextNote = 'Note: This message arrived during catch-up, which has been paused. Respond normally to the user. Catch-up will resume after this conversation.';
-            }
-
-            // Auto-inject cross-platform history for the sender
-            const HISTORY_FETCH_TIMEOUT_MS = 5000;
-            let personHistory: string | undefined;
-            if(params.historyCoordinator) {
-                try {
-                    const historyPromise = (async () => {
-                        const senderUsername = contexts[0]?.username;
-                        if(senderUsername) {
-                            const historyResult = await params.historyCoordinator!.getPersonHistory(
-                                senderUsername, { timeWindowMinutes: 120, maxMessagesPerPlatform: 10, platformHint: 'discord' }
-                            );
-                            if(historyResult.history) {
-                                return historyResult.history;
-                            }
-                        }
-                        // If no person found or no history, fall back to channel-local history
-                        const channelId = contexts[0]?.channelId;
-                        const messageId = contexts[0]?.messageId;
-                        if(channelId) {
-                            return params.historyCoordinator!.getChannelLocalHistory(channelId, messageId);
-                        }
-                        return undefined;
-                    })();
-
-                    personHistory = await Promise.race([
-                        historyPromise,
-                        new Promise<undefined>((resolve) => { setTimeout(resolve, HISTORY_FETCH_TIMEOUT_MS); }),
-                    ]);
-                } catch (err) {
-                    logger.warn({ err }, 'Failed to fetch person history for context injection');
-                }
-            }
-
-            // Call handleInput with presence updates, images, and channel context
-            const result = await agent.handleInput(toMessageContexts(modifiedContexts), {
-                resumeContext: resumeContext ?? undefined,
-                abortController,
-                onStreamEvent: streamEventHandler?.onStreamEvent,
-                images:        images.length > 0 ? toPlatformImages(images) : undefined,
-                channelList,
-                contextNote,
-                personHistory,
-            });
-
-            // Complete presence updates after processing
-            // Pass wasInterrupted flag to skip idle transition for batching
-            completePresenceForMessage(streamEventHandler, result.wasInterrupted);
-
-            return result;
-        } finally {
-            // Clear context after processing
-            clearConversationContext();
+        // Build context note for suspended sessions
+        let contextNote: string | undefined;
+        if(perchSessionRunner?.isSuspended()) {
+            contextNote = 'Note: This message arrived during perch-time, which has been paused. Respond normally to the user. Perch-time will resume after this conversation.';
+        } else if(catchUpSessionRunner?.isSuspended()) {
+            contextNote = 'Note: This message arrived during catch-up, which has been paused. Respond normally to the user. Catch-up will resume after this conversation.';
         }
+
+        // Auto-inject cross-platform history for the sender
+        const HISTORY_FETCH_TIMEOUT_MS = 5000;
+        let personHistory: string | undefined;
+        if(params.historyCoordinator) {
+            try {
+                const historyPromise = (async () => {
+                    const senderUsername = contexts[0]?.username;
+                    if(senderUsername) {
+                        const historyResult = await params.historyCoordinator!.getPersonHistory(
+                            senderUsername, { timeWindowMinutes: 120, maxMessagesPerPlatform: 10, platformHint: 'discord' }
+                        );
+                        if(historyResult.history) {
+                            return historyResult.history;
+                        }
+                    }
+                    // If no person found or no history, fall back to channel-local history
+                    const channelId = contexts[0]?.channelId;
+                    const messageId = contexts[0]?.messageId;
+                    if(channelId) {
+                        return params.historyCoordinator!.getChannelLocalHistory(channelId, messageId);
+                    }
+                    return undefined;
+                })();
+
+                personHistory = await Promise.race([
+                    historyPromise,
+                    new Promise<undefined>((resolve) => { setTimeout(resolve, HISTORY_FETCH_TIMEOUT_MS); }),
+                ]);
+            } catch (err) {
+                logger.warn({ err }, 'Failed to fetch person history for context injection');
+            }
+        }
+
+        // Call handleInput with presence updates, images, and channel context
+        const result = await agent.handleInput(toMessageContexts(modifiedContexts), {
+            resumeContext: resumeContext ?? undefined,
+            abortController,
+            onStreamEvent: streamEventHandler?.onStreamEvent,
+            images:        images.length > 0 ? toPlatformImages(images) : undefined,
+            channelList,
+            contextNote,
+            personHistory,
+        });
+
+        // Complete presence updates after processing
+        // Pass wasInterrupted flag to skip idle transition for batching
+        completePresenceForMessage(streamEventHandler, result.wasInterrupted);
+
+        return result;
     });
 
     return coordinator;

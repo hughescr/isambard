@@ -123,3 +123,51 @@ describe('setupEmail — isSendableChannel type guard', () => {
         expect(mockSend).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('setupEmail — createEmailMcpServerInstance', () => {
+    let options: EmailSetupOptions;
+
+    beforeEach(() => {
+        options = {
+            emailConfig:        MINIMAL_EMAIL_CONFIG,
+            docClient:          makeMockDocClient(),
+            tableName:          'test-table',
+            client:             { channels: { fetch: mock(async () => ({ send: mock(async () => undefined) })) } } as unknown as Client,
+            adminDiscordUserId: 'admin-user-id',
+            wildDuckClient:     {
+                getUserAddresses:   mock(async () => []),
+                getMessages:        mock(async () => ({ messages: [], nextCursor: undefined })),
+                uploadMessage:      mock(async () => ({ id: 'msg-id', uid: 1 })),
+                submitMessage:      mock(async () => undefined),
+                updateMessageFlags: mock(async () => undefined),
+                getMessage:         mock(async () => null),
+            } as unknown as WildDuckClient,
+            approvalSagaBackend: {} as unknown as ApprovalSagaBackend,
+            personAllowlist:     {
+                isAllowed:       mock((_platform: string, _value: string) => false),
+                isPersonAllowed: mock(() => false),
+                addPerson:       mock(async () => {}),
+                removePerson:    mock(async () => {}),
+                load:            mock(async () => {}),
+                list:            mock(async () => []),
+                refreshPerson:   mock(async () => {}),
+            } as unknown as PersonAllowlist,
+            allowlistInteractionHandler: {
+                startFromApproval: mock(async () => ({ allowlistSuffix: '' })),
+                handleButton:      mock(async () => {}),
+                handleModalSubmit: mock(async () => {}),
+            } as unknown as AllowlistInteractionHandler,
+            _deps: { sleep: noopSleep },
+        };
+    });
+
+    it('returns a new McpServerConfig instance distinct from emailMcpServer on each call', async () => {
+        const result = await setupEmail(options);
+
+        const first = result.createEmailMcpServerInstance();
+        const second = result.createEmailMcpServerInstance();
+
+        expect(first).not.toBe(result.emailMcpServer);
+        expect(second).not.toBe(first);
+    });
+});

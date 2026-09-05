@@ -1,12 +1,13 @@
-import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, afterEach, spyOn, jest } from 'bun:test';
 import path from 'node:path';
+import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, MessageCreateOptions } from 'discord.js';
-import { createDiscordMCPServer, setConversationContext, clearConversationContext } from '../../../src/agent/discord-mcp-server';
+import { createDiscordMCPServer } from '../../../src/agent/discord-mcp-server';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
 import type { MCPChannelRegistry, MCPMessageSearchService } from '../../../src/agent/types';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
-import type { ChannelId, GuildId, UserId } from '../../../src/integrations/discord/types';
+import type { ChannelId, GuildId } from '../../../src/integrations/discord/types';
 import { mockFsPromises, resetMockFsPrefix, textContent } from '../../setup';
 
 interface ZodShapeEntry {
@@ -53,6 +54,9 @@ interface MockButtonBuilder {
 interface MockRetryHelper {
     withRetry: ReturnType<typeof mock>
 }
+interface MockPersonAllowlist {
+    isAllowed: ReturnType<typeof mock>
+}
 
 // Helper to create mock search result
 const createMockSearchResult = (overrides: Partial<DiscordSearchResult> = {}): DiscordSearchResult => ({
@@ -96,8 +100,6 @@ describe('createDiscordMCPServer', () => {
     let mockRetryHelper: MockRetryHelper;
 
     beforeEach(() => {
-        // Clear conversation context before each test
-        clearConversationContext();
         mockSearchService = {
             searchMessages:    mock(() => Promise.resolve(createMockSearchResponse())),
             getRecentMessages: mock(() => Promise.resolve(createMockSearchResponse())),
@@ -162,8 +164,8 @@ describe('createDiscordMCPServer', () => {
         };
     });
 
-    // Helper to create server with current mocks and optional timezone override
-    const createServer = (timezone?: string): ReturnType<typeof createDiscordMCPServer> => createDiscordMCPServer({
+    // Helper to create server with current mocks and optional timezone/allowlist override
+    const createServer = (timezone?: string, personAllowlist?: MockPersonAllowlist): ReturnType<typeof createDiscordMCPServer> => createDiscordMCPServer({
         searchService:    mockSearchService,
         client:           mockClient as unknown as Client,
         questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
@@ -173,6 +175,7 @@ describe('createDiscordMCPServer', () => {
         buttonBuilder:    mockButtonBuilder,
         retryHelper:      mockRetryHelper,
         timezone,
+        personAllowlist:  personAllowlist as unknown as Parameters<typeof createDiscordMCPServer>[0]['personAllowlist'],
     });
 
     // Helper function to get tool handler from server instance
@@ -204,9 +207,11 @@ CRITICAL: Only use channel IDs from:
 4. @username format for DMs (e.g., "@alice" to send a DM)
 5. Default: 1451694737026449581 (#general)
 
-NEVER invent or guess channel IDs. If unsure, use #general.`],
+NEVER invent or guess channel IDs. If unsure, use #general.
+
+The channel must always be given explicitly — there is no ambient conversation context.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.'],
-            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.'],
+            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -872,6 +877,10 @@ NEVER invent or guess channel IDs. If unsure, use #general.`],
     });
 
     describe('sendDiscordMessage tool', () => {
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
         test('should have sendDiscordMessage tool with correct description', () => {
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.sendDiscordMessage;
@@ -885,7 +894,9 @@ CRITICAL: Only use channel IDs from:
 4. @username format for DMs (e.g., "@alice" to send a DM)
 5. Default: 1451694737026449581 (#general)
 
-NEVER invent or guess channel IDs. If unsure, use #general.`);
+NEVER invent or guess channel IDs. If unsure, use #general.
+
+The channel must always be given explicitly — there is no ambient conversation context.`);
         });
 
         test('should have correct input schema fields', () => {
@@ -900,6 +911,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(shape.replyToMessageId).toBeDefined();
             expect(shape.createThread).toBeDefined();
             expect(shape.threadName).toBeDefined();
+            expect(shape.requestingUserId).toBeDefined();
         });
 
         test.each([
@@ -941,6 +953,33 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
             expect(parsed.chunksCount).toBe(1);
             expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
+        });
+
+        test('should pass requestingUserId through to the "Message sent via MCP tool" log', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            const infoSpy = spyOn(logger, 'info');
+            infoSpy.mockClear();
+
+            const server = createServer();
+            const handler = getToolHandler(server, 'sendDiscordMessage');
+
+            const result = await handler({
+                channelId:        '123456789012345678',
+                content:          'Test message',
+                requestingUserId: 'user-456',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(infoSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ requestingUserId: 'user-456', msg: 'Message sent via MCP tool' })
+            );
         });
 
         test('should resolve #channel-name to channel ID via registry', async () => {
@@ -1565,7 +1604,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.askUserQuestion;
 
-            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format.');
+            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.');
         });
 
         test('should have correct input schema fields', () => {
@@ -1582,6 +1621,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(shape.createThread).toBeDefined();
             expect(shape.threadName).toBeDefined();
             expect(shape.targetUserId).toBeDefined();
+            expect(shape.requestingUserId).toBeDefined();
         });
 
         test('should send question to channel', async () => {
@@ -2351,45 +2391,55 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
         });
     });
 
-    describe('triggerUserId fallback chain', () => {
-        test('should use currentUserId when available', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
-            mockClient.channels.fetch = mock(async () => mockChannel);
+    describe('triggerUserId resolution', () => {
+        const mockAnsweredChannel = {
+            id:          '123456789012345678',
+            isTextBased: () => true,
+            isThread:    () => false,
+            isDMBased:   () => false,
+            send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
+        };
 
-            setConversationContext({
-                currentUserId:    'user-123' as UserId,
-                currentChannelId: '123456789012345678' as ChannelId,
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        test('should use requestingUserId as triggerUserId when given and allowlisted', async () => {
+            mockClient.channels.fetch = mock(async () => mockAnsweredChannel);
+            const mockAllowlist: MockPersonAllowlist = { isAllowed: mock(() => true) };
+
+            const server = createServer(undefined, mockAllowlist);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            await handler({
+                channelId:        '123456789012345678',
+                question:         'Test question?',
+                requestingUserId: 'user-123',
             });
+
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('discord', 'user-123');
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('user-123');
+        });
+
+        test('should use requestingUserId as triggerUserId when no allowlist is configured', async () => {
+            mockClient.channels.fetch = mock(async () => mockAnsweredChannel);
 
             const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
 
             await handler({
-                channelId: '123456789012345678',
-                question:  'Test question?',
+                channelId:        '123456789012345678',
+                question:         'Test question?',
+                requestingUserId: 'user-123',
             });
 
             const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
             expect(registerCall.triggerUserId).toBe('user-123');
         });
 
-        test('should fallback to clientUser.id when currentUserId not available', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
-            mockClient.channels.fetch = mock(async () => mockChannel);
-
-            clearConversationContext();
+        test('should fallback to clientUser.id when requestingUserId is omitted', async () => {
+            mockClient.channels.fetch = mock(async () => mockAnsweredChannel);
 
             const server = createServer();
             const handler = getToolHandler(server, 'askUserQuestion');
@@ -2403,22 +2453,13 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
         });
 
-        test('should fallback to system when neither currentUserId nor clientUser available', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
+        test('should fallback to system when requestingUserId omitted and no clientUser available', async () => {
             const mockClientWithoutUser = {
                 user:     null,
                 channels: {
-                    fetch: mock(async () => mockChannel),
+                    fetch: mock(async () => mockAnsweredChannel),
                 },
             };
-
-            clearConversationContext();
 
             const server = createDiscordMCPServer({
                 searchService:    mockSearchService,
@@ -2440,6 +2481,73 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
             const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
             expect(registerCall.triggerUserId).toBe('system');
         });
+
+        test('should fallback to clientUser.id and log a warning when requestingUserId is not allowlisted', async () => {
+            mockClient.channels.fetch = mock(async () => mockAnsweredChannel);
+            const mockAllowlist: MockPersonAllowlist = { isAllowed: mock(() => false) };
+            const warnSpy = spyOn(logger, 'warn');
+
+            const server = createServer(undefined, mockAllowlist);
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            await handler({
+                channelId:        '123456789012345678',
+                question:         'Test question?',
+                requestingUserId: 'hallucinated-user-id',
+            });
+
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('discord', 'hallucinated-user-id');
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ requestingUserId: 'hallucinated-user-id' }),
+                expect.stringContaining('not allowlisted')
+            );
+        });
+
+        test('should treat an empty-string requestingUserId as absent rather than throwing', async () => {
+            mockClient.channels.fetch = mock(async () => mockAnsweredChannel);
+            const warnSpy = spyOn(logger, 'warn');
+            // logger.warn is a shared module-level mock (see tests/setup.ts); spyOn() reuses
+            // it rather than wrapping a fresh call-history array, so an adjacent test's calls
+            // can still be sitting in it — clear before exercising this test's own behavior.
+            warnSpy.mockClear();
+
+            // No allowlist configured: '' would otherwise take the fail-open fast path
+            // straight into createUserId(''), which throws (UserId requires non-empty).
+            const server = createServer();
+            const handler = getToolHandler(server, 'askUserQuestion');
+
+            const result = await handler({
+                channelId:        '123456789012345678',
+                question:         'Test question?',
+                requestingUserId: '',
+            });
+
+            expect(result.isError).toBeUndefined();
+            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
+            expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
+            expect(warnSpy).not.toHaveBeenCalled();
+        });
+
+        test('should attribute interleaved askUserQuestion calls on two servers from the same options to their own requestingUserId', async () => {
+            mockClient.channels.fetch = mock(async () => mockAnsweredChannel);
+
+            const serverA = createServer();
+            const serverB = createServer();
+            const handlerA = getToolHandler(serverA, 'askUserQuestion');
+            const handlerB = getToolHandler(serverB, 'askUserQuestion');
+
+            await Promise.all([
+                handlerA({ channelId: '123456789012345678', question: 'From A', requestingUserId: 'user-a' }),
+                handlerB({ channelId: '123456789012345678', question: 'From B', requestingUserId: 'user-b' }),
+            ]);
+
+            const calls = mockQuestionRegistry.register.mock.calls;
+            expect(calls).toHaveLength(2);
+            const triggerIds = calls.map(call => call[0].triggerUserId).toSorted((a: string, b: string) => a.localeCompare(b));
+            expect(triggerIds).toEqual(['user-a', 'user-b']);
+        });
     });
 
     describe('askUserQuestion error handling', () => {
@@ -2458,153 +2566,6 @@ NEVER invent or guess channel IDs. If unsure, use #general.`);
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('Network error');
-        });
-    });
-
-    describe('conversation context', () => {
-        test('should use conversation context userId for triggerUserId when set', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
-            mockClient.channels.fetch = mock(async () => mockChannel);
-
-            // Set conversation context
-            setConversationContext({
-                currentUserId:    'user-789' as UserId,
-                currentChannelId: '123456789012345678' as ChannelId,
-            });
-
-            const server = createServer();
-            const handler = getToolHandler(server, 'askUserQuestion');
-
-            await handler({
-                channelId: '123456789012345678',
-                question:  'Test question?',
-            });
-
-            expect(mockQuestionRegistry.register).toHaveBeenCalled();
-            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
-            expect(registerCall.triggerUserId).toBe('user-789');
-        });
-
-        test('should fallback to bot ID for triggerUserId when context not set', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
-            mockClient.channels.fetch = mock(async () => mockChannel);
-
-            // Ensure context is cleared
-            clearConversationContext();
-
-            const server = createServer();
-            const handler = getToolHandler(server, 'askUserQuestion');
-
-            await handler({
-                channelId: '123456789012345678',
-                question:  'Test question?',
-            });
-
-            expect(mockQuestionRegistry.register).toHaveBeenCalled();
-            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
-            expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
-        });
-
-        test('should fallback to "system" for triggerUserId when both context and clientUser are null', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
-
-            // Create client without user
-            const clientWithoutUser = {
-                user:     null,
-                channels: {
-                    fetch: mock(async () => mockChannel),
-                },
-            };
-
-            // Ensure context is cleared
-            clearConversationContext();
-
-            const server = createDiscordMCPServer({
-                searchService:    mockSearchService,
-                client:           clientWithoutUser as unknown as Client,
-                questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockChannelRegistry,
-                dmTracker:        mockDMTracker,
-                messageSplitter:  mockMessageSplitter,
-                buttonBuilder:    mockButtonBuilder,
-                retryHelper:      mockRetryHelper,
-            });
-            const handler = getToolHandler(server, 'askUserQuestion');
-
-            await handler({
-                channelId: '123456789012345678',
-                question:  'Test question?',
-            });
-
-            expect(mockQuestionRegistry.register).toHaveBeenCalled();
-            const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
-            expect(registerCall.triggerUserId).toBe('system');
-        });
-
-        test('clearConversationContext should reset context', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
-            };
-            mockClient.channels.fetch = mock(async () => mockChannel);
-
-            const server = createServer();
-            const handler = getToolHandler(server, 'askUserQuestion');
-
-            // Set context
-            setConversationContext({
-                currentUserId:    'user-123' as UserId,
-                currentChannelId: '456' as ChannelId,
-            });
-
-            // Call handler - should use the set context
-            await handler({
-                channelId: '123456789012345678',
-                question:  'Test question with context?',
-            });
-
-            // Verify context was used
-            expect(mockQuestionRegistry.register).toHaveBeenCalled();
-            let registerCall = mockQuestionRegistry.register.mock.calls[0][0];
-            expect(registerCall.triggerUserId).toBe('user-123');
-
-            // Reset mock for next call
-            mockQuestionRegistry.register.mockClear();
-
-            // Clear context
-            clearConversationContext();
-
-            // Call handler again - should fallback to bot ID
-            await handler({
-                channelId: '123456789012345678',
-                question:  'Test question after clear?',
-            });
-
-            // Verify context was cleared (falls back to bot ID)
-            expect(mockQuestionRegistry.register).toHaveBeenCalled();
-            registerCall = mockQuestionRegistry.register.mock.calls[0][0];
-            expect(registerCall.triggerUserId).toBe('bot-user-id-12345');
         });
     });
 

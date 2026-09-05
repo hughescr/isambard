@@ -175,6 +175,12 @@ export interface MCPServersOptions {
      */
     embedder?: EmbedderLike
 
+    /**
+     * Optional person allowlist for validating the Discord MCP server's
+     * askUserQuestion requestingUserId argument.
+     */
+    discordAllowlist?: PersonAllowlist
+
 }
 
 /**
@@ -230,10 +236,84 @@ interface MCPServers {
      * Browser MCP server for web browser automation.
      */
     browserMcpServer?: McpServerConfig
+
+    /**
+     * Email MCP server for sending and managing email, when the caller passes an
+     * `emailServerFactory` to {@link createMcpServerInstances}. Not created by the
+     * `createMCPServers` old-path wrapper — the old path wires email separately.
+     */
+    emailMcpServer?: McpServerConfig
 }
 
 /**
- * Creates all MCP servers for the Claude agent.
+ * Dependencies shared across every MCP server instance set created for a session.
+ * Built once via {@link createMcpSharedDeps} and passed to every
+ * {@link createMcpServerInstances} call so singleton state (DMTracker,
+ * BskyCheckpointManager) is constructed exactly once regardless of how many
+ * per-session server sets are built from it.
+ */
+export interface McpSharedDeps {
+    /** The options this session's MCP servers are built from. */
+    options: MCPServersOptions
+
+    /** Username-to-DM-channel resolver, shared across every server set. */
+    dmTracker: DMTracker
+
+    /** Bluesky feed/notification checkpoint tracker, shared across every server set. */
+    bskyCheckpointManager: BskyCheckpointManager
+}
+
+/**
+ * Which kind of session an MCP server instance set is being built for.
+ * The browser MCP server (a single Bun.WebView) attaches only to 'conversation' —
+ * there is exactly one WebView, so a second ('perch') session set must not get one.
+ */
+export type McpServerRole = 'conversation' | 'perch';
+
+/**
+ * Options for {@link createMcpServerInstances}.
+ */
+export interface CreateMcpServerInstancesOptions {
+    /** Which kind of session this server set is for; gates the browser MCP server. */
+    role: McpServerRole
+
+    /**
+     * Optional factory that builds a fresh email MCP server instance for this
+     * session, closing over the email integration's shared dependencies (see
+     * `EmailSetupResult.createEmailMcpServerInstance`). Omit when the caller wires
+     * email separately (the old one-shot path does this today).
+     */
+    emailServerFactory?: () => McpServerConfig
+}
+
+/**
+ * Builds the dependencies shared across every MCP server instance set for a
+ * session's lifetime: singleton state (DMTracker, BskyCheckpointManager) that must
+ * be constructed exactly once, plus the options every instance set is built from.
+ *
+ * Call this once per app/session; pass the result to {@link createMcpServerInstances}
+ * as many times as needed (once per concurrent MCP server instance set required —
+ * e.g. one for the conversation session, one for the perch session).
+ *
+ * @param options - Options containing all required dependencies
+ * @returns Shared dependencies for {@link createMcpServerInstances}
+ */
+export function createMcpSharedDeps(options: MCPServersOptions): McpSharedDeps {
+    return {
+        options,
+        dmTracker:             new DMTracker(options.channelRegistry, options.discordClient),
+        bskyCheckpointManager: new BskyCheckpointManager({ backend: options.memoryBackend }),
+    };
+}
+
+/**
+ * Creates a fresh MCP server instance set from shared dependencies.
+ *
+ * Every call builds brand-new server instances (one `createSdkMcpServer()` call per
+ * server) — an underlying SDK MCP server instance can only be connected to one
+ * session at a time, so each session needing its own set (the conversation session,
+ * the perch session) must call this separately, passing the same {@link McpSharedDeps}
+ * so singleton state (DMTracker, BskyCheckpointManager) is not reconstructed.
  *
  * This factory consolidates the creation of ten MCP servers:
  * 1. Memory MCP server - for deep memory access (view, store, search)
@@ -245,21 +325,21 @@ interface MCPServers {
  * 7. Contacts MCP server - for address book management (optional)
  * 8. User context MCP server - for cross-platform person history (optional)
  * 9. Media MCP server - for video and audio processing tools
- * 10. Email MCP server - created separately in email-setup.ts
- * 11. Browser MCP server - for web browser automation (optional)
+ * 10. Email MCP server - built from `params.emailServerFactory` when given (optional)
+ * 11. Browser MCP server - for web browser automation; 'conversation' role only
  *
- * @param options - Options containing all required dependencies
- * @returns Object containing all MCP server configurations
+ * @param shared - Dependencies shared across every instance set (see {@link createMcpSharedDeps})
+ * @param params - Which role this instance set is for, and an optional email server factory
+ * @returns Object containing all MCP server configurations for this instance set
  */
-export function createMCPServers(options: MCPServersOptions): MCPServers {
+export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMcpServerInstancesOptions): MCPServers {
+    const { options, dmTracker, bskyCheckpointManager } = shared;
+
     const memoryMcpServer = createMemoryMCPServer(options.memoryBackend, {
         recordAccess: options.recordAccess,
         vectorIndex:  options.vectorIndex,
         embedder:     options.embedder,
     });
-
-    // Create DMTracker for username-to-DM-channel resolution
-    const dmTracker = new DMTracker(options.channelRegistry, options.discordClient);
 
     const discordMcpServer = createDiscordMCPServer({
         searchService:    options.messageSearchService,
@@ -287,6 +367,7 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         timezone:         options.timezone,
         healthRegistry:   options.healthRegistry,
         reconnectionLoop: options.discordReconnectionLoop,
+        personAllowlist:  options.discordAllowlist,
     });
 
     const inboxMcpServer = createInboxMCPServer(
@@ -305,7 +386,7 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
     const bskyMcpServer = options.bskyClient
         ? createBskyMCPServer({
             client:                options.bskyClient,
-            checkpointManager:     new BskyCheckpointManager({ backend: options.memoryBackend }),
+            checkpointManager:     bskyCheckpointManager,
             rateLimiter:           options.bskyRateLimiter,
             allowlist:             options.bskyAllowlist,
             sendApprovalRequest:   options.bskySendApprovalRequest,
@@ -340,8 +421,10 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
 
     const mediaMcpServer = createMediaMCPServer();
 
+    const emailMcpServer = params.emailServerFactory?.();
+
     let browserMcpServer: McpServerConfig | undefined;
-    if(options.browserAdapter) {
+    if(params.role === 'conversation' && options.browserAdapter) {
         if(options.browserMaxScreenshotBytes === undefined || options.browserMaxTextBytes === undefined) {
             // Stryker disable next-line StringLiteral: log message is informational only
             logger.error('browserMaxScreenshotBytes and browserMaxTextBytes are required when browserAdapter is provided; skipping browser MCP server');
@@ -372,5 +455,21 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
         userContextMcpServer,
         mediaMcpServer,
         browserMcpServer,
+        emailMcpServer,
     };
+}
+
+/**
+ * Creates all MCP servers for the Claude agent — the old, pre-per-session-factory path.
+ *
+ * A thin wrapper over {@link createMcpSharedDeps} + {@link createMcpServerInstances}
+ * with `role: 'conversation'`, for callers that only ever need a single instance set
+ * and have no need to hold onto the shared deps themselves.
+ *
+ * @param options - Options containing all required dependencies
+ * @returns Object containing all MCP server configurations
+ */
+export function createMCPServers(options: MCPServersOptions): MCPServers {
+    const shared = createMcpSharedDeps(options);
+    return createMcpServerInstances(shared, { role: 'conversation' });
 }

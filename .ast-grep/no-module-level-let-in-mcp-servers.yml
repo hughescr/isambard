@@ -1,0 +1,27 @@
+id: no-module-level-let-in-mcp-servers
+language: typescript
+severity: error
+message: |
+  Module-scope mutable state (let/var) in an MCP server file is shared ambient state
+  across every concurrent session using that server instance — the exact bug class
+  the discord-mcp-server.ts conversationContext singleton had (one session's answer
+  could leak into another's in-flight question).
+
+  MCP servers are now built per-session via createMcpServerInstances(), so any
+  per-request or per-session state must be threaded through as an explicit tool
+  argument (e.g. requestingUserId) or closed over inside a factory function, not
+  held in a module-level `let`/`var`. Module-level `const` is fine.
+
+files:
+  - 'src/agent/*-mcp-server.ts'
+
+rule:
+  all:
+    - any:
+        - pattern: let $VAR = $VAL
+        - pattern: let $VAR
+        - pattern: var $VAR = $VAL
+        - pattern: var $VAR
+    - inside:
+        kind: program
+        stopBy: neighbor

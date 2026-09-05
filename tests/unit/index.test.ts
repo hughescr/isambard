@@ -315,14 +315,15 @@ describe('createApp', () => {
 
             // Mock setupEmail to prevent real email integration setup
             const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-                sendApprovalRequest:     mock(async () => {}),
+                listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:          mock(async () => {}),
+                createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
             spies.push(setupEmailSpy);
 
@@ -484,14 +485,15 @@ describe('createApp', () => {
 
             // Mock setupEmail to prevent real email integration setup
             const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-                sendApprovalRequest:     mock(async () => {}),
+                listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:          mock(async () => {}),
+                createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
             spies.push(setupEmailSpy);
 
@@ -623,14 +625,15 @@ describe('createApp', () => {
 
             // Mock setupEmail to prevent real email integration setup
             const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-                sendApprovalRequest:     mock(async () => {}),
+                listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:          mock(async () => {}),
+                createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
             spies.push(setupEmailSpy);
 
@@ -764,14 +767,15 @@ describe('createApp', () => {
 
             // Mock setupEmail to prevent real email integration setup
             const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-                sendApprovalRequest:     mock(async () => {}),
+                listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:          mock(async () => {}),
+                createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
             spies.push(setupEmailSpy);
 
@@ -909,14 +913,15 @@ describe('createApp', () => {
 
             // Mock setupEmail to prevent real email integration setup
             const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-                sendApprovalRequest:     mock(async () => {}),
+                listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:          mock(async () => {}),
+                createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
             spies.push(setupEmailSpy);
 
@@ -1381,14 +1386,15 @@ describe('createApp', () => {
 
             // Mock setupEmail to prevent real email integration setup
             const setupEmailSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-                listener:                { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-                reviewHandler:           {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-                emailMcpServer:          {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-                outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-                wildDuckClient:          { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-                allowlist:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-                adminChannelId:          '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-                sendApprovalRequest:     mock(async () => {}),
+                listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+                reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+                emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+                outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+                wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+                allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+                adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+                sendApprovalRequest:          mock(async () => {}),
+                createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
             });
             spies.push(setupEmailSpy);
 

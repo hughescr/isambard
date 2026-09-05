@@ -340,7 +340,15 @@ To see all channels including muted ones, use the \`listChannels\` tool with \`i
 You have access to channel management tools:
 - \`listChannels\` - List all channels you can see (optional: includesMuted parameter)
 - \`muteChannel\` - Stop receiving messages from a channel
-- \`unmuteChannel\` - Resume receiving messages from a channel`;
+- \`unmuteChannel\` - Resume receiving messages from a channel
+
+### Explicit tool arguments
+
+\`askUserQuestion\` and \`sendDiscordMessage\` take an explicit \`channelId\` argument, and
+\`askUserQuestion\` also takes an explicit \`requestingUserId\` argument — there is no ambient conversation context.
+Read the channel ID from the message you are responding to, and read the requesting user's ID from
+the "Requesting user: <userId> (<username>)" line at the top of the message you are answering.
+Never guess or invent either value.`;
 
 /**
  * Options for building the system prompt.
