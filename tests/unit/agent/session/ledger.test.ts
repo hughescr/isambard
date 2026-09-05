@@ -495,6 +495,23 @@ describe('reduceLedger: compaction', () => {
         expect(ledger.compaction).toBe('none');
         expect(ledger.context.lastCompactionAt).toEqual(T2);
     });
+
+    it('compaction_failed returns compaction to none without stamping lastCompactionAt', () => {
+        const compacting = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'compaction_started', at: T1 }));
+
+        const ledger = reduceLedger(compacting, frozenEvent({ type: 'compaction_failed', reason: 'timeout', at: T2 }));
+
+        expect(ledger.compaction).toBe('none');
+        expect(ledger.context.lastCompactionAt).toBeUndefined();
+    });
+
+    it('compaction_failed is a no-op (same reference) when compaction is already none', () => {
+        const ledger = initialLedger('conversation');
+
+        const next = reduceLedger(ledger, frozenEvent({ type: 'compaction_failed', at: T1 }));
+
+        expect(next).toBe(ledger);
+    });
 });
 
 describe('reduceLedger: context, process, phase, session', () => {

@@ -32,15 +32,16 @@ describe('createLedgerStore', () => {
         expect(store.get().queued).toEqual({ human: 1, other: 0 });
     });
 
-    it('notifies a subscriber with the new ledger when dispatch changes it', () => {
+    it('notifies a subscriber with the new ledger and the causing event when dispatch changes it', () => {
         const store = createLedgerStore('conversation', { logger: mockLogger });
         const listener = jest.fn();
         store.subscribe(listener);
 
-        store.dispatch({ type: 'envelope_queued', kind: 'discord', at: T1 });
+        const event = { type: 'envelope_queued', kind: 'discord', at: T1 } as const;
+        store.dispatch(event);
 
         expect(listener).toHaveBeenCalledTimes(1);
-        expect(listener).toHaveBeenCalledWith(store.get());
+        expect(listener).toHaveBeenCalledWith(store.get(), event);
     });
 
     it('does not notify when dispatch does not change the ledger (reference-equal result)', () => {

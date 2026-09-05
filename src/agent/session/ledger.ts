@@ -58,6 +58,7 @@ export type LedgerEvent
       | { type: 'interrupt_requested', at: Date }
       | { type: 'compaction_started', trigger?: 'manual' | 'auto', at: Date }
       | { type: 'compaction_finished', at: Date }
+      | { type: 'compaction_failed', reason?: string, at: Date }
       | { type: 'context_usage_polled', usage: ContextUsageSummary, at: Date }
       | { type: 'tick', rssBytes: number, at: Date }
       | { type: 'task_lost', taskId: string, at: Date }
@@ -288,6 +289,14 @@ function reduceCompactionFinished(ledger: Ledger, at: Date): Ledger {
     return { ...ledger, compaction: 'none', context: { ...ledger.context, lastCompactionAt: at } };
 }
 
+/** A failed compaction attempt returns `compaction` to `'none'` — no `lastCompactionAt` stamp, since nothing actually compacted. */
+function reduceCompactionFailed(ledger: Ledger): Ledger {
+    if(ledger.compaction === 'none') {
+        return ledger;
+    }
+    return { ...ledger, compaction: 'none' };
+}
+
 function reduceContextUsagePolled(ledger: Ledger, usage: ContextUsageSummary): Ledger {
     const { context } = ledger;
     if(context.used === usage.totalTokens && context.window === usage.maxTokens && context.percentage === usage.percentage) {
@@ -348,6 +357,9 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
         case 'compaction_finished': {
             return reduceCompactionFinished(ledger, event.at);
         }
+        case 'compaction_failed': {
+            return reduceCompactionFailed(ledger);
+        }
         case 'context_usage_polled': {
             return reduceContextUsagePolled(ledger, event.usage);
         }
@@ -377,8 +389,14 @@ export interface LedgerStore {
     dispatch:  (event: LedgerEvent) => void
     /** The current ledger. */
     get:       () => Ledger
-    /** Registers `listener` to be called with the new ledger on every change; returns an unsubscribe function. */
-    subscribe: (listener: (ledger: Ledger) => void) => () => void
+    /**
+     * Registers `listener` to be called with the new ledger, and the {@link LedgerEvent} that
+     * produced it, on every change; returns an unsubscribe function. The causing event lets a
+     * listener distinguish facts the resulting `Ledger` snapshot alone cannot (for example: a
+     * task disappearing from `ledger.tasks` because of an explicit `task_lost` event or a
+     * `session_opened` reset, versus a normal `task_notification` frame).
+     */
+    subscribe: (listener: (ledger: Ledger, event: LedgerEvent) => void) => () => void
 }
 
 /**
@@ -389,7 +407,7 @@ export interface LedgerStore {
  */
 export function createLedgerStore(role: SessionRole, deps: LedgerStoreDeps): LedgerStore {
     let ledger = initialLedger(role);
-    const listeners = new Set<(ledger: Ledger) => void>();
+    const listeners = new Set<(ledger: Ledger, event: LedgerEvent) => void>();
 
     return {
         dispatch(event: LedgerEvent): void {
@@ -406,7 +424,7 @@ export function createLedgerStore(role: SessionRole, deps: LedgerStoreDeps): Led
             const snapshot = ledger;
             for(const listener of listeners) {
                 try {
-                    listener(snapshot);
+                    listener(snapshot, event);
                 } catch (error) {
                     deps.logger.error({ error }, 'Ledger subscriber threw');
                 }
@@ -415,7 +433,7 @@ export function createLedgerStore(role: SessionRole, deps: LedgerStoreDeps): Led
         get(): Ledger {
             return ledger;
         },
-        subscribe(listener: (ledger: Ledger) => void): () => void {
+        subscribe(listener: (ledger: Ledger, event: LedgerEvent) => void): () => void {
             listeners.add(listener);
             return () => {
                 listeners.delete(listener);

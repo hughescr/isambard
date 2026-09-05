@@ -39,7 +39,7 @@ export class FakeQuery implements SessionQuery {
     private readonly buffer:           QueueItem[] = [];
     private readonly waitingResolvers: ((item: QueueItem) => void)[] = [];
     private pendingInterrupts:         { resolve: (response: SDKControlInterruptResponse) => void, reject: (error: unknown) => void }[] = [];
-    private contextUsageScript:        ContextUsageSummary | Error = { percentage: 0, totalTokens: 0, maxTokens: 0 };
+    private contextUsageScript:        ContextUsageSummary | Error | (() => Promise<ContextUsageSummary>) = { percentage: 0, totalTokens: 0, maxTokens: 0 };
 
     /** Push a frame the fake query "yields" to whatever is iterating it. */
     emit(frame: SDKMessage): void {
@@ -59,6 +59,21 @@ export class FakeQuery implements SessionQuery {
     /** Script the value (or rejection) that {@link getContextUsage} resolves with from now on. */
     scriptContextUsage(value: ContextUsageSummary | Error): void {
         this.contextUsageScript = value;
+    }
+
+    /**
+     * Makes every subsequent {@link getContextUsage} call return a promise that stays pending
+     * until the returned `resolve` is called — for tests that need to observe conductor state
+     * deterministically while a `getContextUsage` round-trip is still in flight, rather than
+     * racing real microtask timing against it.
+     */
+    deferContextUsage(): { resolve: (value: ContextUsageSummary) => void } {
+        let resolveDeferred!: (value: ContextUsageSummary) => void;
+        const deferred = new Promise<ContextUsageSummary>((resolve) => {
+            resolveDeferred = resolve;
+        });
+        this.contextUsageScript = () => deferred;
+        return { resolve: resolveDeferred };
     }
 
     /** Resolve every {@link interrupt} call still pending, in the order they were made. */
@@ -98,9 +113,14 @@ export class FakeQuery implements SessionQuery {
         return Promise.resolve();
     };
 
-    getContextUsage = (): Promise<ContextUsageSummary> => (this.contextUsageScript instanceof Error
-        ? Promise.reject(this.contextUsageScript)
-        : Promise.resolve(this.contextUsageScript));
+    getContextUsage = (): Promise<ContextUsageSummary> => {
+        if(typeof this.contextUsageScript === 'function') {
+            return this.contextUsageScript();
+        }
+        return this.contextUsageScript instanceof Error
+            ? Promise.reject(this.contextUsageScript)
+            : Promise.resolve(this.contextUsageScript);
+    };
 
     /** Drain `iterable` into {@link consumedPrompts}, one message at a time, until it ends. */
     async capturePrompt(iterable: AsyncIterable<SDKUserMessage>): Promise<void> {

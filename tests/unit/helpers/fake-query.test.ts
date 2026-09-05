@@ -141,6 +141,26 @@ describe('FakeQuery', () => {
         await expect(query.getContextUsage()).rejects.toThrow('context usage unavailable');
     });
 
+    it('deferContextUsage() holds getContextUsage() pending until its resolve is called', async () => {
+        const query = new FakeQuery();
+        const { resolve } = query.deferContextUsage();
+        let settled = false;
+
+        const pending = query.getContextUsage().then((value) => {
+            settled = true;
+            return value;
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        resolve({ percentage: 77, totalTokens: 500, maxTokens: 1000 });
+
+        await expect(pending).resolves.toEqual({ percentage: 77, totalTokens: 500, maxTokens: 1000 });
+        expect(settled).toBe(true);
+    });
+
     it('queues a second concurrent pull instead of stranding the first', async () => {
         const query = new FakeQuery();
         const iterA = query[Symbol.asyncIterator]();

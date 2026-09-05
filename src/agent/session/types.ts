@@ -126,7 +126,8 @@ export type JournalEntry
       | { type: 'turn_failed', at: Date, envelopeId: string, kind: EnvelopeKind, error: string }
       | { type: 'task_started', at: Date, taskId: string, description: string }
       | { type: 'task_completed', at: Date, taskId: string, description?: string }
+      | { type: 'task_lost', at: Date, taskId: string, description?: string }
       | { type: 'compaction_started', at: Date, trigger?: 'manual' | 'auto' }
       | { type: 'compaction_completed', at: Date }
       | { type: 'compaction_failed', at: Date, error: string }
-      | { type: 'session_opened', at: Date, sessionId: string, fallback?: boolean };
+      | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, resumed: boolean, fallback?: boolean };

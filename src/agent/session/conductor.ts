@@ -1,0 +1,790 @@
+/**
+ * The long-lived session conductor (design doc section 6): the only writer into a session's
+ * {@link InputQueue}. Owns resume-or-fresh session opening, a host-side priority queue of
+ * {@link Envelope}s, the one-turn-in-flight invariant, the Discord human-wait/interrupt rows,
+ * the host-driven `/compact` submission (via {@link CompactionGuard}), `is_error` retry per the
+ * injected `retryPolicy`, and a bounded shutdown sequence. Every timing decision goes through the
+ * injected {@link Clock} — this module never reads a real timer.
+ *
+ * `bootBundle`/hook wiring for post-compaction re-injection and PostCompact->
+ * `guard.onCompactionFinished()` plumbing belong to whoever builds the session's `Options`
+ * (P9's `src/app/sessions.ts`) — this module only pushes the initial boot envelope once, right
+ * after {@link Conductor.open} resolves, and drives the guard from every raw frame it observes,
+ * which already covers every frame-observable release path (`compact_boundary`, the `/compact`
+ * turn's own result, the `error-compacting-conversation` notification, and the clock ceiling).
+ *
+ * @module agent/session/conductor
+ */
+import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Logger } from '@hughescr/logger';
+import { classifyClaudeError } from '../claude-retry';
+import { buildResumeNote } from '../resume-prompt-builder';
+import { StreamTracker, type StreamProgress  } from '../stream-tracker';
+import type { AgentStreamEvent } from '../types';
+import { createCompactionGuard, type CompactionGuard } from './compaction-guard';
+import {
+    buildBootEnvelope,
+    buildCompactEnvelope,
+    buildResumeEnvelope,
+    toSdkUserMessage
+} from './envelope';
+import { InputQueue } from './input-queue';
+import { createInterruptFlag } from './interrupt-flag';
+import type { Ledger, LedgerEvent, LedgerStore } from './ledger';
+import type { SessionJournal, ResumeStore } from './ports';
+import { resultFrameToError } from './result-frame-error';
+import { openSession, type SessionHandle } from './session';
+import type {
+    Clock,
+    Envelope,
+    EnvelopeMeta,
+    SessionQueryFn,
+    SessionRole,
+    TimerHandle,
+    TurnKind
+} from './types';
+import type { SessionConfig } from '@/config';
+import { InvariantViolationError } from '@/errors';
+import type { ErrorClassification, RetryPolicy } from '@/utils';
+
+type ResultFrame = Extract<SDKMessage, { type: 'result' }>;
+
+/** Priority the host queues an envelope at: `'human'` before `'other'` (design section 6). */
+export type SubmitPriority = 'human' | 'other';
+
+/** Options accepted by {@link Conductor.submit}. */
+export interface SubmitOptions {
+    priority:             SubmitPriority
+    requestingChannelId?: string
+}
+
+/** Options accepted by {@link Conductor.interruptCurrent}. */
+export interface InterruptCurrentOptions {
+    requestingChannelId?: string
+    reason?:              string
+}
+
+/** Options accepted by {@link Conductor.shutdown}. */
+export interface ShutdownOptions {
+    turnWaitMs: number
+    deadlineMs: number
+}
+
+/** The outcome of one submitted turn, resolved by {@link Conductor.submit}. */
+export interface TurnResult {
+    envelopeId:     string
+    /** The final assistant text, or `null` when the turn errored or was interrupted before producing one. */
+    response:       string | null
+    wasInterrupted: boolean
+    partialWork:    StreamProgress
+    sessionId:      string | undefined
+    isError:        boolean
+}
+
+/** A snapshot of the conductor's current state, returned by {@link Conductor.status}. */
+export interface ConductorStatus {
+    role:         SessionRole
+    sessionId:    string | undefined
+    opened:       boolean
+    shuttingDown: boolean
+    queueLength:  number
+    turn: {
+        kind:        TurnKind
+        channelId?:  string
+        envelopeId?: string
+    } | null
+}
+
+/** Dependencies and configuration for {@link createConductor}. */
+export interface CreateConductorParams {
+    role:           SessionRole
+    queryFn:        SessionQueryFn
+    /** Builds full Agent SDK `Options` for a fresh (`undefined`) or resumed (session id) open. */
+    buildOptions:   (resume?: string) => Options
+    clock:          Clock
+    /** Reads the process's current resident set size, in bytes. */
+    readRss:        () => number
+    ledgerStore:    LedgerStore
+    config:         SessionConfig
+    /** `config.retry.claude` — drives `is_error` resubmission, on the injected `clock`. */
+    retryPolicy:    RetryPolicy
+    journal:        SessionJournal
+    resumeStore:    ResumeStore
+    /** Pre-formatted boot bundle text, pushed once as a `boot`-kind envelope right after `open()` succeeds. */
+    bootBundle?:    string
+    logger:         Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    /** Observes every raw frame alongside {@link Conductor.subscribeTurn} subscribers. */
+    onTurnFrame?:   (turnId: string, frame: SDKMessage) => void
+    /** Classifies an `is_error` result's adapted error. Defaults to `classifyClaudeError`. */
+    classifyError?: (error: unknown) => ErrorClassification
+}
+
+/** The long-lived session conductor returned by {@link createConductor}. */
+export interface Conductor {
+    open:             () => Promise<{ sessionId: string, resumed: boolean }>
+    submit:           (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
+    interruptCurrent: (options?: InterruptCurrentOptions) => Promise<void>
+    subscribeTurn:    (handler: (turnId: string, frame: SDKMessage) => void) => () => void
+    status:           () => ConductorStatus
+    shutdown:         (options: ShutdownOptions) => Promise<void>
+}
+
+/** How a caller's `submit()` promise is settled once its turn is resolved one way or another. */
+interface Deferred {
+    resolve: (result: TurnResult) => void
+    reject:  (error: unknown) => void
+}
+
+/** One envelope waiting in the host-side priority queue, or already promoted to the active turn. */
+interface QueuedItem {
+    envelope:             Envelope
+    priority:             SubmitPriority
+    requestingChannelId?: string
+    attempts:             number
+    deferred:             Deferred
+}
+
+/** The one turn currently running against the session, if any. */
+interface ActiveTurn {
+    /** `undefined` for a spontaneous SDK-initiated turn nobody submitted. */
+    item?:              QueuedItem
+    kind:               TurnKind
+    channelId?:         string
+    tracker:            StreamTracker
+    interruptRequested: boolean
+    escalationArmed:    boolean
+    escalationTimer?:   TimerHandle
+}
+
+/** A no-op {@link Deferred} for envelopes the conductor submits to itself (`/compact`, a resume note). */
+function internalDeferred(): Deferred {
+    return { resolve: () => undefined, reject: () => undefined };
+}
+
+/** Normalises an unknown thrown/rejected value to an `Error`: passes an `Error` through, wraps a non-empty string, and falls back to `fallbackMessage` for anything else (`undefined`, or an object with no reliable string form). */
+function toError(error: unknown, fallbackMessage: string): Error {
+    if(error instanceof Error) {
+        return error;
+    }
+    if(typeof error === 'string' && error !== '') {
+        return new Error(error);
+    }
+    return new Error(fallbackMessage);
+}
+
+/** `baseDelayMs * backoffMultiplier ^ (attemptNumber - 1)`, capped at `maxDelayMs`. No jitter — determinism for the injected clock beats a few percent of thundering-herd protection here. */
+function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): number {
+    const raw = policy.baseDelayMs * policy.backoffMultiplier ** (attemptNumber - 1);
+    return Math.min(raw, policy.maxDelayMs);
+}
+
+/**
+ * Creates a long-lived session conductor.
+ * @param params See {@link CreateConductorParams}.
+ * @returns A {@link Conductor}.
+ */
+export function createConductor(params: CreateConductorParams): Conductor {
+    const {
+        role, queryFn, buildOptions, clock, readRss, ledgerStore, config, retryPolicy,
+        journal, resumeStore, bootBundle, logger, onTurnFrame,
+    } = params;
+    const classifyError = params.classifyError ?? classifyClaudeError;
+
+    let opened = false;
+    let shuttingDown = false;
+    /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely. Gates {@link processQueue} and {@link submitCompact} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
+    let reopening = false;
+    let currentSessionId: string | undefined;
+    let currentHandleRef: SessionHandle | undefined;
+    let currentQueue: InputQueue | undefined;
+    let currentTurn: ActiveTurn | null = null;
+    /** True only for the span of {@link afterResult} between nulling `currentTurn` and `guard.onTurnEnd()` resolving — blocks {@link onFrame} from spontaneously opening a notification turn for a frame that arrives in that window, which `submitCompact`'s `beginTurn` (driven by that very `onTurnEnd` call) would otherwise silently clobber. */
+    let awaitingTurnEnd = false;
+    const pendingQueue: QueuedItem[] = [];
+    const turnSubscribers = new Set<(turnId: string, frame: SDKMessage) => void>();
+    const turnEndedWaiters: (() => void)[] = [];
+    let previousTasks = new Map(ledgerStore.get().tasks.map(task => [task.id, task] as const));
+    let previousCompaction = ledgerStore.get().compaction;
+
+    function now(): Date {
+        return new Date(clock.now());
+    }
+
+    function resolveTurnEndedWaiters(): void {
+        const waiters = turnEndedWaiters.splice(0);
+        for(const waiter of waiters) {
+            waiter();
+        }
+    }
+
+    function waitForTurnEnd(): Promise<void> {
+        // Stryker disable next-line BlockStatement: defensive fallback — the sole caller (shutdown's
+        // graceful cleanup, below) already checks `currentTurn !== null` synchronously immediately
+        // before calling this, with no `await` between the check and this call, so `currentTurn`
+        // cannot have changed; unreachable in practice, kept in case another caller is ever added.
+        if(currentTurn === null) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            turnEndedWaiters.push(resolve);
+        });
+    }
+
+    function turnIdFor(turn: ActiveTurn | null): string {
+        return turn?.item?.envelope.id ?? turn?.kind ?? 'none';
+    }
+
+    function notifyTurnSubscribers(frame: SDKMessage): void {
+        const turnId = turnIdFor(currentTurn);
+        for(const handler of turnSubscribers) {
+            handler(turnId, frame);
+        }
+        onTurnFrame?.(turnId, frame);
+    }
+
+    /**
+     * Journals task lifecycle facts by diffing `previousTasks` against `ledger.tasks`. Reads the
+     * causing {@link LedgerEvent} (not just the resulting snapshot) to tell WHY a task left
+     * `ledger.tasks` — an explicit `task_lost` event, or `session_opened` resetting the task list
+     * wholesale on a fallback reopen, both journal `task_lost`; anything else (normally a
+     * `task_notification` frame) journals the ordinary `task_completed`.
+     */
+    function journalTaskLifecycle(ledger: Ledger, event: LedgerEvent): void {
+        const currentTaskIds = new Set(ledger.tasks.map(task => task.id));
+        for(const task of ledger.tasks) {
+            if(!previousTasks.has(task.id)) {
+                journal.append({ type: 'task_started', at: now(), taskId: task.id, description: task.description });
+            }
+        }
+        const isReopen = event.type === 'session_opened';
+        const explicitlyLostTaskId = event.type === 'task_lost' ? event.taskId : undefined;
+        for(const [id, task] of previousTasks) {
+            if(!currentTaskIds.has(id)) {
+                const lost = isReopen || id === explicitlyLostTaskId;
+                journal.append(lost
+                    ? { type: 'task_lost', at: now(), taskId: id, description: task.description }
+                    : { type: 'task_completed', at: now(), taskId: id, description: task.description });
+            }
+        }
+        previousTasks = new Map(ledger.tasks.map(task => [task.id, task] as const));
+    }
+
+    /**
+     * Journals the outcome of a compaction that just transitioned out of `'compacting'`, reading
+     * a `compaction_failed` event's `reason` directly rather than losing it to the reducer's
+     * write-only ledger state. On a `'timeout'` failure with the `/compact` turn still running,
+     * also interrupts it — releasing the guard's own bookkeeping alone leaves `processQueue`
+     * blocked on `currentTurn !== null` forever.
+     */
+    function journalCompactionOutcome(event: LedgerEvent): void {
+        if(event.type === 'compaction_failed') {
+            journal.append({ type: 'compaction_failed', at: now(), error: event.reason ?? 'compaction attempt did not complete' });
+            if(event.reason === 'timeout' && currentTurn?.kind === 'compact') {
+                void interruptCurrentTurnInternal('compaction ceiling exceeded');
+            }
+            return;
+        }
+        journal.append({ type: 'compaction_completed', at: now() });
+    }
+
+    /**
+     * All `pendingQueue`-external ledger bookkeeping this conductor derives from ledger changes:
+     * task lifecycle journaling and releasing submits held for compaction.
+     */
+    ledgerStore.subscribe((ledger, event) => {
+        journalTaskLifecycle(ledger, event);
+
+        if(previousCompaction === 'compacting' && ledger.compaction === 'none') {
+            journalCompactionOutcome(event);
+            processQueue();
+        }
+        previousCompaction = ledger.compaction;
+    });
+
+    function getContextUsage(opts?: { detail?: 'summary' | 'full' }): ReturnType<SessionHandle['getContextUsage']> {
+        const handle = currentHandleRef;
+        if(handle === undefined) {
+            return Promise.reject(new Error('Conductor has no active session'));
+        }
+        return handle.getContextUsage(opts);
+    }
+
+    function submitCompact(): Promise<void> {
+        if(shuttingDown) {
+            return Promise.reject(new Error('Conductor is shutting down'));
+        }
+        if(reopening) {
+            return Promise.reject(new Error('Conductor is reopening its session'));
+        }
+        try {
+            const at = now();
+            journal.append({ type: 'compaction_started', at });
+            beginTurn({ envelope: buildCompactEnvelope(at), priority: 'other', attempts: 1, deferred: internalDeferred() });
+            return Promise.resolve();
+        } catch (error) {
+            return Promise.reject(toError(error, 'submitCompact failed'));
+        }
+    }
+
+    const guard: CompactionGuard = createCompactionGuard({
+        getContextUsage,
+        submitCompact,
+        ledgerStore,
+        clock,
+        thresholdPercent: config.compactThresholdPercent,
+        logger,
+    });
+
+    function enqueue(item: QueuedItem): void {
+        if(item.priority === 'human') {
+            const firstOtherIndex = pendingQueue.findIndex(existing => existing.priority !== 'human');
+            if(firstOtherIndex === -1) {
+                pendingQueue.push(item);
+            } else {
+                pendingQueue.splice(firstOtherIndex, 0, item);
+            }
+        } else {
+            pendingQueue.push(item);
+        }
+        ledgerStore.dispatch({ type: 'envelope_queued', kind: item.envelope.kind, at: now() });
+    }
+
+    function beginTurn(item: QueuedItem): void {
+        const queue = currentQueue;
+        if(queue === undefined) {
+            throw new InvariantViolationError('conductor.beginTurn', 'called before open() assigned currentQueue — every call site (processQueue, submitCompact) only runs once opened is true');
+        }
+        const at = now();
+        currentTurn = {
+            item, kind: item.envelope.kind, channelId: item.envelope.channelId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+        };
+        const meta: EnvelopeMeta = { id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId };
+        ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
+        journal.append({ type: 'envelope_submitted', at, envelopeId: item.envelope.id, kind: item.envelope.kind });
+        queue.push(toSdkUserMessage(item.envelope));
+    }
+
+    function processQueue(): void {
+        if(currentTurn !== null || shuttingDown || reopening) {
+            return;
+        }
+        if(ledgerStore.get().compaction === 'compacting') {
+            return;
+        }
+        const next = pendingQueue.shift();
+        if(next === undefined) {
+            return;
+        }
+        beginTurn(next);
+    }
+
+    async function interruptCurrentTurnInternal(reason: string | undefined): Promise<void> {
+        const handle = currentHandleRef;
+        if(handle === undefined || currentTurn === null || currentTurn.interruptRequested) {
+            return;
+        }
+        currentTurn.interruptRequested = true;
+        ledgerStore.dispatch({ type: 'interrupt_requested', at: now() });
+        logger.debug({ reason }, 'Conductor requesting interrupt');
+        try {
+            await handle.interrupt();
+        } catch (error) {
+            logger.error({ error }, 'Conductor interrupt failed');
+        }
+    }
+
+    function armHumanWaitEscalation(): void {
+        if(currentTurn === null || currentTurn.escalationArmed) {
+            return;
+        }
+        currentTurn.escalationArmed = true;
+        currentTurn.escalationTimer = clock.setTimer(onHumanWaitTargetElapsed, config.humanWaitTargetMs);
+    }
+
+    function onHumanWaitTargetElapsed(): void {
+        if(currentTurn === null) {
+            return;
+        }
+        const progress = currentTurn.tracker.getProgress();
+        if(progress.pendingToolUse !== null) {
+            currentTurn.escalationTimer = clock.setTimer(() => {
+                void interruptCurrentTurnInternal('human wait ceiling elapsed');
+            }, config.humanWaitCeilingMs - config.humanWaitTargetMs);
+            return;
+        }
+        void interruptCurrentTurnInternal('human wait target elapsed');
+    }
+
+    function routeIncoming(item: QueuedItem): void {
+        if(currentTurn === null) {
+            enqueue(item);
+            processQueue();
+            return;
+        }
+        if(item.priority === 'human' && currentTurn.kind === 'discord'
+          && item.requestingChannelId !== undefined && item.requestingChannelId === currentTurn.channelId) {
+            enqueue(item);
+            void interruptCurrentTurnInternal('human envelope for the running channel');
+            return;
+        }
+        if(item.priority === 'human' && currentTurn.kind === 'notification') {
+            enqueue(item);
+            armHumanWaitEscalation();
+            return;
+        }
+        enqueue(item);
+    }
+
+    /** Injects a `resume`-kind envelope ahead of everything else queued when an interrupted spontaneous notification turn left meaningful partial work behind. */
+    function injectResumeNoteIfInterruptedNotification(turn: ActiveTurn, progress: StreamProgress): void {
+        if(turn.kind !== 'notification' || !turn.interruptRequested) {
+            return;
+        }
+        const note = buildResumeNote(progress);
+        if(note !== undefined) {
+            pendingQueue.unshift({ envelope: buildResumeEnvelope(note, now()), priority: 'human', attempts: 1, deferred: internalDeferred() });
+        }
+    }
+
+    /** Retries `item` after `delayMs` on the injected clock (immediately when `delayMs` is `0`). */
+    function scheduleRetry(item: QueuedItem, delayMs: number): void {
+        if(delayMs > 0) {
+            clock.setTimer(() => {
+                routeIncoming(item);
+            }, delayMs);
+            return;
+        }
+        routeIncoming(item);
+    }
+
+    /** Resolves `item`'s `submit()` promise as a non-retryable failure and journals `turn_failed`. */
+    function failTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, error: Error): void {
+        journal.append({ type: 'turn_failed', at: now(), envelopeId: item.envelope.id, kind: turn.kind, error: error.message });
+        item.deferred.resolve({ envelopeId: item.envelope.id, response: null, wasInterrupted: false, partialWork: progress, sessionId: currentSessionId, isError: true });
+    }
+
+    /** An `is_error` result: retries per `retryPolicy` when the classified error is transient/rate-limited and attempts remain, else fails the turn. */
+    function settleErroredTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, frame: ResultFrame): void {
+        const error = resultFrameToError(frame);
+        const classification = classifyError(error);
+        const canRetry = (classification.category === 'transient' || classification.category === 'rate_limited') && item.attempts < retryPolicy.maxAttempts;
+        if(!canRetry) {
+            failTurn(turn, item, progress, error);
+            return;
+        }
+        item.attempts += 1;
+        scheduleRetry(item, classification.retryAfterMs ?? computeBackoffDelayMs(retryPolicy, item.attempts - 1));
+    }
+
+    function settleTurn(turn: ActiveTurn, frame: ResultFrame): void {
+        const wasInterrupted = turn.interruptRequested;
+        const progress = turn.tracker.getProgress();
+
+        injectResumeNoteIfInterruptedNotification(turn, progress);
+
+        if(turn.item === undefined) {
+            return;
+        }
+        const { item } = turn;
+
+        if(!wasInterrupted && frame.is_error) {
+            settleErroredTurn(turn, item, progress, frame);
+            return;
+        }
+
+        journal.append({ type: 'turn_completed', at: now(), envelopeId: item.envelope.id, kind: turn.kind });
+        const response = !wasInterrupted && frame.subtype === 'success' ? frame.result : null;
+        item.deferred.resolve({ envelopeId: item.envelope.id, response, wasInterrupted, partialWork: progress, sessionId: currentSessionId, isError: false });
+    }
+
+    async function afterResult(frame: ResultFrame): Promise<void> {
+        const turn = currentTurn;
+        currentTurn = null;
+        if(turn?.escalationTimer !== undefined) {
+            clock.clearTimer(turn.escalationTimer);
+        }
+        resolveTurnEndedWaiters();
+        if(turn !== null) {
+            settleTurn(turn, frame);
+        }
+        ledgerStore.dispatch({ type: 'tick', rssBytes: readRss(), at: now() });
+        // Between here and guard.onTurnEnd() resolving, currentTurn is null but a `/compact` turn
+        // may be about to begin (submitCompact -> beginTurn, driven from inside onTurnEnd itself).
+        // awaitingTurnEnd blocks onFrame's spontaneous-notification-turn branch for exactly this
+        // span, so a frame arriving in the window is not clobbered when beginTurn overwrites
+        // currentTurn moments later (the one-turn invariant would otherwise be silently violated).
+        awaitingTurnEnd = true;
+        try {
+            await guard.onTurnEnd({ queueEmpty: pendingQueue.length === 0 });
+        } finally {
+            awaitingTurnEnd = false;
+        }
+        processQueue();
+    }
+
+    function onFrame(frame: SDKMessage): void {
+        guard.onFrame(frame);
+        if(currentTurn === null && !awaitingTurnEnd && frame.type === 'assistant') {
+            currentTurn = { kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false };
+        }
+        // boundary cast: AgentStreamEvent is the one-shot path's narrower observability-only view of a stream event; every SDKMessage shape StreamTracker.update switches on (system/task_started, assistant) is a subset of AgentStreamEvent's fields, matching the identical cast already documented in ./session.ts
+        currentTurn?.tracker.update(frame as unknown as AgentStreamEvent);
+        notifyTurnSubscribers(frame);
+        ledgerStore.dispatch({ type: 'sdk_frame', frame, at: now() });
+        if(frame.type === 'result') {
+            void afterResult(frame);
+        }
+    }
+
+    /** Opens exactly one fresh `queryFn` call, resolving once the session id is captured or rejecting on an immediate throw. Assigns `currentQueue`/`currentHandleRef` synchronously as part of settling, so a frame processed in the very same callback already sees the new handle as current. */
+    async function openWithHandle(resumeId: string | undefined): Promise<{ handle: SessionHandle, sessionId: string }> {
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const queue = new InputQueue();
+            const interrupting = createInterruptFlag();
+            const options = buildOptions(resumeId);
+            const handle = openSession({
+                role,
+                queryFn,
+                options,
+                queue,
+                interrupting,
+                onFrame: (frame) => {
+                    onFrame(frame);
+                    if(!settled) {
+                        const id = handle.sessionId();
+                        if(id !== undefined) {
+                            settled = true;
+                            currentQueue = queue;
+                            currentHandleRef = handle;
+                            resolve({ handle, sessionId: id });
+                        }
+                    }
+                },
+                onClosed: (error) => {
+                    if(!settled) {
+                        settled = true;
+                        reject(toError(error, 'Session closed before it opened'));
+                        return;
+                    }
+                    if(handle === currentHandleRef) {
+                        void handleMidLifeClosed(error);
+                    }
+                },
+            });
+        });
+    }
+
+    async function finishOpen(sessionId: string, resumed: boolean, fallback: boolean): Promise<void> {
+        currentSessionId = sessionId;
+        opened = true;
+        const at = now();
+        journal.append({
+            type: 'session_opened', at, role, sessionId, resumed, ...(fallback ? { fallback: true as const } : {}),
+        });
+        ledgerStore.dispatch({ type: 'session_opened', sessionId, at });
+        await resumeStore.save(role, sessionId);
+    }
+
+    function pushBootBundle(): void {
+        if(bootBundle === undefined || bootBundle === '' || currentQueue === undefined) {
+            return;
+        }
+        currentQueue.push(toSdkUserMessage(buildBootEnvelope(bootBundle, now())));
+    }
+
+    /** Rejects and drains every item still waiting in `pendingQueue`, in queue order. */
+    function rejectAllQueued(error: Error): void {
+        const queued = pendingQueue.splice(0);
+        for(const item of queued) {
+            item.deferred.reject(error);
+        }
+    }
+
+    /**
+     * Discards a handle this conductor is about to replace with another one, closing it without
+     * letting its `onClosed` callback run {@link handleMidLifeClosed} again — that callback only
+     * reopens when the closed handle is still `currentHandleRef`, so clearing the reference first
+     * (when `handle` is in fact still current) makes the close a deliberate no-op from the
+     * reopen machinery's point of view.
+     */
+    function discardHandle(handle: SessionHandle): void {
+        if(currentHandleRef === handle) {
+            currentHandleRef = undefined;
+            currentQueue = undefined;
+        }
+        handle.close();
+    }
+
+    async function handleMidLifeClosed(error: unknown): Promise<void> {
+        if(shuttingDown) {
+            return;
+        }
+        logger.error({ error }, 'Session ended unexpectedly; reopening');
+        reopening = true;
+        const inFlightItem = currentTurn?.item;
+        if(currentTurn?.escalationTimer !== undefined) {
+            clock.clearTimer(currentTurn.escalationTimer);
+        }
+        currentTurn = null;
+        resolveTurnEndedWaiters();
+        const lastSessionId = currentSessionId;
+        try {
+            try {
+                const { handle, sessionId } = await openWithHandle(lastSessionId);
+                try {
+                    await finishOpen(sessionId, true, false);
+                } catch (finishError) {
+                    discardHandle(handle);
+                    throw finishError;
+                }
+            } catch{
+                const { sessionId } = await openWithHandle(undefined);
+                await finishOpen(sessionId, false, true);
+            }
+        } catch (reopenError) {
+            reopening = false;
+            opened = false;
+            // The fresh-open fallback may itself have opened a live handle before its own
+            // finishOpen rejected — close it rather than merely dropping the reference, which
+            // would otherwise leak the CLI subprocess.
+            if(currentHandleRef !== undefined) {
+                discardHandle(currentHandleRef);
+            }
+            const failure = toError(reopenError, 'Conductor failed to reopen the session');
+            logger.error({ error: failure }, 'Conductor could not reopen the session after it closed unexpectedly; giving up');
+            if(inFlightItem !== undefined) {
+                inFlightItem.deferred.reject(failure);
+            }
+            rejectAllQueued(failure);
+            return;
+        }
+        reopening = false;
+        if(inFlightItem !== undefined) {
+            pendingQueue.unshift(inFlightItem);
+        }
+        processQueue();
+    }
+
+    async function open(): Promise<{ sessionId: string, resumed: boolean }> {
+        const stored = await resumeStore.load(role);
+        if(stored !== undefined) {
+            try {
+                const { handle, sessionId } = await openWithHandle(stored);
+                try {
+                    await finishOpen(sessionId, true, false);
+                } catch (finishError) {
+                    discardHandle(handle);
+                    throw finishError;
+                }
+                pushBootBundle();
+                return { sessionId, resumed: true };
+            } catch (error) {
+                logger.warn({ error }, 'Resuming the stored session failed; opening a fresh session');
+            }
+        }
+        const { sessionId } = await openWithHandle(undefined);
+        await finishOpen(sessionId, false, stored !== undefined);
+        pushBootBundle();
+        return { sessionId, resumed: false };
+    }
+
+    function submit(envelope: Envelope, options: SubmitOptions): Promise<TurnResult> {
+        if(shuttingDown) {
+            return Promise.reject(new Error('Conductor is shutting down'));
+        }
+        if(!opened) {
+            return Promise.reject(new Error('Conductor is not open'));
+        }
+        return new Promise<TurnResult>((resolve, reject) => {
+            routeIncoming({
+                envelope, priority: options.priority, requestingChannelId: options.requestingChannelId, attempts: 1, deferred: { resolve, reject },
+            });
+        });
+    }
+
+    async function interruptCurrent(options: InterruptCurrentOptions = {}): Promise<void> {
+        if(currentTurn === null) {
+            return;
+        }
+        if(options.requestingChannelId !== undefined && currentTurn.channelId !== undefined && currentTurn.channelId !== options.requestingChannelId) {
+            logger.warn({ requestingChannelId: options.requestingChannelId, turnChannelId: currentTurn.channelId }, 'interruptCurrent ignored: requesting channel does not own the running turn');
+            return;
+        }
+        await interruptCurrentTurnInternal(options.reason);
+    }
+
+    function subscribeTurn(handler: (turnId: string, frame: SDKMessage) => void): () => void {
+        turnSubscribers.add(handler);
+        return () => {
+            turnSubscribers.delete(handler);
+        };
+    }
+
+    function status(): ConductorStatus {
+        return {
+            role,
+            sessionId:   currentSessionId,
+            opened,
+            shuttingDown,
+            queueLength: pendingQueue.length,
+            turn:        currentTurn === null ? null : { kind: currentTurn.kind, channelId: currentTurn.channelId, envelopeId: currentTurn.item?.envelope.id },
+        };
+    }
+
+    /** Resolves after `ms` on `clock`, or as soon as `promise` settles — whichever comes first. */
+    function raceAgainstTimeout(promise: Promise<void>, ms: number): Promise<void> {
+        return new Promise((resolve) => {
+            const timer = clock.setTimer(resolve, ms);
+            void promise.then(() => {
+                clock.clearTimer(timer);
+                resolve();
+                return undefined;
+            });
+        });
+    }
+
+    async function shutdown(options: ShutdownOptions): Promise<void> {
+        if(shuttingDown) {
+            return;
+        }
+        shuttingDown = true;
+        // Nothing still waiting in pendingQueue will ever be dequeued — processQueue() now
+        // early-returns on shuttingDown forever — so settle those submit() promises now rather
+        // than leaving them pending for the life of the process.
+        rejectAllQueued(new Error('Conductor is shutting down'));
+
+        let deadlineTimer: TimerHandle | undefined;
+        const deadline = new Promise<void>((resolve) => {
+            deadlineTimer = clock.setTimer(resolve, options.deadlineMs);
+        });
+
+        const graceful = (async (): Promise<void> => {
+            if(currentTurn !== null) {
+                await raceAgainstTimeout(waitForTurnEnd(), options.turnWaitMs);
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, sonarjs/different-types-comparison -- TS narrows currentTurn from the outer check, but the await above lets afterResult() (running from a frame observed while we waited) set it back to null concurrently; re-checking is deliberate, not redundant
+                if(currentTurn !== null) {
+                    await interruptCurrentTurnInternal('shutdown turn-wait elapsed');
+                }
+            }
+            try {
+                await journal.flush();
+            } catch (error) {
+                // A rejecting flush must not prevent the close below — closing the handle is what
+                // actually releases the CLI subprocess and the input queue, and a shutdown that
+                // never reaches it hangs the host on exit.
+                logger.error({ error }, 'Conductor shutdown: journal flush failed');
+            }
+        })();
+
+        await Promise.race([graceful, deadline]);
+        if(deadlineTimer !== undefined) {
+            clock.clearTimer(deadlineTimer);
+        }
+        currentHandleRef?.close();
+    }
+
+    return {
+        open, submit, interruptCurrent, subscribeTurn, status, shutdown,
+    };
+}

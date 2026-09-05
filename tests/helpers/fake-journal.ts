@@ -1,26 +1,40 @@
 /**
- * In-memory double for the session write-ahead journal: `append()` records, `entries()`/
- * `byKind()` read back what was recorded, and `scriptReadSince()` scripts what `readSince()`
- * resolves with (mirroring the real journal port P7 declares in src/agent/session/ports.ts).
+ * In-memory double for the {@link SessionJournal} port (src/agent/session/ports.ts): `append()`
+ * records synchronously (the real port's `append` is fire-and-forget, returning `void`),
+ * `entries()`/`byKind()` read back what was recorded, `flushCount` counts calls to `flush()`, and
+ * `scriptFlushRejection()`/`scriptReadSince()` script `flush()`/`readSince()`'s outcome.
  *
  * @module tests/helpers/fake-journal
  */
+import type { SessionJournal } from '@/agent/session/ports';
 import type { JournalEntry } from '@/agent/session/types';
 
 /** Scriptable double of the session's write-ahead journal port. */
-export class FakeJournal {
-    private readonly recorded: JournalEntry[] = [];
-    private scriptedReadSince: JournalEntry[] = [];
+export class FakeJournal implements SessionJournal {
+    private readonly recorded:      JournalEntry[] = [];
+    private scriptedReadSince:      JournalEntry[] = [];
+    private scriptedFlushRejection: Error | undefined;
 
-    /** Record `entry`. Write-through, like the real journal: resolves once recorded. */
-    append(entry: JournalEntry): Promise<void> {
+    /** Number of times {@link flush} has been called (whether it resolved or rejected). */
+    flushCount = 0;
+
+    /** Record `entry`. Synchronous, like the real port's `append` — never throws. */
+    append(entry: JournalEntry): void {
         this.recorded.push(entry);
+    }
+
+    /** Barrier over in-flight appends. This fake has none, so it resolves immediately — unless {@link scriptFlushRejection} scripted a rejection. */
+    flush(): Promise<void> {
+        this.flushCount += 1;
+        if(this.scriptedFlushRejection !== undefined) {
+            return Promise.reject(this.scriptedFlushRejection);
+        }
         return Promise.resolve();
     }
 
-    /** Barrier over in-flight appends. This fake has none, so it resolves immediately. */
-    flush(): Promise<void> {
-        return Promise.resolve();
+    /** Make every subsequent {@link flush} call reject with `error`, until cleared with `undefined`. */
+    scriptFlushRejection(error: Error | undefined): void {
+        this.scriptedFlushRejection = error;
     }
 
     /** Every entry appended so far, in append order. */

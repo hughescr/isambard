@@ -75,7 +75,30 @@ export {
 
 export { buildCatchupText, type CatchupSummary } from './catchup-text';
 
+export type { SessionJournal, ResumeStore } from './ports';
+
+export { resultFrameToError } from './result-frame-error';
+
+export {
+    createCompactionGuard,
+    type CompactionGuard,
+    type CompactionFailureReason,
+    type CreateCompactionGuardParams
+} from './compaction-guard';
+
 export { createContextPolicy, type ContextPolicy, type CreateContextPolicyParams, type EventsDeltaSource } from './context-policy';
+
+export {
+    createConductor,
+    type Conductor,
+    type ConductorStatus,
+    type CreateConductorParams,
+    type TurnResult,
+    type SubmitPriority,
+    type SubmitOptions,
+    type InterruptCurrentOptions,
+    type ShutdownOptions
+} from './conductor';
 
 export {
     createBootBundleBuilder,
