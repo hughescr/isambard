@@ -274,12 +274,31 @@ export const vectorIndexConfigSchema = z.object({
 
 export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
 
+// Session configuration for long-lived conversations
+/* Stryker disable BooleanLiteral,ArithmeticOperator,StringLiteral: Default values are configuration - validated by schema tests */
+export const sessionConfigSchema = z.object({
+    mode:                    z.enum(['oneshot', 'conductor']).default('oneshot'),
+    compactThresholdPercent: z.number().int().positive().default(60),
+    humanWaitTargetMs:       z.number().int().positive().default(10_000),
+    humanWaitCeilingMs:      z.number().int().positive().default(30_000),
+    perchWrapUpLeadMs:       z.number().int().positive().default(300_000),
+    perchInterruptGraceMs:   z.number().int().positive().default(120_000),
+    userMemoryWindowMs:      z.number().int().positive().default(6 * 60 * 60 * 1000),
+    bootEventsWindowMs:      z.number().int().positive().default(24 * 60 * 60 * 1000),
+    shutdownTurnWaitMs:      z.number().int().positive().default(60_000),
+    shutdownDeadlineMs:      z.number().int().positive().default(120_000),
+    transcriptRetentionMs:   z.number().int().positive().default(7 * 24 * 60 * 60 * 1000),
+    debounceMs:              z.number().int().positive().default(250),
+});
+/* Stryker restore BooleanLiteral,ArithmeticOperator,StringLiteral */
+
 // Full config schema (planned integrations are optional)
 export const configSchema = z.object({
     app:                   appConfigSchema,
     agent:                 agentConfigSchema,
     discord:               discordConfigSchema,
     perch:                 perchConfigSchema,
+    session:               sessionConfigSchema.default(sessionConfigSchema.parse({})),
     reconciliation:        reconciliationConfigSchema.optional(),
     contactReconciliation: contactReconciliationConfigSchema.optional(),
     adminDiscordUserId:    z.string().min(1),
@@ -295,4 +314,6 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type EmailConfig = z.infer<typeof emailConfigSchema>;
 export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type DynamoDBConfig = z.infer<typeof dynamoDBConfigSchema>;
+export type SessionConfig = z.infer<typeof sessionConfigSchema>;
+export type SessionMode = SessionConfig['mode'];
 export type Config = z.infer<typeof configSchema>;

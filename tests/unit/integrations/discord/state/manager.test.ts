@@ -44,7 +44,6 @@ describe('BotStateManager', () => {
         describe('startCatchUp', () => {
             it('should transition from idle to catching_up', () => {
                 const context: CatchingUpModeContext = {
-                    viewedChannels:      new Set(),
                     sessionId:           'session-123',
                     startedAt:           new Date(),
                     unreadCount:         10,
@@ -65,38 +64,8 @@ describe('BotStateManager', () => {
                     timeSinceLastActive: '1 hour',
                 });
             });
-
-            it('should deep-clone viewedChannels Set in catching_up context (isCatchingUpContext type guard)', () => {
-                // isCatchingUpContext must return true for CatchingUpModeContext.
-                // If the guard's condition were replaced with `false`, cloneModeContext would
-                // do a shallow clone of the Set — this test catches that mutant.
-                const viewedChannels = new Set<ChannelId>([testChannelId]);
-                const context: CatchingUpModeContext = {
-                    viewedChannels,
-                    sessionId:           null,
-                    startedAt:           new Date(),
-                    unreadCount:         5,
-                    channelNames:        [],
-                    topAuthors:          [],
-                    timeSinceLastActive: null,
-                };
-
-                manager.startCatchUp(context);
-
-                // Mutate the original set — deep clone should be unaffected
-                const anotherChannelId = createChannelId('another-channel');
-                viewedChannels.add(anotherChannelId);
-
-                const state = manager.getState();
-                const modeCtx = state.modeContext as CatchingUpModeContext;
-                // Deep-cloned Set only has the original channel, not the later-added one
-                expect(modeCtx.viewedChannels.has(testChannelId)).toBe(true);
-                expect(modeCtx.viewedChannels.has(anotherChannelId)).toBe(false);
-            });
-
             it('should throw TransitionError when not in idle mode', () => {
                 const context: CatchingUpModeContext = {
-                    viewedChannels:      new Set(),
                     sessionId:           null,
                     startedAt:           new Date(),
                     unreadCount:         5,
@@ -123,18 +92,6 @@ describe('BotStateManager', () => {
                 expect(context.channelId).toBe(testChannelId);
                 expect(context.userMessage).toBe('Hello world');
             });
-
-            it('should NOT add viewedChannels to processing_message context (isCatchingUpContext type guard)', () => {
-                // isCatchingUpContext must return false for ProcessingMessageModeContext.
-                // If the guard's condition were replaced with `true`, cloneModeContext would
-                // spread viewedChannels onto the context — this test catches that mutant.
-                manager.startProcessingMessage(testChannelId, 'Hello world');
-
-                const state = manager.getState();
-                const context = state.modeContext as Record<string, unknown>;
-                expect('viewedChannels' in context).toBe(false);
-            });
-
             it('should throw TransitionError when not in idle mode', () => {
                 manager.startProcessingMessage(testChannelId, 'First message');
 
@@ -166,7 +123,6 @@ describe('BotStateManager', () => {
         describe('goIdle', () => {
             it('should transition to idle from catching_up', () => {
                 const context: CatchingUpModeContext = {
-                    viewedChannels:      new Set(),
                     sessionId:           null,
                     startedAt:           new Date(),
                     unreadCount:         5,
@@ -357,98 +313,9 @@ describe('BotStateManager', () => {
             });
         });
 
-        describe('markChannelViewed', () => {
-            it('should add channel to viewedChannels in catching_up mode', () => {
-                const context: CatchingUpModeContext = {
-                    viewedChannels:      new Set(),
-                    sessionId:           null,
-                    startedAt:           new Date(),
-                    unreadCount:         5,
-                    channelNames:        [],
-                    topAuthors:          [],
-                    timeSinceLastActive: null,
-                };
-                manager.startCatchUp(context);
-
-                manager.markChannelViewed(testChannelId);
-
-                const state = manager.getState();
-                const modeContext = state.modeContext as CatchingUpModeContext;
-                expect(modeContext.viewedChannels.has(testChannelId)).toBe(true);
-            });
-
-            it('should log warning when not in catching_up mode', () => {
-                const warnCalls: unknown[][] = [];
-                mockLogger.warn = ((...args: unknown[]) => {
-                    warnCalls.push(args);
-                }) as BotStateManagerDeps['logger']['warn'];
-
-                manager.markChannelViewed(testChannelId);
-
-                expect(warnCalls).toHaveLength(1);
-                expect(warnCalls[0][0]).toEqual({ mode: 'idle' });
-                expect(warnCalls[0][1]).toBe('Cannot mark channel viewed: not in catching_up mode');
-            });
-
-            it('should isolate viewedChannels mutations from callers', () => {
-                // Test that the Set is cloned, not shared with callers
-                const externalSet = new Set<ChannelId>();
-                const context: CatchingUpModeContext = {
-                    viewedChannels:      externalSet,
-                    sessionId:           null,
-                    startedAt:           new Date(),
-                    unreadCount:         5,
-                    channelNames:        [],
-                    topAuthors:          [],
-                    timeSinceLastActive: null,
-                };
-                manager.startCatchUp(context);
-
-                // Mark a channel as viewed
-                manager.markChannelViewed(testChannelId);
-
-                // Verify the external Set was NOT mutated
-                expect(externalSet.has(testChannelId)).toBe(false);
-
-                // Verify the manager's internal Set WAS updated
-                const state = manager.getState();
-                const modeContext = state.modeContext as CatchingUpModeContext;
-                expect(modeContext.viewedChannels.has(testChannelId)).toBe(true);
-            });
-
-            it('should notify subscribers with correct previous/new state for viewedChannels', () => {
-                const context: CatchingUpModeContext = {
-                    viewedChannels:      new Set(),
-                    sessionId:           null,
-                    startedAt:           new Date(),
-                    unreadCount:         5,
-                    channelNames:        [],
-                    topAuthors:          [],
-                    timeSinceLastActive: null,
-                };
-                manager.startCatchUp(context);
-
-                const changes: StateChange[] = [];
-                manager.subscribe((change: StateChange): void => {
-                    changes.push(change);
-                });
-
-                manager.markChannelViewed(testChannelId);
-
-                expect(changes).toHaveLength(1);
-                const prevContext = changes[0].previousState.modeContext as CatchingUpModeContext;
-                const newContext = changes[0].newState.modeContext as CatchingUpModeContext;
-
-                // Core immutability contract: previous and new state are different
-                expect(prevContext.viewedChannels.has(testChannelId)).toBe(false);
-                expect(newContext.viewedChannels.has(testChannelId)).toBe(true);
-            });
-        });
-
         describe('setSessionId', () => {
             it('should set sessionId in catching_up mode', () => {
                 const context: CatchingUpModeContext = {
-                    viewedChannels:      new Set(),
                     sessionId:           null,
                     startedAt:           new Date(),
                     unreadCount:         5,
@@ -548,29 +415,6 @@ describe('BotStateManager', () => {
 
             expect(changes).toHaveLength(1);
             expect(changes[0].changeType).toBe('activity_phase');
-        });
-
-        it('should notify subscriber on context update', () => {
-            const context: CatchingUpModeContext = {
-                viewedChannels:      new Set(),
-                sessionId:           null,
-                startedAt:           new Date(),
-                unreadCount:         5,
-                channelNames:        [],
-                topAuthors:          [],
-                timeSinceLastActive: null,
-            };
-            manager.startCatchUp(context);
-
-            const changes: StateChange[] = [];
-            manager.subscribe((change: StateChange): void => {
-                changes.push(change);
-            });
-
-            manager.markChannelViewed(testChannelId);
-
-            expect(changes).toHaveLength(1);
-            expect(changes[0].changeType).toBe('context_update');
         });
 
         it('should support multiple subscribers', () => {
@@ -692,7 +536,6 @@ describe('BotStateManager', () => {
 
         it('should return deep frozen state', () => {
             const context: CatchingUpModeContext = {
-                viewedChannels:      new Set([testChannelId]),
                 sessionId:           null,
                 startedAt:           new Date(),
                 unreadCount:         5,
@@ -714,7 +557,6 @@ describe('BotStateManager', () => {
     describe('getSessionType', () => {
         it('should return "catching_up" when in catching_up mode', () => {
             const context: CatchingUpModeContext = {
-                viewedChannels:      new Set(),
                 sessionId:           null,
                 startedAt:           new Date(),
                 unreadCount:         5,
@@ -729,7 +571,6 @@ describe('BotStateManager', () => {
 
         it('should return "catching_up" when in catching_up mode even if isDMChannel is true', () => {
             const context: CatchingUpModeContext = {
-                viewedChannels:      new Set(),
                 sessionId:           null,
                 startedAt:           new Date(),
                 unreadCount:         5,

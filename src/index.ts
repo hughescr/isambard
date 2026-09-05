@@ -699,7 +699,6 @@ export async function createApp(): Promise<App> {
         questionRegistry,
         channelRegistry:           discordInfra.channelRegistry,
         inboxManager:              discordInfra.inboxManager,
-        botStateManager:           discordInfra.botStateManager,
         timezone:                  resolveTimezone(),
         recordAccess:              paths => contextLayer.contextBuilder.recordAccess(paths),
         bskyClient,

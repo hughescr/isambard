@@ -11,7 +11,8 @@ import {
     perchConfigSchema,
     reconciliationConfigSchema,
     vectorIndexConfigSchema,
-    idleSignalsConfigSchema
+    idleSignalsConfigSchema,
+    sessionConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
@@ -411,6 +412,7 @@ describe('configSchema', () => {
         expect(result.success).toBe(true);
         if(result.success) {
             expect(result.data.app.logLevel).toBe('info');
+            expect(result.data.session).toStrictEqual(sessionConfigSchema.parse({}));
         }
     });
 
@@ -1148,5 +1150,28 @@ describe.concurrent('idleSignalsConfigSchema', () => {
         if(result.success) {
             expect(result.data.presence?.idleSignals).toBeUndefined();
         }
+    });
+});
+
+describe('sessionConfigSchema', () => {
+    test('applies all session defaults', () => {
+        expect(sessionConfigSchema.parse({})).toStrictEqual({
+            mode:                    'oneshot',
+            compactThresholdPercent: 60,
+            humanWaitTargetMs:       10_000,
+            humanWaitCeilingMs:      30_000,
+            perchWrapUpLeadMs:       300_000,
+            perchInterruptGraceMs:   120_000,
+            userMemoryWindowMs:      6 * 60 * 60 * 1000,
+            bootEventsWindowMs:      24 * 60 * 60 * 1000,
+            shutdownTurnWaitMs:      60_000,
+            shutdownDeadlineMs:      120_000,
+            transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
+            debounceMs:              250,
+        });
+    });
+
+    test('rejects an unknown session mode', () => {
+        expect(sessionConfigSchema.safeParse({ mode: 'unknown' }).success).toBe(false);
     });
 });

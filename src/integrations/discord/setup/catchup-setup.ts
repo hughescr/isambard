@@ -114,7 +114,6 @@ export function setupCatchUpSessionRunner(params: SetupCatchUpRunnerParams): Cat
         storeInProgressSignal:  memoryBackend.storeInProgressSignal,
         loadInProgressSignal:   memoryBackend.loadInProgressSignal,
         deleteInProgressSignal: memoryBackend.deleteInProgressSignal,
-        resolveChannelName:     channelId => inboxManager.getChannelName(channelId),
         activityLogger:         params.activityLogger,
         runAgentSession:        async (runOptions) => {
             // Create abort controller from signal

@@ -159,7 +159,6 @@ export type { InterruptingMessageDetails } from '@/agent/types';
  * @example
  * ```typescript
  * const context: CatchingUpModeContext = {
- *   viewedChannels: new Set([channelId1, channelId2]),
  *   sessionId: 'session-123',
  *   startedAt: new Date(),
  *   unreadCount: 42,
@@ -170,8 +169,6 @@ export type { InterruptingMessageDetails } from '@/agent/types';
  * ```
  */
 export interface CatchingUpModeContext {
-    /** Channels that have been viewed during this catch-up session */
-    viewedChannels:      Set<ChannelId>
     /** Claude agent session ID for this catch-up session */
     sessionId:           string | null
     /** When catch-up mode was entered */
@@ -191,7 +188,6 @@ export interface CatchingUpModeContext {
  */
 // Stryker disable ObjectLiteral: Zod schema definition - structure tested through usage
 const catchingUpModeContextSchema = z.object({
-    viewedChannels:      z.set(channelIdSchema),
     sessionId:           z.string().nullable(),
     startedAt:           z.date(),
     unreadCount:         z.number().int().nonnegative(),
@@ -510,14 +506,6 @@ export interface BotStateManager {
      * Clear the current activity phase.
      */
     clearActivityPhase(): void
-
-    /**
-     * Mark a channel as viewed during catch-up.
-     * Only valid in catching_up mode.
-     *
-     * @param channelId - Channel that was viewed
-     */
-    markChannelViewed(channelId: ChannelId): void
 
     /**
      * Set the Claude agent session ID.

@@ -26,9 +26,8 @@
  * Foreground tasks (run_in_background !== true) are not tracked.
  * TaskCreated/TaskCompleted hooks are logging-only; they do NOT touch the tracking sets.
  */
-import { chain } from 'lodash-es';
-import { type ToolUseBlock, extractThinkingContent, extractToolUses  } from './agent';
 import { extractSessionId } from './session-cleanup';
+import { type ToolUseBlock, extractAssistantText, extractThinkingContent, extractToolUses } from './stream-extractors';
 import type { AgentStreamEvent } from './types';
 
 /**
@@ -45,28 +44,6 @@ export interface StreamProgress {
     sessionId:                  string | undefined
     /** Number of background tasks not yet collected via TaskOutput — includes both phase-1 pending (tool_use observed, task_started not yet received) and phase-2 outstanding (task_id promoted, awaiting TaskOutput) entries */
     uncollectedBackgroundTasks: number
-}
-
-/**
- * Extract text content from an assistant message.
- * @param message SDK message with potential content blocks
- * @returns Extracted text or empty string
- */
-function extractAssistantText(message: { type: string, message?: { content?: unknown } }): string {
-    // Stryker disable StringLiteral,ConditionalExpression,BlockStatement: Only called when message.type === 'assistant', defensive check cannot be tested
-    if(message.type !== 'assistant') {
-        return '';
-    }
-    // Stryker restore StringLiteral,ConditionalExpression,BlockStatement
-
-    interface ContentBlock {
-        type:  string
-        text?: string
-    }
-    const content = message.message?.content as ContentBlock[] | undefined;
-    // Stryker disable next-line ArrayDeclaration: Equivalent mutant - filter on strings returns [] same as on []
-    const textBlocks = (content ?? []).filter(block => block.type === 'text');
-    return chain(textBlocks).map('text').compact().join('\n').value().trim();
 }
 
 /**

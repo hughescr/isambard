@@ -4,7 +4,8 @@
  * Provides Claude agent creation, memory MCP server, context building, and plugin loading.
  */
 
-export { createClaudeAgent, type ClaudeAgent, extractToolUses, redactSensitiveArgs } from './agent';
+export { createClaudeAgent, type ClaudeAgent } from './agent';
+export { extractToolUses, redactSensitiveArgs } from './stream-extractors';
 export type { CompactionStateManager } from './hooks/compaction';
 export { createContextBuilder, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from './context-builder';
 export { EventDeltaTracker } from './event-delta-tracker';

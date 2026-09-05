@@ -21,6 +21,7 @@ import type { StreamTracker } from '@/agent/stream-tracker';
 import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
 import * as staticTaskCopierModule from '@/agent/task-directory-copier';
 import * as staticTaskCoordinatorModule from '@/agent/task-persistence-coordinator';
+import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
 import * as staticIndexModule from '@/index';
 import * as staticDiscordModule from '@/integrations/discord/bot';
@@ -38,6 +39,21 @@ import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
 import * as staticTaskSessionModule from '@/storage/task-session';
+
+const sessionConfig: SessionConfig = {
+    mode:                    'oneshot',
+    compactThresholdPercent: 60,
+    humanWaitTargetMs:       10_000,
+    humanWaitCeilingMs:      30_000,
+    perchWrapUpLeadMs:       300_000,
+    perchInterruptGraceMs:   120_000,
+    userMemoryWindowMs:      6 * 60 * 60 * 1000,
+    bootEventsWindowMs:      24 * 60 * 60 * 1000,
+    shutdownTurnWaitMs:      60_000,
+    shutdownDeadlineMs:      120_000,
+    transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
+    debounceMs:              250,
+};
 
 describe('createApp', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -92,7 +108,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -156,7 +173,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -320,7 +338,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -488,7 +507,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -626,7 +646,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -766,7 +787,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -910,7 +932,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -1009,7 +1032,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -1075,7 +1099,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -1144,7 +1169,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -1208,7 +1234,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,
@@ -1377,7 +1404,8 @@ describe('createApp', () => {
                     mainModel:     'sonnet',
                     fallbackModel: 'sonnet',
                 },
-                email: {
+                session: sessionConfig,
+                email:   {
                     user:                           'user@example.com',
                     password:                       'emailpass',
                     pollFallbackMs:                 300_000,

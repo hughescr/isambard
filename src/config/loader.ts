@@ -90,6 +90,10 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
                     : undefined,
             }
             : undefined,
+        session: {
+            mode:                    env.get('SESSION_MODE').default('oneshot').asString(),
+            compactThresholdPercent: env.get('SESSION_COMPACT_THRESHOLD_PERCENT').asIntPositive(),
+        },
         adminDiscordUserId: resources.AdminDiscordUserId.value,
         email:              resources.EmailUser.value
             ? {

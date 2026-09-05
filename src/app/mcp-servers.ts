@@ -4,7 +4,7 @@ import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
-import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager, type BotStateManager } from '@/integrations/discord';
+import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { MemoryToolBackend, MemoryPath, ContactBackend, PersonAllowlist, EmbedderLike, VectorIndex } from '@/storage';
 
@@ -41,11 +41,6 @@ export interface MCPServersOptions {
      * Inbox manager for accessing unread messages.
      */
     inboxManager: InboxManager
-
-    /**
-     * Bot state manager for tracking viewed channels during catch-up.
-     */
-    botStateManager: BotStateManager
 
     /**
      * Server timezone for localTimestamp enrichment in Discord message history.
@@ -303,7 +298,6 @@ export function createMCPServers(options: MCPServersOptions): MCPServers {
             getAllChannels:     () => options.channelRegistry.getAllChannels(),
             getUnmutedChannels: () => options.channelRegistry.getUnmutedChannels(),
         },
-        options.botStateManager,
         options.healthRegistry,
         options.discordReconnectionLoop
     );

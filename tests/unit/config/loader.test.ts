@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { loadConfig, loadDynamoDBConfig, type ResourceProvider, type DynamoDBResourceProvider } from '@/config/loader';
 import { resolveTimezone } from '@/utils/time';
 
@@ -607,5 +607,43 @@ describe('loadDynamoDBConfig', () => {
         };
         const config = loadDynamoDBConfig(resources);
         expect(config.tableName).toBe('CustomTableName');
+    });
+});
+
+describe('loadConfig - Session Config', () => {
+    let originalSessionMode: string | undefined;
+    let originalCompactThresholdPercent: string | undefined;
+
+    beforeEach(() => {
+        originalSessionMode = process.env.SESSION_MODE;
+        originalCompactThresholdPercent = process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
+    });
+
+    afterEach(() => {
+        if(originalSessionMode === undefined) {
+            delete process.env.SESSION_MODE;
+        } else {
+            process.env.SESSION_MODE = originalSessionMode;
+        }
+        if(originalCompactThresholdPercent === undefined) {
+            delete process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
+        } else {
+            process.env.SESSION_COMPACT_THRESHOLD_PERCENT = originalCompactThresholdPercent;
+        }
+    });
+
+    test('parses SESSION_MODE=conductor', () => {
+        process.env.SESSION_MODE = 'conductor';
+        expect(loadConfig(createMockResources()).session.mode).toBe('conductor');
+    });
+
+    test('defaults SESSION_MODE to oneshot when unset', () => {
+        delete process.env.SESSION_MODE;
+        expect(loadConfig(createMockResources()).session.mode).toBe('oneshot');
+    });
+
+    test('overrides compact threshold from SESSION_COMPACT_THRESHOLD_PERCENT', () => {
+        process.env.SESSION_COMPACT_THRESHOLD_PERCENT = '20';
+        expect(loadConfig(createMockResources()).session.compactThresholdPercent).toBe(20);
     });
 });

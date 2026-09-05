@@ -18,7 +18,6 @@ import type { BlueskyClient } from '@/integrations/bsky/client';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
-import type { BotStateManager } from '@/integrations/discord/state/types';
 import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '@/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -44,7 +43,6 @@ describe('createMCPServers', () => {
             questionRegistry:     {} as unknown as QuestionRegistry,
             channelRegistry:      {} as unknown as ChannelRegistryManager,
             inboxManager:         {} as unknown as InboxManager,
-            botStateManager:      {} as unknown as BotStateManager,
             timezone:             'America/New_York',
         };
     });
@@ -212,7 +210,6 @@ describe('createMCPServers', () => {
                 getAllChannels:     expect.any(Function),
                 getUnmutedChannels: expect.any(Function),
             }),
-            mockOptions.botStateManager,
             mockOptions.healthRegistry,
             mockOptions.discordReconnectionLoop
         );

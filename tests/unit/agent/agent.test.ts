@@ -3,254 +3,11 @@ import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import * as agentSdk from '@anthropic-ai/claude-agent-sdk';
 import * as loggerModule from '@hughescr/logger';
-import { createClaudeAgent, extractToolUses, extractThinkingContent, parseToolName, redactSensitiveArgs, resetLogStreamState } from '../../../src/agent/agent';
+import { createClaudeAgent, resetLogStreamState } from '../../../src/agent/agent';
 import * as sessionCleanupModule from '../../../src/agent/session-cleanup';
 import { type PlatformImage } from '../../../src/agent/types';
 import { type DiscordMessageContext, createGuildId, createChannelId, createUserId  } from '../../../src/integrations/discord/types';
 import { mockLogger } from '../../setup';
-
-describe('parseToolName', () => {
-    test.each([
-        // MCP format
-        ['mcp__memory__view', { module: 'memory', tool: 'view' }],
-        ['mcp__discord__get_messages', { module: 'discord', tool: 'get_messages' }],
-        // Nested modules with double underscores
-        ['mcp__discord__search__messages', { module: 'discord', tool: 'search__messages' }],
-        ['mcp__server__a__b__c', { module: 'server', tool: 'a__b__c' }],
-        ['mcp__memory__search', { module: 'memory', tool: 'search' }],
-        // Standard tools
-        ['Read', { module: 'claude', tool: 'Read' }],
-        ['WebFetch', { module: 'claude', tool: 'WebFetch' }],
-        ['TaskCreate', { module: 'claude', tool: 'TaskCreate' }],
-        // Non-MCP patterns (should NOT be treated as MCP)
-        ['regular_tool', { module: 'claude', tool: 'regular_tool' }],
-        ['some__other__tool', { module: 'claude', tool: 'some__other__tool' }],
-        ['mcp_memory_search', { module: 'claude', tool: 'mcp_memory_search' }],
-        ['foo__bar__baz', { module: 'claude', tool: 'foo__bar__baz' }],
-        // Edge cases
-        ['', { module: 'claude', tool: '' }],
-        [undefined, { module: 'claude', tool: 'unknown' }],
-        ['mcp__foo', { module: 'claude', tool: 'mcp__foo' }],
-        ['mcp__', { module: 'claude', tool: 'mcp__' }],
-    ] as const)('should parse "%s" as %j', (input, expected) => {
-        expect(parseToolName(input as string | undefined)).toEqual(expected);
-    });
-});
-
-describe('redactSensitiveArgs', () => {
-    test.each([
-        ['apiKey', 'value'],
-        ['password', 'value'],
-        ['secret', 'value'],
-        ['token', 'value'],
-        ['credential', 'value'],
-        ['auth', 'value'],
-        ['privateKey', 'value'],
-        ['secretKey', 'value'],
-        ['accessKey', 'value'],
-        ['authKey', 'value'],
-        ['passwd', 'value'],
-        ['PASSWORD', 'value'], // Case insensitivity
-        ['ApiKey', 'value'],
-        ['API_KEY', 'value'],
-        ['primaryKey', 'db-key'], // Keys containing "key" substring
-        ['sortKey', 'sort-value'],
-        ['keyboardType', 'numeric'],
-    ])('should redact sensitive key "%s"', (key, value) => {
-        expect(redactSensitiveArgs({ [key]: value })).toEqual({ [key]: '[REDACTED]' });
-    });
-
-    test('should NOT redact non-sensitive keys', () => {
-        const nonSensitive = { path: '/memories/test', content: 'Hello', name: 'my-tool', id: '12345' };
-        expect(redactSensitiveArgs(nonSensitive)).toEqual(nonSensitive);
-    });
-
-    test('should redact in nested objects', () => {
-        const input = {
-            config: {
-                apiKey:   'secret',
-                endpoint: 'https://api.example.com',
-            },
-            level1: {
-                level2: {
-                    level3: {
-                        password: 'deep-secret',
-                    },
-                },
-            },
-        };
-        expect(redactSensitiveArgs(input)).toEqual({
-            config: {
-                apiKey:   '[REDACTED]',
-                endpoint: 'https://api.example.com',
-            },
-            level1: {
-                level2: {
-                    level3: {
-                        password: '[REDACTED]',
-                    },
-                },
-            },
-        });
-    });
-
-    test('should redact in arrays', () => {
-        const input = {
-            users: [
-                { name: 'Alice', password: 'secret1' },
-                { name: 'Bob', password: 'secret2' },
-            ],
-            items: ['string', 123, { token: 'secret' }, null],
-        };
-        expect(redactSensitiveArgs(input)).toEqual({
-            users: [
-                { name: 'Alice', password: '[REDACTED]' },
-                { name: 'Bob', password: '[REDACTED]' },
-            ],
-            items: ['string', 123, { token: '[REDACTED]' }, null],
-        });
-    });
-
-    test('should handle primitives unchanged', () => {
-        expect(redactSensitiveArgs('string')).toBe('string');
-        expect(redactSensitiveArgs(123)).toBe(123);
-        expect(redactSensitiveArgs(true)).toBe(true);
-        expect(redactSensitiveArgs(null)).toBeNull();
-        expect(redactSensitiveArgs(undefined)).toBeUndefined();
-    });
-
-    test('should handle empty collections', () => {
-        expect(redactSensitiveArgs({})).toEqual({});
-        expect(redactSensitiveArgs([])).toEqual([]);
-    });
-
-    test('should redact multiple sensitive keys in same object', () => {
-        const input = {
-            apiKey:   'key1',
-            password: 'pass1',
-            token:    'tok1',
-            path:     '/safe',
-        };
-        expect(redactSensitiveArgs(input)).toEqual({
-            apiKey:   '[REDACTED]',
-            password: '[REDACTED]',
-            token:    '[REDACTED]',
-            path:     '/safe',
-        });
-    });
-});
-
-describe('extractToolUses', () => {
-    test('should return empty array for non-assistant messages', () => {
-        expect(extractToolUses({ type: 'user', message: { content: [] } })).toEqual([]);
-        expect(extractToolUses({ type: 'assistant', message: {} })).toEqual([]);
-        expect(extractToolUses({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } })).toEqual([]);
-    });
-
-    test('should extract single tool_use block', () => {
-        const message = {
-            type:    'assistant',
-            message: {
-                content: [
-                    {
-                        type:  'tool_use',
-                        id:    'tool_123',
-                        name:  'memory_view',
-                        input: { path: '/memories/test' },
-                    },
-                ],
-            },
-        };
-        const result = extractToolUses(message);
-        expect(result).toHaveLength(1);
-        expect(result[0]).toEqual({
-            type:  'tool_use',
-            id:    'tool_123',
-            name:  'memory_view',
-            input: { path: '/memories/test' },
-        });
-    });
-
-    test('should extract multiple tool_use blocks', () => {
-        const message = {
-            type:    'assistant',
-            message: {
-                content: [
-                    { type: 'text', text: 'Let me check' },
-                    {
-                        type:  'tool_use',
-                        id:    'tool_123',
-                        name:  'memory_view',
-                        input: { path: '/memories/test' },
-                    },
-                    {
-                        type:  'tool_use',
-                        id:    'tool_456',
-                        name:  'memory_store',
-                        input: { path: '/memories/new', content: 'data' },
-                    },
-                ],
-            },
-        };
-        const result = extractToolUses(message);
-        expect(result).toHaveLength(2);
-        expect(result[0].name).toBe('memory_view');
-        expect(result[1].name).toBe('memory_store');
-    });
-});
-
-describe('extractThinkingContent', () => {
-    test('should return empty string for non-assistant messages', () => {
-        expect(extractThinkingContent({ type: 'user', message: { content: [] } })).toBe('');
-        expect(extractThinkingContent({ type: 'system', message: { content: [] } })).toBe('');
-        expect(extractThinkingContent({ type: 'result', message: { content: [] } })).toBe('');
-        expect(extractThinkingContent({ type: 'assistant', message: {} })).toBe('');
-        expect(extractThinkingContent({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } })).toBe('');
-    });
-
-    test('should extract single thinking block', () => {
-        const message = {
-            type:    'assistant',
-            message: {
-                content: [
-                    {
-                        type: 'thinking',
-                        text: 'Let me think about this...',
-                    },
-                ],
-            },
-        };
-        expect(extractThinkingContent(message)).toBe('Let me think about this...');
-    });
-
-    test('should extract and join multiple thinking blocks', () => {
-        const message = {
-            type:    'assistant',
-            message: {
-                content: [
-                    { type: 'thinking', text: 'First thought' },
-                    { type: 'text', text: 'Some response' },
-                    { type: 'thinking', text: 'Second thought' },
-                ],
-            },
-        };
-        expect(extractThinkingContent(message)).toBe('First thought\nSecond thought');
-    });
-
-    test('should trim whitespace from final joined thinking content', () => {
-        const message = {
-            type:    'assistant',
-            message: {
-                content: [
-                    { type: 'thinking', text: ' First thought' },
-                    { type: 'thinking', text: 'Second thought ' },
-                ],
-            },
-        };
-        // The join creates " First thought\nSecond thought " and trim removes leading/trailing space
-        expect(extractThinkingContent(message)).toBe('First thought\nSecond thought');
-    });
-});
 
 describe('createClaudeAgent', () => {
     let mockMessageContext: DiscordMessageContext;
@@ -1030,77 +787,28 @@ describe('createClaudeAgent', () => {
         });
     });
 
-    describe('tool filtering by specialMode', () => {
-        test('should exclude inbox tools when specialMode is undefined (chat)', async () => {
+    describe('inbox server and mcp__inbox__* attached for normal, catchup and perching', () => {
+        test.each([
+            ['normal', undefined],
+            ['catchup', 'catchup'],
+            ['perching', 'perching'],
+        ] as const)('attaches inbox tools and server for %s turns', async (_name, specialMode) => {
             const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
             const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
+            await agent.handleInput([mockMessageContext], specialMode === undefined ? undefined : { specialMode });
+
+            const options = querySpy.mock.calls[0][0].options;
+            expect(options.mcpServers?.inbox).toEqual(mockInboxServer);
+            expect(options.allowedTools).toContain('mcp__inbox__*');
+        });
+
+        test('disables cron tools and enables per-task stop affordance', async () => {
+            const agent = createClaudeAgent({});
             await agent.handleInput([mockMessageContext]);
 
-            const queryParams = querySpy.mock.calls[0][0];
-            const allowedTools = queryParams.options.allowedTools;
-
-            // Verify inbox tools are NOT included
-            expect(allowedTools).not.toContain('mcp__inbox__*');
-        });
-
-        test('should exclude inbox MCP server when specialMode is undefined (chat)', async () => {
-            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
-            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.handleInput([mockMessageContext]);
-
-            const queryParams = querySpy.mock.calls[0][0];
-            const mcpServers = queryParams.options.mcpServers;
-
-            // Verify inbox server is NOT registered
-            expect(mcpServers?.inbox).toBeUndefined();
-        });
-
-        test('should exclude inbox tools when specialMode is undefined (handleInput)', async () => {
-            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
-            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.handleInput([mockMessageContext]);
-
-            const queryParams = querySpy.mock.calls[0][0];
-            const allowedTools = queryParams.options.allowedTools;
-
-            // Verify inbox tools are NOT included
-            expect(allowedTools).not.toContain('mcp__inbox__*');
-        });
-
-        test('should exclude inbox MCP server when specialMode is undefined (handleInput)', async () => {
-            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
-            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.handleInput([mockMessageContext]);
-
-            const queryParams = querySpy.mock.calls[0][0];
-            const mcpServers = queryParams.options.mcpServers;
-
-            // Verify inbox server is NOT registered
-            expect(mcpServers?.inbox).toBeUndefined();
-        });
-
-        test('should include inbox tools when specialMode is catchup (handleInput)', async () => {
-            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
-            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.handleInput([mockMessageContext], { specialMode: 'catchup' });
-
-            const queryParams = querySpy.mock.calls[0][0];
-            const allowedTools = queryParams.options.allowedTools;
-
-            // Verify inbox tools ARE included
-            expect(allowedTools).toContain('mcp__inbox__*');
-        });
-
-        test('should include inbox MCP server when specialMode is catchup (handleInput)', async () => {
-            const mockInboxServer = { command: 'node', args: ['inbox-server.js'] };
-            const agent = createClaudeAgent({ inboxMcpServer: mockInboxServer });
-            await agent.handleInput([mockMessageContext], { specialMode: 'catchup' });
-
-            const queryParams = querySpy.mock.calls[0][0];
-            const mcpServers = queryParams.options.mcpServers;
-
-            // Verify inbox server IS registered
-            expect(mcpServers?.inbox).toEqual(mockInboxServer);
+            const options = querySpy.mock.calls[0][0].options;
+            expect(options.disallowedTools).toEqual(['CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup']);
+            expect(options.perTaskStopAffordance).toBe(true);
         });
     });
 

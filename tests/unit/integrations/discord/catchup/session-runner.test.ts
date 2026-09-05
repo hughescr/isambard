@@ -9,7 +9,7 @@ import { createCatchUpSessionRunner,
 } from '@/integrations/discord/catchup/session-runner';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { BotStateManager, OperationalMode, CatchingUpModeContext } from '@/integrations/discord/state/types';
-import { createChannelId, type ChannelId } from '@/integrations/discord/types';
+import { createChannelId } from '@/integrations/discord/types';
 
 describe('CatchUpSessionRunner', () => {
     let mockStateManager: BotStateManager;
@@ -33,7 +33,6 @@ describe('CatchUpSessionRunner', () => {
         // Default mode state
         mockMode = 'idle';
         mockModeContext = {
-            viewedChannels:      new Set<ChannelId>(),
             sessionId:           null,
             startedAt:           new Date(),
             unreadCount:         0,
@@ -50,10 +49,9 @@ describe('CatchUpSessionRunner', () => {
             }),
             goIdle: mock(() => {
                 mockMode        = 'idle';
-                mockModeContext = { viewedChannels: new Set(), sessionId: null, startedAt: new Date(), unreadCount: 0, channelNames: [], topAuthors: [], timeSinceLastActive: null };
+                mockModeContext = { sessionId: null, startedAt: new Date(), unreadCount: 0, channelNames: [], topAuthors: [], timeSinceLastActive: null };
             }),
-            markChannelViewed: mock((channelId: ChannelId) => { mockModeContext.viewedChannels.add(channelId); }),
-            getState:          mock(() => ({ mode: mockMode, activityPhase: null, modeEnteredAt: new Date(), modeContext: mockModeContext })),
+            getState: mock(() => ({ mode: mockMode, activityPhase: null, modeEnteredAt: new Date(), modeContext: mockModeContext })),
         } as unknown as BotStateManager;
 
         // Use a mutable variable for totalUnread that tests can modify
@@ -253,7 +251,6 @@ describe('CatchUpSessionRunner', () => {
             const context = startCatchUpMock.mock.calls[0][0] as CatchingUpModeContext;
 
             // Verify context has correct structure and values
-            expect(context.viewedChannels).toEqual(new Set());
             expect(context.sessionId).toBeNull();
             expect(context.startedAt).toBeInstanceOf(Date);
             expect(context.unreadCount).toBe(5);
@@ -864,28 +861,9 @@ describe('CatchUpSessionRunner', () => {
             expect(mockDeleteInProgressSignal).toHaveBeenCalled();
         });
 
-        it('should use buildCatchUpResumedPrompt with viewed channels and suspending message', async () => {
+        it('should use buildCatchUpResumedPrompt with the suspending message', async () => {
             // Set up state as catching_up
             mockMode = 'catching_up';
-
-            // Mock viewed channels
-            const viewedChannel1 = createChannelId('111');
-            const viewedChannel2 = createChannelId('222');
-            mockModeContext.viewedChannels = new Set([viewedChannel1, viewedChannel2]);
-
-            // Mock channel name resolution
-
-            const mockResolveChannelName = mock((channelId: ChannelId): string | undefined => {
-                if(channelId === viewedChannel1) {
-                    return 'general';
-                }
-                if(channelId === viewedChannel2) {
-                    return 'random';
-                }
-                return undefined;
-            });
-
-            deps.resolveChannelName = mockResolveChannelName;
 
             mockInboxManager.getUnreadOverview = mock().mockReturnValue({
                 totalUnread: 3,
@@ -912,7 +890,7 @@ describe('CatchUpSessionRunner', () => {
 
             // Verify prompt contains resumed content
             expect(options.prompt).toContain('CATCH-UP SESSION RESUMED');
-            expect(options.prompt).toContain('general, random'); // viewed channels
+            expect(options.prompt).not.toContain('Before suspension, you had viewed these channels');
             expect(options.prompt).toContain('TestUser'); // author
             expect(options.prompt).toContain('#urgent'); // channel name
             expect(options.prompt).toContain('Need help ASAP!'); // message content

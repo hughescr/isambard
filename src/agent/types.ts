@@ -432,13 +432,3 @@ export interface MCPInboxManager {
     /** Mark all messages in a channel as read */
     markChannelRead(channelId: ChannelId): Promise<void>
 }
-
-/**
- * Platform-agnostic state manager interface for the inbox MCP server.
- * Extends AgentStateManager with channel viewed tracking.
- * @internal Only consumed by src/agent/inbox-mcp-server.ts.
- */
-export interface MCPInboxStateManager {
-    /** Mark a channel as viewed during catch-up */
-    markChannelViewed(channelId: ChannelId): void
-}

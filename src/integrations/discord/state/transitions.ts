@@ -66,21 +66,4 @@ export function assertValidTransition(from: OperationalMode, to: OperationalMode
     }
 }
 
-/**
- * Get the emoji prefix for a mode.
- *
- * @param mode - The operational mode
- * @returns The emoji string for the mode
- */
-export function getModeEmoji(mode: OperationalMode): string {
-    const baseEmojis: Record<OperationalMode, string> = {
-        idle:               '💤',
-        catching_up:        '📥',
-        processing_message: '💬',
-        perching:           '🪶',
-    };
-
-    return baseEmojis[mode];
-}
-
 export { TransitionError } from '@/errors';

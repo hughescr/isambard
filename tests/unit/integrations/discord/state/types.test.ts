@@ -113,7 +113,6 @@ describe('modeContextSchema', () => {
 
     it('should accept catching_up mode context', () => {
         const context: CatchingUpModeContext = {
-            viewedChannels:      new Set([createChannelId('123')]),
             sessionId:           'session-123',
             startedAt:           new Date(),
             unreadCount:         42,
@@ -299,7 +298,6 @@ describe('isModeContext', () => {
 
     it('should return true for catching_up mode context', () => {
         const context: CatchingUpModeContext = {
-            viewedChannels:      new Set(),
             sessionId:           null,
             startedAt:           new Date(),
             unreadCount:         0,

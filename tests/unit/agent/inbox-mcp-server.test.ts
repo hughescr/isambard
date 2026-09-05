@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createInboxMCPServer } from '@/agent/inbox-mcp-server';
 import * as textGenerator from '@/agent/text-generator';
-import type { MCPChannelRegistry, MCPInboxManager, MCPInboxStateManager } from '@/agent/types';
+import type { MCPChannelRegistry, MCPInboxManager } from '@/agent/types';
 import type { UnreadMessage, UnreadOverview, ChannelSummaryResponse } from '@/integrations/discord/inbox/types';
 import { createChannelId } from '@/integrations/discord/types';
 
@@ -607,116 +607,6 @@ describe('createInboxMCPServer', () => {
             const text = getTextContent(result);
             expect(text).toBeDefined();
             expect(text!).toContain('Error: Test error');
-        });
-    });
-
-    describe('MCPInboxStateManager integration', () => {
-        test('getChannelSummary should mark channel as viewed when state manager provided', async () => {
-            const messages: UnreadMessage[] = [
-                {
-                    id:          '111',
-                    channelId:   createChannelId('123456789'),
-                    channelName: 'general',
-                    guildId:     'DM',
-                    author:      'Alice',
-                    content:     'Hello',
-                    timestamp:   '2025-01-24T10:00:00.000Z',
-                    isRead:      false,
-                },
-            ];
-
-            mockInboxManager.getChannelMessages = mock(() => messages);
-            const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Test summary');
-            spies.push(spy);
-
-            const mockStateManager: MCPInboxStateManager = {
-                markChannelViewed: mock(() => undefined),
-            };
-
-            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
-            const handler = getToolHandler(server, 'getChannelSummary');
-
-            await handler({ channelId: '123456789' });
-
-            expect(mockStateManager.markChannelViewed).toHaveBeenCalledTimes(1);
-            expect(mockStateManager.markChannelViewed).toHaveBeenCalledWith(createChannelId('123456789'));
-        });
-
-        test('getChannelSummary should not mark channel when state manager not provided', async () => {
-            const messages: UnreadMessage[] = [
-                {
-                    id:          '111',
-                    channelId:   createChannelId('123456789'),
-                    channelName: 'general',
-                    guildId:     'DM',
-                    author:      'Alice',
-                    content:     'Hello',
-                    timestamp:   '2025-01-24T10:00:00.000Z',
-                    isRead:      false,
-                },
-            ];
-
-            mockInboxManager.getChannelMessages = mock(() => messages);
-            const spy = spyOn(textGenerator, 'generateTextWithSystemPrompt').mockResolvedValue('Test summary');
-            spies.push(spy);
-
-            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
-            const handler = getToolHandler(server, 'getChannelSummary');
-
-            const result = await handler({ channelId: '123456789' });
-
-            // Should succeed without state manager
-            expect(result.isError).toBeUndefined();
-        });
-
-        test('fetchMessages should mark channel as viewed when state manager provided', async () => {
-            const message: UnreadMessage = {
-                id:          '111',
-                channelId:   createChannelId('123456789'),
-                channelName: 'general',
-                guildId:     'DM',
-                author:      'Alice',
-                content:     'Hello',
-                timestamp:   '2025-01-24T10:00:00.000Z',
-                isRead:      false,
-            };
-
-            mockInboxManager.getMessage = mock(() => message);
-
-            const mockStateManager: MCPInboxStateManager = {
-                markChannelViewed: mock(() => undefined),
-            };
-
-            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry, mockStateManager);
-            const handler = getToolHandler(server, 'fetchMessages');
-
-            await handler({ channelId: '123456789', messageIds: ['111'] });
-
-            expect(mockStateManager.markChannelViewed).toHaveBeenCalledTimes(1);
-            expect(mockStateManager.markChannelViewed).toHaveBeenCalledWith(createChannelId('123456789'));
-        });
-
-        test('fetchMessages should not mark channel when state manager not provided', async () => {
-            const message: UnreadMessage = {
-                id:          '111',
-                channelId:   createChannelId('123456789'),
-                channelName: 'general',
-                guildId:     'DM',
-                author:      'Alice',
-                content:     'Hello',
-                timestamp:   '2025-01-24T10:00:00.000Z',
-                isRead:      false,
-            };
-
-            mockInboxManager.getMessage = mock(() => message);
-
-            const server = createInboxMCPServer(mockInboxManager, mockChannelRegistry);
-            const handler = getToolHandler(server, 'fetchMessages');
-
-            const result = await handler({ channelId: '123456789', messageIds: ['111'] });
-
-            // Should succeed without state manager
-            expect(result.isError).toBeUndefined();
         });
     });
 });

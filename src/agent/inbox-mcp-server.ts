@@ -5,7 +5,7 @@ import { chain } from 'lodash-es';
 import { z } from 'zod';
 import { mcpJsonResult, withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
-import { createChannelId, type MCPInboxManager, type MCPInboxStateManager, type MCPChannelRegistry, type MCPChannelSummaryResponse, type MCPMessageMetadata } from './types';
+import { createChannelId, type MCPInboxManager, type MCPChannelRegistry, type MCPChannelSummaryResponse, type MCPMessageMetadata } from './types';
 import { InvariantViolationError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 
@@ -41,12 +41,10 @@ Keep it factual and actionable. The assistant will decide whether to read full m
  *
  * @param inboxManager - Inbox manager for accessing unread messages
  * @param channelRegistry - Channel registry for resolving channel names
- * @param stateManager - Optional bot state manager for tracking viewed channels
  */
 export function createInboxMCPServer(
     inboxManager: MCPInboxManager,
     channelRegistry: MCPChannelRegistry,
-    stateManager?: MCPInboxStateManager,
     healthRegistry?: ServiceHealthRegistry,
     reconnectionLoop?: ReconnectionLoop
 ) {
@@ -87,11 +85,6 @@ export function createInboxMCPServer(
                     withToolErrorHandling('getChannelSummary', async (args): Promise<CallToolResult> => {
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
                         const messages = inboxManager.getChannelMessages(channelId);
-
-                        // Track that this channel was viewed during catch-up
-                        if(stateManager) {
-                            stateManager.markChannelViewed(channelId);
-                        }
 
                         if(messages.length === 0) {
                             return mcpJsonResult({
@@ -188,11 +181,6 @@ export function createInboxMCPServer(
                     // Stryker disable next-line StringLiteral: tool name is logged for observability, not behavior
                     withToolErrorHandling('fetchMessages', async (args): Promise<CallToolResult> => {
                         const channelId = createChannelId(channelRegistry.resolveChannelId(args.channelId));
-
-                        // Track that this channel was viewed during catch-up
-                        if(stateManager) {
-                            stateManager.markChannelViewed(channelId);
-                        }
 
                         const fetchedMessages = [];
 

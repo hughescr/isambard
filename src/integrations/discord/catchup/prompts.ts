@@ -4,8 +4,6 @@ import { formatTimeHeader } from '@/utils';
  * Options for building the catch-up resumed prompt.
  */
 export interface CatchUpResumedOptions {
-    /** Channel names that were viewed during catch-up */
-    viewedChannels:    string[]
     /** Number of unread messages remaining */
     remainingUnread:   number
     /** Number of channels with unread messages remaining */
@@ -55,8 +53,7 @@ Sessions are ephemeral but your TaskList is durable across sessions.
 5. Send Discord messages if responses are needed
 6. Mark as read LAST (so if interrupted, you won't miss anything)
 
-Not all messages need responses. Prioritize based on urgency and relevance.
-Your inbox tools will not be available in regular conversations, so process everything now.`;
+Not all messages need responses. Prioritize based on urgency and relevance.`;
 }
 
 /**
@@ -66,11 +63,7 @@ Your inbox tools will not be available in regular conversations, so process ever
  * @returns The formatted resumed prompt
  */
 export function buildCatchUpResumedPrompt(options: CatchUpResumedOptions): string {
-    const { viewedChannels, remainingUnread, remainingChannels, newMessage } = options;
-
-    const viewedList = viewedChannels.length > 0
-        ? viewedChannels.join(', ')
-        : 'None yet';
+    const { remainingUnread, remainingChannels, newMessage } = options;
 
     const messagePlural = remainingUnread === 1 ? 'message remains' : 'messages remain';
     const channelPlural = remainingChannels === 1 ? 'channel' : 'channels';
@@ -80,9 +73,6 @@ export function buildCatchUpResumedPrompt(options: CatchUpResumedOptions): strin
 --- CATCH-UP SESSION RESUMED ---
 
 A new message arrived while you were catching up on unread messages.
-
-Before suspension, you had viewed these channels (summaries retrieved):
-${viewedList}
 
 Current inbox state:
 - ${remainingUnread} unread ${messagePlural} across ${remainingChannels} ${channelPlural}

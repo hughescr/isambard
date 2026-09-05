@@ -28,6 +28,7 @@ import * as taskCleanupModule from '@/agent/task-cleanup-processor';
 import * as taskDirectoryCopierModule from '@/agent/task-directory-copier';
 import * as taskPersistenceModule from '@/agent/task-persistence-coordinator';
 import * as storageLayerModule from '@/app/storage-layer';
+import type { SessionConfig } from '@/config';
 import * as configLoaderModule from '@/config/loader';
 import * as indexModule from '@/index';
 import * as discordBotModule from '@/integrations/discord/bot';
@@ -42,6 +43,21 @@ import type { MemoryPath } from '@/storage/memory-tool/types';
 import * as vecStoreModule from '@/storage/memory-vec-store';
 import type { IndexerJob } from '@/storage/memory-vec-store/types';
 import * as taskSessionModule from '@/storage/task-session';
+
+const sessionConfig: SessionConfig = {
+    mode:                    'oneshot',
+    compactThresholdPercent: 60,
+    humanWaitTargetMs:       10_000,
+    humanWaitCeilingMs:      30_000,
+    perchWrapUpLeadMs:       300_000,
+    perchInterruptGraceMs:   120_000,
+    userMemoryWindowMs:      6 * 60 * 60 * 1000,
+    bootEventsWindowMs:      24 * 60 * 60 * 1000,
+    shutdownTurnWaitMs:      60_000,
+    shutdownDeadlineMs:      120_000,
+    transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
+    debounceMs:              250,
+};
 
 // ─── 1. Config wiring ───────────────────────────────────────────────────────
 describe('Vector feature wiring', () => {
@@ -136,6 +152,7 @@ describe('Vector feature wiring', () => {
                 spyOn(configLoaderModule, 'loadConfig').mockReturnValue({
                     app:     { nodeEnv: 'test', logLevel: 'info', port: 3000 },
                     agent:   { oauthToken: 'test-oauth-token', mainModel: 'sonnet', fallbackModel: 'sonnet' },
+                    session: sessionConfig,
                     discord: {
                         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                         applicationId: '123456789012345678',
@@ -375,6 +392,7 @@ describe('Vector feature wiring', () => {
                 spyOn(configLoaderModule, 'loadConfig').mockReturnValue({
                     app:     { nodeEnv: 'test', logLevel: 'info', port: 3000 },
                     agent:   { oauthToken: 'test-oauth-token', mainModel: 'sonnet', fallbackModel: 'sonnet' },
+                    session: sessionConfig,
                     discord: {
                         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
                         applicationId: '123456789012345678',

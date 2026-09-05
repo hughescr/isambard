@@ -13,7 +13,6 @@ import { chain } from 'lodash-es';
 import { DateTime } from 'luxon';
 import type { InboxManager } from '../inbox';
 import type { BotStateManager, CatchingUpModeContext, InterruptingMessageDetails } from '../state';
-import type { ChannelId } from '../types';
 import { buildCatchUpPrompt, buildCatchUpResumedPrompt } from './prompts';
 import type { ActivityLogger } from '@/agent';
 import { formatTimeSince } from '@/utils';
@@ -101,8 +100,6 @@ export interface CatchUpSessionRunnerDeps {
     runAgentSession:        (options: RunAgentSessionOptions) => Promise<AgentSessionResult>
     /** Optional callback invoked when catch-up completes */
     onCatchUpComplete?:     () => void
-    /** Optional function to resolve channel ID to channel name */
-    resolveChannelName?:    (channelId: ChannelId) => string | undefined
     /** Optional activity logger for tracking catch-up lifecycle events */
     activityLogger?:        ActivityLogger
 }
@@ -205,7 +202,6 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
     let suspendedState: {
         sessionId:           string | undefined
         interruptingMessage: InterruptingMessage
-        viewedChannels:      Set<ChannelId>
     } | null = null;
 
     // Local closure function for completing catch-up
@@ -408,11 +404,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
 
             // Create catch-up context
             const catchUpContext: CatchingUpModeContext = {
-                viewedChannels: new Set(),
-                sessionId:      null,
-                startedAt:      new Date(),
-                unreadCount:    overview.totalUnread,
-                channelNames:   overview.channels.map(ch => ch.channelName),
+                sessionId:    null,
+                startedAt:    new Date(),
+                unreadCount:  overview.totalUnread,
+                channelNames: overview.channels.map(ch => ch.channelName),
                 topAuthors,
                 timeSinceLastActive,
             };
@@ -458,16 +453,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 return;
             }
 
-            // Read viewedChannels from BotStateManager context BEFORE goIdle
-            const state = deps.stateManager.getState();
-            const catchUpContext = state.modeContext as CatchingUpModeContext;
-            const viewedChannels = new Set(catchUpContext.viewedChannels);
-
-            // Save state to suspendedState
+            // Save state needed to resume the interrupted catch-up session.
             suspendedState = {
                 sessionId:           currentSessionId,
                 interruptingMessage: message,
-                viewedChannels,
             };
 
             // Transition to idle
@@ -504,7 +493,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 return;
             }
 
-            // Build new CatchingUpModeContext with restored viewedChannels and fresh inbox data
+            // Build new CatchingUpModeContext with fresh inbox data.
             // Stryker disable ArrowFunction,StringLiteral,ArrayDeclaration: Status context values affect status generation but not core behavior
             const allMessages = overview.channels.flatMap(ch => deps.inboxManager.getChannelMessages(ch.channelId));
             const topAuthors = chain(allMessages).map('author').countBy().toPairs().orderBy([1], ['desc']).take(3).map(([author]) => author).value();
@@ -516,11 +505,10 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
                 : null;
 
             const catchUpContext: CatchingUpModeContext = {
-                viewedChannels: savedState.viewedChannels,
-                sessionId:      savedState.sessionId ?? null,
-                startedAt:      new Date(),
-                unreadCount:    overview.totalUnread,
-                channelNames:   overview.channels.map(ch => ch.channelName),
+                sessionId:    savedState.sessionId ?? null,
+                startedAt:    new Date(),
+                unreadCount:  overview.totalUnread,
+                channelNames: overview.channels.map(ch => ch.channelName),
                 topAuthors,
                 timeSinceLastActive,
             };
@@ -544,11 +532,7 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             };
             // Stryker restore StringLiteral
 
-            // Build resumed prompt
-            const viewedChannelIds = [...savedState.viewedChannels];
-            const viewedChannels = viewedChannelIds.map(channelId =>
-                deps.resolveChannelName?.(channelId) ?? channelId);
-
+            // Build resumed prompt.
             // Stryker disable StringLiteral: Fallback display strings not behavior-critical
             const newMessage = {
                 author:      savedState.interruptingMessage.author,
@@ -558,7 +542,6 @@ export function createCatchUpSessionRunner(deps: CatchUpSessionRunnerDeps): Catc
             // Stryker restore StringLiteral
 
             const prompt = buildCatchUpResumedPrompt({
-                viewedChannels,
                 remainingUnread:   overview.totalUnread,
                 remainingChannels: overview.channels.length,
                 newMessage,

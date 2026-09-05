@@ -3,8 +3,7 @@ import {
     VALID_TRANSITIONS,
     isValidTransition,
     assertValidTransition,
-    TransitionError,
-    getModeEmoji
+    TransitionError
 } from '@/integrations/discord/state/transitions';
 import type { OperationalMode } from '@/integrations/discord/state/types';
 
@@ -142,24 +141,6 @@ describe('assertValidTransition', () => {
     test('throws for same mode to same mode', () => {
         expect(() => assertValidTransition('idle', 'idle'))
             .toThrow(TransitionError);
-    });
-});
-
-describe('getModeEmoji', () => {
-    test('idle returns sleep emoji', () => {
-        expect(getModeEmoji('idle')).toBe('💤');
-    });
-
-    test('catching_up returns inbox emoji', () => {
-        expect(getModeEmoji('catching_up')).toBe('📥');
-    });
-
-    test('processing_message returns speech emoji', () => {
-        expect(getModeEmoji('processing_message')).toBe('💬');
-    });
-
-    test('perching returns feather emoji', () => {
-        expect(getModeEmoji('perching')).toBe('🪶');
     });
 });
 

@@ -25,15 +25,6 @@ import {
 import type { CompactionStateManager } from '@/agent/hooks/compaction';
 import { InvariantViolationError } from '@/errors';
 
-/** Type guard: check if a ModeContext is a CatchingUpModeContext (has unreadCount). */
-// Stryker disable ConditionalExpression,StringLiteral: Equivalent — markChannelViewed creates new Set via spread, never mutates in place
-function isCatchingUpContext(context: unknown): context is CatchingUpModeContext {
-    return typeof context === 'object' && context !== null && 'unreadCount' in context;
-}
-// Stryker restore ConditionalExpression,StringLiteral
-
-// Re-export for convenience
-
 /**
  * Dependencies required by BotStateManager.
  */
@@ -113,20 +104,8 @@ export class BotStateManagerImpl implements BotStateManager {
 
     /**
      * Deep clone mode context.
-     * Handles catching_up context with Set<ChannelId>.
      */
-
     private cloneModeContext(context: ModeContext): ModeContext {
-        // Stryker disable StringLiteral,BlockStatement: Equivalent — cloning with/without viewedChannels deep copy has same behavior since markChannelViewed always creates a new Set via spread (never mutates in place)
-        if(isCatchingUpContext(context)) {
-            // CatchingUpModeContext - identified by unique property
-            return {
-                ...context,
-                viewedChannels: new Set(context.viewedChannels),
-            };
-        }
-        // Stryker restore StringLiteral,BlockStatement
-        // Other contexts are plain objects
         return { ...context };
     }
 
@@ -219,10 +198,7 @@ export class BotStateManagerImpl implements BotStateManager {
             mode:          'catching_up',
             activityPhase: null,
             modeEnteredAt: new Date(),
-            modeContext:   {
-                ...context,
-                viewedChannels: new Set(context.viewedChannels), // Clone the Set
-            },
+            modeContext:   { ...context },
         };
 
         // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
@@ -386,33 +362,6 @@ export class BotStateManagerImpl implements BotStateManager {
      */
     getCompactionStateManager(): CompactionStateManager {
         return this;
-    }
-
-    markChannelViewed(channelId: ChannelId): void {
-        this.assertNotStopped();
-        const previousState = this.cloneState(this.currentState);
-
-        if(this.currentState.mode !== 'catching_up') {
-            // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-            this.deps.logger.warn({ mode: this.currentState.mode }, 'Cannot mark channel viewed: not in catching_up mode');
-            // Stryker restore ObjectLiteral,StringLiteral
-            return;
-        }
-
-        const context = this.currentState.modeContext as CatchingUpModeContext;
-        // Create new state with new Set containing the channel (immutable)
-        this.currentState = {
-            ...this.currentState,
-            modeContext: {
-                ...context,
-                viewedChannels: new Set([...context.viewedChannels, channelId])
-            }
-        };
-
-        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
-        this.deps.logger.debug({ channelId }, 'Channel marked as viewed');
-        // Stryker restore ObjectLiteral,StringLiteral
-        this.notifySubscribers(previousState, 'context_update');
     }
 
     setSessionId(sessionId: string): void {

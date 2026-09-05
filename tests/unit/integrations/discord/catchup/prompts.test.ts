@@ -23,6 +23,10 @@ describe('buildCatchUpPrompt', () => {
         expect(prompt).toContain('markChannelRead');
     });
 
+    it('does not claim inbox tools are unavailable in regular conversations', () => {
+        expect(buildCatchUpPrompt(10, 2)).not.toContain('will not be available in regular conversations');
+    });
+
     it('should include workflow guidance', () => {
         const prompt = buildCatchUpPrompt(10, 2);
         expect(prompt).toContain('Recommended Workflow');
@@ -50,7 +54,6 @@ describe('buildCatchUpPrompt', () => {
 describe('buildCatchUpResumedPrompt', () => {
     it('should include time context', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general'],
             remainingUnread:   5,
             remainingChannels: 2,
             newMessage:        {
@@ -64,24 +67,8 @@ describe('buildCatchUpResumedPrompt', () => {
         expect(prompt).toContain('UTC:');
     });
 
-    it('should include viewed channels', () => {
+    it('does not render unmaintained viewed-channel state', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general', 'random'],
-            remainingUnread:   5,
-            remainingChannels: 2,
-            newMessage:        {
-                author:      'Alice',
-                channelName: 'general',
-                content:     'Hello!',
-            },
-        };
-        const prompt = buildCatchUpResumedPrompt(options);
-        expect(prompt).toContain('general, random');  // verify comma-space separator
-    });
-
-    it('should show "None yet" when no channels viewed', () => {
-        const options: CatchUpResumedOptions = {
-            viewedChannels:    [],
             remainingUnread:   10,
             remainingChannels: 3,
             newMessage:        {
@@ -91,12 +78,12 @@ describe('buildCatchUpResumedPrompt', () => {
             },
         };
         const prompt = buildCatchUpResumedPrompt(options);
-        expect(prompt).toContain('None yet');
+        expect(prompt).not.toContain('Before suspension, you had viewed these channels');
+        expect(prompt).not.toContain('None yet');
     });
 
     it('should include new message details', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    [],
             remainingUnread:   5,
             remainingChannels: 1,
             newMessage:        {
@@ -113,7 +100,6 @@ describe('buildCatchUpResumedPrompt', () => {
 
     it('should include remaining unread state', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general'],
             remainingUnread:   8,
             remainingChannels: 2,
             newMessage:        {
@@ -129,7 +115,6 @@ describe('buildCatchUpResumedPrompt', () => {
 
     it('should handle singular remaining counts', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general'],
             remainingUnread:   1,
             remainingChannels: 1,
             newMessage:        {
@@ -147,7 +132,6 @@ describe('buildCatchUpResumedPrompt', () => {
 
     it('should handle plural remaining counts', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general'],
             remainingUnread:   5,
             remainingChannels: 3,
             newMessage:        {
@@ -164,7 +148,6 @@ describe('buildCatchUpResumedPrompt', () => {
 
     it('should present new message for prioritization', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general'],
             remainingUnread:   5,
             remainingChannels: 2,
             newMessage:        {
@@ -182,7 +165,6 @@ describe('buildCatchUpResumedPrompt', () => {
 
     it('should tell agent to continue catching up after handling', () => {
         const options: CatchUpResumedOptions = {
-            viewedChannels:    ['general'],
             remainingUnread:   3,
             remainingChannels: 1,
             newMessage:        {
