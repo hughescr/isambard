@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 import { channelIdSchema, type ChannelId } from '../types';
+import { activityPhaseSchema, isActivityPhase, type ActivityPhase } from '@/agent';
 // eslint-disable-next-line boundaries/dependencies -- discord/state/types imports CompactionStateManager for getCompactionStateManager(); direct import avoids circular dep through agent index
 import type { CompactionStateManager } from '@/agent/hooks/compaction';
 // eslint-disable-next-line boundaries/dependencies -- discord/state/types re-exports agent OperationalMode; direct import avoids circular dep through agent index
@@ -68,67 +69,13 @@ export const operationalModeSchema = z.enum(['idle', 'catching_up', 'processing_
 // ============================================================================
 
 /**
- * Discriminated union representing the current activity phase during message processing.
- * Each phase maps to different Discord presence status and behavior.
- *
- * Phases:
- * - thinking: Bot is processing the user's message and formulating a response
- * - using_tool: Bot is executing a specific tool (memory search, file read, etc.)
- * - responding: Bot is generating and sending the response text
- *
- * @example
- * ```typescript
- * const thinkingPhase: ActivityPhase = {
- *   type: 'thinking',
- *   startedAt: new Date(),
- *   userMessage: 'What is the weather?'
- * };
- *
- * const toolPhase: ActivityPhase = {
- *   type: 'using_tool',
- *   toolName: 'memory_tool',
- *   startedAt: new Date(),
- *   generatedStatus: 'Searching memories...'
- * };
- * ```
+ * `ActivityPhase`, `activityPhaseSchema` and `isActivityPhase` moved to
+ * `src/agent/session/activity-phase.ts` (plan amendment A1 / P4): that module is now the sole
+ * owner. Re-exported here (and used locally below, e.g. by `botStateSchema`) so `presence/`,
+ * `manager.ts`, `bot.ts` and their tests keep compiling unchanged until P14.
  */
-export type ActivityPhase
-    = | { type: 'thinking', startedAt: Date, userMessage?: string, generatedStatus?: string }
-      | { type: 'using_tool', toolName: string, startedAt: Date, generatedStatus?: string }
-      | { type: 'responding', startedAt: Date, generatedStatus?: string }
-      | { type: 'compacting', startedAt: Date, trigger?: 'manual' | 'auto' };
-
-/**
- * Zod schema for validating activity phases.
- * Uses discriminated union for type-safe validation.
- */
-// Stryker disable StringLiteral,ObjectLiteral: Zod schema definition - discriminated union values tested through usage
-export const activityPhaseSchema = z.discriminatedUnion('type', [
-    z.object({
-        type:            z.literal('thinking'),
-        startedAt:       z.date(),
-        userMessage:     z.string().optional(),
-        generatedStatus: z.string().optional(),
-    }),
-    z.object({
-        type:            z.literal('using_tool'),
-        toolName:        z.string(),
-        startedAt:       z.date(),
-        generatedStatus: z.string().optional(),
-    }),
-    z.object({
-        type:            z.literal('responding'),
-        startedAt:       z.date(),
-        generatedStatus: z.string().optional(),
-    }),
-    z.object({
-        type:      z.literal('compacting'),
-        startedAt: z.date(),
-        // Stryker disable next-line ArrayDeclaration: Zod enum values are validated at runtime; array mutation produces a Zod error, not a silent pass
-        trigger:   z.enum(['manual', 'auto']).optional(),
-    }),
-// Stryker restore StringLiteral,ObjectLiteral
-]);
+// eslint-disable-next-line unicorn/prefer-export-from -- activityPhaseSchema/ActivityPhase are also used locally below (e.g. botStateSchema, updateActivityPhase); `export…from` would not bind them for local use
+export { activityPhaseSchema, isActivityPhase, type ActivityPhase };
 
 // ============================================================================
 // Mode Context - Mode-specific state data
@@ -560,24 +507,6 @@ export interface BotStateManager {
 // ============================================================================
 // Type Guards
 // ============================================================================
-
-/**
- * Type guard to check if a value is a valid ActivityPhase.
- *
- * @param value - Value to check
- * @returns True if value is an ActivityPhase
- *
- * @example
- * ```typescript
- * if (isActivityPhase(phase)) {
- *   console.log('Phase type:', phase.type);
- * }
- * ```
- */
-export function isActivityPhase(value: unknown): value is ActivityPhase {
-    const result = activityPhaseSchema.safeParse(value);
-    return result.success;
-}
 
 /**
  * Type guard to check if a value is a valid ModeContext.

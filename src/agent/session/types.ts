@@ -57,6 +57,9 @@ export type SessionQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>, o
  */
 export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact' | 'boot';
 
+/** Every {@link EnvelopeKind} member, for table-driven tests that must stay exhaustive as the union grows. */
+export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot'];
+
 /**
  * The minimal envelope shape the ledger keys `turn_submitted` events on — distinct from
  * {@link Envelope} (the full domain type built by the P6 envelope builders): `queuedAt` is when
