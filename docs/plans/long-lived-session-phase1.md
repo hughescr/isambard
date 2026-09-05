@@ -8,6 +8,14 @@ Fifteen ordered packages. The conductor lands beside the one-shot path behind `c
 
 Total: 15 packages, 158 points (1 point = rename a variable across 3 files, no tests).
 
+## Plan amendments (binding on every package)
+
+Resolved from the completeness critic's cross-package gaps on 2026-09-04, before P3 starts. Where a package section below conflicts with an amendment, the amendment wins.
+
+- **A1. One owner for the shared session types.** `src/agent/session/types.ts` (P3) is the sole owner of `SessionRole`, `EnvelopeKind` (the full 8-member union used by envelopes and the ledger; the ledger keys `queued.human` on `kind === 'discord'`), `Envelope`/`EnvelopeMeta`, and the `JournalEntry` discriminated union (member names: `envelope_submitted`, `response_delivered`, `turn_completed`, `turn_failed`, `task_started`, `task_completed`, `compaction_started`, `compaction_completed`, `compaction_failed`, `session_opened`). P4 does not create `envelope-types.ts`; it imports from `./types`. P6 does not define its own `Envelope`. P7's `ports.ts` declares the `SessionJournal`/`ResumeStore` port interfaces only and imports `JournalEntry` from `./types`. P8's `src/storage/session-journal/types.ts` holds only the DynamoDB item shape and a zod `journalEntrySchema` that `satisfies z.ZodType<JournalEntry>` from `@/agent` with identical member names; P8 does not redeclare `SessionRole`.
+- **A2. One place for test fakes.** `tests/helpers/` (P3) is the only home for fakes: `fake-clock.ts`, `fake-query.ts`, `fake-discord-transport.ts`, `fake-journal.ts` (gains `flushCount` and an optional reject-on-flush in P7), and `fake-resume-store.ts` (added by P7). P7 does not create `tests/fakes/`.
+- **A3. Every package folds in the "Gaps" items that name it** (see the Gaps section) as part of its scope; the orchestrator passes them in the package brief.
+
 ## Work packages
 
 ### P1 · Session config flag, stream-extractors leaf, unified tools, dead-code deletion (8 pts, deployable after)
@@ -593,10 +601,10 @@ Do not graft the config flag, the ledger-to-BotStateManager shim, or the legacy-
 - [ ] **Perch conductor boot: journal, resume store, recovery and boot-bundle envelope for the perch role**
   - Why: Design 3.4/7.3 apply to both sessions (resume by id, lost tasks reported, boot bundle at start). P8 makes journal/resumeStore role-keyed and P10 writes runBootSequence for the conversation conductor (replay, catch-up). P12 opens the perch conductor but only says 'retention keeps both session ids'; it never wires createSessionJournal('perch'), createResumeStore('perch'), computeRecovery for perch-started workflows, or a perch boot envelope on process start. Perch is the session that launches the long workflows the whole design exists to keep alive, so unreported lost perch tasks defeat the purpose.
   - Where: P12 (src/app/sessions.ts openPerchConductor: pass role-keyed journal + resumeStore; a perch-flavoured runBootSequence call without replay/catch-up steps) plus a bot-lifecycle test asserting two journals and two resume ids.
-- [ ] **Single owner for EnvelopeKind, Envelope, SessionRole and JournalEntry — four packages define conflicting unions**
+- [x] **Single owner for EnvelopeKind, Envelope, SessionRole and JournalEntry — four packages define conflicting unions** — resolved by plan amendment A1/A2 above
   - Why: P3 types.ts defines EnvelopeKind with 8 members and an Envelope; P4 envelope-types.ts defines EnvelopeKind with 4 members and claims ownership ('P6 imports from P4'); P6 envelope.ts defines its own Envelope with 8 kinds; P8 storage/session-journal/types.ts defines envelopeKind with 'perch_slot' and moves SessionRole to storage while P3/P5 define SessionRole in src/agent/session. P7 ports.ts declares JournalEntry (response_delivered, turn_failed, compaction_failed) and P8 declares journalEntrySchema (delivered, turn_completed, compaction_completed) with different member names and shapes, and P7 says P8 implements P7's port. The first implementer of each will collide at typecheck, and the ledger's queued.human counter keys on kind === 'discord' while the journal keys on 'perch_slot'.
   - Where: Amend P3 to be the sole owner of SessionRole/EnvelopeKind/Envelope/JournalEntry (or P4 for the kind union) and strike the duplicate definitions from P4, P6, P7 and P8; P8's zod schema must be `satisfies` the P7 port union with identical member names.
-- [ ] **Duplicate test fakes: tests/helpers/fake-journal.ts (P3) versus tests/fakes/session-ports.ts FakeJournal/FakeResumeStore (P7)**
+- [x] **Duplicate test fakes: tests/helpers/fake-journal.ts (P3) versus tests/fakes/session-ports.ts FakeJournal/FakeResumeStore (P7)** — resolved by plan amendment A1/A2 above
   - Why: P3 creates tests/helpers/{fake-clock,fake-query,fake-discord-transport,fake-journal}.ts with entries()/byKind()/scriptReadSince; P7 creates a second FakeJournal in a new tests/fakes/ directory with entries[]/flushCount and says P8/P9 reuse it. Two fakes for one port in two directories is the kind of drift the harness package exists to prevent, and knip ignores non-.test helpers so neither will be flagged.
   - Where: P7: drop tests/fakes/session-ports.ts and extend P3's tests/helpers/fake-journal.ts (add flushCount, reject-on-flush) and add tests/helpers/fake-resume-store.ts there.
 - [ ] **Idle-status side effects in the conductor onResponse branch: addRecentMessage('izzy') and the per-exchange activity log**
