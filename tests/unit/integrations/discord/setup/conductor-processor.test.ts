@@ -83,6 +83,10 @@ class FakeConductor implements Conductor {
     });
 
     shutdown = (): Promise<void> => Promise.resolve();
+
+    private thresholdPercent = 60;
+    getCompactionThresholdPercent = (): number => this.thresholdPercent;
+    setCompactionThresholdPercent = (percent: number): void => { this.thresholdPercent = percent; };
 }
 
 function makeContextPolicy(overrides: Partial<ContextPolicy> = {}): ContextPolicy {

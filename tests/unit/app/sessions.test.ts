@@ -229,6 +229,33 @@ describe('createConversationConductor', () => {
         expect(typeof result.contextPolicy.resetAll).toBe('function');
     });
 
+    it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compact_boundary pair as one completed record', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { ledgerStore, compactionTelemetry } = await createConversationConductor(h.params);
+
+        ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(5) });
+        ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(10) });
+
+        expect(compactionTelemetry.getRecords()).toEqual([
+            { startedAt: new Date(5), thresholdAtStart: DEFAULT_CONFIG.compactThresholdPercent, finishedAt: new Date(10) },
+        ]);
+    });
+
+    it('compactionTelemetry reads the conductor\'s live threshold at each compaction_started, not a value cached at construction', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore, compactionTelemetry } = await createConversationConductor(h.params);
+        conductor.setCompactionThresholdPercent(77);
+
+        ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(0) });
+
+        expect(compactionTelemetry.getRecords()).toHaveLength(1);
+        expect(compactionTelemetry.getRecords()[0].thresholdAtStart).toBe(77);
+    });
+
     it('wires all twelve MCP server instances into the session\'s SDK options, correctly keyed', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FULL_MCP_SERVERS);
@@ -472,6 +499,33 @@ describe('createPerchConductor', () => {
 
         expect(result.ledgerStore.get().role).toBe('perch');
         expect(typeof result.conductor.submit).toBe('function');
+    });
+
+    it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compact_boundary pair as one completed record', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { ledgerStore, compactionTelemetry } = await createPerchConductor(h.params);
+
+        ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(5) });
+        ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(10) });
+
+        expect(compactionTelemetry.getRecords()).toEqual([
+            { startedAt: new Date(5), thresholdAtStart: DEFAULT_CONFIG.compactThresholdPercent, finishedAt: new Date(10) },
+        ]);
+    });
+
+    it('compactionTelemetry reads the conductor\'s live threshold at each compaction_started, not a value cached at construction', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore, compactionTelemetry } = await createPerchConductor(h.params);
+        conductor.setCompactionThresholdPercent(88);
+
+        ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(0) });
+
+        expect(compactionTelemetry.getRecords()).toHaveLength(1);
+        expect(compactionTelemetry.getRecords()[0].thresholdAtStart).toBe(88);
     });
 
     it('merges a SessionStart boot-bundle hook (perch variant) carrying the task list and perch context', async () => {

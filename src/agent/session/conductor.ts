@@ -201,8 +201,8 @@ export interface DeliverResult {
 
 /** The long-lived session conductor returned by {@link createConductor}. */
 export interface Conductor {
-    open:                    () => Promise<{ sessionId: string, resumed: boolean }>
-    submit:                  (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
+    open:                          () => Promise<{ sessionId: string, resumed: boolean }>
+    submit:                        (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
     /**
      * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
      * this id, `send` is skipped entirely; otherwise `send` runs, `response_delivered` is
@@ -213,7 +213,7 @@ export interface Conductor {
      * replays `response_delivered` rows into a fresh guard, so a `response_delivered` row that
      * did land is never re-sent even if this call never got to return.
      */
-    deliver:                 (envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => Promise<DeliverResult>
+    deliver:                       (envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => Promise<DeliverResult>
     /**
      * Reports a just-finished compaction's PostCompact summary (design 3.3, P8): logs it via
      * {@link import('./compaction-log').logCompactionSummary} when {@link CreateConductorParams.memoryBackend}
@@ -222,11 +222,15 @@ export interface Conductor {
      * (P9's hook wiring — see the module doc) is responsible for calling this from an actual
      * PostCompact hook with the SDK's `compact_summary`.
      */
-    recordCompactionSummary: (summary: string) => Promise<void>
-    interruptCurrent:        (options?: InterruptCurrentOptions) => Promise<void>
-    subscribeTurn:           (handler: (turnId: string, frame: SDKMessage) => void) => () => void
-    status:                  () => ConductorStatus
-    shutdown:                (options: ShutdownOptions) => Promise<void>
+    recordCompactionSummary:       (summary: string) => Promise<void>
+    interruptCurrent:              (options?: InterruptCurrentOptions) => Promise<void>
+    subscribeTurn:                 (handler: (turnId: string, frame: SDKMessage) => void) => () => void
+    status:                        () => ConductorStatus
+    shutdown:                      (options: ShutdownOptions) => Promise<void>
+    /** The compaction guard's live threshold percentage — see {@link CompactionGuard.getThresholdPercent}. */
+    getCompactionThresholdPercent: () => number
+    /** Changes the compaction guard's live threshold percentage — see {@link CompactionGuard.setThresholdPercent}. */
+    setCompactionThresholdPercent: (percent: number) => void
 }
 
 /** How a caller's `submit()` promise is settled once its turn is resolved one way or another. */
@@ -1074,5 +1078,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
 
     return {
         open, submit, deliver, recordCompactionSummary, interruptCurrent, subscribeTurn, status, shutdown,
+        getCompactionThresholdPercent: () => guard.getThresholdPercent(),
+        setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };
 }

@@ -271,4 +271,50 @@ describe('createCompactionGuard', () => {
         expect(logger.warn).toHaveBeenCalledWith({ error: failure }, expect.any(String));
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'compaction_failed', reason: 'submit-rejected' }));
     });
+
+    it('getThresholdPercent returns the constructor value before any setter call', () => {
+        guard = build({ thresholdPercent: 42 });
+
+        expect(guard.getThresholdPercent()).toBe(42);
+    });
+
+    it('setThresholdPercent mid-backoff changes future onTurnEnd comparisons without touching skipRemaining/nextBackoffSkips', async () => {
+        // Attempt 1 fails (submit-rejected) -> arms a single-turn-end backoff skip
+        // (skipRemaining=1, nextBackoffSkips doubles from 1 to 2).
+        getContextUsage.mockResolvedValue(frames.contextUsage({ percentage: 60 }));
+        submitCompact.mockRejectedValueOnce(new Error('CLI refused /compact'));
+        await guard.onTurnEnd({ queueEmpty: true });
+        expect(submitCompact).toHaveBeenCalledTimes(1);
+
+        // Lower the threshold BELOW the fixed usage (60), deliberately -- not above it. If the
+        // setter wrongly cleared skipRemaining, the very next turn end would fall through to the
+        // usage/threshold check and submit, because usage (60) is already past the new threshold
+        // (50). A threshold set above usage could never distinguish that mutation, since a
+        // cleared skip would also be caught by "usage below threshold" and produce an
+        // identical, misleadingly-passing assertion.
+        guard.setThresholdPercent(50);
+
+        // The armed skip is untouched by the setter: still skipped even though usage (60) is
+        // already past the NEW threshold (50) -- if the setter had cleared skipRemaining, this
+        // would submit.
+        await guard.onTurnEnd({ queueEmpty: true });
+        expect(submitCompact).toHaveBeenCalledTimes(1);
+
+        // The skip is now consumed (a live cell read, not one cached at construction): usage (60)
+        // is past the new threshold (50), so this turn end submits -- and fails, to arm a second
+        // backoff cycle for the nextBackoffSkips assertion below.
+        submitCompact.mockRejectedValueOnce(new Error('CLI refused /compact'));
+        await guard.onTurnEnd({ queueEmpty: true });
+        expect(submitCompact).toHaveBeenCalledTimes(2);
+
+        // nextBackoffSkips must also survive untouched: if the setter had reset it to 1, only one
+        // turn end would be skipped here instead of two, and the third call below would submit
+        // one turn early.
+        await guard.onTurnEnd({ queueEmpty: true });
+        expect(submitCompact).toHaveBeenCalledTimes(2);
+        await guard.onTurnEnd({ queueEmpty: true });
+        expect(submitCompact).toHaveBeenCalledTimes(2);
+        await guard.onTurnEnd({ queueEmpty: true });
+        expect(submitCompact).toHaveBeenCalledTimes(3);
+    });
 });

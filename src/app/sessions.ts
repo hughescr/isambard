@@ -31,6 +31,7 @@ import {
     createBootBundleBuilder,
     createBootBundleHooks,
     createCompactionHooks,
+    createCompactionTelemetry,
     createConductor,
     createContextPolicy,
     createLedgerStore,
@@ -39,6 +40,7 @@ import {
     mergeHookMaps,
     type Clock,
     type CompactionSink,
+    type CompactionTelemetry,
     type Conductor,
     type ContextPolicy,
     type CreateBootBundleBuilderParams,
@@ -85,9 +87,10 @@ export interface CreateConversationConductorParams {
 
 /** What {@link createConversationConductor} returns. */
 export interface ConversationConductorResult {
-    conductor:     Conductor
-    ledgerStore:   LedgerStore
-    contextPolicy: ContextPolicy
+    conductor:           Conductor
+    ledgerStore:         LedgerStore
+    contextPolicy:       ContextPolicy
+    compactionTelemetry: CompactionTelemetry
 }
 
 /**
@@ -95,7 +98,7 @@ export interface ConversationConductorResult {
  * policy, and returns a {@link Conductor} that has NOT been opened. The caller is responsible for
  * calling `conductor.open()` when it decides opening is safe.
  * @param params See {@link CreateConversationConductorParams}.
- * @returns `{ conductor, ledgerStore, contextPolicy }` — see {@link ConversationConductorResult}.
+ * @returns `{ conductor, ledgerStore, contextPolicy, compactionTelemetry }` — see {@link ConversationConductorResult}.
  */
 export async function createConversationConductor(params: CreateConversationConductorParams): Promise<ConversationConductorResult> {
     const {
@@ -163,6 +166,15 @@ export async function createConversationConductor(params: CreateConversationCond
     // cannot see that the assignment below must happen after this closure is already captured.
     // eslint-disable-next-line prefer-const -- assigned exactly once, but necessarily after compactionSink/hooks/buildOptions close over it (circular build order: buildOptions -> createConductor needs hooks -> compactionSink needs the Conductor this call produces)
     let conductorRef: Conductor | undefined;
+
+    // Q4: structured per-compaction telemetry, fed only from this role's ledgerStore. Reads the
+    // threshold fresh from the live conductor on every compaction_started (falling back to the
+    // static config value for the narrow window before conductorRef is assigned below) so a
+    // later setCompactionThresholdPercent() call is reflected in each subsequent record.
+    const compactionTelemetry = createCompactionTelemetry({
+        getThresholdPercent: () => conductorRef?.getCompactionThresholdPercent() ?? config.compactThresholdPercent,
+    });
+    ledgerStore.subscribe((_ledger, event) => compactionTelemetry.record(event));
 
     const compactionSink: CompactionSink = {
         onCompactionStart: (trigger) => {
@@ -234,7 +246,9 @@ export async function createConversationConductor(params: CreateConversationCond
         },
     };
 
-    return { conductor, ledgerStore, contextPolicy };
+    return {
+        conductor, ledgerStore, contextPolicy, compactionTelemetry,
+    };
 }
 
 /**
@@ -265,8 +279,9 @@ export interface CreatePerchConductorParams {
 
 /** What {@link createPerchConductor} returns. */
 export interface PerchConductorResult {
-    conductor:   Conductor
-    ledgerStore: LedgerStore
+    conductor:           Conductor
+    ledgerStore:         LedgerStore
+    compactionTelemetry: CompactionTelemetry
 }
 
 /**
@@ -286,7 +301,7 @@ export interface PerchConductorResult {
  * there is no `ContextPolicy`: perch's boot bundle carries no per-user memory block to gate (see
  * `boot-bundle.ts`'s perch variant), so there is nothing for a compaction to reset.
  * @param params See {@link CreatePerchConductorParams}.
- * @returns `{ conductor, ledgerStore }` — see {@link PerchConductorResult}.
+ * @returns `{ conductor, ledgerStore, compactionTelemetry }` — see {@link PerchConductorResult}.
  */
 export async function createPerchConductor(params: CreatePerchConductorParams): Promise<PerchConductorResult> {
     const {
@@ -349,6 +364,12 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     // eslint-disable-next-line prefer-const -- assigned exactly once, but necessarily after compactionSink/hooks/buildOptions close over it
     let conductorRef: Conductor | undefined;
 
+    // Q4: see createConversationConductor's identical comment for why the fallback exists.
+    const compactionTelemetry = createCompactionTelemetry({
+        getThresholdPercent: () => conductorRef?.getCompactionThresholdPercent() ?? config.compactThresholdPercent,
+    });
+    ledgerStore.subscribe((_ledger, event) => compactionTelemetry.record(event));
+
     const compactionSink: CompactionSink = {
         onCompactionStart: (trigger) => {
             ledgerStore.dispatch({ type: 'compaction_started', trigger, at: new Date(clock.now()) });
@@ -400,5 +421,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
     conductorRef = conductor;
 
-    return { conductor, ledgerStore };
+    return {
+        conductor, ledgerStore, compactionTelemetry,
+    };
 }

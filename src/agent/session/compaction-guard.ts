@@ -55,18 +55,27 @@ export interface CompactionGuard {
     onFrame:              (frame: SDKMessage) => void
     /** Call when the PostCompact hook reports a finished compaction (not itself a stream frame). Releases as success. */
     onCompactionFinished: () => void
+    /** The percentage {@link onTurnEnd} currently compares context usage against. */
+    getThresholdPercent:  () => number
+    /**
+     * Changes the live threshold going forward. Takes effect on the next {@link onTurnEnd} call —
+     * it never touches in-flight/backoff state (`skipRemaining`, `nextBackoffSkips`), so a change
+     * mid-backoff only affects the comparison once the armed skip has been consumed.
+     */
+    setThresholdPercent:  (percent: number) => void
 }
 
 /**
  * @param params See {@link CreateCompactionGuardParams}.
  */
 export function createCompactionGuard(params: CreateCompactionGuardParams): CompactionGuard {
-    const { getContextUsage, submitCompact, ledgerStore, clock, thresholdPercent, ceilingMs = 300_000, logger } = params;
+    const { getContextUsage, submitCompact, ledgerStore, clock, ceilingMs = 300_000, logger } = params;
 
     let inFlight = false;
     let ceilingTimer: TimerHandle | undefined;
     let nextBackoffSkips = 1;
     let skipRemaining = 0;
+    let thresholdPercentCell = params.thresholdPercent;
 
     function release(reason: 'success' | CompactionFailureReason): void {
         if(!inFlight) {
@@ -121,7 +130,7 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
                 skipRemaining -= 1;
                 return;
             }
-            if(usage.percentage < thresholdPercent || !queueEmpty) {
+            if(usage.percentage < thresholdPercentCell || !queueEmpty) {
                 return;
             }
             await submit();
@@ -146,6 +155,14 @@ export function createCompactionGuard(params: CreateCompactionGuardParams): Comp
 
         onCompactionFinished(): void {
             release('success');
+        },
+
+        getThresholdPercent(): number {
+            return thresholdPercentCell;
+        },
+
+        setThresholdPercent(percent: number): void {
+            thresholdPercentCell = percent;
         },
     };
 }

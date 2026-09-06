@@ -976,6 +976,22 @@ describe('createConductor', () => {
         });
     });
 
+    describe('getCompactionThresholdPercent()/setCompactionThresholdPercent()', () => {
+        it('getCompactionThresholdPercent returns config.compactThresholdPercent immediately after construction', () => {
+            const h = build();
+
+            expect(h.conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
+        });
+
+        it('setCompactionThresholdPercent followed by getCompactionThresholdPercent round-trips through to the private guard', () => {
+            const h = build();
+
+            h.conductor.setCompactionThresholdPercent(42);
+
+            expect(h.conductor.getCompactionThresholdPercent()).toBe(42);
+        });
+    });
+
     describe('is_error retry via retryPolicy', () => {
         it('a transient error is resubmitted, and exhausting retryPolicy.maxAttempts journals turn_failed', async () => {
             const h = build();
