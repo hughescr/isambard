@@ -159,3 +159,22 @@ export {
     type ShutdownResult,
     type ShutdownSession
 } from './shutdown';
+
+export {
+    createNotificationBridge,
+    DEFAULT_NOTIFICATION_DEDUPE_CAPACITY,
+    type NotificationBridge,
+    type NotificationConductor,
+    type NotifyFn,
+    type NotifyParams,
+    type CreateNotificationBridgeParams
+} from './notification-bridge';
+
+export {
+    shouldNotifyHealthChange,
+    createHealthOutageCoalescer,
+    DEFAULT_HEALTH_OUTAGE_WINDOW_MS,
+    DEFAULT_HEALTH_ALREADY_REPORTED_CAPACITY,
+    type HealthOutageCoalescer,
+    type CreateHealthOutageCoalescerParams
+} from './health-notification';

@@ -75,6 +75,7 @@ class FakeConductor implements Conductor {
     };
 
     open = (): Promise<{ sessionId: string, resumed: boolean }> => Promise.resolve({ sessionId: 'sess-1', resumed: false });
+    appendWithoutTurn = (): void => { throw new Error('FakeConductor.appendWithoutTurn is unused by conductor-processor.ts'); };
     deliver = (): Promise<never> => Promise.reject(new Error('FakeConductor.deliver is unused by conductor-processor.ts'));
     recordCompactionSummary = (): Promise<void> => Promise.resolve();
     interruptCurrent = (): Promise<void> => Promise.resolve();

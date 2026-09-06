@@ -594,6 +594,49 @@ describe('Bot Lifecycle Integration', () => {
             expect(botOptions.isCostPaused!()).toBe(false);
         });
 
+        it('passes a working notify function into createDiscordBot, reaching the real conductor once attached (Q5 / B1)', async () => {
+            const mockClient = {} as DynamoDBClient;
+            const mockDocClient = { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient;
+            const mockContextBuilder = {} as ContextBuilder;
+            const mockMemoryMcp = {};
+            const conductor = { open: mock(async () => ({ sessionId: 'conv-sess', resumed: false })), submit: mock(async () => ({})), appendWithoutTurn: mock(() => undefined), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
+
+            spies.push(
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: { ...mockSessionConfig, mode: 'conductor' },
+                    perch:   mockPerchConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
+                    client: mockClient, docClient: mockDocClient, tableName: 'IsambardMemory',
+                }),
+                spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
+                spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
+                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
+                // @ts-expect-error - Mocking constructor
+                spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
+            );
+            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            const createPerchConductorSpy = spyOn(sessionsModule, 'createPerchConductor').mockResolvedValue({
+                conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
+            spies.push(createConversationConductorSpy, createPerchConductorSpy, createDiscordBotSpy);
+
+            await createApp();
+
+            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { notify?: (params: { source: string, text: string, wake: boolean, dedupeKey: string }) => void };
+            expect(typeof botOptions.notify).toBe('function');
+
+            botOptions.notify!({ source: 'test', text: 'hello', wake: true, dedupeKey: 'bot-lifecycle-key' });
+            expect(conductor.submit).toHaveBeenCalledTimes(1);
+            expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'other' });
+        });
+
         it('oneshot mode (kill switch): opens no perch conductor', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({

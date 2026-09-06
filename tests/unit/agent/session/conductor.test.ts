@@ -70,6 +70,19 @@ function catchupEnvelope(overrides: Partial<Envelope> = {}): Envelope {
     };
 }
 
+function notificationEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+    idCounter += 1;
+    return {
+        id:           `notification-${idCounter}`,
+        kind:         'notification',
+        text:         `notification text ${idCounter}`,
+        hostPriority: 'accumulate',
+        shouldQuery:  false,
+        createdAt:    new Date(0),
+        ...overrides,
+    };
+}
+
 interface Harness {
     conductor:   Conductor
     instances:   FakeQuery[]
@@ -470,6 +483,76 @@ describe('createConductor', () => {
             await firstResult;
 
             expect(h.instances[0].stopTaskCalls).toEqual([]);
+        });
+    });
+
+    describe('appendWithoutTurn()', () => {
+        it('pushes the envelope onto the live queue without opening a turn, and a Discord submit afterward still runs to completion', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'accumulate me' }));
+            await flush();
+
+            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('accumulate me');
+            expect(h.conductor.status().turn).toBeNull();
+
+            const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'discord', channelId: 'chan-1' });
+
+            h.instances[0].emit(frames.resultSuccess());
+            const result = await resultPromise;
+
+            expect(result.isError).toBe(false);
+        });
+
+        it('never dispatches envelope_queued on the ledger: appendWithoutTurn never opens a turn, so the "other" gauge stays at 0', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.appendWithoutTurn(notificationEnvelope());
+            await flush();
+
+            expect(h.ledgerStore.get().queued).toEqual({ human: 0, other: 0 });
+        });
+
+        it('is a no-op before open() has assigned a live queue: does not throw and pushes nothing', () => {
+            const h = build();
+
+            expect(() => {
+                h.conductor.appendWithoutTurn(notificationEnvelope());
+            }).not.toThrow();
+            expect(h.instances).toHaveLength(0);
+        });
+
+        it('throws an InvariantViolationError when given a shouldQuery:true envelope', async () => {
+            const h = build();
+            await openWith(h);
+
+            expect(() => {
+                h.conductor.appendWithoutTurn(catchupEnvelope());
+            }).toThrow('shouldQuery');
+        });
+
+        it('throws the shouldQuery:true InvariantViolationError even before open() has assigned a live queue', () => {
+            const h = build();
+
+            expect(() => {
+                h.conductor.appendWithoutTurn(catchupEnvelope());
+            }).toThrow('shouldQuery');
+        });
+    });
+
+    describe('submit() shouldQuery guard', () => {
+        it('throws an InvariantViolationError when given a shouldQuery:false envelope', async () => {
+            const h = build();
+            await openWith(h);
+
+            expect(() => {
+                void h.conductor.submit(notificationEnvelope(), { priority: 'other' });
+            }).toThrow('shouldQuery');
         });
     });
 

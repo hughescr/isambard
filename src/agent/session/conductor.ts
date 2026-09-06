@@ -202,7 +202,19 @@ export interface DeliverResult {
 /** The long-lived session conductor returned by {@link createConductor}. */
 export interface Conductor {
     open:                          () => Promise<{ sessionId: string, resumed: boolean }>
+    /** Throws {@link InvariantViolationError} if `envelope.shouldQuery !== true` — `submit()` always opens a turn; a `shouldQuery:false` envelope belongs on {@link Conductor.appendWithoutTurn} instead. */
     submit:                        (envelope: Envelope, options: SubmitOptions) => Promise<TurnResult>
+    /**
+     * Pushes `envelope` onto the live SDK queue without opening a turn — mirrors the private
+     * boot-bundle push (`pushBootBundle`). A no-op when there is no live queue yet (before
+     * `open()` has assigned one), or while shutting down or reopening. Never reads or writes
+     * {@link ConductorStatus.turn} and never calls `beginTurn`/`processQueue`: this is the
+     * accumulate-only seam for `shouldQuery:false` notifications, which the SDK appends to the
+     * transcript without triggering an assistant turn (no result frame), so routing one through
+     * `submit()` would wedge the one-turn-in-flight invariant forever. Throws
+     * {@link InvariantViolationError} if `envelope.shouldQuery !== false`.
+     */
+    appendWithoutTurn:             (envelope: Envelope) => void
     /**
      * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
      * this id, `send` is skipped entirely; otherwise `send` runs, `response_delivered` is
@@ -747,6 +759,20 @@ export function createConductor(params: CreateConductorParams): Conductor {
         currentQueue.push(toSdkUserMessage(buildBootEnvelope(resolvedBootBundle, now())));
     }
 
+    function appendWithoutTurn(envelope: Envelope): void {
+        if(envelope.shouldQuery !== false) {
+            throw new InvariantViolationError('conductor.appendWithoutTurn', 'called with a shouldQuery:true envelope — this seam is accumulate-only; use submit() for shouldQuery:true envelopes');
+        }
+        if(currentQueue === undefined || shuttingDown || reopening) {
+            return;
+        }
+        // Deliberately does NOT dispatch `envelope_queued`: that ledger event is only ever
+        // balanced by `turn_submitted` (see `enqueue`/`beginTurn`), and this seam by construction
+        // never opens a turn — dispatching it here would permanently inflate `ledger.queued.other`
+        // for the life of the process (see Q5 review finding).
+        currentQueue.push(toSdkUserMessage(envelope));
+    }
+
     /**
      * Boot-time crash recovery (P8), run once at the start of {@link open}: reads the journal
      * window ending now, derives {@link import('./recovery').computeRecovery}'s lost tasks and
@@ -934,6 +960,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function submit(envelope: Envelope, options: SubmitOptions): Promise<TurnResult> {
+        if(envelope.shouldQuery !== true) {
+            throw new InvariantViolationError('conductor.submit', 'called with a shouldQuery:false envelope — submit() always opens a turn; use appendWithoutTurn() for shouldQuery:false envelopes');
+        }
         if(shuttingDown) {
             return Promise.reject(new Error('Conductor is shutting down'));
         }
@@ -1077,7 +1106,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, deliver, recordCompactionSummary, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, appendWithoutTurn, deliver, recordCompactionSummary, interruptCurrent, subscribeTurn, status, shutdown,
         getCompactionThresholdPercent: () => guard.getThresholdPercent(),
         setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };

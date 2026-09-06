@@ -37,7 +37,7 @@ import {
 } from './state';
 import { installLedgerShim } from './state/ledger-shim';
 import { createChannelId, createUserId, type ChannelId } from './types';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal, type Clock, type Shutdown, type ShutdownSession  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -240,6 +240,15 @@ export interface DiscordBotOptions {
      * path is left untouched, unchanged.
      */
     isCostPaused?: () => boolean
+
+    /**
+     * Optional Q5/B1 shared notification bridge `notify` function (see
+     * `agent/session/notification-bridge.ts`). A safe no-op until the composition root
+     * (`src/index.ts`) attaches the real conductor to the bridge. Not yet consumed inside this
+     * file — Q6-Q8 land the notification sources that will call it; this field only threads the
+     * seam through the composition root.
+     */
+    notify?: NotifyFn
 
     /**
      * Optional write-through identity cache.

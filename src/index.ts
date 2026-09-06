@@ -7,7 +7,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, createCostCeiling, createCostCeilingStore, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
+import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, createCostCeiling, createCostCeilingStore, createNotificationBridge, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -17,7 +17,7 @@ import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, Contact
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
-import { resolveTimezone } from '@/utils';
+import { formatTimeHeader, resolveTimezone } from '@/utils';
 
 export interface App {
     /**
@@ -284,6 +284,20 @@ export async function createApp(): Promise<App> {
     const allowlistInteractionHandler = new AllowlistInteractionHandler({
         executor:       allowlistSagaExecutor,
         contactBackend: storage.contactBackend,
+    });
+
+    // Notification core (Q5 / plan amendment B1): constructed here, BEFORE setupEmail and the
+    // conductor-mode block below, because the real conductor does not exist yet at this point —
+    // createConversationConductor itself consumes email's MCP server instance, so the dependency
+    // runs the other way. notify() is a safe no-op (debug log, drop) until
+    // notificationBridge.attachConductor() late-binds the real conductor once
+    // createConversationConductor resolves (Q7 threads notificationBridge.notify into
+    // setupEmail's options).
+    const notificationBridge = createNotificationBridge({
+        clock:      systemClock,
+        timezone:   config.session.timezone,
+        timeHeader: () => formatTimeHeader(config.session.timezone),
+        logger,
     });
 
     // Set up email integration if email config is present (conditional — non-fatal)
@@ -873,6 +887,7 @@ export async function createApp(): Promise<App> {
         });
         conductorForTaskReader = builtConductor.conductor;
         conversationConductor = builtConductor.conductor;
+        notificationBridge.attachConductor(builtConductor.conductor);
         conversationLedgerStore = builtConductor.ledgerStore;
         conversationContextPolicy = builtConductor.contextPolicy;
     }
@@ -986,6 +1001,10 @@ export async function createApp(): Promise<App> {
         // Q3 / B4: daily cost ceiling predicate — reaches only the conductor-mode perch scheduler
         // and presence composer (bot.ts); Discord's own turns are never gated by this.
         isCostPaused:       costCeiling.isPaused,
+        // Q5 / B1: the shared notification bridge's notify function — a safe no-op until
+        // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
+        // notification sources; this package only threads the seam through.
+        notify:             notificationBridge.notify,
         // P9: conductor-mode dependencies, undefined in oneshot mode. bot.ts's clientReady opens
         // conversationConductor once the guild cache and channel registry exist and degrades to
         // the legacy agent above if open() rejects (implementer B's slice of this package).
@@ -1203,6 +1222,11 @@ export async function createApp(): Promise<App> {
             // Unsubscribe health listeners
             unsubscribeOutboxDrain();
             unsubscribeSagaRetry();
+
+            // Q5 / B1: detach the notification bridge from the conductor — subsequent notify()
+            // calls (there should be none once shutdown starts, but any straggler) revert to the
+            // safe unattached no-op.
+            notificationBridge.detach();
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional unsubscribe — only registered after first successful start()
             unsubscribeDiscordRecovery?.();
             unsubscribeDynamoDBReconnect();

@@ -10,7 +10,8 @@ import { mockLogger, resetMockSstResource } from '../setup';
 // pushing tests close enough to the 60ms CI timeout cap to risk a mid-test timeout (see CI
 // failure: "should throw fatal error when ChannelRegistryBackend construction fails" at
 // 64.40ms on macOS).
-import { initialLedger, type CompactionTelemetry, type Conductor, type ContextPolicy, type Ledger, type LedgerEvent, type LedgerStore } from '@/agent';
+import { initialLedger, createNotificationBridge as importedCreateNotificationBridge, type CompactionTelemetry, type Conductor, type ContextPolicy, type Ledger, type LedgerEvent, type LedgerStore, type NotificationBridge, type NotifyFn } from '@/agent';
+import * as staticAgentIndexModule from '@/agent';
 import * as staticAgentModule from '@/agent/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
 import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
@@ -45,6 +46,14 @@ import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
 import * as staticTaskSessionModule from '@/storage/task-session';
+
+// Captured as a plain variable (not a live ES-module binding) at file-load time, before any
+// spyOn() call ever runs — mirrors tests/setup.ts's "capture functions as local variables
+// BEFORE mock.module()" pattern. spyOn(staticAgentIndexModule, 'createNotificationBridge')
+// mutates the module's live export binding; a `mockImplementation` that called the *imported*
+// name (a live binding to that same export) would recurse into its own spy forever. This copy
+// is a normal value, immune to that later mutation.
+const realCreateNotificationBridge = importedCreateNotificationBridge;
 
 const sessionConfig: SessionConfig = {
     mode:                    'oneshot',
@@ -87,6 +96,7 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
     pruneStaleSessionsSpy:      ReturnType<typeof spyOn>
     getSessionIdForRole:        ReturnType<typeof mock>
     createBotSpy:               ReturnType<typeof spyOn>
+    emailSetupSpy:              ReturnType<typeof spyOn>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
@@ -94,6 +104,17 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
     const pruneStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'pruneStaleSessions').mockResolvedValue(undefined);
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
         start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+    });
+    const emailSetupSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
+        listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
+        reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
+        emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
+        outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
+        wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
+        allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
+        adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
+        sendApprovalRequest:          mock(async () => {}),
+        createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
     });
 
     spies.push(
@@ -143,17 +164,7 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         spyOn(staticWildDuckClientModule, 'WildDuckClient').mockImplementation(() => ({
             init: mock(async () => {}),
         } as unknown as InstanceType<typeof staticWildDuckClientModule.WildDuckClient>)),
-        spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
-            listener:                     { start: mock(async () => {}), stop: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
-            reviewHandler:                {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['reviewHandler'],
-            emailMcpServer:               {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'],
-            outboundApprovalHandler:      {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['outboundApprovalHandler'],
-            wildDuckClient:               { init: mock(async () => {}) } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['wildDuckClient'],
-            allowlist:                    {} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['allowlist'],
-            adminChannelId:               '987654321098765432' as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['adminChannelId'],
-            sendApprovalRequest:          mock(async () => {}),
-            createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
-        }),
+        emailSetupSpy,
         spyOn(staticConfigModule, 'loadConfig').mockReturnValue({
             app: {
                 nodeEnv:  'development',
@@ -197,7 +208,7 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         pruneStaleSessionsSpy
     );
 
-    return { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy };
+    return { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy, emailSetupSpy };
 }
 
 describe('createApp', () => {
@@ -902,6 +913,133 @@ describe('createApp', () => {
 
             await expect(createApp()).resolves.toBeDefined();
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
+        });
+    });
+
+    describe('Notification bridge composition (Q5 / plan amendment B1)', () => {
+        function fakeConductor(sessionId: string): Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> } {
+            return {
+                open:              mock(async () => ({ sessionId, resumed: false })),
+                submit:            mock(async () => ({})),
+                appendWithoutTurn: mock(() => undefined),
+                status:            mock(() => ({ sessionId: undefined })),
+            } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
+        }
+
+        test('is constructed before setupEmail and before createConversationConductor', async () => {
+            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => realCreateNotificationBridge(bridgeParams)
+            );
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            spies.push(createBridgeSpy, createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const bridgeOrder = createBridgeSpy.mock.invocationCallOrder[0];
+            const emailOrder = emailSetupSpy.mock.invocationCallOrder[0];
+            const conductorOrder = createConversationConductorSpy.mock.invocationCallOrder[0];
+            expect(bridgeOrder).toBeDefined();
+            expect(emailOrder).toBeDefined();
+            expect(conductorOrder).toBeDefined();
+            expect(bridgeOrder).toBeLessThan(emailOrder);
+            expect(bridgeOrder).toBeLessThan(conductorOrder);
+        });
+
+        test('notify() called while createConversationConductor is still resolving is a safe no-op; once attached (after resolution) it reaches the real conductor via the createDiscordBot options', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            let capturedBridge: NotificationBridge | undefined;
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
+                    const bridge = realCreateNotificationBridge(bridgeParams);
+                    capturedBridge = bridge;
+                    return bridge;
+                }
+            );
+            const conductor = fakeConductor('conv-sess');
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockImplementation(async () => {
+                // The bridge is constructed before this call (per B1) but attachConductor only
+                // runs after this promise resolves — a notify() here must be a safe no-op.
+                capturedBridge?.notify({ source: 'mid-boot', text: 'mid-boot text', wake: true, dedupeKey: 'mid-boot-key' });
+                return { conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry };
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createBridgeSpy, createConversationConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            // Mid-boot notify() (before attachConductor ran) never reached the conductor.
+            expect(conductor.submit).not.toHaveBeenCalled();
+
+            // The bridge's notify is threaded through createDiscordBot's options...
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { notify?: NotifyFn };
+            expect(typeof botOptions.notify).toBe('function');
+
+            // ...and, now that the conductor has resolved and been attached, reaches it for real.
+            botOptions.notify!({ source: 'post-boot', text: 'post-boot text', wake: true, dedupeKey: 'post-boot-key' });
+            expect(conductor.submit).toHaveBeenCalledTimes(1);
+            expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'other' });
+        });
+
+        test('app.stop() detaches the notification bridge from the conductor', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            // app.stop() reaches storage.holder.destroy() -> client.destroy(); the shared happy-path
+            // mock's bare `{}` client has no such method (only tests that actually call stop()
+            // need this override — see the equivalent stub near the double-stop test below).
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+            let attachSpy: ReturnType<typeof spyOn>;
+            let detachSpy: ReturnType<typeof spyOn>;
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
+                    const bridge = realCreateNotificationBridge(bridgeParams);
+                    attachSpy = spyOn(bridge, 'attachConductor');
+                    detachSpy = spyOn(bridge, 'detach');
+                    return bridge;
+                }
+            );
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            spies.push(createBridgeSpy, createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+
+            expect(attachSpy).toHaveBeenCalledTimes(1);
+            expect(detachSpy).not.toHaveBeenCalled();
+
+            await app.stop();
+
+            expect(detachSpy).toHaveBeenCalledTimes(1);
+        });
+
+        test('oneshot mode: the bridge is still constructed but never attached (no conductor exists)', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
+            let attachSpy: ReturnType<typeof spyOn>;
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
+                    const bridge = realCreateNotificationBridge(bridgeParams);
+                    attachSpy = spyOn(bridge, 'attachConductor');
+                    return bridge;
+                }
+            );
+            spies.push(createBridgeSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createBridgeSpy).toHaveBeenCalledTimes(1);
+            expect(attachSpy).not.toHaveBeenCalled();
         });
     });
 
