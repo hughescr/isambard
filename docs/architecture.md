@@ -136,3 +136,17 @@ Boundary mapping between Discord-specific types and the agent's platform-agnosti
 `src/config/` loads all configuration from environment variables using the `env-var` package for type coercion, validated by Zod schemas at startup. Retry constants live in `config/retry-config.ts` and are imported by the retry utilities.
 
 `src/errors/` defines `IsambardError` as the base class for all application errors. It carries a typed `code: ErrorCode` field and a context bag for structured diagnostics. Two main subtrees exist: `StorageError` (DynamoDB, memory tool, contacts, reconciliation errors) and `DiscordError` (channel registry, presence, state transition, permission errors). A separate `PathSecurityError` handles file path validation failures. All error codes are centralized in `ErrorCode` enum in `errors/codes.ts`.
+
+## Session Mode
+
+`session.mode` (`SESSION_MODE` env var, `sessionConfigSchema` in `src/config/schemas.ts`) defaults to `'conductor'`. With no override, `src/index.ts` *builds* (but never opens) the long-lived, journaled conversation conductor described above, and hands it to `createDiscordBot`; the bot's `clientReady` handler is what actually calls `open()`, once the guild cache and channel registry exist. A perch conductor is built the same way, but only when `config.perch?.enabled` is also set — an unconfigured or disabled perch is not built at all, so a default deployment with no perch config runs the conversation conductor alone. `SESSION_MODE=oneshot` is the rollback / kill switch, restoring the previous one-shot `handleInput`-per-message path (no conductors, no session journal, unconditional transcript wipe on startup) with a plain restart — no code change or redeploy needed.
+
+**Production soak checklist**, gating P13b (which deletes the one-shot path and the flag entirely): before that removal, the deployed conductor-mode run must show, from the ledger/journal logs:
+- at least one full perch cycle (scheduled slot start through wrap-up)
+- one forced `/compact` with the boot bundle re-injected (a `SessionStart` compact entry in the logs)
+- one restart with resume — the same session id reused, no `fallback: true`
+- one `SIGTERM` shutdown that completes inside `session.shutdownDeadlineMs`
+- queue-to-first-token latency per source, read from the ledger logs, within the ~10s human target
+- RSS trend logged over the soak window, with no runaway growth
+
+Running and recording this soak is a production activity Craig performs after deployment; this repository does not run or verify it — P13a only documents the checklist P13b's acceptance gate depends on.

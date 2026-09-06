@@ -28,6 +28,7 @@ import * as staticAppLifecycleModule from '@/app/lifecycle';
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
+import { sessionConfigSchema } from '@/config/schemas';
 import * as staticIndexModule from '@/index';
 import * as staticDiscordModule from '@/integrations/discord/bot';
 import * as staticChannelRegistryModule from '@/integrations/discord/channel-registry';
@@ -715,6 +716,27 @@ describe('createApp', () => {
             expect(conversationJournalArg).toBeDefined();
             expect(perchJournalArg).toBeDefined();
             expect(perchJournalArg).not.toBe(conversationJournalArg);
+        });
+
+        // P13a: 'conductor' is now the schema/env default (SESSION_MODE=oneshot is the kill
+        // switch) — this exercises that default value specifically, rather than a
+        // hardcoded 'conductor' literal, so it tracks the schema default if it ever moves.
+        test('default config path (session.mode left at its schema default): builds both conductors (unopened)', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: sessionConfigSchema.parse({}).mode });
+
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
+                conductor: fakeConductor('perch-sess'), ledgerStore: {} as LedgerStore,
+            });
+            spies.push(createConversationConductorSpy, createPerchConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createConversationConductorSpy).toHaveBeenCalledTimes(1);
+            expect(createPerchConductorSpy).toHaveBeenCalledTimes(1);
         });
     });
 

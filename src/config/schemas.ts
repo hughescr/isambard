@@ -279,7 +279,7 @@ export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
 // Session configuration for long-lived conversations
 /* Stryker disable BooleanLiteral,ArithmeticOperator,StringLiteral: Default values are configuration - validated by schema tests */
 export const sessionConfigSchema = z.object({
-    mode:                    z.enum(['oneshot', 'conductor']).default('oneshot'),
+    mode:                    z.enum(['oneshot', 'conductor']).default('conductor'),
     compactThresholdPercent: z.number().int().positive().default(60),
     humanWaitTargetMs:       z.number().int().positive().default(10_000),
     humanWaitCeilingMs:      z.number().int().positive().default(30_000),

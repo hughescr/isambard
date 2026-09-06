@@ -1203,7 +1203,7 @@ describe.concurrent('idleSignalsConfigSchema', () => {
 describe('sessionConfigSchema', () => {
     test('applies all session defaults', () => {
         expect(sessionConfigSchema.parse({})).toStrictEqual({
-            mode:                    'oneshot',
+            mode:                    'conductor',
             compactThresholdPercent: 60,
             humanWaitTargetMs:       10_000,
             humanWaitCeilingMs:      30_000,

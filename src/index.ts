@@ -821,7 +821,7 @@ export async function createApp(): Promise<App> {
     // before createDiscordBot so the bot can open it itself once the guild cache and channel
     // registry exist (P9/P10). The legacy agent above is still created unconditionally: it is
     // the fallback createDiscordBot degrades to if open() ever rejects. Oneshot mode: none of
-    // this runs, matching the byte-for-byte-unchanged requirement for SESSION_MODE unset.
+    // this runs, matching the byte-for-byte-unchanged requirement for SESSION_MODE=oneshot.
     // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
     let conversationConductor: Conductor | undefined;
     let conversationLedgerStore: LedgerStore | undefined;

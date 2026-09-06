@@ -92,7 +92,7 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             }
             : undefined,
         session: {
-            mode:                    env.get('SESSION_MODE').default('oneshot').asString(),
+            mode:                    env.get('SESSION_MODE').default('conductor').asString(),
             compactThresholdPercent: env.get('SESSION_COMPACT_THRESHOLD_PERCENT').asIntPositive(),
             shutdownDeadlineMs:      env.get('SESSION_SHUTDOWN_DEADLINE_MS').asIntPositive(),
             shutdownTurnWaitMs:      env.get('SESSION_TURN_WAIT_MS').asIntPositive(),

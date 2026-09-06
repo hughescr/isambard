@@ -64,8 +64,13 @@ describe('Bot Lifecycle Integration', () => {
         };
 
         // Mock Session configuration (P8: config.session.mode is read early in createApp, right
-        // after storage creation, to decide the stale-session cleanup strategy)
-        mockSessionConfig = sessionConfigSchema.parse({});
+        // after storage creation, to decide the stale-session cleanup strategy). Pinned to
+        // 'oneshot' explicitly (P13a flipped the schema default to 'conductor') so every test in
+        // this file that doesn't care about session mode keeps exercising the oneshot
+        // composition it was written against; tests that DO care override `mode` explicitly
+        // (see the 'Conductor mode component wiring (P9)' and 'Perch conductor component wiring
+        // (P12)' describe blocks below).
+        mockSessionConfig = { ...sessionConfigSchema.parse({}), mode: 'oneshot' };
 
         // Mock DynamoDB configuration
         mockDynamoDBConfig = {
@@ -393,12 +398,12 @@ describe('Bot Lifecycle Integration', () => {
             expect(botOptions.conversationConductor).toBe(fakeConductor);
         });
 
-        it('oneshot mode (default): never calls createConversationConductor', async () => {
+        it('oneshot mode (kill switch): never calls createConversationConductor', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: mockSessionConfig,
+                    session: { ...mockSessionConfig, mode: 'oneshot' },
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
@@ -550,12 +555,12 @@ describe('Bot Lifecycle Integration', () => {
             expect(botOptions.perchJournal).toBe(perchJournal);
         });
 
-        it('oneshot mode: opens no perch conductor', async () => {
+        it('oneshot mode (kill switch): opens no perch conductor', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: mockSessionConfig,
+                    session: { ...mockSessionConfig, mode: 'oneshot' },
                     perch:   mockPerchConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),

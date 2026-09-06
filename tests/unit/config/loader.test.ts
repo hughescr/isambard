@@ -670,8 +670,13 @@ describe('loadConfig - Session Config', () => {
         expect(loadConfig(createMockResources()).session.mode).toBe('conductor');
     });
 
-    test('defaults SESSION_MODE to oneshot when unset', () => {
+    test('defaults SESSION_MODE to conductor when unset', () => {
         delete process.env.SESSION_MODE;
+        expect(loadConfig(createMockResources()).session.mode).toBe('conductor');
+    });
+
+    test('parses SESSION_MODE=oneshot (kill switch still works)', () => {
+        process.env.SESSION_MODE = 'oneshot';
         expect(loadConfig(createMockResources()).session.mode).toBe('oneshot');
     });
 
