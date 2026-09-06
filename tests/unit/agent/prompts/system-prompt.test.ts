@@ -369,6 +369,16 @@ describe.concurrent('system-prompt', () => {
             assertPromptHygiene(perch);
         });
 
+        test('both roles are told getServiceHealth reports which integrations are online', () => {
+            const conversation = buildSessionSystemPrompt({ role: 'conversation', identity: 'id' });
+            const perch = buildSessionSystemPrompt({ role: 'perch', identity: 'id' });
+
+            for(const prompt of [conversation, perch]) {
+                expect(prompt).toContain('getServiceHealth');
+                assertPromptHygiene(prompt);
+            }
+        });
+
         test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {
             expect(SESSION_BASE_PROMPT.length).toBeGreaterThan(0);
             expect(CONVERSATION_ROLE_PROMPT.length).toBeGreaterThan(0);

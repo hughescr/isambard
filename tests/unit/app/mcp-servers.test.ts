@@ -5,6 +5,7 @@ import type { BrowserAdapter } from '@/agent/browser';
 import * as browserMcpModule from '@/agent/browser-mcp-server';
 import * as bskyMcpModule from '@/agent/bsky-mcp-server';
 import * as discordMcpModule from '@/agent/discord-mcp-server';
+import * as healthMcpModule from '@/agent/health-mcp-server';
 import * as inboxMcpModule from '@/agent/inbox-mcp-server';
 import * as mediaMcpModule from '@/agent/media-mcp-server';
 import * as memoryMcpModule from '@/agent/memory-mcp-server';
@@ -21,6 +22,7 @@ import type { DMTracker } from '@/integrations/discord/channel-registry/dm-track
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import type { ServiceHealthRegistry } from '@/services';
 import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '@/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -505,6 +507,7 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockImplementation(() => freshServerConfig('memory')),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockImplementation(() => freshServerConfig('discord')),
+            spyOn(healthMcpModule, 'createHealthMCPServer').mockImplementation(() => freshServerConfig('health')),
             spyOn(inboxMcpModule, 'createInboxMCPServer').mockImplementation(() => freshServerConfig('inbox')),
             spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockImplementation(() => freshServerConfig('wikipedia')),
             spyOn(mediaMcpModule, 'createMediaMCPServer').mockImplementation(() => freshServerConfig('media'))
@@ -625,5 +628,28 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
         const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
 
         expect(result.emailMcpServer).toBeUndefined();
+    });
+
+    test('attaches healthMcpServer when healthRegistry is supplied', () => {
+        const shared = mcpServersModule.createMcpSharedDeps({
+            ...mockOptions,
+            healthRegistry: {} as unknown as ServiceHealthRegistry,
+        });
+        const mockHealthMcpServer = freshServerConfig('health');
+        const createHealthMcpServerSpy = spyOn(healthMcpModule, 'createHealthMCPServer').mockReturnValue(mockHealthMcpServer);
+        spies.push(createHealthMcpServerSpy);
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(result.healthMcpServer).toBe(mockHealthMcpServer);
+        expect(createHealthMcpServerSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('healthMcpServer is undefined when healthRegistry is omitted', () => {
+        const shared = mcpServersModule.createMcpSharedDeps(mockOptions);
+
+        const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+        expect(result.healthMcpServer).toBeUndefined();
     });
 });

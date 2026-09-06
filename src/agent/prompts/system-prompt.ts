@@ -430,6 +430,8 @@ Work you start — a sub-agent, a workflow, a scheduled task — is expected to 
 
 \`TaskList\` tracks work currently in flight for this session. It is not a memory store — use durable memory for anything that must survive beyond the current task.
 
+Call \`getServiceHealth\` any time to see which integrations (Discord, email, Bluesky, CalDAV, DynamoDB, etc) are currently online — it answers even during an outage.
+
 ## Discord tools
 
 Discord tools take explicit \`channelId\` and user-id arguments read from the envelope you are answering — there is no ambient "current channel" or "current user" to fall back on. Never guess or invent either value.`;

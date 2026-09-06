@@ -49,7 +49,7 @@ describe('buildMcpServers', () => {
 
 describe('buildAllowedTools', () => {
     test('every configured mcpServers key has a matching allowedTools pattern', () => {
-        const names: (keyof SessionMcpServers)[] = ['memory', 'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser'];
+        const names: (keyof SessionMcpServers)[] = ['memory', 'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser', 'health'];
         for(const name of names) {
             const tools = buildAllowedTools({ [name]: mockMcpServer });
             expect(tools).toContain(`mcp__${name}__*`);
@@ -89,6 +89,20 @@ describe('buildSessionQueryOptions', () => {
         const opts = buildSessionQueryOptions(baseParams({ role, mcpServers: { inbox: mockMcpServer } }));
         expect(opts.mcpServers?.inbox).toEqual(mockMcpServer);
         expect(opts.allowedTools).toContain('mcp__inbox__*');
+    });
+
+    test.each([
+        ['conversation'],
+        ['perch'],
+    ] as const)('health server + mcp__health__* are attached for role=%s whenever mcpServers.health is given', (role) => {
+        const opts = buildSessionQueryOptions(baseParams({ role, mcpServers: { health: mockMcpServer } }));
+        expect(opts.mcpServers?.health).toEqual(mockMcpServer);
+        expect(opts.allowedTools).toContain('mcp__health__*');
+    });
+
+    test('mcp__health__* is absent when no health server is configured', () => {
+        const opts = buildSessionQueryOptions(baseParams());
+        expect(opts.allowedTools).not.toContain('mcp__health__*');
     });
 
     test('has no abortController key', () => {

@@ -116,6 +116,7 @@ export async function createConversationConductor(params: CreateConversationCond
         media:          mcpInstances.mediaMcpServer,
         browser:        mcpInstances.browserMcpServer,
         email:          mcpInstances.emailMcpServer,
+        health:         mcpInstances.healthMcpServer,
     };
 
     // Built once, here, from the injected IdentityCache — never rebuilt on a later reopen
@@ -303,6 +304,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         contacts:       mcpInstances.contactsMcpServer,
         'user-context': mcpInstances.userContextMcpServer,
         media:          mcpInstances.mediaMcpServer,
+        health:         mcpInstances.healthMcpServer,
         // No browser (single Bun.WebView — conversation only) and no email server for perch.
     };
 

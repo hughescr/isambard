@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createUserContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type ContactChangeRequest, type PersonHistoryCoordinator } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
@@ -243,6 +243,13 @@ interface MCPServers {
      * `createMCPServers` old-path wrapper — the old path wires email separately.
      */
     emailMcpServer?: McpServerConfig
+
+    /**
+     * Health MCP server exposing {@link ServiceHealthRegistry} state as a read-only pull
+     * tool, built whenever a `healthRegistry` is supplied. Deliberately not wrapped in a
+     * health guard — it must answer even during an outage.
+     */
+    healthMcpServer?: McpServerConfig
 }
 
 /**
@@ -315,7 +322,7 @@ export function createMcpSharedDeps(options: MCPServersOptions): McpSharedDeps {
  * the perch session) must call this separately, passing the same {@link McpSharedDeps}
  * so singleton state (DMTracker, BskyCheckpointManager) is not reconstructed.
  *
- * This factory consolidates the creation of ten MCP servers:
+ * This factory consolidates the creation of twelve MCP servers:
  * 1. Memory MCP server - for deep memory access (view, store, search)
  * 2. Discord MCP server - for message history and sending messages
  * 3. Inbox MCP server - for unread message management
@@ -327,6 +334,7 @@ export function createMcpSharedDeps(options: MCPServersOptions): McpSharedDeps {
  * 9. Media MCP server - for video and audio processing tools
  * 10. Email MCP server - built from `params.emailServerFactory` when given (optional)
  * 11. Browser MCP server - for web browser automation; 'conversation' role only
+ * 12. Health MCP server - read-only service-health reporting, built from `options.healthRegistry` when given (optional)
  *
  * @param shared - Dependencies shared across every instance set (see {@link createMcpSharedDeps})
  * @param params - Which role this instance set is for, and an optional email server factory
@@ -423,6 +431,10 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
 
     const emailMcpServer = params.emailServerFactory?.();
 
+    const healthMcpServer = options.healthRegistry
+        ? createHealthMCPServer({ healthRegistry: options.healthRegistry })
+        : undefined;
+
     let browserMcpServer: McpServerConfig | undefined;
     if(params.role === 'conversation' && options.browserAdapter) {
         if(options.browserMaxScreenshotBytes === undefined || options.browserMaxTextBytes === undefined) {
@@ -456,6 +468,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         mediaMcpServer,
         browserMcpServer,
         emailMcpServer,
+        healthMcpServer,
     };
 }
 

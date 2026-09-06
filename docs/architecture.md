@@ -79,7 +79,7 @@ Auto-loading of `/state/` items uses `sigmoidScore()`, which combines access fre
 
 The agent module is **platform-agnostic**. It receives `MessageContext` objects (text, optional `PlatformImage` attachments) and emits stream events — it has no knowledge of Discord, email, or Bluesky at the type level.
 
-The agent exposes its capabilities to Claude through a suite of **custom MCP servers**: memory (view, store, search, log), Discord message history, email (inbox, send, archive, reply, drafts), Bluesky (feeds, posts, DMs, social graph, rejection management), Discord inbox (unread overview, channel summary), CalDAV (calendar events), contacts (lookup, search, create, update, delete), media processing (video analysis, spectrograms), Wikipedia, and user context.
+The agent exposes its capabilities to Claude through a suite of **custom MCP servers**: memory (view, store, search, log), Discord message history, email (inbox, send, archive, reply, drafts), Bluesky (feeds, posts, DMs, social graph, rejection management), Discord inbox (unread overview, channel summary), CalDAV (calendar events), contacts (lookup, search, create, update, delete), media processing (video analysis, spectrograms), Wikipedia, user context, and health (read-only per-service status, deliberately reachable during an outage).
 
 Supporting machinery within the agent module:
 - **Context builder**: assembles the per-turn user message prefix by loading auto-load memory items, perch context (email inbox state, Bluesky DM notifications, rejected posts), and calendar events.

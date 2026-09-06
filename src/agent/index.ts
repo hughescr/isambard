@@ -65,6 +65,9 @@ export { createMediaMCPServer } from './media-mcp-server';
 // Wikipedia MCP Server
 export { createWikipediaMCPServer } from './wikipedia-mcp-server';
 
+// Health MCP Server
+export { createHealthMCPServer } from './health-mcp-server';
+
 // Contacts MCP Server
 export { createContactsMCPServer, type ContactChangeRequest } from './contacts-mcp-server';
 
