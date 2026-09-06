@@ -11,12 +11,46 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
+import type { NotifyParams } from '@/agent';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
-import { setupEmail, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
-import type { WildDuckClient } from '@/integrations/email';
+import { setupEmail, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
+import { type EmailMetadata, type ClassifierVerdict, type WildDuckClient, ClassifierVerdictType, buildReviewEmbed, buildUnsafeAlert, EmailFolder  } from '@/integrations/email';
 import type { ApprovalSagaBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
+
+/** Minimal valid NotifyFn mock — always reports delivery succeeded. */
+function makeNotify() {
+    return mock((_params: NotifyParams) => true);
+}
+
+/** Minimal EmailMetadata fixture — only the fields the callbacks under test read. */
+function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
+    return {
+        uid:            42,
+        messageId:      '<msg@example.com>',
+        from:           { address: 'sender@example.com', name: 'Sender' },
+        to:             [],
+        cc:             [],
+        subject:        'Test subject',
+        date:           new Date('2026-01-01T00:00:00Z'),
+        bodyText:       'body',
+        hasAttachments: false,
+        attachments:    [],
+        headers:        {},
+        ...overrides,
+    };
+}
+
+/** Minimal ClassifierVerdict fixture. */
+function makeVerdict(overrides: Partial<ClassifierVerdict> = {}): ClassifierVerdict {
+    return {
+        verdict:    ClassifierVerdictType.Uncertain,
+        confidence: 0.5,
+        reason:     'test reason',
+        ...overrides,
+    };
+}
 
 /** Build a mock DynamoDB document client whose send() always returns {} (empty item). */
 function makeMockDocClient(): DynamoDBDocumentClient {
@@ -74,7 +108,8 @@ describe('setupEmail — isSendableChannel type guard', () => {
                 handleButton:      mock(async () => {}),
                 handleModalSubmit: mock(async () => {}),
             } as unknown as AllowlistInteractionHandler,
-            _deps: { sleep: noopSleep },
+            _deps:  { sleep: noopSleep },
+            notify: makeNotify(),
         };
     });
 
@@ -157,7 +192,8 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
                 handleButton:      mock(async () => {}),
                 handleModalSubmit: mock(async () => {}),
             } as unknown as AllowlistInteractionHandler,
-            _deps: { sleep: noopSleep },
+            _deps:  { sleep: noopSleep },
+            notify: makeNotify(),
         };
     });
 
@@ -169,5 +205,164 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
 
         expect(first).not.toBe(result.emailMcpServer);
         expect(second).not.toBe(first);
+    });
+});
+
+describe('buildEmailProcessorCallbacks', () => {
+    const adminDiscordChannelId = 'admin-channel-id';
+    let notify: ReturnType<typeof makeNotify>;
+    let sendToChannel: ReturnType<typeof mock<(channelId: string, content: unknown, options?: unknown) => Promise<{ status: 'sent' }>>>;
+    let discordCapability: { sendToChannel: typeof sendToChannel };
+
+    beforeEach(() => {
+        notify = makeNotify();
+        sendToChannel = mock((_channelId: string, _content: unknown, _options?: unknown) => Promise.resolve({ status: 'sent' as const }));
+        discordCapability = { sendToChannel };
+    });
+
+    it('onSafe notifies with wake:false and a uid-keyed dedupeKey, and posts the unchanged admin content', async () => {
+        const callbacks = buildEmailProcessorCallbacks({
+            client:            {} as unknown as Client,
+            adminDiscordChannelId,
+            discordCapability: discordCapability as never,
+            notify,
+        });
+        const email = makeEmail({ uid: 7, from: { address: 'sender@example.com', name: 'Sender' }, subject: 'Hi there' });
+
+        await callbacks.onSafe?.(email, makeVerdict({ verdict: ClassifierVerdictType.Safe }));
+
+        expect(notify).toHaveBeenCalledTimes(1);
+        const call = notify.mock.calls[0][0];
+        expect(call.source).toBe('email');
+        expect(call.wake).toBe(false);
+        expect(call.dedupeKey).toBe('email-safe:7');
+        expect(call.text).toBe('Safe email from sender@example.com — not on allowlist. Subject: Hi there');
+        expect(sendToChannel).toHaveBeenCalledTimes(1);
+        const [channelId, content] = sendToChannel.mock.calls[0];
+        expect(channelId).toBe(adminDiscordChannelId);
+        expect((content as { content?: string }).content).toBe(
+            'Safe email from **sender@example.com** — not on allowlist.\nSubject: Hi there\n\nTo allowlist: first `/contact add` (if needed), then `/allowlist add <personId>`.'
+        );
+    });
+
+    it('onReview notifies with wake:false and a uid-keyed dedupeKey, and posts the unchanged review embed', async () => {
+        const callbacks = buildEmailProcessorCallbacks({
+            client:            {} as unknown as Client,
+            adminDiscordChannelId,
+            discordCapability: discordCapability as never,
+            notify,
+        });
+        const email = makeEmail({ uid: 8 });
+
+        const verdict = makeVerdict();
+        await callbacks.onReview?.(email, verdict);
+
+        expect(notify).toHaveBeenCalledTimes(1);
+        const call = notify.mock.calls[0][0];
+        expect(call.source).toBe('email');
+        expect(call.wake).toBe(false);
+        expect(call.dedupeKey).toBe('email-review:8');
+        expect(call.text).toBe(`Email needs review: ${email.subject}`);
+        expect(sendToChannel).toHaveBeenCalledTimes(1);
+        const [channelId, content] = sendToChannel.mock.calls[0];
+        expect(channelId).toBe(adminDiscordChannelId);
+        const expected = buildReviewEmbed(email, EmailFolder.Review);
+        const actual = content as { embeds: { toJSON: () => unknown }[], components: { toJSON: () => unknown }[] };
+        expect(actual.embeds).toHaveLength(1);
+        expect(actual.embeds[0].toJSON()).toEqual(expected.embed.toJSON());
+        expect(actual.components).toHaveLength(1);
+        expect(actual.components[0].toJSON()).toEqual(expected.actionRow.toJSON());
+    });
+
+    it('onAuthFailed notifies with wake:false and a uid-keyed dedupeKey, and posts the unchanged admin content', async () => {
+        const callbacks = buildEmailProcessorCallbacks({
+            client:            {} as unknown as Client,
+            adminDiscordChannelId,
+            discordCapability: discordCapability as never,
+            notify,
+        });
+        const email = makeEmail({ uid: 9, from: { address: 'sender@example.com', name: 'Sender' }, subject: 'Auth fail' });
+
+        await callbacks.onAuthFailed?.(email);
+
+        expect(notify).toHaveBeenCalledTimes(1);
+        const call = notify.mock.calls[0][0];
+        expect(call.source).toBe('email');
+        expect(call.wake).toBe(false);
+        expect(call.dedupeKey).toBe('email-auth-failed:9');
+        expect(call.text).toBe('Allowlisted sender sender@example.com failed auth check. Subject: Auth fail');
+        expect(sendToChannel).toHaveBeenCalledTimes(1);
+        const [channelId, content] = sendToChannel.mock.calls[0];
+        expect(channelId).toBe(adminDiscordChannelId);
+        expect((content as { content?: string }).content).toBe(
+            'Allowlisted sender **sender@example.com** failed SPF/DKIM auth check.\nSubject: Auth fail\nEmail was sent to classifier instead of auto-approved.'
+        );
+    });
+
+    it('onUnsafe notifies with wake:true and a uid-keyed dedupeKey, and posts the unchanged unsafe alert embed', async () => {
+        const callbacks = buildEmailProcessorCallbacks({
+            client:            {} as unknown as Client,
+            adminDiscordChannelId,
+            discordCapability: discordCapability as never,
+            notify,
+        });
+        const email = makeEmail({ uid: 10 });
+
+        const verdict = makeVerdict({ verdict: ClassifierVerdictType.Unsafe });
+        await callbacks.onUnsafe?.(email, verdict);
+
+        expect(notify).toHaveBeenCalledTimes(1);
+        const call = notify.mock.calls[0][0];
+        expect(call.source).toBe('email');
+        expect(call.wake).toBe(true);
+        expect(call.dedupeKey).toBe('email-unsafe:10');
+        expect(call.text).toBe(`Unsafe email quarantined: ${email.subject}`);
+        expect(sendToChannel).toHaveBeenCalledTimes(1);
+        const [channelId, content] = sendToChannel.mock.calls[0];
+        expect(channelId).toBe(adminDiscordChannelId);
+        const expected = buildUnsafeAlert(email, verdict, EmailFolder.Quarantine);
+        const actual = content as { embeds: { toJSON: () => unknown }[], components: { toJSON: () => unknown }[] };
+        expect(actual.embeds).toHaveLength(1);
+        expect(actual.embeds[0].toJSON()).toEqual(expected.embed.toJSON());
+        expect(actual.components).toHaveLength(1);
+        expect(actual.components[0].toJSON()).toEqual(expected.actionRow.toJSON());
+    });
+
+    it('calls notify only after the admin-channel send has resolved, not before', async () => {
+        const order: string[] = [];
+        const orderedSendToChannel = mock(() => {
+            order.push('send');
+            return Promise.resolve({ status: 'sent' as const });
+        });
+        const orderedNotify = mock((_params: NotifyParams) => {
+            order.push('notify');
+            return true;
+        });
+        const callbacks = buildEmailProcessorCallbacks({
+            client:            {} as unknown as Client,
+            adminDiscordChannelId,
+            discordCapability: { sendToChannel: orderedSendToChannel } as never,
+            notify:            orderedNotify,
+        });
+
+        await callbacks.onSafe?.(makeEmail(), makeVerdict());
+
+        expect(order).toEqual(['send', 'notify']);
+    });
+
+    it('falls back to client.channels.fetch when discordCapability is not provided', async () => {
+        const mockSend = mock(async () => undefined);
+        const fetch = mock(async (_channelId: string) => ({ send: mockSend }));
+        const callbacks = buildEmailProcessorCallbacks({
+            client: { channels: { fetch } } as unknown as Client,
+            adminDiscordChannelId,
+            notify,
+        });
+
+        await callbacks.onSafe?.(makeEmail(), makeVerdict());
+
+        expect(fetch).toHaveBeenCalledWith(adminDiscordChannelId);
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        expect(notify).toHaveBeenCalledTimes(1);
     });
 });

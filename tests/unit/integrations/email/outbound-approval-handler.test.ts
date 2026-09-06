@@ -6,6 +6,7 @@ import { OutboundApprovalHandler, type OutboundApprovalHandlerDeps  } from '../.
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
 import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
 import { mockLogger } from '../../../setup';
+import type { NotifyParams } from '@/agent';
 
 const ADMIN_USER_ID = '222222222222222222';
 
@@ -94,10 +95,13 @@ function makeDeps(overrides: Partial<OutboundApprovalHandlerDeps> = {}): Outboun
         handleModalSubmit: mock(async () => {}),
     } as unknown as AllowlistInteractionHandler;
 
+    const mockNotify = mock((_params: unknown) => true);
+
     return {
         wildDuckClient:              mockWildDuck,
         sagaBackend:                 mockSagaBackend,
         allowlistInteractionHandler: mockAllowlistInteractionHandler,
+        notify:                      mockNotify,
         ...overrides,
     };
 }
@@ -201,6 +205,70 @@ describe('OutboundApprovalHandler', () => {
                 };
                 expect(replyArg.embeds).toHaveLength(1);
                 expect(replyArg.components).toHaveLength(0);
+            });
+
+            test('should notify wake:true with dedupeKey email:<uid>:approved after editReply', async () => {
+                const order: string[] = [];
+                const notify = mock((_params: NotifyParams) => {
+                    order.push('notify');
+                    return true;
+                });
+                const deps    = makeDeps({ notify });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
+                editReply.mockImplementation(async () => {
+                    order.push('editReply');
+                    return {};
+                });
+
+                await handler.handleButton(interaction);
+
+                expect(order).toEqual(['editReply', 'notify']);
+                expect(notify).toHaveBeenCalledTimes(1);
+                const call = notify.mock.calls[0]?.[0];
+                expect(call?.source).toBe('email-approval');
+                expect(call?.wake).toBe(true);
+                expect(call?.dedupeKey).toBe('email:42:approved');
+                expect(call?.text).toBe('Outbound email (uid 42) approved for sending');
+            });
+
+            test('should still resolve and leave editReply outcome intact when notify throws', async () => {
+                const notify = mock((_params: NotifyParams): boolean => {
+                    throw new Error('notify boom');
+                });
+                const deps    = makeDeps({ notify });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
+
+                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+
+                expect(editReply).toHaveBeenCalledTimes(1);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    uid: 42,
+                    msg: 'Notify failed for email approval',
+                }));
+            });
+
+            test('should still notify wake:true when the Discord editReply fails (approval is already persisted)', async () => {
+                const notify = mock((_params: NotifyParams) => true);
+                const deps    = makeDeps({ notify });
+                const handler = new OutboundApprovalHandler(deps);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
+                editReply.mockRejectedValue(new Error('Discord timeout'));
+
+                await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
+
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(notify).toHaveBeenCalledTimes(1);
+                const call = notify.mock.calls[0]?.[0];
+                expect(call?.source).toBe('email-approval');
+                expect(call?.wake).toBe(true);
+                expect(call?.dedupeKey).toBe('email:42:approved');
+                expect(call?.text).toBe('Outbound email (uid 42) approved for sending');
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    uid: 42,
+                    msg: 'Failed to update Discord embed after email approval',
+                }));
             });
         });
 
@@ -584,6 +652,60 @@ describe('OutboundApprovalHandler', () => {
             expect(mockLogger.error).toHaveBeenCalledTimes(2);
         });
 
+        test('should notify wake:true with dedupeKey email:<uid>:rejected after the Discord editReply block', async () => {
+            const order: string[] = [];
+            const notify = mock((_params: NotifyParams) => {
+                order.push('notify');
+                return true;
+            });
+            const deps    = makeDeps({ notify });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
+            editReply.mockImplementation(async () => {
+                order.push('editReply');
+                return {};
+            });
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(order).toEqual(['editReply', 'notify']);
+            expect(notify).toHaveBeenCalledTimes(1);
+            const call = notify.mock.calls[0]?.[0];
+            expect(call?.source).toBe('email-approval');
+            expect(call?.wake).toBe(true);
+            expect(call?.dedupeKey).toBe('email:42:rejected');
+            expect(call?.text).toBe('Outbound email (uid 42) rejected by admin. Reason: Not appropriate');
+        });
+
+        test('should leave the rejection resolved and persisted when notify throws', async () => {
+            const notify = mock((_params: NotifyParams): boolean => {
+                throw new Error('notify boom');
+            });
+            const deps    = makeDeps({ notify });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
+
+            await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
+
+            expect(deps.wildDuckClient.updateMessageMetadata).toHaveBeenCalledTimes(1);
+            expect(editReply).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                uid: 42,
+                msg: 'Notify failed for email rejection',
+            }));
+        });
+
+        test('should not fail the rejection when notify returns false', async () => {
+            const notify = mock((_params: NotifyParams) => false);
+            const deps    = makeDeps({ notify });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Not appropriate');
+
+            await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
+
+            expect(mockLogger.info).toHaveBeenCalledTimes(1);
+        });
+
         test('should log warn and info with discordUpdated:false when editReply fails after WildDuck persist succeeds', async () => {
             const deps    = makeDeps();
             const handler = new OutboundApprovalHandler(deps);
@@ -723,6 +845,48 @@ describe('OutboundApprovalHandler', () => {
             expect(replyArg.embeds).toHaveLength(1);
             expect(replyArg.components).toHaveLength(0);
             expect(replyArg.content).toBeNull();
+        });
+
+        test('should notify wake:true with dedupeKey email:<uid>:approved exactly once after editReply, even with multiple recipients', async () => {
+            const order: string[] = [];
+            const notify = mock((_params: NotifyParams) => {
+                order.push('notify');
+                return true;
+            });
+            const deps    = makeDeps({ notify });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com', 'b@example.com']);
+            editReply.mockImplementation(async () => {
+                order.push('editReply');
+                return {};
+            });
+
+            await handler.handleSelectMenu(interaction);
+
+            expect(order).toEqual(['editReply', 'notify']);
+            expect(notify).toHaveBeenCalledTimes(1);
+            const call = notify.mock.calls[0]?.[0];
+            expect(call?.source).toBe('email-approval');
+            expect(call?.wake).toBe(true);
+            expect(call?.dedupeKey).toBe('email:42:approved');
+            expect(call?.text).toBe('Outbound email (uid 42) approved for sending');
+        });
+
+        test('should still resolve and leave editReply outcome intact when notify throws', async () => {
+            const notify = mock((_params: NotifyParams): boolean => {
+                throw new Error('notify boom');
+            });
+            const deps    = makeDeps({ notify });
+            const handler = new OutboundApprovalHandler(deps);
+            const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
+
+            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+
+            expect(editReply).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                uid: 42,
+                msg: 'Notify failed for email approval',
+            }));
         });
     });
 });

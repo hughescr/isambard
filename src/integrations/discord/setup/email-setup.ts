@@ -3,7 +3,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type Client, type MessageCreateOptions, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { BLUE } from '../colors';
-import { createEmailMCPServer, type ActivityLogger } from '@/agent';
+import { createEmailMCPServer, type ActivityLogger, type NotifyFn } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
@@ -19,7 +19,8 @@ import {
     buildRestrictedAccessEmbed,
     EmailFolder,
     WildDuckClient,
-    OutboundApprovalHandler
+    OutboundApprovalHandler,
+    type ProcessEmailCallbacks
 } from '@/integrations/email';
 import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
@@ -73,6 +74,12 @@ export interface EmailSetupOptions {
     personAllowlist:             PersonAllowlist
     /** Allowlist interaction handler for the saga-based allowlist flow */
     allowlistInteractionHandler: AllowlistInteractionHandler
+    /**
+     * Shared notification bridge submission function (Q5/Q7, plan amendment B1-B2).
+     * Required — a mis-ordered composition-root construction is a typecheck error here,
+     * not a runtime log branch.
+     */
+    notify:                      NotifyFn
 }
 
 export interface EmailSetupResult {
@@ -96,6 +103,119 @@ export interface EmailSetupResult {
      * than reusing `emailMcpServer`, which is simply the result of the first call.
      */
     createEmailMcpServerInstance: () => McpServerConfig
+}
+
+// ---------------------------------------------------------------------------
+// Email processor callbacks
+// ---------------------------------------------------------------------------
+
+/** Dependencies for {@link buildEmailProcessorCallbacks}. */
+export interface BuildEmailProcessorCallbacksDeps {
+    /** Discord client instance, used when `discordCapability` is not provided */
+    client:                Client
+    /** Admin Discord channel ID to post notifications to */
+    adminDiscordChannelId: string
+    /**
+     * Optional Discord capability facade. When provided, admin channel notifications use the
+     * facade (with outbox fallback when Discord is offline) instead of calling channel.send()
+     * directly.
+     */
+    discordCapability?:    DiscordCapability
+    /** Shared notification bridge submission function (Q5/Q7, plan amendment B1-B2) */
+    notify:                NotifyFn
+}
+
+/**
+ * Builds the four `EmailProcessor` Discord admin-channel callbacks (`onSafe`/`onReview`/
+ * `onUnsafe`/`onAuthFailed`), each paired with a `notify()` call to the shared notification
+ * bridge (Q7, plan amendment B2) alongside the existing admin-channel embed/content payload.
+ * `onSafe`/`onReview`/`onAuthFailed` accumulate (`wake:false`); `onUnsafe` wakes (`wake:true`) —
+ * matching the design's "admin approval outcomes" wake row. Every `dedupeKey` is keyed on the
+ * email's `uid`, which is stable for the life of that message. Extracted from `setupEmail` (and
+ * exported directly) so mutation coverage on `wake`/`dedupeKey` is real rather than absorbed by
+ * `setupEmail`'s integration-wiring Stryker-disable block below.
+ * @param deps - client, admin channel id, optional Discord capability facade, and the shared notify function
+ * @returns The `ProcessEmailCallbacks` passed to `EmailProcessor`
+ */
+export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksDeps): ProcessEmailCallbacks {
+    const { client, adminDiscordChannelId, discordCapability, notify } = deps;
+
+    return {
+        onSafe: async (email, _verdict) => {
+            await sendToAdminChannel(
+                client,
+                adminDiscordChannelId,
+                { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nTo allowlist: first \`/contact add\` (if needed), then \`/allowlist add <personId>\`.` },
+                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
+                'Failed to send safe-but-not-allowlisted notification to admin channel',
+                discordCapability
+            );
+            // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
+            // retried or logged here — deliberate per Q7 plan amendment B2.
+            notify({
+                source:    'email',
+                wake:      false,
+                dedupeKey: `email-safe:${email.uid}`,
+                text:      `Safe email from ${email.from.address} — not on allowlist. Subject: ${email.subject}`,
+            });
+        },
+        onReview: async (email, _verdict) => {
+            const { embed, actionRow } = buildReviewEmbed(email, EmailFolder.Review);
+            await sendToAdminChannel(
+                client,
+                adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
+                'Failed to send email review embed to admin channel',
+                discordCapability
+            );
+            // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
+            // retried or logged here — deliberate per Q7 plan amendment B2.
+            notify({
+                source:    'email',
+                wake:      false,
+                dedupeKey: `email-review:${email.uid}`,
+                text:      `Email needs review: ${email.subject}`,
+            });
+        },
+        onUnsafe: async (email, verdict) => {
+            const { embed, actionRow } = buildUnsafeAlert(email, verdict, EmailFolder.Quarantine);
+            await sendToAdminChannel(
+                client,
+                adminDiscordChannelId,
+                { embeds: [embed], components: [actionRow] },
+                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
+                'Failed to send unsafe alert to admin channel',
+                discordCapability
+            );
+            // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
+            // retried or logged here — deliberate per Q7 plan amendment B2.
+            notify({
+                source:    'email',
+                wake:      true,
+                dedupeKey: `email-unsafe:${email.uid}`,
+                text:      `Unsafe email quarantined: ${email.subject}`,
+            });
+        },
+        onAuthFailed: async (email) => {
+            await sendToAdminChannel(
+                client,
+                adminDiscordChannelId,
+                { content: `Allowlisted sender **${email.from.address}** failed SPF/DKIM auth check.\nSubject: ${email.subject}\nEmail was sent to classifier instead of auto-approved.` },
+                // Stryker disable next-line StringLiteral: log message content is not behavior-affecting
+                'Failed to send auth-failure notification to admin channel',
+                discordCapability
+            );
+            // Fire-and-forget: a `false` return (e.g. conductor not yet open at boot) is not
+            // retried or logged here — deliberate per Q7 plan amendment B2.
+            notify({
+                source:    'email',
+                wake:      false,
+                dedupeKey: `email-auth-failed:${email.uid}`,
+                text:      `Allowlisted sender ${email.from.address} failed auth check. Subject: ${email.subject}`,
+            });
+        },
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,52 +269,22 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     }
     // Stryker restore BlockStatement
 
-    // Create processor with Discord admin channel callbacks
-    // Stryker disable ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral: EmailProcessor config and callbacks are integration wiring - not unit testable
+    // Create processor with Discord admin channel callbacks. Callback bodies themselves live in
+    // buildEmailProcessorCallbacks (exported, directly unit-tested) — these disables cover only
+    // the remaining EmailProcessor construction wiring. (Both mutants are also neutralised by
+    // the TypeScript checker today, but the comments are kept anchored to the lines that
+    // actually carry the mutants rather than the `new EmailProcessor(` call line above them.)
     const processor = new EmailProcessor(
+        // Stryker disable next-line ObjectLiteral: EmailProcessor construction wiring is integration-only - not unit testable
         { allowlist, classifier, wildDuckClient },
-        {
-            onSafe: async (email, _verdict) => {
-                await sendToAdminChannel(
-                    client,
-                    emailConfig.adminDiscordChannelId,
-                    { content: `Safe email from **${email.from.address}** — not on allowlist.\nSubject: ${email.subject}\n\nTo allowlist: first \`/contact add\` (if needed), then \`/allowlist add <personId>\`.` },
-                    'Failed to send safe-but-not-allowlisted notification to admin channel',
-                    options.discordCapability
-                );
-            },
-            onReview: async (email, _verdict) => {
-                const { embed, actionRow } = buildReviewEmbed(email, EmailFolder.Review);
-                await sendToAdminChannel(
-                    client,
-                    emailConfig.adminDiscordChannelId,
-                    { embeds: [embed], components: [actionRow] },
-                    'Failed to send email review embed to admin channel',
-                    options.discordCapability
-                );
-            },
-            onUnsafe: async (email, verdict) => {
-                const { embed, actionRow } = buildUnsafeAlert(email, verdict, EmailFolder.Quarantine);
-                await sendToAdminChannel(
-                    client,
-                    emailConfig.adminDiscordChannelId,
-                    { embeds: [embed], components: [actionRow] },
-                    'Failed to send unsafe alert to admin channel',
-                    options.discordCapability
-                );
-            },
-            onAuthFailed: async (email) => {
-                await sendToAdminChannel(
-                    client,
-                    emailConfig.adminDiscordChannelId,
-                    { content: `Allowlisted sender **${email.from.address}** failed SPF/DKIM auth check.\nSubject: ${email.subject}\nEmail was sent to classifier instead of auto-approved.` },
-                    'Failed to send auth-failure notification to admin channel',
-                    options.discordCapability
-                );
-            },
-        }
+        // Stryker disable next-line ObjectLiteral: EmailProcessor construction wiring is integration-only - not unit testable
+        buildEmailProcessorCallbacks({
+            client,
+            adminDiscordChannelId: emailConfig.adminDiscordChannelId,
+            discordCapability:     options.discordCapability,
+            notify:                options.notify,
+        })
     );
-    // Stryker restore ObjectLiteral,BlockStatement,ArrayDeclaration,StringLiteral
 
     // Create review handler (handles email-* button interactions)
     // Stryker disable next-line ObjectLiteral: ReviewHandler config object is integration wiring
@@ -271,6 +361,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         sagaBackend:                 options.approvalSagaBackend,
         activityLogger:              options.activityLogger,
         allowlistInteractionHandler: options.allowlistInteractionHandler,
+        notify:                      options.notify,
     });
 
     // Create email MCP server for Claude agent. Wrapped in a factory (rather than a bare

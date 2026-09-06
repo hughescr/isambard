@@ -971,6 +971,29 @@ describe('createApp', () => {
             expect(bridgeOrder).toBeLessThan(conductorOrder);
         });
 
+        test('threads notificationBridge.notify into setupEmail\'s options (Q7)', async () => {
+            let capturedBridge: NotificationBridge | undefined;
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
+                    const bridge = realCreateNotificationBridge(bridgeParams);
+                    capturedBridge = bridge;
+                    return bridge;
+                }
+            );
+            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            spies.push(createBridgeSpy, createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(capturedBridge).toBeDefined();
+            const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as { notify?: NotifyFn };
+            expect(emailOptions.notify).toBe(capturedBridge!.notify);
+        });
+
         test('notify() called while createConversationConductor is still resolving is a safe no-op; once attached (after resolution) it reaches the real conductor via the createDiscordBot options', async () => {
             wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
             let capturedBridge: NotificationBridge | undefined;

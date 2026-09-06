@@ -17,6 +17,7 @@ export { checkVerificationResults } from './auth-checker';
 export { CLASSIFIER_SYSTEM_PROMPT } from './classifier-prompt';
 export { EmailClassifier } from './classifier';
 export { EmailProcessor } from './email-processor';
+export type { ProcessEmailCallbacks } from './email-processor';
 export { WildDuckListener } from './wildduck-listener';
 export type { WildDuckListenerConfig } from './wildduck-listener';
 export {

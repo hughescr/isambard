@@ -1,6 +1,7 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { chain } from 'lodash-es';
+import type { NotifyFn } from '@/agent';
 import { InvariantViolationError } from '@/errors';
 import { EmailFolder } from '@/integrations/email/types';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
@@ -11,6 +12,8 @@ export interface OutboundApprovalHandlerDeps {
     sagaBackend:                 SagaWriter
     activityLogger?:             ApprovalActivityLogger
     allowlistInteractionHandler: AllowlistSagaStarter
+    /** Shared notification bridge (Q7, plan amendment B2) — required so every admin approval outcome (approve, approve+allowlist, reject) wakes a notification. Never lets a false return or a thrown error fail the outcome it is reporting; see call sites below. */
+    notify:                      NotifyFn
 }
 
 /**
@@ -33,6 +36,7 @@ export interface OutboundApprovalHandlerDeps {
  */
 export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number> {
     private readonly wildDuckClient: WildDuckClient;
+    private readonly notify:         NotifyFn;
 
     constructor(deps: OutboundApprovalHandlerDeps) {
         super({
@@ -41,6 +45,7 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
             allowlistInteractionHandler: deps.allowlistInteractionHandler,
         });
         this.wildDuckClient = deps.wildDuckClient;
+        this.notify         = deps.notify;
     }
 
     // ---------------------------------------------------------------------------
@@ -132,6 +137,21 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
         }
         // Stryker restore BlockStatement
 
+        // Wake notification (Q7, plan amendment B2) — deliberately AFTER the Discord editReply
+        // block above so a stuck/failed notify can never be mistaken for a WildDuck-persist
+        // failure or delay the "Rejected" embed. A thrown or false-returning notify never fails
+        // the rejection outcome, which has already been persisted and reflected to Discord.
+        try {
+            this.notify({
+                source:    'email-approval',
+                wake:      true,
+                dedupeKey: `email:${uid}:rejected`,
+                text:      `Outbound email (uid ${uid}) rejected by admin. Reason: ${reason}`,
+            });
+        } catch (err) {
+            logger.warn({ err, uid, msg: 'Notify failed for email rejection' });
+        }
+
         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ uid, reason, discordUpdated, msg: 'Discord admin rejected outbound email' });
     }
@@ -203,6 +223,20 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
                 embeds:     [updatedEmbed],
                 components: [],
             });
+
+            // Wake notification (Q7, plan amendment B2) \u2014 after editReply succeeds, exactly once
+            // per uid regardless of how many recipients were selected above. A thrown or
+            // false-returning notify never fails this approval outcome.
+            try {
+                this.notify({
+                    source:    'email-approval',
+                    wake:      true,
+                    dedupeKey: `email:${uid}:approved`,
+                    text:      `Outbound email (uid ${uid}) approved for sending`,
+                });
+            } catch (notifyError) {
+                logger.warn({ err: notifyError, uid, msg: 'Notify failed for email approval' });
+            }
         } catch (err) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
             logger.error({ err, uid, msg: 'Failed to process allowlist select menu' });
@@ -251,10 +285,33 @@ export class OutboundApprovalHandler extends BaseOutboundApprovalHandler<number>
 
         const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 sending shortly');
 
-        await interaction.editReply({
-            embeds:     [updatedEmbed],
-            components: [],
-        });
+        // The approval saga above is already persisted, so a failed Discord UI update must not
+        // suppress the wake notification below (mirrors performRejection's editReply guard).
+        // Stryker disable BlockStatement: try-catch wraps best-effort Discord UI update \u2014 the wake notification below must fire even if this fails
+        try {
+            await interaction.editReply({
+                embeds:     [updatedEmbed],
+                components: [],
+            });
+        } catch (editError) {
+            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
+            logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email approval' });
+        }
+        // Stryker restore BlockStatement
+
+        // Wake notification (Q7, plan amendment B2) \u2014 after the Discord editReply attempt
+        // above, regardless of whether it succeeded. A thrown or false-returning notify never
+        // fails this approval outcome.
+        try {
+            this.notify({
+                source:    'email-approval',
+                wake:      true,
+                dedupeKey: `email:${uid}:approved`,
+                text:      `Outbound email (uid ${uid}) approved for sending`,
+            });
+        } catch (err) {
+            logger.warn({ err, uid, msg: 'Notify failed for email approval' });
+        }
     }
 
     private async handleApproveShowAllowlist(interaction: ButtonInteraction, uid: number): Promise<void> {

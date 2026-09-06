@@ -12,7 +12,7 @@ interface EmailProcessorDeps {
     wildDuckClient: WildDuckClient
 }
 
-interface ProcessEmailCallbacks {
+export interface ProcessEmailCallbacks {
     /** Called when an email is classified as 'safe' but sender is not on allowlist — used for Discord admin notification */
     onSafe?:       (email: EmailMetadata, verdict: ClassifierVerdict) => Promise<void>
     /** Called when an email is classified as 'uncertain' — used for Discord review embed */

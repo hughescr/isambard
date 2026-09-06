@@ -364,6 +364,7 @@ export async function createApp(): Promise<App> {
                 approvalSagaBackend,
                 personAllowlist,
                 allowlistInteractionHandler,
+                notify:             notificationBridge.notify,
             });
         } catch (err) {
             // Non-WildDuck setup failure (e.g. allowlist DynamoDB load) — log and skip email.
