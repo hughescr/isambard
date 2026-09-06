@@ -11,7 +11,7 @@ import * as frames from '../../../../helpers/sdk-frames';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import type { DiscordConfig } from '@/config';
 import * as presenceModule from '@/integrations/discord/presence';
-import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import type { PresenceManager, PresenceManagerDeps } from '@/integrations/discord/presence/manager';
 import type { PresenceView } from '@/integrations/discord/presence/presence-view';
 import type { IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
 import { setupConductorPresence, setupPresence } from '@/integrations/discord/setup/presence-setup';
@@ -132,6 +132,7 @@ describe('setupPresence — getPreviousStatus forwarding', () => {
 describe('setupConductorPresence', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
     let mockPresenceManager: { start: ReturnType<typeof mock>, stop: ReturnType<typeof mock>, applyView: ReturnType<typeof mock> };
+    let capturedPresenceManagerDeps: PresenceManagerDeps | undefined;
 
     beforeEach(() => {
         mockPresenceManager = {
@@ -139,10 +140,14 @@ describe('setupConductorPresence', () => {
             stop:      mock(() => undefined),
             applyView: mock(async (_view: PresenceView) => undefined),
         };
+        capturedPresenceManagerDeps = undefined;
 
         spies.push(
             // @ts-expect-error — Mocking constructor
-            spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
+            spyOn(presenceModule, 'PresenceManager').mockImplementation((deps: PresenceManagerDeps): PresenceManager => {
+                capturedPresenceManagerDeps = deps;
+                return mockPresenceManager as unknown as PresenceManager;
+            }),
             spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
                 generate:     mock(() => ({ name: 'Active', type: ActivityType.Custom })),
                 formatStatus: mock((s: string) => ({ name: s, type: ActivityType.Custom })),
@@ -244,6 +249,106 @@ describe('setupConductorPresence', () => {
         });
 
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+    });
+
+    test('isCostPaused omitted: composed prefix carries no pause marker (Q3 / B4)', () => {
+        const conversation = makeConversationLedger();
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle:               throttleAlways(),
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+        });
+
+        const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
+        expect(view.prefix).not.toContain('⏸');
+    });
+
+    test('isCostPaused() true is composed into the prefix as the ⏸ perch marker (Q3 / B4)', () => {
+        const conversation = makeConversationLedger();
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle:               throttleAlways(),
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+            isCostPaused:           () => true,
+        });
+
+        const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
+        expect(view.prefix).toBe('💤 • ⏸ perch');
+    });
+
+    test('isCostPaused is re-read on every tick, not only at setup (Q3 / B4)', () => {
+        const conversation = makeConversationLedger();
+        let paused = false;
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle:               throttleAlways(),
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+            isCostPaused:           () => paused,
+        });
+        mockPresenceManager.applyView.mockClear();
+
+        paused = true;
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+        });
+
+        const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
+        expect(view.prefix).toContain('⏸ perch');
+    });
+
+    test('wires PresenceManager with a recomposeIdlePrefix that re-reads isCostPaused() at call time, not just at setup (Q3/B4 midnight-clear staleness)', () => {
+        const conversation = makeConversationLedger();
+        let paused = true;
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle:               throttleAlways(),
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+            isCostPaused:           () => paused,
+        });
+
+        expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).toContain('⏸ perch');
+
+        // The idle refresh loop calls this on its own periodic timer, independent of any ledger
+        // event — a midnight clear (isCostPaused() flipping false with no ledger activity) must
+        // be visible the very next time it is called.
+        paused = false;
+        expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).not.toContain('⏸');
+    });
+
+    test('recomposeIdlePrefix with isCostPaused omitted carries no pause marker (Q3/B4)', () => {
+        const conversation = makeConversationLedger();
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle:               throttleAlways(),
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+        });
+
+        expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).not.toContain('⏸');
     });
 
     test('return shape carries no BotStateManager-bridge unsubscribe handles (setupConductorPresence takes no BotStateManager to subscribe to)', () => {

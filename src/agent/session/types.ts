@@ -138,4 +138,13 @@ export type JournalEntry
       /** The counterpart to session_opened, journaled by the P7 shutdown sequence. */
       | { type: 'session_ended', at: Date, sessionId: string }
       /** Journaled last, after session_ended, once the P7 shutdown sequence has flushed the journal. */
-      | { type: 'shutdown', at: Date };
+      | { type: 'shutdown', at: Date }
+      /**
+       * The Q3/B4 daily cost ceiling's day bucket, saved by {@link
+       * import('./cost-ceiling-store').createCostCeilingStore} on every state-changing
+       * `CostCeiling.record()`/rollover and replayed at boot (via `readSince`, taking the latest
+       * one) so a restart neither loses today's spend nor silently un-pauses perch. Role-independent
+       * — appended through whichever role's journal the composition root has in hand, since the
+       * ceiling itself tracks spend across both conductors.
+       */
+      | { type: 'cost_ceiling_snapshot', at: Date, dateKey: string, totalUsd: number, paused: boolean };

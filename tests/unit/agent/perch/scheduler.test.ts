@@ -1081,6 +1081,97 @@ describe('PerchScheduler', () => {
         });
     });
 
+    describe('cost ceiling pause (Q3 / B4)', () => {
+        test('skips onPerchTrigger but still reschedules when isCostPaused() is true', () => {
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config,
+                onPerchTrigger: mockOnPerchTrigger,
+                isCostPaused:   () => true,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            const ceilingSkipCalls = (): number => (mockLogger.debug as Mock<Logger['debug']>).mock.calls
+                .filter(call => call[0] === 'Perch trigger skipped - cost ceiling reached').length;
+
+            jest.advanceTimersByTime(3_600_000); // first scheduled tick
+            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
+            expect(ceilingSkipCalls()).toBe(1);
+
+            // Still reschedules: a second tick fires the trigger again (still paused).
+            jest.advanceTimersByTime(3_600_000);
+            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
+            expect(ceilingSkipCalls()).toBe(2);
+
+            scheduler.stop();
+        });
+
+        test('triggers normally when isCostPaused() is false', () => {
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config,
+                onPerchTrigger: mockOnPerchTrigger,
+                isCostPaused:   () => false,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            jest.advanceTimersByTime(3_600_000);
+            expect(mockOnPerchTrigger).toHaveBeenCalledTimes(1);
+
+            scheduler.stop();
+        });
+
+        test('triggers normally when isCostPaused is omitted', () => {
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            jest.advanceTimersByTime(3_600_000);
+            expect(mockOnPerchTrigger).toHaveBeenCalledTimes(1);
+
+            scheduler.stop();
+        });
+
+        test('isCostPaused() toggling false/true/false across successive ticks is honored every tick, never permanently paused', () => {
+            let paused = false;
+            const deps: PerchSchedulerDeps = {
+                stateManager:   mockStateManager,
+                logger:         mockLogger,
+                config,
+                onPerchTrigger: mockOnPerchTrigger,
+                isCostPaused:   () => paused,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.start();
+
+            jest.advanceTimersByTime(3_600_000); // tick 1: unpaused
+            expect(mockOnPerchTrigger).toHaveBeenCalledTimes(1);
+
+            paused = true;
+            jest.advanceTimersByTime(3_600_000); // tick 2: paused
+            expect(mockOnPerchTrigger).toHaveBeenCalledTimes(1);
+
+            paused = false;
+            jest.advanceTimersByTime(3_600_000); // tick 3: unpaused again, no stop()/start() in between
+            expect(mockOnPerchTrigger).toHaveBeenCalledTimes(2);
+
+            scheduler.stop();
+        });
+    });
+
     describe('getNextTriggerDelay', () => {
         test('should return positive delay for next hour trigger', () => {
             // This is tested indirectly through scheduler start

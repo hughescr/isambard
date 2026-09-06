@@ -53,6 +53,9 @@ export const journalEntrySchema = z.discriminatedUnion('type', [
     }),
     z.object({ ...journalEntryBase, type: z.literal('session_ended'), sessionId: z.string() }),
     z.object({ ...journalEntryBase, type: z.literal('shutdown') }),
+    z.object({
+        ...journalEntryBase, type: z.literal('cost_ceiling_snapshot'), dateKey: z.string(), totalUsd: z.number(), paused: z.boolean(),
+    }),
 ]) satisfies z.ZodType<JournalEntry>;
 
 /**

@@ -170,6 +170,8 @@ interface SetupPerchDriverParams {
     rateLimiter:        DiscordRateLimiter
     /** Optional capability facade for outbox fallback when Discord is offline. */
     discordCapability?: DiscordCapability
+    /** Optional Q3/B4 daily cost ceiling predicate, forwarded to {@link createPerchScheduler}'s deps unchanged. */
+    isCostPaused?:      () => boolean
 }
 
 /**
@@ -250,7 +252,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
     driver:    PerchDriver
     scheduler: PerchScheduler
 } {
-    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability } = params;
+    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isCostPaused } = params;
 
     // Stryker disable next-line BlockStatement: composition root — timezone-based hour resolution is not unit-testable with fake timers
     const getCurrentLocalHour = (): number => DateTime.now().setZone(perchConfig.timezone).hour;
@@ -276,6 +278,7 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
         onPerchTrigger: (slot) => {
             driver.runSlot(slot);
         },
+        isCostPaused,
     });
 
     scheduler.start();

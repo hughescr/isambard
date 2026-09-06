@@ -172,6 +172,9 @@ describe('SessionJournalBackend', () => {
             },
             { ...BASE, SK: 'l', type: 'session_ended', sessionId: 'sess-1' },
             { ...BASE, SK: 'm', type: 'shutdown' },
+            {
+                ...BASE, SK: 'n', type: 'cost_ceiling_snapshot', dateKey: '2026-09-05', totalUsd: 1.23, paused: true,
+            },
         ];
 
         test('every JournalEntry member round-trips through readSince with no malformed rows', async () => {

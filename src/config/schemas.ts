@@ -291,6 +291,10 @@ export const sessionConfigSchema = z.object({
     shutdownDeadlineMs:      z.number().int().positive().default(120_000),
     transcriptRetentionMs:   z.number().int().positive().default(7 * 24 * 60 * 60 * 1000),
     debounceMs:              z.number().int().positive().default(250),
+    /** Daily USD spend ceiling that pauses perch (never Discord) once crossed (Q3 / plan amendment B4). Undefined disables the ceiling entirely. */
+    dailyCostCeilingUsd:     z.number().positive().optional(),
+    /** IANA timezone the daily cost ceiling's local-calendar-day bucket is computed in (default: system timezone), independent of whether perch is configured. */
+    timezone:                z.string().default(resolveTimezone()),
 });
 /* Stryker restore BooleanLiteral,ArithmeticOperator,StringLiteral */
 

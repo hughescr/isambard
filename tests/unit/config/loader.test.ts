@@ -634,12 +634,14 @@ describe('loadConfig - Session Config', () => {
     let originalCompactThresholdPercent: string | undefined;
     let originalShutdownDeadlineMs: string | undefined;
     let originalTurnWaitMs: string | undefined;
+    let originalDailyCostCeilingUsd: string | undefined;
 
     beforeEach(() => {
         originalSessionMode = process.env.SESSION_MODE;
         originalCompactThresholdPercent = process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
         originalShutdownDeadlineMs = process.env.SESSION_SHUTDOWN_DEADLINE_MS;
         originalTurnWaitMs = process.env.SESSION_TURN_WAIT_MS;
+        originalDailyCostCeilingUsd = process.env.SESSION_DAILY_COST_CEILING_USD;
     });
 
     afterEach(() => {
@@ -662,6 +664,11 @@ describe('loadConfig - Session Config', () => {
             delete process.env.SESSION_TURN_WAIT_MS;
         } else {
             process.env.SESSION_TURN_WAIT_MS = originalTurnWaitMs;
+        }
+        if(originalDailyCostCeilingUsd === undefined) {
+            delete process.env.SESSION_DAILY_COST_CEILING_USD;
+        } else {
+            process.env.SESSION_DAILY_COST_CEILING_USD = originalDailyCostCeilingUsd;
         }
     });
 
@@ -703,5 +710,19 @@ describe('loadConfig - Session Config', () => {
     test('defaults shutdownTurnWaitMs to 60000 when SESSION_TURN_WAIT_MS is unset', () => {
         delete process.env.SESSION_TURN_WAIT_MS;
         expect(loadConfig(createMockResources()).session.shutdownTurnWaitMs).toBe(60_000);
+    });
+
+    test('overrides dailyCostCeilingUsd from SESSION_DAILY_COST_CEILING_USD', () => {
+        process.env.SESSION_DAILY_COST_CEILING_USD = '12.5';
+        expect(loadConfig(createMockResources()).session.dailyCostCeilingUsd).toBe(12.5);
+    });
+
+    test('leaves dailyCostCeilingUsd undefined when SESSION_DAILY_COST_CEILING_USD is unset (ceiling disabled)', () => {
+        delete process.env.SESSION_DAILY_COST_CEILING_USD;
+        expect(loadConfig(createMockResources()).session.dailyCostCeilingUsd).toBeUndefined();
+    });
+
+    test('defaults session.timezone to the resolved system timezone', () => {
+        expect(loadConfig(createMockResources()).session.timezone).toBe(resolveTimezone());
     });
 });

@@ -258,6 +258,12 @@ export function setupConductorPresence(params: {
      * generation goes unthrottled (P11 review finding).
      */
     botStateManager?:        Pick<BotStateManager, 'recordPresenceUpdate'>
+    /**
+     * Optional Q3/B4 daily cost ceiling predicate: `tick()` re-reads it on every compose (never
+     * cached), so a pause taken or cleared mid-run is reflected on the very next ledger event —
+     * rendered as a `⏸ perch` marker in the composed prefix (see `composePresence`'s own doc).
+     */
+    isCostPaused?:           () => boolean
 }): ConductorPresenceSetupResult {
     const {
         identityContext,
@@ -275,6 +281,7 @@ export function setupConductorPresence(params: {
         getPreviousStatus,
         setPreviousStatus,
         botStateManager,
+        isCostPaused,
     } = params;
 
     const activeStatusGenerator = createActiveStatusGenerator({
@@ -299,12 +306,20 @@ export function setupConductorPresence(params: {
     });
 
     const presenceManager = new PresenceManager({
-        discordClient: readyClient,
-        config:        presenceConfig,
+        discordClient:       readyClient,
+        config:              presenceConfig,
         activeStatusGenerator,
         idleStatusGenerator,
         dynamicStatusGenerator,
         logger,
+        // Q3/B4: recompose fresh on every idle refresh tick (the periodic timer, not only a
+        // ledger-driven applyView) so the `⏸ perch` marker clearing at local midnight — a
+        // wall-clock event with no ledger notification behind it — is visible on the very next
+        // tick instead of lingering on whatever prefix was last composed by a ledger event.
+        recomposeIdlePrefix: () => {
+            const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
+            return { prefix: view.prefix, compacting: view.compacting };
+        },
     });
 
     presenceManager.start();
@@ -335,7 +350,7 @@ export function setupConductorPresence(params: {
 
     /** Composes the current view from every ledger and applies it, if `planPresenceUpdate` says to. */
     function tick(): void {
-        const view = composePresence(ledgers.map(store => store.get()));
+        const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
         const signature = phaseSignature(view);
         const digestJustArrived = signature !== null && signature === lastSeenSignature && !lastSeenHadDigest && hasDigest(view);
 

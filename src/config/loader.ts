@@ -96,6 +96,8 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             compactThresholdPercent: env.get('SESSION_COMPACT_THRESHOLD_PERCENT').asIntPositive(),
             shutdownDeadlineMs:      env.get('SESSION_SHUTDOWN_DEADLINE_MS').asIntPositive(),
             shutdownTurnWaitMs:      env.get('SESSION_TURN_WAIT_MS').asIntPositive(),
+            dailyCostCeilingUsd:     env.get('SESSION_DAILY_COST_CEILING_USD').asFloatPositive(),
+            timezone:                resolveTimezone(),
         },
         adminDiscordUserId: resources.AdminDiscordUserId.value,
         email:              resources.EmailUser.value

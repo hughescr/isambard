@@ -141,6 +141,47 @@ describe('presence-view', () => {
         });
     });
 
+    describe('composePresence — costPaused (Q3 / B4)', () => {
+        test('costPaused omitted: no pause marker, prefix unchanged', () => {
+            const conversation: Ledger = { ...initialLedger('conversation'), turn: openTurn() };
+            const perch: Ledger = initialLedger('perch');
+
+            expect(composePresence([conversation, perch]).prefix).toBe('💬');
+        });
+
+        test('costPaused false: no pause marker', () => {
+            const conversation: Ledger = { ...initialLedger('conversation'), turn: openTurn() };
+            const perch: Ledger = initialLedger('perch');
+
+            expect(composePresence([conversation, perch], false).prefix).toBe('💬');
+        });
+
+        test('costPaused true with no task counts: marker appended after the session indicator', () => {
+            const conversation: Ledger = { ...initialLedger('conversation'), turn: openTurn() };
+            const perch: Ledger = initialLedger('perch');
+
+            expect(composePresence([conversation, perch], true).prefix).toBe('💬 • ⏸ perch');
+        });
+
+        test('costPaused true while idle: marker appended after 💤', () => {
+            const conversation: Ledger = initialLedger('conversation');
+            const perch: Ledger = initialLedger('perch');
+
+            expect(composePresence([conversation, perch], true).prefix).toBe('💤 • ⏸ perch');
+        });
+
+        test('costPaused true with task counts: marker appended after the counts, never truncated', () => {
+            const conversation: Ledger = {
+                ...initialLedger('conversation'),
+                turn:  openTurn(),
+                tasks: [task('subagent', 't1'), task('subagent', 't2')],
+            };
+            const perch: Ledger = initialLedger('perch');
+
+            expect(composePresence([conversation, perch], true).prefix).toBe('💬 • 2 🔬 • ⏸ perch');
+        });
+    });
+
     describe('renderPresenceText', () => {
         const baseView: PresenceView = {
             live:       ['conversation'],

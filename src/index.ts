@@ -7,7 +7,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal } from '@/agent';
+import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, createCostCeiling, createCostCeilingStore, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -919,6 +919,31 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore all
 
+    // Q3 / plan amendment B4: a day-bucketed spend ceiling that pauses perch (never Discord) once
+    // config.session.dailyCostCeilingUsd is crossed, fed by both session ledgers' cumulativeUsd
+    // deltas and surviving a process restart via the conversation journal (whichever role's
+    // journal the composition root has in hand — cost-ceiling-store.ts's own doc). Undefined in
+    // oneshot mode (no journal), in which case the ceiling still constructs but is never
+    // persisted/restored and is simply never read (isCostPaused only reaches conductor-mode perch
+    // setup — see bot.ts).
+    const costCeilingPersistence: CostCeilingPersistence | undefined = conversationJournal && createCostCeilingStore({ journal: conversationJournal, clock: systemClock });
+    const costCeiling = createCostCeiling({
+        clock:       systemClock,
+        timezone:    config.session.timezone,
+        ceilingUsd:  config.session.dailyCostCeilingUsd,
+        persistence: costCeilingPersistence,
+        logger,
+    });
+    // A boot-time journal read failure must not block startup — the ceiling simply starts fresh,
+    // as if today's spend had not yet been recorded (mirrors the P8 role-id lookup failure below).
+    const costCeilingSnapshot = await costCeilingPersistence?.load().catch((error: unknown) => {
+        logger.warn({ error }, 'Failed to restore daily cost ceiling snapshot at boot');
+        return undefined;
+    });
+    costCeilingSnapshot && costCeiling.restore(costCeilingSnapshot);
+    conversationLedgerStore?.subscribe((ledger, event) => costCeiling.record(conversationLedgerStore, ledger, event));
+    perchLedgerStore?.subscribe((ledger, event) => costCeiling.record(perchLedgerStore, ledger, event));
+
     // Construct allowlist command handler using the unified PersonAllowlist
     // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
     const allowlistHandler = new AllowlistCommandHandler(
@@ -958,6 +983,9 @@ export async function createApp(): Promise<App> {
         historyCoordinator,
         healthRegistry,
         discordCapability,
+        // Q3 / B4: daily cost ceiling predicate — reaches only the conductor-mode perch scheduler
+        // and presence composer (bot.ts); Discord's own turns are never gated by this.
+        isCostPaused:       costCeiling.isPaused,
         // P9: conductor-mode dependencies, undefined in oneshot mode. bot.ts's clientReady opens
         // conversationConductor once the guild cache and channel registry exist and degrades to
         // the legacy agent above if open() rejects (implementer B's slice of this package).

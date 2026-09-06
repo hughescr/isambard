@@ -1590,6 +1590,57 @@ describe('PresenceManager', () => {
             });
         });
 
+        it('periodic idle refresh recomposes the prefix via recomposeIdlePrefix instead of re-rendering a stale cached one (Q3/B4: the ⏸ perch marker must clear at midnight even with no ledger event to trigger a fresh applyView)', async () => {
+            // A call counter (rather than reassigning a captured variable) drives the sequence: the
+            // ceiling is paused for the first recompose (the initial applyView), then clears for
+            // the second (the periodic timer's own refresh) — with no further test-side mutation
+            // in between, so nothing here races the async idle-generation path.
+            const prefixesByCall = ['💤 • ⏸ perch', '💤'];
+            let recomposeCallCount = 0;
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+                recomposeIdlePrefix:   () => {
+                    const prefix = prefixesByCall[recomposeCallCount] ?? prefixesByCall.at(-1)!;
+                    recomposeCallCount += 1;
+                    return { prefix, compacting: false };
+                },
+            });
+
+            await manager.applyView(idleView);
+            expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤 • ⏸ perch', compacting: false });
+
+            // The cost ceiling clears at local midnight from a wall-clock rollover, not a ledger
+            // event — nothing calls applyView() again, but the periodic idle refresh timer still
+            // fires and must recompose rather than reuse the stale cached prefix.
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤', compacting: false });
+        });
+
+        it('without recomposeIdlePrefix, periodic idle refresh keeps rendering the last composed prefix (legacy behaviour unchanged)', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.applyView(idleView);
+
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤 • 1 🪾', compacting: false });
+        });
+
         it('discards a stale idle result when the composed prefix changes during generation', async () => {
             const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
             mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {

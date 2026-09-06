@@ -34,6 +34,17 @@ export interface PresenceManagerDeps {
     dynamicStatusGenerator?: DynamicStatusGenerator
     /** Configuration for timing and rate limiting */
     config:                  PresenceConfig
+    /**
+     * Q3/B4: optional recompose hook consulted on every idle refresh (the periodic timer AND the
+     * immediate refresh `applyView` triggers), not only when a fresh view arrives via `applyView`.
+     * Part of the composed prefix (e.g. the `⏸ perch` cost-ceiling marker) can change from wall-
+     * clock time alone — the ceiling clears at local midnight with no ledger event — so without
+     * this, the idle refresh loop would keep rendering whatever prefix was cached at the last
+     * `applyView` call until the next ledger-driven one, which may never come while idle. Omitted
+     * (the legacy `setupPresence` bridge, which never composes a `PresenceView` at all) leaves the
+     * cached prefix behaviour unchanged.
+     */
+    recomposeIdlePrefix?:    () => { prefix: string, compacting: boolean }
     /** Logger instance */
     logger: {
         debug: (message: unknown, ...args: unknown[]) => void
@@ -118,6 +129,16 @@ export class PresenceManager {
         // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: Defensive guard for race condition - unreachable in tests
         if(this.currentPhase?.type !== 'idle') {
             return; // No longer idle
+        }
+
+        // Q3/B4: recompose the cached prefix/compacting fresh on every refresh (not only when a
+        // new view arrives via applyView) so a wall-clock-driven change — the cost-ceiling marker
+        // clearing at local midnight, with no ledger event to trigger a fresh applyView — is
+        // picked up by the very next periodic tick instead of lingering indefinitely.
+        const recomposed = this.deps.recomposeIdlePrefix?.();
+        if(recomposed) {
+            this.composedPrefix = recomposed.prefix;
+            this.composedCompacting = recomposed.compacting;
         }
 
         // Capture current mode/prefix at start to detect stale results

@@ -89,6 +89,16 @@ export {
 
 export { createResumeStore, type RoleResumeStore } from './resume-store';
 
+export {
+    createCostCeiling,
+    type CostCeiling,
+    type CostCeilingSnapshot,
+    type CostCeilingPersistence,
+    type CreateCostCeilingParams
+} from './cost-ceiling';
+
+export { createCostCeilingStore, type CreateCostCeilingStoreParams } from './cost-ceiling-store';
+
 export { computeRecovery, type LostTask, type UndeliveredEnvelope, type RecoveryResult } from './recovery';
 
 export { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';

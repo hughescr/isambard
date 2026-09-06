@@ -86,10 +86,28 @@ describe('setupPerchDriverAndScheduler', () => {
         const schedulerArgs = createPerchSchedulerSpy.mock.calls[0][0];
         expect(schedulerArgs.stateManager).toBeUndefined();
         expect(schedulerArgs).not.toHaveProperty('perchSessionRunner');
+        expect(schedulerArgs.isCostPaused).toBeUndefined();
 
         expect(result.driver).toBe(fakeDriver);
         expect(result.scheduler).toBe(fakeScheduler);
         expect(fakeScheduler.start).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards isCostPaused to the scheduler deps by identity (Q3 / B4)', () => {
+        const fakeDriver = { runSlot: mock(), stop: mock() };
+        const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
+        jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
+        const createPerchSchedulerSpy = jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ delivered: true })) };
+        const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
+        const isCostPaused = (): boolean => true;
+
+        setupPerchDriverAndScheduler({
+            conductor, perchConfig: PERCH_CONFIG, clock, isCostPaused, ...deliveryDeps(),
+        });
+
+        const schedulerArgs = createPerchSchedulerSpy.mock.calls[0][0];
+        expect(schedulerArgs.isCostPaused).toBe(isCostPaused);
     });
 
     it('wires the scheduler\'s onPerchTrigger to call driver.runSlot', () => {

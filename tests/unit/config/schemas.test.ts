@@ -1215,10 +1215,28 @@ describe('sessionConfigSchema', () => {
             shutdownDeadlineMs:      120_000,
             transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
             debounceMs:              250,
+            timezone:                resolveTimezone(),
         });
     });
 
     test('rejects an unknown session mode', () => {
         expect(sessionConfigSchema.safeParse({ mode: 'unknown' }).success).toBe(false);
+    });
+
+    test('dailyCostCeilingUsd is undefined by default (the ceiling is disabled)', () => {
+        expect(sessionConfigSchema.parse({}).dailyCostCeilingUsd).toBeUndefined();
+    });
+
+    test('accepts a positive dailyCostCeilingUsd', () => {
+        expect(sessionConfigSchema.parse({ dailyCostCeilingUsd: 5.5 }).dailyCostCeilingUsd).toBe(5.5);
+    });
+
+    test('rejects a zero or negative dailyCostCeilingUsd', () => {
+        expect(sessionConfigSchema.safeParse({ dailyCostCeilingUsd: 0 }).success).toBe(false);
+        expect(sessionConfigSchema.safeParse({ dailyCostCeilingUsd: -1 }).success).toBe(false);
+    });
+
+    test('accepts an explicit timezone override', () => {
+        expect(sessionConfigSchema.parse({ timezone: 'America/New_York' }).timezone).toBe('America/New_York');
     });
 });

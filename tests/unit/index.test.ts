@@ -10,7 +10,7 @@ import { mockLogger, resetMockSstResource } from '../setup';
 // pushing tests close enough to the 60ms CI timeout cap to risk a mid-test timeout (see CI
 // failure: "should throw fatal error when ChannelRegistryBackend construction fails" at
 // 64.40ms on macOS).
-import type { Conductor, ContextPolicy, LedgerStore } from '@/agent';
+import { initialLedger, type Conductor, type ContextPolicy, type Ledger, type LedgerEvent, type LedgerStore } from '@/agent';
 import * as staticAgentModule from '@/agent/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
 import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
@@ -59,6 +59,7 @@ const sessionConfig: SessionConfig = {
     shutdownDeadlineMs:      120_000,
     transcriptRetentionMs:   7 * 24 * 60 * 60 * 1000,
     debounceMs:              250,
+    timezone:                'UTC',
 };
 
 /** Default `config.perch` for `wireHappyPathForCleanupTests` — perch enabled, matching production defaults. `perchOverrides` lets a test disable it (`{ enabled: false }`) or tweak a field. */
@@ -603,7 +604,7 @@ describe('createApp', () => {
             const fakeConductor = { open: fakeOpen, submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockImplementation(async () => {
                 oauthTokenAtCallTime = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-                return { conductor: fakeConductor, ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy };
+                return { conductor: fakeConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy };
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -648,11 +649,11 @@ describe('createApp', () => {
             wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
 
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const fakePerch = fakeConductor('perch-sess');
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
-                conductor: fakePerch, ledgerStore: {} as LedgerStore,
+                conductor: fakePerch, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -676,7 +677,7 @@ describe('createApp', () => {
         test('conductor mode with perch DISABLED (config.perch.enabled: false): createPerchConductor is never called', async () => {
             wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, { enabled: false });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor');
             spies.push(createConversationConductorSpy, createPerchConductorSpy);
@@ -701,10 +702,10 @@ describe('createApp', () => {
         test('passes a role-keyed journal/resume store distinct from the conversation conductor\'s own', async () => {
             wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
-                conductor: fakeConductor('perch-sess'), ledgerStore: {} as LedgerStore,
+                conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
             });
             spies.push(createConversationConductorSpy, createPerchConductorSpy);
 
@@ -725,10 +726,10 @@ describe('createApp', () => {
             wireHappyPathForCleanupTests(spies, { mode: sessionConfigSchema.parse({}).mode });
 
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
-                conductor: fakeConductor('perch-sess'), ledgerStore: {} as LedgerStore,
+                conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
             });
             spies.push(createConversationConductorSpy, createPerchConductorSpy);
 
@@ -737,6 +738,170 @@ describe('createApp', () => {
 
             expect(createConversationConductorSpy).toHaveBeenCalledTimes(1);
             expect(createPerchConductorSpy).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('Daily cost ceiling (Q3 / B4)', () => {
+        function fakeConductor(sessionId: string): Conductor {
+            return { open: mock(async () => ({ sessionId, resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
+        }
+
+        /** A controllable `LedgerStore` double: `emit` synchronously fires whatever was passed to `subscribe`. */
+        function fakeLedgerStoreWithEmit(): LedgerStore & { emit: (ledger: Ledger, event: LedgerEvent) => void } {
+            let listener: ((ledger: Ledger, event: LedgerEvent) => void) | undefined;
+            return {
+                get:       mock(() => initialLedger('conversation')),
+                dispatch:  mock(() => undefined),
+                subscribe: mock((cb: (ledger: Ledger, event: LedgerEvent) => void) => {
+                    listener = cb;
+                    return () => {
+                        listener = undefined;
+                    };
+                }),
+                emit(ledger: Ledger, event: LedgerEvent) {
+                    listener?.(ledger, event);
+                },
+            };
+        }
+
+        function tickEvent(): LedgerEvent {
+            return { type: 'tick', rssBytes: 0, at: new Date() };
+        }
+
+        test('passes a working isCostPaused function into createDiscordBot, initially false', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy,
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            expect(typeof botOptions.isCostPaused).toBe('function');
+            expect(botOptions.isCostPaused!()).toBe(false);
+        });
+
+        test('a conversation ledger event crossing dailyCostCeilingUsd pauses isCostPaused()', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            const conversationLedgerStore = fakeLedgerStoreWithEmit();
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            // The very first record() for a store baselines rather than booking its prior spend
+            // (cost-ceiling.ts's own doc) — emit a $0 baseline event first, matching production
+            // (the ledger starts at $0 when the ceiling subscribes at boot), then the delta that
+            // actually crosses the ceiling.
+            conversationLedgerStore.emit({ ...initialLedger('conversation'), cost: { cumulativeUsd: 0, lastTurnUsd: 0 } }, tickEvent());
+            conversationLedgerStore.emit({ ...initialLedger('conversation'), cost: { cumulativeUsd: 2, lastTurnUsd: 0 } }, tickEvent());
+
+            expect(botOptions.isCostPaused!()).toBe(true);
+        });
+
+        test('a perch ledger event crossing dailyCostCeilingUsd also pauses isCostPaused() — the shared ceiling folds both stores', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            const perchLedgerStore = fakeLedgerStoreWithEmit();
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy,
+            });
+            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
+                conductor: fakeConductor('perch-sess'), ledgerStore: perchLedgerStore,
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            perchLedgerStore.emit({ ...initialLedger('perch'), cost: { cumulativeUsd: 0, lastTurnUsd: 0 } }, tickEvent());
+            perchLedgerStore.emit({ ...initialLedger('perch'), cost: { cumulativeUsd: 2, lastTurnUsd: 0 } }, tickEvent());
+
+            expect(botOptions.isCostPaused!()).toBe(true);
+        });
+
+        test('dailyCostCeilingUsd left undefined: isCostPaused() stays false regardless of ledger spend', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const conversationLedgerStore = fakeLedgerStoreWithEmit();
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            conversationLedgerStore.emit({ ...initialLedger('conversation'), cost: { cumulativeUsd: 1000, lastTurnUsd: 0 } }, tickEvent());
+
+            expect(botOptions.isCostPaused!()).toBe(false);
+        });
+
+        test('restores a previously-persisted paused snapshot from the conversation journal at boot, before any ledger event', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            const snapshotRow = {
+                PK: 'SESSION_JOURNAL#conversation', SK: '2026-09-05T00:00:00.000Z#000000', TTL: 0, at: '2026-09-05T00:00:00.000Z', type: 'cost_ceiling_snapshot', dateKey: '2026-09-05', totalUsd: 5, paused: true,
+            };
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    {} as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => ({ Items: [snapshotRow] })) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy,
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createBotSpy);
+
+            // Fixes "now" inside the restored snapshot's own local day so the boot-time
+            // rollover check does not immediately clear it as stale.
+            const fixedNow = new Date('2026-09-05T12:00:00.000Z');
+            const dateNowSpy = spyOn(Date, 'now').mockReturnValue(fixedNow.getTime());
+            spies.push(dateNowSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            expect(botOptions.isCostPaused!()).toBe(true);
+        });
+
+        test('a boot-time journal read failure is logged and tolerated, never blocking startup', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    {} as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => { throw new Error('DynamoDB throttled'); }) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy,
+            });
+            spies.push(createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+
+            await expect(createApp()).resolves.toBeDefined();
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.any(String));
         });
     });
 

@@ -385,7 +385,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
             const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor, ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createConversationConductorSpy, createDiscordBotSpy);
@@ -455,10 +455,10 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
             const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConversationConductor, ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConversationConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const createPerchConductorSpy = spyOn(sessionsModule, 'createPerchConductor').mockResolvedValue({
-                conductor: fakePerchConductor, ledgerStore: {} as LedgerStore,
+                conductor: fakePerchConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
             });
             const createMcpServerInstancesSpy = spyOn(mcpServersModule, 'createMcpServerInstances');
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
@@ -511,10 +511,10 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
             const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
             });
             const createPerchConductorSpy = spyOn(sessionsModule, 'createPerchConductor').mockResolvedValue({
-                conductor: fakeConductor('perch-sess'), ledgerStore: {} as LedgerStore,
+                conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
             });
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createConversationConductorSpy, createPerchConductorSpy, createDiscordBotSpy);
@@ -553,6 +553,45 @@ describe('Bot Lifecycle Integration', () => {
             const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { journal?: unknown, perchJournal?: unknown };
             expect(botOptions.journal).toBe(conversationJournal);
             expect(botOptions.perchJournal).toBe(perchJournal);
+        });
+
+        it('passes a working isCostPaused function into createDiscordBot (Q3 / B4)', async () => {
+            const mockClient = {} as DynamoDBClient;
+            const mockDocClient = { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient;
+            const mockContextBuilder = {} as ContextBuilder;
+            const mockMemoryMcp = {};
+
+            spies.push(
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: { ...mockSessionConfig, mode: 'conductor', dailyCostCeilingUsd: 1 },
+                    perch:   mockPerchConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
+                    client: mockClient, docClient: mockDocClient, tableName: 'IsambardMemory',
+                }),
+                spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
+                spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
+                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
+                // @ts-expect-error - Mocking constructor
+                spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
+            );
+            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createPerchConductorSpy = spyOn(sessionsModule, 'createPerchConductor').mockResolvedValue({
+                conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+            });
+            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
+            spies.push(createConversationConductorSpy, createPerchConductorSpy, createDiscordBotSpy);
+
+            await createApp();
+
+            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { isCostPaused?: () => boolean };
+            expect(typeof botOptions.isCostPaused).toBe('function');
+            expect(botOptions.isCostPaused!()).toBe(false);
         });
 
         it('oneshot mode (kill switch): opens no perch conductor', async () => {

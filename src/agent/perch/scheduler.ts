@@ -36,6 +36,13 @@ export interface PerchSchedulerDeps {
     onPerchTrigger:       (slot: PerchSlot) => void
     /** Optional perch session runner for suspension check */
     perchSessionRunner?:  PerchSessionRunner
+    /**
+     * Optional Q3/B4 daily cost ceiling predicate: when it returns true, a scheduled trigger
+     * skips `onPerchTrigger` without stopping the reschedule loop, so the pause self-clears at
+     * local midnight with no restart. Discord's own turns are never gated by this — only perch's
+     * scheduled trigger path checks it.
+     */
+    isCostPaused?:        () => boolean
 }
 
 /**
@@ -149,6 +156,12 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         // Stryker disable next-line ConditionalExpression,BlockStatement: Tested via behavior - scheduler reschedules when disabled
         if(!config.enabled) {
             // Reschedule even if disabled to allow enabling later
+            scheduleNextTrigger();
+            return;
+        }
+
+        if(deps.isCostPaused?.()) {
+            logger.debug('Perch trigger skipped - cost ceiling reached');
             scheduleNextTrigger();
             return;
         }

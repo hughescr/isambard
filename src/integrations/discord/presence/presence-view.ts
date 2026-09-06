@@ -110,12 +110,17 @@ function resolveActiveRole(conversationPhase: ActivityPhase | null, perchPhase: 
     return null;
 }
 
+/** Q3/B4: literal marker appended to the prefix, after the task counts, while perch is cost-paused. */
+const COST_PAUSED_MARKER = '⏸ perch';
+
 /**
  * Composes a {@link PresenceView} from the session ledgers: index 0 is the conversation ledger,
  * index 1 is the perch ledger. The conversation's phase wins when both are live; counts are the
- * union of both ledgers' tasks (shell tasks are never rendered).
+ * union of both ledgers' tasks (shell tasks are never rendered). `costPaused` (Q3 / plan amendment
+ * B4, default `false`) appends a `⏸ perch` marker to the prefix, after the task counts — part of
+ * the fixed prefix, so it is NEVER truncated by the digest budget.
  */
-export function composePresence(ledgers: readonly Ledger[]): PresenceView {
+export function composePresence(ledgers: readonly Ledger[], costPaused = false): PresenceView {
     const [conversation, perch] = ledgers;
 
     const live: PresenceRole[] = [];
@@ -128,7 +133,8 @@ export function composePresence(ledgers: readonly Ledger[]): PresenceView {
 
     const indicator = live.length === 0 ? IDLE_EMOJI : live.map(role => LIVE_EMOJI[role]).join('');
     const counts = renderTaskCounts(ledgers);
-    const prefix = counts.length === 0 ? indicator : `${indicator}${SEPARATOR}${counts}`;
+    const segments = [counts, costPaused ? COST_PAUSED_MARKER : ''].filter(segment => segment.length > 0);
+    const prefix = segments.length === 0 ? indicator : `${indicator}${SEPARATOR}${segments.join(SEPARATOR)}`;
 
     const compacting = ledgers.some(ledger => ledger.compaction === 'compacting');
 

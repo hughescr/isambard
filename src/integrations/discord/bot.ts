@@ -235,6 +235,13 @@ export interface DiscordBotOptions {
     discordCapability?: DiscordCapability
 
     /**
+     * Optional Q3/B4 daily cost ceiling predicate. Forwarded only into the conductor-mode perch
+     * setup path (`setupPerchDriverAndScheduler`) — the legacy oneshot session runner+scheduler
+     * path is left untouched, unchanged.
+     */
+    isCostPaused?: () => boolean
+
+    /**
      * Optional write-through identity cache.
      * When provided, idle status generation uses the cache instead of the inline
      * TTL-based loader.  Invalidate this cache from the memory-tool write path
@@ -944,12 +951,17 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const conductorPresence = setupConductorPresence({
                         ...sharedPresenceParams,
                         // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorLedgers() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorLedgers` can never be undefined here; the `?? [ledgerStore]` exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
-                        ledgers:  conductorLedgers ?? [ledgerStore],
-                        throttle: presenceThrottle,
+                        ledgers:      conductorLedgers ?? [ledgerStore],
+                        throttle:     presenceThrottle,
                         // Keeps the DEGRADED-FALLBACK legacy perch runner's own presence throttle
                         // clock ticking (see setupConductorPresence's own doc) when perchConductor
                         // was omitted or its own open() rejected — never subscribed to.
                         botStateManager,
+                        // Q3/B4: only forward the predicate when perch is actually enabled — the
+                        // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
+                        // scheduler was ever going to run, so nothing is paused regardless of what
+                        // isCostPaused() reports (finding: the marker rendered even with perch off).
+                        isCostPaused: options.perchConfig?.enabled ? options.isCostPaused : undefined,
                     });
                     presenceManager = conductorPresence.presenceManager;
                     unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
@@ -995,16 +1007,17 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(agent && options.perchConfig?.enabled) {
                 if(perchConductorOpened && perchConductor) {
                     const perchSetup = setupPerchDriverAndScheduler({
-                        conductor:   perchConductor,
-                        perchConfig: options.perchConfig,
+                        conductor:    perchConductor,
+                        perchConfig:  options.perchConfig,
                         clock,
                         contextBuilder,
                         activityLogger,
                         channelRegistry,
                         responseRouter,
-                        client:      readyClient,
+                        client:       readyClient,
                         rateLimiter,
                         discordCapability,
+                        isCostPaused: options.isCostPaused,
                     });
                     perchDriver = perchSetup.driver;
                     perchScheduler = perchSetup.scheduler;
