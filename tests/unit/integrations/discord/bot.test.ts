@@ -21,6 +21,7 @@ import * as catchupSetupModule from '@/integrations/discord/setup/catchup-setup'
 import * as coordinatorSetupModule from '@/integrations/discord/setup/coordinator-setup';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-handler-setup';
+import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state/manager';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
 
@@ -1638,12 +1639,36 @@ describe('createDiscordBot', () => {
             } as unknown as Conductor & { open: ReturnType<typeof mock>, shutdown: ReturnType<typeof mock>, subscribeTurn: ReturnType<typeof mock> };
         }
 
+        /**
+         * `emit` is test-only (not part of `LedgerStore`): it invokes every listener `subscribe()`
+         * was ever called with (mirroring the real store's multi-subscriber `Set`, since
+         * production wires more than one subscriber — e.g. `installLedgerShim` AND (P11) bot.ts's
+         * own ring-buffer mirror — onto the same store), letting a test simulate a ledger change
+         * without a real `createLedgerStore` reducer.
+         *
+         * `unsubscribe` is returned specifically to whichever `subscribe()` call registers a
+         * 2-argument `(ledger, event) => …` listener — `installLedgerShim`'s own signature (see
+         * `state/ledger-shim.ts`) — since that is the one existing tests (e.g. the shutdown-order
+         * suite) name and assert on; P11's own ring-buffer listener declares only `(ledger) => …`
+         * (1 argument) and gets its own independent, unasserted unsubscribe instead. Distinguishing
+         * by arity rather than call order keeps this fake correct regardless of which subscriber
+         * bot.ts happens to wire up first.
+         */
         function makeFakeLedgerStore(sessionId: string | undefined = 'ledger-sess-1', unsubscribe: ReturnType<typeof mock> = mock(() => undefined)) {
+            const listeners = new Set<(ledger: unknown, event?: unknown) => void>();
             return {
                 get:       mock(() => ({ sessionId, tasks: [] })),
                 dispatch:  mock(() => undefined),
-                subscribe: mock(() => unsubscribe),
-            } as unknown as LedgerStore & { get: ReturnType<typeof mock> };
+                subscribe: mock((l: (ledger: unknown, event?: unknown) => void) => {
+                    listeners.add(l);
+                    return l.length >= 2 ? unsubscribe : mock(() => undefined);
+                }),
+                emit: (ledger: unknown, event?: unknown): void => {
+                    for(const listener of listeners) {
+                        listener(ledger, event);
+                    }
+                },
+            } as unknown as LedgerStore & { get: ReturnType<typeof mock>, emit: (ledger: unknown, event?: unknown) => void };
         }
 
         function conductorDeps(overrides: Record<string, unknown> = {}): Partial<DiscordBotOptions> {
@@ -2111,6 +2136,265 @@ describe('createDiscordBot', () => {
 
             expect(shouldStartCatchUp).not.toHaveBeenCalled();
             expect(startCatchUp).not.toHaveBeenCalled();
+        });
+
+        describe('P11: ledger-driven ring buffers', () => {
+            const minimalPerchConfig = {
+                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5,
+            };
+
+            /** Spies on `agentModule.LiveSignals`'s constructor and captures the `getRecentTools`/`getRecentChannels` closures it was built with. */
+            function captureLiveSignalsGetters() {
+                let captured: { getRecentTools?: () => readonly unknown[], getRecentChannels?: () => readonly unknown[] } = {};
+                spies.push(
+                    // @ts-expect-error — Mocking constructor
+                    spyOn(agentModule, 'LiveSignals').mockImplementation((params: typeof captured) => {
+                        captured = params;
+                        return { snapshot: mock(() => Promise.resolve([])) };
+                    })
+                );
+                return { getCaptured: () => captured };
+            }
+
+            test('feeds recentTools from a using_tool phase change on either ledger, deduped by toolName', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { getCaptured } = captureLiveSignalsGetters();
+
+                const ledgerStore = makeFakeLedgerStore();
+                const deps = conductorDeps({ ledgerStore });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const phaseChangedEvent = { type: 'phase_changed', phase: null, at: new Date(0) };
+                ledgerStore.emit({ turn: { kind: 'discord', phase: { type: 'using_tool', toolName: 'Bash' } } }, phaseChangedEvent);
+                // A second event naming the SAME tool must not duplicate the ring-buffer entry.
+                ledgerStore.emit({ turn: { kind: 'discord', phase: { type: 'using_tool', toolName: 'Bash' } } }, phaseChangedEvent);
+
+                const tools = getCaptured().getRecentTools?.() as { toolName: string }[];
+                expect(tools).toHaveLength(1);
+                expect(tools[0].toolName).toBe('Bash');
+            });
+
+            test('feeds recentChannels from a new discord turn carrying a channelId', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { getCaptured } = captureLiveSignalsGetters();
+
+                const ledgerStore = makeFakeLedgerStore();
+                const deps = conductorDeps({ ledgerStore });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                ledgerStore.emit({ turn: { id: 'turn-1', kind: 'discord', channelId: 'chan-1', phase: null } }, { type: 'phase_changed', phase: null, at: new Date(0) });
+
+                const channels = getCaptured().getRecentChannels?.() as { channelId: string }[];
+                expect(channels).toHaveLength(1);
+                expect(channels[0].channelId).toBe('chan-1');
+            });
+
+            test('the ring buffers themselves never subscribe to botStateManager in conductor mode (only the legacy-perch-ledger adapter does)', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const customBotStateManager = new BotStateManagerImpl({ logger: mockLogger });
+                const subscribeSpy = spyOn(customBotStateManager, 'subscribe');
+                spies.push(subscribeSpy);
+
+                const deps = conductorDeps();
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    botStateManager: customBotStateManager,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                // Exactly one subscription: `createLegacyPerchLedger`'s own internal mirror (a
+                // DIFFERENT concern — mirroring the legacy perch runner into a ledger, design doc
+                // section 8). Neither ring-buffer listener from the oneshot branch is present.
+                expect(subscribeSpy).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe('P11: presence composed from ledgers', () => {
+            test('uses setupConductorPresence (never setupPresence) once identityContext/config.presence/ledgerStore are all present', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
+                });
+                const setupPresenceSpy = spyOn(presenceSetupModule, 'setupPresence');
+                spies.push(setupConductorPresenceSpy, setupPresenceSpy);
+
+                const ledgerStore = makeFakeLedgerStore();
+                const deps = conductorDeps({ ledgerStore });
+
+                createDiscordBot({
+                    config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    identityContext: 'Test identity',
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(setupConductorPresenceSpy).toHaveBeenCalledTimes(1);
+                expect(setupPresenceSpy).not.toHaveBeenCalled();
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[] } | undefined;
+                expect(call?.ledgers).toHaveLength(2);
+            });
+
+            test('passes botStateManager through so the legacy perch runner\'s own presence throttle clock keeps ticking (P11 review finding)', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
+                });
+                spies.push(setupConductorPresenceSpy);
+
+                const customBotStateManager = new BotStateManagerImpl({ logger: mockLogger });
+                const ledgerStore = makeFakeLedgerStore();
+                const deps = conductorDeps({ ledgerStore });
+
+                createDiscordBot({
+                    config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    identityContext: 'Test identity',
+                    botStateManager: customBotStateManager,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { botStateManager?: unknown } | undefined;
+                expect(call?.botStateManager).toBe(customBotStateManager);
+            });
+
+            test('unsubscribeLedgers is called during stop()', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const unsubscribeLedgers = mock(() => undefined);
+                spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                    presenceManager: { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers,
+                }));
+
+                const ledgerStore = makeFakeLedgerStore();
+                const deps = conductorDeps({ ledgerStore });
+
+                const bot = createDiscordBot({
+                    config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    identityContext: 'Test identity',
+                    ...deps,
+                });
+
+                await triggerReady(client);
+                await bot.stop();
+
+                expect(unsubscribeLedgers).toHaveBeenCalledTimes(1);
+            });
+
+            describe('getRecentContext (relocated callback)', () => {
+                function captureRecentContext(): { getGetRecentContext: () => (() => Promise<string | undefined>) | undefined, getAddRecentMessage: () => ((content: string, author: 'user' | 'izzy') => void) | undefined } {
+                    let getRecentContext: (() => Promise<string | undefined>) | undefined;
+                    let addRecentMessage: ((content: string, author: 'user' | 'izzy') => void) | undefined;
+
+                    spies.push(
+                        spyOn(presenceSetupModule, 'setupConductorPresence').mockImplementation((params: { getRecentContext: () => Promise<string | undefined> }) => {
+                            getRecentContext = params.getRecentContext;
+                            return {
+                                presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                                unsubscribeLedgers: mock(() => undefined),
+                            };
+                        }),
+                        spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { addRecentMessage?: (content: string, author: 'user' | 'izzy') => void }) => {
+                            addRecentMessage = params.addRecentMessage;
+                            return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+                        })
+                    );
+
+                    return { getGetRecentContext: () => getRecentContext, getAddRecentMessage: () => addRecentMessage };
+                }
+
+                async function setUp(): Promise<{ getGetRecentContext: () => (() => Promise<string | undefined>) | undefined, getAddRecentMessage: () => ((content: string, author: 'user' | 'izzy') => void) | undefined }> {
+                    const client = makeMockClientForConductor();
+                    spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+                    const captured = captureRecentContext();
+
+                    const ledgerStore = makeFakeLedgerStore();
+                    const deps = conductorDeps({ ledgerStore });
+
+                    createDiscordBot({
+                        config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                        channelRegistry: mockChannelRegistry,
+                        agent:           {} as ClaudeAgent,
+                        identityContext: 'Test identity',
+                        ...deps,
+                    });
+
+                    await triggerReady(client);
+                    return captured;
+                }
+
+                test('returns undefined when no recent messages have been recorded', async () => {
+                    const { getGetRecentContext } = await setUp();
+
+                    await expect(getGetRecentContext()!()).resolves.toBeUndefined();
+                });
+
+                test('sorts recorded messages by timestamp ascending (not insertion order) and labels user vs. Izzy turns', async () => {
+                    jest.useFakeTimers();
+                    const { getGetRecentContext, getAddRecentMessage } = await setUp();
+                    const addRecentMessage = getAddRecentMessage()!;
+
+                    // Recorded out of chronological order: the later message first, the earlier
+                    // message second. Only a correct ascending sort (a.timestamp - b.timestamp)
+                    // — not push order — puts "First message" ahead of "Second reply" below.
+                    jest.setSystemTime(new Date(2000));
+                    addRecentMessage('Second reply', 'izzy');
+                    jest.setSystemTime(new Date(1000));
+                    addRecentMessage('First message', 'user');
+
+                    const context = await getGetRecentContext()!();
+
+                    expect(context).toBe('User: First message\nIzzy: Second reply');
+                });
+            });
         });
     });
 

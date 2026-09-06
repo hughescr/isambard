@@ -14,7 +14,7 @@ import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry
 import type { ChannelMetadata } from '../channel-registry/types';
 import type { InboxManager } from '../inbox';
 import { MessageCoordinator } from '../message-coordinator';
-import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
+import { type createDynamicStatusGenerator, type PresenceManager, type PresenceThrottle } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponse, sendEnvelopeResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
@@ -22,7 +22,7 @@ import { createChannelId, type ChannelId, type DiscordMessageContext } from '../
 import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
 import { createPresenceStreamHandler, type PresenceStreamHandler } from './presence-stream-handler';
 import {
-    type ClaudeAgent, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, type Conductor, type ContextPolicy, type ContextBuilder, type DeliveryGuard, type SessionJournal, generateText
+    type ClaudeAgent, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, type Conductor, type ContextPolicy, type ContextBuilder, type DeliveryGuard, type SessionJournal, type LedgerStore, generateText
 } from '@/agent';
 import { resolveTimezone } from '@/utils';
 
@@ -186,6 +186,14 @@ interface SetupCoordinatorParams {
     envelopeProvider?:      DiscordEnvelopeProvider
     /** Only needed in conductor mode, for `createConductorProcessor`'s own timezone dependency. */
     contextBuilder?:        Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
+    /**
+     * P11: forwarded verbatim into `createConductorProcessor`'s own `ledgerStore`/`throttle`
+     * (paired with `dynamicStatusGenerator` above) so every conductor turn also overlays synopses
+     * onto the conversation ledger — see that module's own doc. Omitted entirely, the conductor
+     * branch behaves exactly as it did before P11 (a `StreamTracker` only, no ledger writes).
+     */
+    ledgerStore?:           Pick<LedgerStore, 'dispatch'>
+    presenceThrottle?:      PresenceThrottle
 }
 
 /**
@@ -588,7 +596,8 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
     const {
         responseRouter, rateLimiter, readyClient, botStateManager,
         contextPolicy, envelopeProvider, contextBuilder, inboxManager,
-        catchUpSessionRunner, perchSessionRunner,
+        catchUpSessionRunner, perchSessionRunner, ledgerStore, presenceThrottle, dynamicStatusGenerator,
+        onThinkingContentUpdate,
     } = params;
 
     const coordinator = new MessageCoordinator({
@@ -716,6 +725,10 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
         contextBuilder:   contextBuilder!,
         resolveTimezone,
         logger,
+        ledgerStore,
+        throttle:         presenceThrottle,
+        dynamicStatusGenerator,
+        onThinkingContentUpdate,
     }));
 
     return coordinator;

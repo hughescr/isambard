@@ -425,4 +425,125 @@ describe('createConductorProcessor', () => {
 
         expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ userMemoryBlock: undefined }));
     });
+
+    describe('P11: ledger-sink presence wiring', () => {
+        function makeThrottle() {
+            return { shouldUpdate: jest.fn(() => true), record: jest.fn() };
+        }
+
+        it('dispatches a phase_synopsis event to the ledger sink for the submitted turn\'s own id', async () => {
+            const ledgerStore = { dispatch: jest.fn() };
+            const dynamicStatusGenerator = { generateSynopsis: jest.fn(() => Promise.resolve('a fresh synopsis')), generateCatchUpSynopsis: jest.fn() };
+            const processorWithLedger = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle: makeThrottle(), dynamicStatusGenerator,
+            });
+            coordinator.setProcessor(processorWithLedger);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+            const { envelope } = conductor.submitCalls[0];
+
+            conductor.emitFrame(envelope.id, {
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            });
+            await flush();
+
+            expect(ledgerStore.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'phase_synopsis', turnId: envelope.id, phaseType: 'using_tool', text: 'a fresh synopsis',
+            }));
+        });
+
+        it('never dispatches to the ledger sink when ledgerStore/throttle are not provided (backward compatible)', async () => {
+            // `processor` (built in beforeEach) has neither ledgerStore nor throttle — this just
+            // re-confirms the existing suite's processor still works without them (no throw).
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+            const { envelope } = conductor.submitCalls[0];
+
+            expect(() => {
+                conductor.emitFrame(envelope.id, {
+                    type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+                });
+            }).not.toThrow();
+        });
+
+        it('forwards onThinkingContentUpdate to the ledger-sink handler', async () => {
+            const ledgerStore = { dispatch: jest.fn() };
+            const dynamicStatusGenerator = { generateSynopsis: jest.fn(() => Promise.resolve('a fresh synopsis')), generateCatchUpSynopsis: jest.fn() };
+            const onThinkingContentUpdate = jest.fn();
+            const processorWithLedger = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle: makeThrottle(), dynamicStatusGenerator, onThinkingContentUpdate,
+            });
+            coordinator.setProcessor(processorWithLedger);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+            const { envelope } = conductor.submitCalls[0];
+
+            conductor.emitFrame(envelope.id, {
+                type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'pondering' }] },
+            });
+            await flush();
+
+            expect(onThinkingContentUpdate).toHaveBeenCalledWith('pondering');
+        });
+
+        it('pre-generates a thinking synopsis (peeking the throttle, not a BotStateManager) so the first thinking phase carries a synopsis with no accumulated context yet', async () => {
+            const ledgerStore = { dispatch: jest.fn() };
+            const dynamicStatusGenerator = { generateSynopsis: jest.fn(() => Promise.resolve('pre-generated synopsis')), generateCatchUpSynopsis: jest.fn() };
+            const throttle = makeThrottle();
+            const processorWithLedger = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle, dynamicStatusGenerator,
+            });
+            coordinator.setProcessor(processorWithLedger);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+            const { envelope } = conductor.submitCalls[0];
+
+            expect(dynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith({ phase: 'thinking', userMessage: 'hello' });
+
+            // No delta text and no tool history yet: the ledger-sink handler's own regeneration
+            // gate has nothing to regenerate from, so it must fall back to the pre-generated value.
+            conductor.emitFrame(envelope.id, { type: 'assistant', message: { content: [] } });
+
+            expect(ledgerStore.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'phase_synopsis', turnId: envelope.id, phaseType: 'thinking', text: 'pre-generated synopsis',
+            }));
+        });
+
+        it('does not pre-generate a thinking synopsis when the throttle window has not elapsed', async () => {
+            const ledgerStore = { dispatch: jest.fn() };
+            const dynamicStatusGenerator = { generateSynopsis: jest.fn(() => Promise.resolve('should not be used')), generateCatchUpSynopsis: jest.fn() };
+            const throttle = { shouldUpdate: jest.fn(() => false), record: jest.fn() };
+            const processorWithLedger = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle, dynamicStatusGenerator,
+            });
+            coordinator.setProcessor(processorWithLedger);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(dynamicStatusGenerator.generateSynopsis).not.toHaveBeenCalled();
+        });
+
+        it('ignores a frame for a different turn\'s id (per-turn filter applies to the ledger handler too)', async () => {
+            const ledgerStore = { dispatch: jest.fn() };
+            const dynamicStatusGenerator = { generateSynopsis: jest.fn(() => Promise.resolve('synopsis')), generateCatchUpSynopsis: jest.fn() };
+            const processorWithLedger = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle: makeThrottle(), dynamicStatusGenerator,
+            });
+            coordinator.setProcessor(processorWithLedger);
+
+            coordinator.handleMessage(makeContext({ channelId: createChannelId('chan-A'), messageId: 'msg-A1' }), makeDiscordMessage('chan-A', 'msg-A1', 'first'));
+            await flush();
+
+            conductor.emitFrame('some-other-turn-id', {
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            });
+            await flush();
+
+            expect(ledgerStore.dispatch).not.toHaveBeenCalled();
+        });
+    });
 });

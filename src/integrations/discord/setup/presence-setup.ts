@@ -2,13 +2,17 @@ import { logger } from '@hughescr/logger';
 import { ActivityType, type Client  } from 'discord.js';
 import type { InboxManager } from '../inbox';
 import {
+    composePresence,
     createActiveStatusGenerator,
     type createDynamicStatusGenerator,
     createIdleStatusGenerator,
-    PresenceManager
+    planPresenceUpdate,
+    PresenceManager,
+    type PresenceThrottle,
+    type PresenceView
 } from '../presence';
 import type { BotStateManager, StateChange } from '../state';
-import { IdentityCache, type ContextBuilder, type Signal } from '@/agent';
+import { IdentityCache, type ContextBuilder, type LedgerStore, type Signal } from '@/agent';
 import type { DiscordConfig } from '@/config';
 
 /**
@@ -179,3 +183,182 @@ export function setupPresence(params: {
     };
 }
 // Stryker restore all
+
+/** `${activeRole}:${phaseType}` for a non-idle {@link PresenceView}, `null` for idle. */
+function phaseSignature(view: PresenceView): string | null {
+    // Stryker disable next-line StringLiteral: equivalent mutant — composePresence's own invariant
+    // (presence-view.ts's resolveActiveRole) guarantees `activeRole` is non-null whenever
+    // `phase.type !== 'idle'` (the only branch that evaluates this expression, per the guard
+    // above), so the `?? ''` fallback's literal value can never be observed: every `view` this
+    // function is ever called with (always `composePresence`'s own return value, from `tick()`)
+    // makes this branch dead. Kept only as a type-level defensive default against `PresenceView`'s
+    // own type, which does not itself encode that correlation.
+    return view.phase.type === 'idle' ? null : `${view.activeRole ?? ''}:${view.phase.type}`;
+}
+
+/** `true` when the view's phase carries a ledger-overlaid synopsis (`compacting` has none). */
+function hasDigest(view: PresenceView): boolean {
+    return 'generatedStatus' in view.phase && view.phase.generatedStatus !== undefined;
+}
+
+/** Result of {@link setupConductorPresence}. */
+export interface ConductorPresenceSetupResult {
+    /** Presence manager for Discord status updates. */
+    presenceManager:    PresenceManager
+    /** Stops mirroring every ledger in `ledgers` into `presenceManager`. */
+    unsubscribeLedgers: () => void
+}
+
+/**
+ * Sets up Discord presence for conductor mode (P9 `config.session.mode === 'conductor'`):
+ * composes presence from the session ledgers (design doc section 8) instead of bridging
+ * `BotStateManager`. Deliberately does none of what `setupPresence`'s bridge (:110-181, untouched
+ * — see this file's module-level doc discipline) does: no `botStateManager.subscribe`, no
+ * `transitionPresenceDisplayMode` call, and no explicit idle bootstrap — the very first
+ * synchronous compose (before any ledger has emitted an event) already renders `💤`, because every
+ * ledger starts with no open turn.
+ *
+ * The composition/throttle DECISION lives entirely in `presence-view.ts`'s pure
+ * `composePresence`/`planPresenceUpdate` (already measured at 100% mutation coverage on their
+ * own); this function's own body is just the plumbing that calls them and applies the result.
+ * @param params Construction inputs mirroring `setupPresence`'s (status generators, identity
+ * cache, live-signals/task-context callbacks), plus the ledgers to compose from and the shared
+ * `PresenceThrottle` instance.
+ * @returns See {@link ConductorPresenceSetupResult}.
+ */
+export function setupConductorPresence(params: {
+    identityContext:         string
+    presenceConfig:          NonNullable<DiscordConfig['presence']>
+    readyClient:             Client
+    /** The session ledgers to compose from — conventionally `[conversationLedger, legacyPerchLedger]` (design doc section 8: conversation wins when both are live). */
+    ledgers:                 readonly LedgerStore[]
+    /** The one process-wide throttle shared with the ledger-sink stream handler (P11). */
+    throttle:                PresenceThrottle
+    dynamicStatusGenerator:  ReturnType<typeof createDynamicStatusGenerator> | undefined
+    getTaskContext?:         () => Promise<string | undefined>
+    getRecentContext:        () => Promise<string | undefined>
+    contextBuilder?:         ContextBuilder
+    getLastThinkingContent?: () => string | undefined
+    /** Pre-built write-through identity cache. When provided, replaces the inline loader. */
+    identityCache?:          IdentityCache
+    /** Optional live-signals snapshot callback. */
+    getLiveSignals?:         () => Promise<Signal[]>
+    /** Getter for the last idle status text (anti-rut). */
+    getPreviousStatus?:      () => string | undefined
+    /** Setter for persisting the last idle status text (anti-rut). */
+    setPreviousStatus?:      (text: string) => void
+    /**
+     * The still-legacy `BotStateManager` — used ONLY to call `recordPresenceUpdate()` on every
+     * applied update, never `subscribe`d to. Until P12 gives perch its own conductor, the legacy
+     * perch runner's own stream handler (`createStreamEventHandler`, wired through
+     * `perch-setup.ts`) still gates its Haiku calls on `botStateManager.shouldUpdatePresence()` —
+     * a throttle whose clock the removed oneshot bridge used to advance on every activity update.
+     * Omitted, the legacy perch runner's synopsis generation goes unthrottled (P11 review finding).
+     */
+    botStateManager?:        Pick<BotStateManager, 'recordPresenceUpdate'>
+}): ConductorPresenceSetupResult {
+    const {
+        identityContext,
+        presenceConfig,
+        readyClient,
+        ledgers,
+        throttle,
+        dynamicStatusGenerator,
+        getTaskContext,
+        getRecentContext,
+        contextBuilder,
+        getLastThinkingContent,
+        identityCache: providedIdentityCache,
+        getLiveSignals,
+        getPreviousStatus,
+        setPreviousStatus,
+        botStateManager,
+    } = params;
+
+    const activeStatusGenerator = createActiveStatusGenerator({
+        activityType: ActivityType.Custom,
+        logger,
+    });
+
+    const identityCache = providedIdentityCache ?? new IdentityCache(
+        contextBuilder ? () => contextBuilder.loadCoreIdentity() : () => Promise.resolve(identityContext)
+    );
+
+    const idleStatusGenerator = createIdleStatusGenerator({
+        logger,
+        activityType:    ActivityType.Custom,
+        identityContext: () => identityCache.get(),
+        getLiveSignals,
+        getPreviousStatus,
+        setPreviousStatus,
+        getTaskContext,
+        getRecentContext,
+        getLastThinkingContent,
+    });
+
+    const presenceManager = new PresenceManager({
+        discordClient: readyClient,
+        config:        presenceConfig,
+        activeStatusGenerator,
+        idleStatusGenerator,
+        dynamicStatusGenerator,
+        logger,
+    });
+
+    presenceManager.start();
+
+    // P11 fix: the ledger-sink stream handler (stream-event-handler.ts) peeks `throttle` to decide
+    // whether generating a synopsis is worth it, then dispatches `phase_synopsis` once it resolves
+    // (design doc section 8) — but that generation is an LLM call, so it can never resolve within
+    // the same synchronous tick as the sdk_frame that started it. Left to `planPresenceUpdate`
+    // alone, whichever tick happens to apply first (the digest-less base phase, or an even earlier
+    // phase still holding the window) consumes the whole 12s window, and the digest — once it
+    // finally resolves — is then either a whole window late or dropped outright for a turn shorter
+    // than the window (see the P11 review finding this fixes). `lastSeenSignature`/
+    // `lastSeenHadDigest` remember the (role, phaseType) and digest-presence of the most recently
+    // COMPOSED non-idle view — whether or not it was actually applied — reset at every idle view
+    // (a turn boundary). The first tick where that exact phase's digest goes from absent to present
+    // is a REFINEMENT of whatever is already on screen for it (or would have been, throttle
+    // permitting), not a new presence-worthy event: apply it directly, bypassing the throttle, so
+    // the window a placeholder already spent (or is still holding) doesn't also swallow the one
+    // synopsis it was generated for.
+    let lastSeenSignature: string | null = null;
+    let lastSeenHadDigest = false;
+
+    /** Applies `view` and, if a legacy `botStateManager` was provided, keeps its own throttle clock in sync (see the param's doc). */
+    function apply(view: PresenceView): void {
+        void presenceManager.applyView(view);
+        botStateManager?.recordPresenceUpdate();
+    }
+
+    /** Composes the current view from every ledger and applies it, if `planPresenceUpdate` says to. */
+    function tick(): void {
+        const view = composePresence(ledgers.map(store => store.get()));
+        const signature = phaseSignature(view);
+        const digestJustArrived = signature !== null && signature === lastSeenSignature && !lastSeenHadDigest && hasDigest(view);
+
+        lastSeenSignature = signature;
+        lastSeenHadDigest = hasDigest(view);
+
+        if(digestJustArrived) {
+            apply(view);
+            return;
+        }
+
+        if(planPresenceUpdate(view, throttle) !== null) {
+            apply(view);
+        }
+    }
+
+    const unsubscribes = ledgers.map(store => store.subscribe(tick));
+    tick();
+
+    return {
+        presenceManager,
+        unsubscribeLedgers: (): void => {
+            for(const unsubscribe of unsubscribes) {
+                unsubscribe();
+            }
+        },
+    };
+}

@@ -7,6 +7,7 @@
 
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
+import { renderPrefixedText } from './presence-view.js';
 import { generateTextWithSystemPrompt, type Signal } from '@/agent';
 import { truncateToWordBoundary } from '@/utils';
 
@@ -18,9 +19,25 @@ export interface IdleStatusGenerator {
    * Generate creative idle status text using Claude Haiku.
    * This is async and may fail - returns fallback "Idle" on error.
    *
-   * @returns Discord activity configuration with 💤 emoji prefix
+   * With no `options` (or `options.prefix` omitted), behaves exactly as before: a `'💤 '`
+   * emoji prefix and a 128-code-unit budget. When `options.prefix` is given (the P11 composed
+   * presence prefix), that prefix is rendered in full and never truncated; the generated text is
+   * word-boundary-truncated to whatever budget remains out of Discord's 128-code-unit limit
+   * (after the prefix, a ` • ` separator, and — when `options.compacting` — a `'compacting'`
+   * marker), and dropped entirely when fewer than 12 code units would remain for it.
+   *
+   * @param options - Optional composed prefix and compacting marker (P11)
+   * @returns Discord activity configuration
    */
-    generate(): Promise<ActivitiesOptions>
+    generate(options?: IdleStatusOptions): Promise<ActivitiesOptions>
+}
+
+/** Optional composed-prefix inputs to {@link IdleStatusGenerator.generate} (P11). */
+export interface IdleStatusOptions {
+    /** The composed presence prefix (session indicators + task counts), rendered in full. */
+    prefix?:     string
+    /** When true, a `'compacting'` marker is inserted between the prefix and the digest. */
+    compacting?: boolean
 }
 
 /**
@@ -104,6 +121,42 @@ Output the thought ONLY - no quotes, no framing. Keep it SHORT.`;
  * User prompt when no context is available.
  */
 const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, under 50 chars):';
+
+/** Discord's custom-status length limit, in UTF-16 code units (`.length`). */
+const PRESENCE_BUDGET = 128;
+
+/** The result of composing one idle-status render: the final name, and the digest actually used (if any). */
+interface ComposedIdleStatus {
+    name:        string
+    digestText?: string
+}
+
+/** Unchanged pre-P11 behaviour: a bare `'💤 '` prefix and a 128-code-unit budget for the whole thing. */
+function composeDefaultIdleStatus(rawText: string): ComposedIdleStatus {
+    // Reserve space for emoji prefix
+    // Discord limit is 128 code units (.length property)
+    // "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
+    const emojiPrefix = '💤 ';
+    const maxLength = PRESENCE_BUDGET - emojiPrefix.length;
+    const statusText = truncateToWordBoundary(rawText, maxLength);
+    return { name: `${emojiPrefix}${statusText}`, digestText: statusText };
+}
+
+/** The composed prefix plus, when compacting, the `'compacting'` marker — never truncated. */
+function composeIdleBase(prefix: string, compacting: boolean): string {
+    return renderPrefixedText(prefix, compacting, undefined).name;
+}
+
+/**
+ * P11 composed-prefix behaviour: `prefix` (and, when compacting, the `'compacting'` marker) is
+ * rendered in full and never truncated; the generated text is word-boundary-truncated to
+ * whatever budget remains, and dropped entirely (no digest at all) when too little budget would
+ * remain for it — see {@link renderPrefixedText}, shared with the active-phase render path so the
+ * two never drift apart on the budget/separator/truncation rules.
+ */
+function composePrefixedIdleStatus(prefix: string, compacting: boolean, rawText: string): ComposedIdleStatus {
+    return renderPrefixedText(prefix, compacting, rawText);
+}
 
 /**
  * Render a list of signals as a numbered "Now-signals:" menu.
@@ -214,7 +267,7 @@ export function createIdleStatusGenerator(
 
     return {
         // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
-        async generate(): Promise<ActivitiesOptions> {
+        async generate(options?: IdleStatusOptions): Promise<ActivitiesOptions> {
             try {
                 logger.debug('Generating idle status with Haiku');
 
@@ -225,28 +278,30 @@ export function createIdleStatusGenerator(
                     : await buildLegacyPrompts(identity);
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true });
-
-                // Reserve space for emoji prefix
-                // Discord limit is 128 code units (.length property)
-                // "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
-                const emojiPrefix = '💤 ';
-                const maxLength = 128 - emojiPrefix.length;
                 // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
-                const statusText = truncateToWordBoundary(text.trim(), maxLength);
+                const rawText = text.trim();
 
-                const finalStatus = `${emojiPrefix}${statusText}`;
+                const { name: finalStatus, digestText } = options?.prefix === undefined
+                    ? composeDefaultIdleStatus(rawText)
+                    : composePrefixedIdleStatus(options.prefix, options.compacting ?? false, rawText);
 
                 logger.info({ statusText: finalStatus }, 'Generated idle status');
 
-                // Persist the generated text so the next refresh sees it in anti-rut block
-                setPreviousStatus?.(statusText);
+                // Persist the generated text so the next refresh sees it in anti-rut block.
+                // Nothing to persist when the digest was dropped entirely for lack of budget.
+                if(digestText !== undefined) {
+                    setPreviousStatus?.(digestText);
+                }
 
                 return { name: finalStatus, type: activityType };
             } catch (error) {
-                // Stryker disable all: Error fallback - tested only via integration, difficult to trigger in unit tests
                 logger.error({ error }, 'Failed to generate idle status, using fallback');
-                return { name: '💤 Idle', type: activityType };
-                // Stryker restore all
+                // P11: a composed prefix (task counts, compacting marker) must survive a Haiku
+                // failure — dropping straight to the bare '💤 Idle' silently hid the task counts
+                // for as long as generation kept failing. Only the truly prefix-less legacy path
+                // (no options.prefix — pre-P11 callers) still gets the hardcoded fallback.
+                const name = options?.prefix === undefined ? '💤 Idle' : composeIdleBase(options.prefix, options.compacting ?? false);
+                return { name, type: activityType };
             }
         },
         // Stryker restore StringLiteral,ObjectLiteral

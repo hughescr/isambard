@@ -18,6 +18,7 @@ import { createInteractionHandler } from './interactions';
 import type { MessageCoordinator } from './message-coordinator';
 import {
     createDynamicStatusGenerator,
+    createPresenceThrottle,
     type PresenceManager
 } from './presence';
 import { DiscordRateLimiter } from './rate-limiter';
@@ -29,13 +30,14 @@ import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeIn
 import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
-import { setupPresence, type PresenceSetupResult } from './setup/presence-setup';
+import { setupConductorPresence, setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
 import { installLedgerShim } from './state/ledger-shim';
-import { createUserId } from './types';
+import { createLegacyPerchLedger } from './state/legacy-perch-ledger';
+import { createChannelId, createUserId } from './types';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal, type Clock, type Shutdown  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
@@ -384,6 +386,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Capture unsubscribe functions for cleanup
     let unsubscribeModeTransition: (() => void) | undefined;
     let unsubscribeActivityPhase: (() => void) | undefined;
+    // P11: torn down instead of the two above when presence is composed from ledgers.
+    let unsubscribeLedgerPresence: (() => void) | undefined;
+    // P11: the ONE process-wide throttle shared by presence-setup's conductor branch and the
+    // ledger-sink stream handler wired per turn by conductor-processor.ts (design doc section 8:
+    // "at most one non-idle presence update per 12s"). Built once, only in conductor mode.
+    const presenceThrottle = ledgerStore
+        ? createPresenceThrottle(config.presence?.updateThrottleMs, () => Date.now())
+        : undefined;
 
     // P9: true once conversationConductor.open() has succeeded this process — gates whether
     // setupCoordinatorIntegration/setupMessageProcessing take the conductor branch, and whether
@@ -625,27 +635,61 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Stryker restore BlockStatement
     });
 
-    // Subscribe to botStateManager for recent-tools ring buffer
+    // P11: in conductor mode, the ring buffers are fed from the session ledgers (conversation +
+    // the throwaway legacy-perch adapter) instead of BotStateManager — ledger-shim.ts no longer
+    // forwards activity phases at all, so the botStateManager-based subscriptions below would
+    // silently starve the moment a Discord turn migrates to the conductor. `legacyPerchLedger` is
+    // deleted in P12 once perch opens its own real conductor/ledger.
+    const legacyPerchLedger = ledgerStore ? createLegacyPerchLedger(botStateManager, () => new Date()) : undefined;
     // Stryker disable BlockStatement: Composition root — ring-buffer subscriptions are integration-wiring, not unit-testable
-    const unsubscribeToolTracking = botStateManager.subscribe((change) => {
-        if(change.changeType === 'activity_phase') {
-            const phase = change.newState.activityPhase;
-            if(phase?.type === 'using_tool') {
-                addRecentTool(phase.toolName);
+    let unsubscribeToolTracking: () => void;
+    let unsubscribeChannelTracking: () => void;
+    if(ledgerStore && legacyPerchLedger) {
+        const ledgers: readonly LedgerStore[] = [ledgerStore, legacyPerchLedger];
+        const lastToolNameByLedger = new Map<LedgerStore, string | undefined>();
+        const lastTurnIdByLedger = new Map<LedgerStore, string | undefined>();
+        const unsubscribes = ledgers.map(store => store.subscribe((ledger) => {
+            const { turn } = ledger;
+            if(turn?.phase?.type === 'using_tool' && turn.phase.toolName !== lastToolNameByLedger.get(store)) {
+                lastToolNameByLedger.set(store, turn.phase.toolName);
+                addRecentTool(turn.phase.toolName);
+            } else if(turn?.phase?.type !== 'using_tool') {
+                lastToolNameByLedger.set(store, undefined);
             }
-        }
-    });
+            if(turn?.kind === 'discord' && turn.channelId !== undefined && turn.id !== lastTurnIdByLedger.get(store)) {
+                lastTurnIdByLedger.set(store, turn.id);
+                addRecentChannel(createChannelId(turn.channelId));
+            }
+        }));
+        const unsubscribeAll = (): void => {
+            for(const unsubscribe of unsubscribes) {
+                unsubscribe();
+            }
+        };
+        unsubscribeToolTracking = unsubscribeAll;
+        unsubscribeChannelTracking = unsubscribeAll;
+    } else {
+        // Subscribe to botStateManager for recent-tools ring buffer
+        unsubscribeToolTracking = botStateManager.subscribe((change) => {
+            if(change.changeType === 'activity_phase') {
+                const phase = change.newState.activityPhase;
+                if(phase?.type === 'using_tool') {
+                    addRecentTool(phase.toolName);
+                }
+            }
+        });
 
-    // Subscribe to botStateManager for recent-channels ring buffer
-    // Records the channel whenever the bot transitions into processing_message mode
-    const unsubscribeChannelTracking = botStateManager.subscribe((change) => {
-        if(change.changeType === 'mode_transition' && change.newState.mode === 'processing_message') {
-            const ctx = change.newState.modeContext as { channelId?: RecentChannel['channelId'] };
-            if(ctx.channelId) {
-                addRecentChannel(ctx.channelId);
+        // Subscribe to botStateManager for recent-channels ring buffer
+        // Records the channel whenever the bot transitions into processing_message mode
+        unsubscribeChannelTracking = botStateManager.subscribe((change) => {
+            if(change.changeType === 'mode_transition' && change.newState.mode === 'processing_message') {
+                const ctx = change.newState.modeContext as { channelId?: RecentChannel['channelId'] };
+                if(ctx.channelId) {
+                    addRecentChannel(ctx.channelId);
+                }
             }
-        }
-    });
+        });
+    }
     // Stryker restore BlockStatement
 
     // Create dynamic status generator if identityContext is provided
@@ -698,38 +742,16 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 : undefined;
             // Stryker restore BlockStatement
 
-            // Setup presence manager if optional deps provided
-            // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent
+            // P11 fix: presence construction moved below the conductor-open block (still before
+            // setupCoordinatorIntegration/setupMessageProcessing, which is all "before
+            // coordinator.setProcessor" ever required) so it can gate on `conductorOpened` —
+            // whether open() actually SUCCEEDED — rather than on `ledgerStore`'s mere existence,
+            // which only means conductor mode was REQUESTED. Gating on `ledgerStore` left presence
+            // frozen on the boot-time idle status for the process lifetime whenever open() rejected
+            // or timed out (the degrade-to-oneshot path below), since the ledger it was composing
+            // from would then never receive another event. See `presenceSetup`/`catchUpSessionRunner`/
+            // `perchSessionRunner` construction after the conductor-open block.
             let presenceSetup: PresenceSetupResult | undefined;
-            if(identityContext && config.presence) {
-                presenceSetup = setupPresence({
-                    identityContext,
-                    presenceConfig:   config.presence,
-                    readyClient,
-                    botStateManager,
-                    dynamicStatusGenerator,
-                    inboxManager,
-                    getTaskContext:   () => taskListReader.buildTaskListSummary(),
-                    // Stryker disable next-line BlockStatement: composition root callback — not covered by unit tests
-                    getRecentContext: async () => {
-                        // Stryker disable next-line BlockStatement: optimization guard — empty array short-circuit, not covered by unit tests
-                        if(recentMessages.length === 0) {
-                            return undefined;
-                        }
-                        const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
-                        return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
-                    },
-                    contextBuilder,
-                    getLastThinkingContent,
-                    identityCache,
-                    getLiveSignals: liveSignals ? () => liveSignals.snapshot() : undefined,
-                    getPreviousStatus,
-                    setPreviousStatus,
-                });
-                presenceManager = presenceSetup.presenceManager;
-                unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
-                unsubscribeActivityPhase = presenceSetup.unsubscribeActivityPhase;
-            }
 
             // Create DMTracker and ResponseRouter (after client is ready, BEFORE session runners)
             const dmTracker = new DMTracker(channelRegistry, readyClient);
@@ -739,52 +761,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // P10: captured for triggerCatchUp's conductor-mode branch, which runs outside
             // clientReady's own scope (see the outer `let responseRouterRef` declaration).
             responseRouterRef = responseRouter;
-
-            // Create catch-up session runner if all dependencies available (must be created before inbox init)
-            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
-            if(inboxManager && agent && memoryBackend) {
-                catchUpSessionRunner = setupCatchUpSessionRunner({
-                    inboxManager,
-                    agent,
-                    memoryBackend,
-                    botStateManager,
-                    presenceManager,
-                    dynamicStatusGenerator,
-                    responseRouter,
-                    rateLimiter,
-                    client:                  readyClient,
-                    onThinkingContentUpdate: setLastThinkingContent,
-                    setLastSessionId,
-                    addRecentMessage,
-                    activityLogger,
-                    discordCapability,
-                });
-            }
-            // Stryker restore BlockStatement
-
-            // Create perch session runner and scheduler if config provided
-            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
-            if(agent && options.perchConfig?.enabled) {
-                const perchSetup = setupPerchSessionRunnerAndScheduler({
-                    agent,
-                    perchConfig:             options.perchConfig,
-                    botStateManager,
-                    presenceManager,
-                    dynamicStatusGenerator,
-                    responseRouter,
-                    rateLimiter,
-                    client:                  readyClient,
-                    contextBuilder,
-                    onThinkingContentUpdate: setLastThinkingContent,
-                    setLastSessionId,
-                    addRecentMessage,
-                    activityLogger,
-                    discordCapability,
-                });
-                perchSessionRunner = perchSetup.runner;
-                perchScheduler = perchSetup.scheduler;
-            }
-            // Stryker restore BlockStatement
 
             // Initialize channel registry BEFORE setting up message handlers.
             // startHydration() fires the reconnection loop asynchronously — do not await.
@@ -832,6 +808,107 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 }
             }
             // Stryker restore all
+
+            // Setup presence manager if optional deps provided.
+            // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent.
+            // P11 fix: gated on `conductorOpened` (open() actually succeeded), not on `ledgerStore`'s
+            // mere existence (conductor mode merely REQUESTED) — see the comment left at this
+            // block's old position, above, for why.
+            if(identityContext && config.presence) {
+                // Stryker disable next-line BlockStatement: composition root callback
+                const getRecentContext = async (): Promise<string | undefined> => {
+                    // Stryker disable next-line BlockStatement: optimization guard — empty array short-circuit, not covered by unit tests
+                    if(recentMessages.length === 0) {
+                        return undefined;
+                    }
+                    const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
+                    return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
+                };
+                const sharedPresenceParams = {
+                    identityContext,
+                    presenceConfig: config.presence,
+                    readyClient,
+                    dynamicStatusGenerator,
+                    getTaskContext: () => taskListReader.buildTaskListSummary(),
+                    getRecentContext,
+                    contextBuilder,
+                    getLastThinkingContent,
+                    identityCache,
+                    getLiveSignals: liveSignals ? () => liveSignals.snapshot() : undefined,
+                    getPreviousStatus,
+                    setPreviousStatus,
+                };
+                // P11: in conductor mode, presence composes from the session ledgers instead of
+                // bridging BotStateManager (design doc section 8) — see setupConductorPresence's
+                // own doc for exactly what it deliberately omits versus the oneshot bridge below.
+                if(conductorOpened && legacyPerchLedger && presenceThrottle && ledgerStore) {
+                    const conductorPresence = setupConductorPresence({
+                        ...sharedPresenceParams,
+                        ledgers:  [ledgerStore, legacyPerchLedger],
+                        throttle: presenceThrottle,
+                        // Keeps the still-legacy perch runner's own presence throttle clock ticking
+                        // (see setupConductorPresence's own doc) — never subscribed to.
+                        botStateManager,
+                    });
+                    presenceManager = conductorPresence.presenceManager;
+                    unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
+                } else {
+                    presenceSetup = setupPresence({
+                        ...sharedPresenceParams,
+                        botStateManager,
+                        inboxManager,
+                    });
+                    presenceManager = presenceSetup.presenceManager;
+                    unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
+                    unsubscribeActivityPhase = presenceSetup.unsubscribeActivityPhase;
+                }
+            }
+
+            // Create catch-up session runner if all dependencies available (must be created before inbox init)
+            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
+            if(inboxManager && agent && memoryBackend) {
+                catchUpSessionRunner = setupCatchUpSessionRunner({
+                    inboxManager,
+                    agent,
+                    memoryBackend,
+                    botStateManager,
+                    presenceManager,
+                    dynamicStatusGenerator,
+                    responseRouter,
+                    rateLimiter,
+                    client:                  readyClient,
+                    onThinkingContentUpdate: setLastThinkingContent,
+                    setLastSessionId,
+                    addRecentMessage,
+                    activityLogger,
+                    discordCapability,
+                });
+            }
+            // Stryker restore BlockStatement
+
+            // Create perch session runner and scheduler if config provided
+            // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
+            if(agent && options.perchConfig?.enabled) {
+                const perchSetup = setupPerchSessionRunnerAndScheduler({
+                    agent,
+                    perchConfig:             options.perchConfig,
+                    botStateManager,
+                    presenceManager,
+                    dynamicStatusGenerator,
+                    responseRouter,
+                    rateLimiter,
+                    client:                  readyClient,
+                    contextBuilder,
+                    onThinkingContentUpdate: setLastThinkingContent,
+                    setLastSessionId,
+                    addRecentMessage,
+                    activityLogger,
+                    discordCapability,
+                });
+                perchSessionRunner = perchSetup.runner;
+                perchScheduler = perchSetup.scheduler;
+            }
+            // Stryker restore BlockStatement
 
             // Mute admin email channel so Craig's messages there don't reach Izzy
             if(emailSetup?.adminChannelId) {
@@ -892,6 +969,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             envelopeProvider,
                             contextBuilder,
                             inboxManager,
+                            // P11: shared with presence-setup's conductor branch so every turn
+                            // overlays synopses onto the SAME ledger/throttle presence composes from.
+                            ledgerStore,
+                            presenceThrottle,
                         }
                         : {}),
                 });
@@ -996,6 +1077,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             if(unsubscribeActivityPhase) {
                 unsubscribeActivityPhase();
+            }
+            if(unsubscribeLedgerPresence) {
+                unsubscribeLedgerPresence();
             }
             unsubscribeToolTracking();
             unsubscribeChannelTracking();

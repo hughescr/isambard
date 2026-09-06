@@ -25,6 +25,29 @@ export {
 
 export { createActiveStatusGenerator } from './status-generator-active.js';
 export { createDynamicStatusGenerator, resetCooldownState } from './status-generator-dynamic.js';
-export { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from './status-generator-idle.js';
+export { createIdleStatusGenerator, type IdleStatusGeneratorDeps, type IdleStatusOptions } from './status-generator-idle.js';
 export { PresenceManager, type PresenceManagerDeps } from './manager.js';
-export { buildThinkingSynopsis, createStreamEventHandler, type StreamEventHandler } from './stream-event-handler.js';
+export {
+    buildLedgerThinkingSynopsis,
+    buildThinkingSynopsis,
+    createLedgerStreamEventHandler,
+    createStreamEventHandler,
+    type CreateLedgerStreamEventHandlerDeps,
+    type LedgerSink,
+    type LedgerStreamEventHandler,
+    type StreamEventHandler
+} from './stream-event-handler.js';
+
+// P11: presence composed from the conversation and perch ledgers
+export {
+    composePresence,
+    renderPresenceText,
+    renderPrefixedText,
+    createPresenceThrottle,
+    planPresenceUpdate,
+    type PresenceRole,
+    type PresenceView,
+    type PresenceThrottle,
+    type PresencePlan,
+    type RenderedPrefixedText
+} from './presence-view.js';

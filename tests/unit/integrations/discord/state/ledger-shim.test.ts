@@ -138,7 +138,7 @@ describe('installLedgerShim', () => {
         expect(botStateManager.goIdle).not.toHaveBeenCalled();
     });
 
-    it('mirrors an activity-phase change from the ledger onto BotStateManager', () => {
+    it('P11: never mirrors an activity-phase change onto BotStateManager (presence now reads Ledger.turn.phase directly)', () => {
         const { ledgerStore, botStateManager } = build('idle');
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: discordEnvelopeMeta(), at: new Date(0) });
 
@@ -148,37 +148,27 @@ describe('installLedgerShim', () => {
             at:    new Date(1),
         });
 
-        expect(botStateManager.updateActivityPhase).toHaveBeenCalled();
+        expect(botStateManager.updateActivityPhase).not.toHaveBeenCalled();
     });
 
-    it('stashes on compaction start and restores on compaction end', () => {
+    it('P11: never stashes/restores compaction onto BotStateManager (presence now reads Ledger.compaction directly)', () => {
         const { ledgerStore, stashAndSetCompacting, restoreFromCompacting } = build('idle');
 
         ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(0) });
-        expect(stashAndSetCompacting).toHaveBeenCalledWith('auto');
-
         ledgerStore.dispatch({ type: 'compaction_finished', at: new Date(1) });
-        expect(restoreFromCompacting).toHaveBeenCalledTimes(1);
+
+        expect(stashAndSetCompacting).not.toHaveBeenCalled();
+        expect(restoreFromCompacting).not.toHaveBeenCalled();
     });
 
-    it('stashes on compaction start even while a turn is open (the production shape — compaction_started also sets turn.phase to compacting)', () => {
-        const { ledgerStore, stashAndSetCompacting } = build('idle');
-        ledgerStore.dispatch({ type: 'turn_submitted', envelope: discordEnvelopeMeta(), at: new Date(0) });
+    it('P11: never calls getCompactionStateManager at all', () => {
+        const { ledgerStore, botStateManager } = build('idle');
 
-        ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(1) });
-
-        expect(stashAndSetCompacting).toHaveBeenCalledWith('auto');
-    });
-
-    it('restores from compacting once the SDK compact_boundary frame lands, even though no discrete compaction_finished event is ever dispatched in production', () => {
-        const { ledgerStore, stashAndSetCompacting, restoreFromCompacting } = build('idle');
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: discordEnvelopeMeta(), at: new Date(0) });
         ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(1) });
-        expect(stashAndSetCompacting).toHaveBeenCalledWith('auto');
-
         ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(2) });
 
-        expect(restoreFromCompacting).toHaveBeenCalledTimes(1);
+        expect(botStateManager.getCompactionStateManager).not.toHaveBeenCalled();
     });
 
     it('stops mirroring once unsubscribed', () => {

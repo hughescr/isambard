@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, mock, jest, spyOn } from '
 import { type Client, type ActivitiesOptions, ActivityType  } from 'discord.js';
 import { mockWithDiscordRetry, originalWithDiscordRetry } from '../../../../setup';
 import { PresenceManager, type PresenceManagerDeps  } from '@/integrations/discord/presence/manager';
+import type { PresenceView } from '@/integrations/discord/presence/presence-view';
 import type { PresencePhase, PresenceConfig } from '@/integrations/discord/presence/types';
 
 // Typed mock shapes that expose both real interface and bun mock methods
@@ -1490,6 +1491,149 @@ describe('PresenceManager', () => {
 
             // Idle refresh should have fired again (loop still running)
             expect(mockIdleGenerator.generate.mock.calls.length).toBeGreaterThan(idleCallCount);
+        });
+    });
+
+    describe('applyView (P11)', () => {
+        const idleView: PresenceView = {
+            live:       [],
+            prefix:     '💤 • 1 🪾',
+            compacting: false,
+            phase:      { type: 'idle', since: new Date(0) },
+            activeRole: null,
+        };
+
+        const activeView: PresenceView = {
+            live:       ['conversation'],
+            prefix:     '💬 • 1 🪾',
+            compacting: false,
+            phase:      { type: 'thinking', startedAt: new Date(0) },
+            activeRole: 'conversation',
+        };
+
+        it('idle view starts the idle refresh and passes { prefix, compacting } to idleStatusGenerator.generate', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.applyView(idleView);
+
+            expect(mockIdleGenerator.generate).toHaveBeenCalledWith({ prefix: '💤 • 1 🪾', compacting: false });
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: '💤 Dozing peacefully', type: ActivityType.Custom });
+        });
+
+        it('an idle-to-idle prefix change refreshes the status immediately, not just on the next periodic interval', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.applyView(idleView);
+            const callCountAfterFirst = mockIdleGenerator.generate.mock.calls.length;
+
+            const changedView: PresenceView = { ...idleView, prefix: '💤 • 2 🪾' };
+            await manager.applyView(changedView);
+
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(callCountAfterFirst + 1);
+            expect(mockIdleGenerator.generate).toHaveBeenLastCalledWith({ prefix: '💤 • 2 🪾', compacting: false });
+        });
+
+        it('active view stops the idle refresh and applies renderPresenceText(view, digest)', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // Establish the idle refresh loop first so we can prove it gets stopped.
+            await manager.applyView(idleView);
+            const idleCallCount = mockIdleGenerator.generate.mock.calls.length;
+
+            await manager.applyView(activeView);
+
+            // activeStatusGenerator.generate is called with the phase only (no display mode / no emoji prefix)
+            expect(mockActiveGenerator.generate).toHaveBeenCalledWith(activeView.phase);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({
+                name: '💬 • 1 🪾 • Status for thinking',
+                type: ActivityType.Custom,
+            });
+
+            // Idle refresh loop was stopped: advancing time triggers no further idle generation
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs + 50);
+            await Promise.resolve();
+            expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCallCount);
+        });
+
+        it('compacting active view renders the compacting marker before the digest', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.applyView({ ...activeView, compacting: true });
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({
+                name: '💬 • 1 🪾 • compacting • Status for thinking',
+                type: ActivityType.Custom,
+            });
+        });
+
+        it('discards a stale idle result when the composed prefix changes during generation', async () => {
+            const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
+            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
+                idleGeneratePromises.push({ resolve });
+            }));
+
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            const staleView: PresenceView = { ...idleView, prefix: '💤 • 1 🪾' };
+            const freshView: PresenceView = { ...idleView, prefix: '💤 • 2 🪾' };
+
+            void manager.applyView(staleView);
+            await Promise.resolve();
+            expect(idleGeneratePromises).toHaveLength(1);
+
+            void manager.applyView(freshView);
+            await Promise.resolve();
+            expect(idleGeneratePromises).toHaveLength(2);
+
+            // Resolve the stale (first) generation — must be discarded, not applied.
+            idleGeneratePromises[0].resolve({ name: 'Stale idle status', type: ActivityType.Custom });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockClient.user.setActivity).not.toHaveBeenCalledWith(
+                expect.objectContaining({ name: 'Stale idle status' })
+            );
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { prefixAtStart: '💤 • 1 🪾', currentPrefix: '💤 • 2 🪾' },
+                'Discarding stale idle status (composed prefix changed during generation)'
+            );
+
+            // Resolve the fresh (second) generation — must be applied.
+            idleGeneratePromises[1].resolve({ name: 'Fresh idle status', type: ActivityType.Custom });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Fresh idle status', type: ActivityType.Custom });
         });
     });
 });

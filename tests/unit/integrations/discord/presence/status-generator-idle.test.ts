@@ -965,4 +965,190 @@ describe('IdleStatusGenerator', () => {
             expect(userPromptArg).toContain('[channel] 5m ago: #general');
         });
     });
+
+    describe('generate with a composed prefix (P11)', () => {
+        test('default call (no options) still yields 💤 <text> within 128, unchanged', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Dozing peacefully'));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate();
+
+            expect(result.name).toBe('💤 Dozing peacefully');
+            expect(result.name.length).toBeLessThanOrEqual(128);
+        });
+
+        test('generate({ prefix }) keeps the prefix intact and word-boundary-truncates the text to fit 128', async () => {
+            const longText = 'word '.repeat(40).trim();
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(longText));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix: '💤 • 2 🔬' });
+
+            expect(result.name).toStartWith('💤 • 2 🔬 • word word');
+            expect(result.name).toEndWith('…');
+            expect(result.name.length).toBeLessThanOrEqual(128);
+        });
+
+        test('generate({ prefix, compacting: true }) inserts the compacting marker before the text', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Mulling it over'));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix: '💤', compacting: true });
+
+            expect(result.name).toBe('💤 • compacting • Mulling it over');
+        });
+
+        test('a very long prefix leaves the text dropped rather than the prefix cut', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Something to say'));
+            const bigPrefix = 'X'.repeat(120);
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix: bigPrefix });
+
+            expect(result.name).toBe(bigPrefix);
+        });
+
+        test('digest included when exactly 12 code units remain (the boundary)', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('twelve chars'));
+            // 128 - 3 (separator) - 12 (remaining) = 113
+            const prefix = 'X'.repeat(113);
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix });
+
+            expect(result.name).toBe(`${prefix} • twelve chars`);
+        });
+
+        test('digest dropped when exactly 11 code units remain (one below the boundary)', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('twelve chars'));
+            // 128 - 3 (separator) - 11 (remaining) = 114
+            const prefix = 'X'.repeat(114);
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix });
+
+            expect(result.name).toBe(prefix);
+        });
+
+        test('setPreviousStatus is not called when the digest is dropped for lack of budget', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Something to say'));
+            const mockSetPreviousStatus = mock((_text: string) => undefined);
+            const bigPrefix = 'X'.repeat(120);
+
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                setPreviousStatus: mockSetPreviousStatus,
+            });
+
+            await generator.generate({ prefix: bigPrefix });
+
+            expect(mockSetPreviousStatus).not.toHaveBeenCalled();
+        });
+
+        test('setPreviousStatus receives the rendered (possibly truncated) digest text when it fits', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Mulling it over'));
+            const mockSetPreviousStatus = mock((_text: string) => undefined);
+
+            const generator = createIdleStatusGenerator({
+                logger:            mockLogger,
+                activityType:      ActivityType.Custom,
+                identityContext:   () => Promise.resolve('Test identity'),
+                setPreviousStatus: mockSetPreviousStatus,
+            });
+
+            await generator.generate({ prefix: '💤' });
+
+            expect(mockSetPreviousStatus).toHaveBeenCalledWith('Mulling it over');
+        });
+
+        test('falls back to the composed prefix (not the hardcoded "💤 Idle") when generation errors, so task counts survive a Haiku failure', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('API rate limit exceeded')));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix: '💤 • 1 🪾', compacting: false });
+
+            expect(result.name).toBe('💤 • 1 🪾');
+            expect(result.type).toBe(ActivityType.Custom);
+        });
+
+        test('falls back to the composed prefix with the compacting marker when generation errors', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('API rate limit exceeded')));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix: '💤 • 1 🪾', compacting: true });
+
+            expect(result.name).toBe('💤 • 1 🪾 • compacting');
+        });
+
+        test('falls back to the composed prefix with no compacting marker when generation errors and `compacting` is omitted', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('API rate limit exceeded')));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate({ prefix: '💤 • 1 🪾' });
+
+            expect(result.name).toBe('💤 • 1 🪾');
+            expect(result.name).not.toContain('compacting');
+        });
+
+        test('still falls back to the hardcoded "💤 Idle" when no prefix was composed (unchanged pre-P11 behaviour)', async () => {
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.reject(new Error('API rate limit exceeded')));
+
+            const generator = createIdleStatusGenerator({
+                logger:          mockLogger,
+                activityType:    ActivityType.Custom,
+                identityContext: () => Promise.resolve('Test identity'),
+            });
+
+            const result = await generator.generate();
+
+            expect(result.name).toBe('💤 Idle');
+        });
+    });
 });

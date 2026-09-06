@@ -13,6 +13,7 @@
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
 import { DateTime } from 'luxon';
+import { renderPresenceText, type PresenceView } from './presence-view.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
 import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
@@ -75,6 +76,10 @@ export class PresenceManager {
     private currentPhase:        PresencePhase | null = null; // Start uninitialized
     private idleRefreshInterval: NodeJS.Timeout | null = null;
     private presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
+    // P11: set only by applyView(), never by the oneshot updatePhase/transitionPresenceDisplayMode paths.
+    // Non-null means the idle refresh loop should render via the composed prefix, not the legacy '💤 ' default.
+    private composedPrefix:      string | null = null;
+    private composedCompacting = false;
 
     constructor(private readonly deps: PresenceManagerDeps) {}
 
@@ -115,18 +120,55 @@ export class PresenceManager {
             return; // No longer idle
         }
 
-        // Capture current mode at start to detect stale results
+        // Capture current mode/prefix at start to detect stale results
         const modeAtStart = this.presenceDisplayMode;
+        const prefixAtStart = this.composedPrefix;
 
-        const activity = await this.deps.idleStatusGenerator.generate();
+        // P11: once applyView() has composed a prefix, every idle refresh renders through it
+        // instead of the legacy bare '💤 ' default.
+        const activity = prefixAtStart === null
+            ? await this.deps.idleStatusGenerator.generate()
+            : await this.deps.idleStatusGenerator.generate({ prefix: prefixAtStart, compacting: this.composedCompacting });
 
-        // Check if mode changed while generating - if so, discard stale result
-        if(this.presenceDisplayMode !== modeAtStart) {
-            this.deps.logger.debug({ modeAtStart, currentMode: this.presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
+        if(prefixAtStart === null) {
+            // Legacy path: check if display mode changed while generating - if so, discard stale result
+            if(this.presenceDisplayMode !== modeAtStart) {
+                this.deps.logger.debug({ modeAtStart, currentMode: this.presenceDisplayMode }, 'Discarding stale idle status (mode changed during generation)');
+                return;
+            }
+        } else if(this.composedPrefix !== prefixAtStart) {
+            // P11 path: check if the composed prefix changed while generating - if so, discard stale result
+            this.deps.logger.debug({ prefixAtStart, currentPrefix: this.composedPrefix }, 'Discarding stale idle status (composed prefix changed during generation)');
             return;
         }
 
         await this.applyPresenceUpdate(activity);
+    }
+
+    /**
+     * Applies a composed {@link PresenceView} (P11 conductor-mode presence): idle views store the
+     * composed prefix and either start the idle refresh loop (first idle) or, when it is already
+     * running, refresh immediately with the new prefix — an idle-to-idle prefix change (a
+     * background task starting/finishing while otherwise idle) must reach Discord right away, not
+     * lag by up to `idleRefreshIntervalMs`; the loop itself is never restarted, so the periodic
+     * cadence is unaffected. Non-idle views stop the idle refresh loop and apply
+     * `renderPresenceText(view, digest)`, where `digest` is
+     * `activeStatusGenerator.generate(view.phase).name` — no display mode, so no emoji prefix.
+     */
+    async applyView(view: PresenceView): Promise<void> {
+        this.currentPhase = view.phase;
+
+        if(view.phase.type === 'idle') {
+            this.composedPrefix = view.prefix;
+            this.composedCompacting = view.compacting;
+            await (this.idleRefreshInterval ? this.refreshIdleStatus() : this.startIdleRefresh());
+            return;
+        }
+
+        this.stopIdleRefresh();
+        const generated = this.deps.activeStatusGenerator.generate(view.phase);
+        const text = renderPresenceText(view, generated.name);
+        await this.applyPresenceUpdate({ name: text, type: generated.type });
     }
 
     /**

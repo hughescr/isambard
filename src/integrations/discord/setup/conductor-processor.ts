@@ -23,12 +23,13 @@
 import type { Logger } from '@hughescr/logger';
 import { addAttachmentInfoToContexts } from '../attachments';
 import type { MessageProcessor, ProcessResult } from '../message-coordinator';
+import { buildLedgerThinkingSynopsis, createLedgerStreamEventHandler, type createDynamicStatusGenerator, type PresenceThrottle } from '../presence';
 import type { DiscordMessageContext } from '../types';
 import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
     buildDiscordEnvelope, buildResumeNote, StreamTracker,
-    type AgentStreamEvent, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type PlatformImage
+    type AgentStreamEvent, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage
 } from '@/agent';
 import { formatTimeHeader } from '@/utils';
 
@@ -46,14 +47,27 @@ export interface DiscordEnvelopeProvider {
 
 /** Dependencies for {@link createConductorProcessor}. */
 export interface CreateConductorProcessorParams {
-    conductor:        Conductor
-    contextPolicy:    ContextPolicy
-    envelopeProvider: DiscordEnvelopeProvider
+    conductor:                Conductor
+    contextPolicy:            ContextPolicy
+    envelopeProvider:         DiscordEnvelopeProvider
     /** Only the two members this processor needs: the author's stored timezone, and their `[About this user]` memory block text. */
-    contextBuilder:   Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
+    contextBuilder:           Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
     /** Resolves a possibly-`undefined` stored timezone to a definite IANA zone — injected so tests do not depend on the server's real timezone or `src/utils/time.ts`'s `DateTime.local()` fallback. */
-    resolveTimezone:  (userTimezone?: string) => string
-    logger:           Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    resolveTimezone:          (userTimezone?: string) => string
+    logger:                   Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    /**
+     * P11: when provided together with {@link throttle}, every turn also gets a
+     * `createLedgerStreamEventHandler` overlaying synopses onto this ledger (design doc section
+     * 8) — `dispatch` is the only member it needs. Omitted entirely, the processor behaves exactly
+     * as before P11 (a plain `StreamTracker`, no ledger writes).
+     */
+    ledgerStore?:             Pick<LedgerStore, 'dispatch'>
+    /** The one process-wide throttle shared with `presence-setup.ts`'s conductor branch. Required alongside `ledgerStore` for the ledger-sink wiring to activate. */
+    throttle?:                PresenceThrottle
+    /** Optional LLM-based synopsis generator for the ledger-sink handler; omitted means no synopsis is ever generated (the ledger's base phase still reaches the composer via `sdk_frame`). */
+    dynamicStatusGenerator?:  ReturnType<typeof createDynamicStatusGenerator>
+    /** Forwarded verbatim to the ledger-sink handler's own `onThinkingContentUpdate` (see `bot.ts`'s `getLastThinkingContent`/`setLastThinkingContent` ring buffer) — omitted means the idle-status generator never sees a last-thinking-content signal in conductor mode. */
+    onThinkingContentUpdate?: (content: string) => void
 }
 
 /** An empty `ProcessResult` for the (unreachable in production — the coordinator never calls a processor with an empty batch) empty-contexts guard. */
@@ -71,7 +85,7 @@ function emptyResult(): ProcessResult {
  */
 export function createConductorProcessor(params: CreateConductorProcessorParams): MessageProcessor {
     const {
-        conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle, dynamicStatusGenerator, onThinkingContentUpdate,
     } = params;
 
     return async (contexts, resumeContext, abortSignal): Promise<ProcessResult> => {
@@ -85,11 +99,21 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         const enrichedContexts = addAttachmentInfoToContexts(contexts, contentAdditions);
         const platformImages = toPlatformImages(images);
 
-        const [names, channelList, storedTimezone, newEvents] = await Promise.all([
+        // P11: pre-generated alongside the other independent I/O below (never on its own await) so
+        // the first `thinking` phase of the turn — before any accumulated content or tool history
+        // exists for handleThinkingTransition to regenerate from — still carries a synopsis instead
+        // of falling through to nothing (the oneshot path's own `buildThinkingSynopsis`, mirrored
+        // here against `throttle` since the conductor path has no `BotStateManager` to peek).
+        const thinkingSynopsisPromise = ledgerStore && throttle
+            ? buildLedgerThinkingSynopsis(dynamicStatusGenerator, throttle, first.content)
+            : Promise.resolve(undefined);
+
+        const [names, channelList, storedTimezone, newEvents, thinkingSynopsis] = await Promise.all([
             envelopeProvider.resolveNames(first),
             envelopeProvider.channelList(),
             contextBuilder.loadUserTimezone(first.userId),
             contextPolicy.eventsDelta(),
+            thinkingSynopsisPromise,
         ]);
 
         const input = envelopeProvider.toEnvelopeInput(enrichedContexts, names, platformImages, channelList);
@@ -134,9 +158,17 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // requires one on every ProcessResult, and reads it to capture partial work on an
         // interrupted turn for the next submit's resume context).
         const streamTracker = new StreamTracker();
+        // P11: overlays synopses onto the ledger for this turn's own id — only when the caller
+        // wired both ledgerStore and throttle (see CreateConductorProcessorParams's doc).
+        const ledgerHandler = ledgerStore && throttle
+            ? createLedgerStreamEventHandler({
+                turnId: envelope.id, sink: ledgerStore, throttle, dynamicStatusGenerator, logger, userMessage: input.content, thinkingSynopsis, onThinkingContentUpdate,
+            })
+            : undefined;
         const unsubscribe = conductor.subscribeTurn((turnId, frame) => {
             if(turnId === envelope.id) {
                 streamTracker.update(frame as AgentStreamEvent);
+                ledgerHandler?.onStreamEvent(frame as AgentStreamEvent);
             }
         });
 
@@ -147,6 +179,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             });
         } finally {
             unsubscribe();
+            ledgerHandler?.complete();
         }
 
         logger.info({

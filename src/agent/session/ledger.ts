@@ -16,6 +16,8 @@ import type { ContextUsageSummary, EnvelopeKind, EnvelopeMeta, SessionRole } fro
 
 /** One in-flight turn: opened by `turn_submitted`, or spontaneously by an unsolicited assistant frame. */
 export interface LedgerTurn {
+    /** Stable id for this turn: the submitting envelope's `id`, or a synthesized id for a spontaneously-opened notification turn. Matched against a {@link LedgerEvent} `phase_synopsis`'s `turnId` so a stale synopsis (from a turn that has since ended) is dropped rather than misapplied to whatever turn is open now. */
+    id:            string
     kind:          EnvelopeKind
     startedAt:     Date
     queuedAt?:     Date
@@ -30,7 +32,7 @@ export interface LedgerTurn {
 export interface LedgerTask {
     id:          string
     taskType:    string
-    kind:        'subagent' | 'workflow' | 'shell' | 'other'
+    kind:        'subagent' | 'workflow' | 'shell' | 'monitor' | 'other'
     description: string
     startedAt:   Date
 }
@@ -63,7 +65,15 @@ export type LedgerEvent
       | { type: 'tick', rssBytes: number, at: Date }
       | { type: 'task_lost', taskId: string, at: Date }
       | { type: 'session_opened', sessionId: string, at: Date }
-      | { type: 'phase_changed', phase: ActivityPhase | null, at: Date };
+      | { type: 'phase_changed', phase: ActivityPhase | null, at: Date }
+      /**
+       * A synopsis generated for the currently-open turn's phase (`presence/stream-event-handler.ts`'s
+       * `createLedgerStreamEventHandler`). Applied as `turn.phase.generatedStatus` only when `turnId`
+       * matches `turn.id` and `phaseType` matches `turn.phase.type`; dropped otherwise (design doc
+       * section 8) — a synopsis resolving after its turn ended, or after the phase already moved on,
+       * must never overwrite an unrelated turn's or phase's status.
+       */
+      | { type: 'phase_synopsis', turnId: string, phaseType: ActivityPhase['type'], text: string, at: Date };
 
 /** A fresh {@link Ledger} for `role`, with every field at its zero value. */
 export function initialLedger(role: SessionRole): Ledger {
@@ -91,6 +101,9 @@ function taskKindFor(taskType: string | undefined): LedgerTask['kind'] {
     }
     if(taskType === 'local_bash') {
         return 'shell';
+    }
+    if(taskType === 'monitor' || taskType === 'local_monitor') {
+        return 'monitor';
     }
     return 'other';
 }
@@ -128,7 +141,7 @@ function reduceResultFrame(ledger: Ledger, frame: ResultFrame): Ledger {
 function reduceAssistantFrame(ledger: Ledger, frame: AssistantFrame, at: Date): Ledger {
     if(ledger.turn === null) {
         const phase = phaseFromFrame(frame, null, at);
-        return { ...ledger, turn: { kind: 'notification', startedAt: at, phase, interrupting: false } };
+        return { ...ledger, turn: { id: `notification-${at.getTime()}`, kind: 'notification', startedAt: at, phase, interrupting: false } };
     }
 
     const { turn } = ledger;
@@ -250,6 +263,7 @@ function reduceTurnSubmitted(ledger: Ledger, envelope: EnvelopeMeta, at: Date): 
         ? { ...ledger.queued, human: Math.max(0, ledger.queued.human - 1) }
         : { ...ledger.queued, other: Math.max(0, ledger.queued.other - 1) };
     const turn: LedgerTurn = {
+        id:           envelope.id,
         kind:         envelope.kind,
         startedAt:    at,
         queuedAt:     envelope.queuedAt,
@@ -334,6 +348,26 @@ function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger
 }
 
 /**
+ * Applies a `phase_synopsis` event's `text` as `turn.phase.generatedStatus`, but only when the
+ * event's `turnId` matches the currently open turn's `id` AND `phaseType` matches that turn's
+ * current `phase.type` — otherwise the event is a stale synopsis (its turn ended, or the phase
+ * has since moved on) and is dropped, returning `ledger` unchanged by reference.
+ */
+function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type: 'phase_synopsis' }>): Ledger {
+    const { turn } = ledger;
+    if(turn === null) {
+        return ledger;
+    }
+    if(turn.phase === null) {
+        return ledger;
+    }
+    if(turn.id !== event.turnId || turn.phase.type !== event.phaseType) {
+        return ledger;
+    }
+    return { ...ledger, turn: { ...turn, phase: { ...turn.phase, generatedStatus: event.text } as ActivityPhase } };
+}
+
+/**
  * Folds one {@link LedgerEvent} into `ledger`, pure and clock-free: `event.at` is the only source
  * of time. Returns `ledger` itself, by reference, when the event changes nothing.
  */
@@ -374,6 +408,9 @@ export function reduceLedger(ledger: Ledger, event: LedgerEvent): Ledger {
         }
         case 'phase_changed': {
             return reducePhaseChanged(ledger, event.phase);
+        }
+        case 'phase_synopsis': {
+            return reducePhaseSynopsis(ledger, event);
         }
     }
 }

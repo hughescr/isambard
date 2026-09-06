@@ -91,6 +91,7 @@ describe('reduceLedger: turn_submitted', () => {
 
         expect(ledger.queued).toEqual({ human: 0, other: 0 });
         expect(ledger.turn).toEqual({
+            id:           'env-1',
             kind:         'discord',
             startedAt:    T2,
             queuedAt:     T1,
@@ -99,6 +100,12 @@ describe('reduceLedger: turn_submitted', () => {
             phase:        null,
             interrupting: false,
         });
+    });
+
+    it('stamps turn.id from the envelope id', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope({ id: 'env-42' }), at: T2 }));
+
+        expect(ledger.turn?.id).toBe('env-42');
     });
 
     it('floors queued.human at 0 when nothing was queued', () => {
@@ -193,6 +200,76 @@ describe('reduceLedger: sdk_frame assistant + latency', () => {
 
         expect(ledger.turn).toMatchObject({ kind: 'notification', startedAt: T1, interrupting: false, phase: { type: 'responding', startedAt: T1 } });
         expect(ledger.latency.bySource).toEqual({});
+    });
+
+    it('stamps a spontaneously-opened notification turn with a non-empty id', () => {
+        const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('unsolicited'), at: T1 }));
+
+        expect(typeof ledger.turn?.id).toBe('string');
+        expect(ledger.turn?.id.length).toBeGreaterThan(0);
+    });
+});
+
+describe('reduceLedger: phase_synopsis', () => {
+    function openTurn(): Ledger {
+        return reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
+    }
+
+    it('applies generatedStatus onto turn.phase when turnId and phaseType both match the current turn', () => {
+        const thinking = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 }));
+        expect(thinking.turn?.phase).toEqual({ type: 'responding', startedAt: T2 });
+
+        const ledger = reduceLedger(thinking, frozenEvent({
+            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T3,
+        }));
+
+        expect(ledger.turn?.phase).toEqual({ type: 'responding', startedAt: T2, generatedStatus: 'writing a reply' });
+    });
+
+    it('drops the event (returns the same reference) when turnId does not match the current turn', () => {
+        // Regression coverage: dispatch an sdk_frame first (as the phaseType-mismatch test below
+        // does) so `turn.phase` is live and matches the event's `phaseType` — otherwise the earlier
+        // `turn.phase === null` guard returns first and the turnId check below it is never reached.
+        const thinking = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 }));
+        expect(thinking.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2 });
+
+        const result = reduceLedger(thinking, frozenEvent({
+            type: 'phase_synopsis', turnId: 'stale-turn', phaseType: 'using_tool', text: 'irrelevant', at: T3,
+        }));
+
+        expect(result).toBe(thinking);
+    });
+
+    it('drops the event when phaseType does not match the current turn\'s phase type', () => {
+        const thinking = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 }));
+        expect(thinking.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2 });
+
+        const result = reduceLedger(thinking, frozenEvent({
+            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'irrelevant', at: T3,
+        }));
+
+        expect(result).toBe(thinking);
+    });
+
+    it('drops the event (returns the same reference) when no turn is open', () => {
+        const ledger = initialLedger('conversation');
+
+        const result = reduceLedger(ledger, frozenEvent({
+            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'irrelevant', at: T1,
+        }));
+
+        expect(result).toBe(ledger);
+    });
+
+    it('drops the event when the turn has no phase yet', () => {
+        const ledger = openTurn();
+        expect(ledger.turn?.phase).toBeNull();
+
+        const result = reduceLedger(ledger, frozenEvent({
+            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'irrelevant', at: T2,
+        }));
+
+        expect(result).toBe(ledger);
     });
 });
 
@@ -328,6 +405,8 @@ describe('reduceLedger: background tasks', () => {
         ['local_agent', 'subagent'],
         ['local_workflow', 'workflow'],
         ['local_bash', 'shell'],
+        ['monitor', 'monitor'],
+        ['local_monitor', 'monitor'],
         ['something_else', 'other'],
     ] as const)('task_started maps task_type %s to kind %s', (taskType, kind) => {
         const ledger = reduceLedger(initialLedger('conversation'), frozenEvent({
