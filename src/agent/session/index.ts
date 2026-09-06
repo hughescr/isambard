@@ -173,8 +173,10 @@ export {
 export {
     shouldNotifyHealthChange,
     createHealthOutageCoalescer,
+    createHealthNotificationListener,
     DEFAULT_HEALTH_OUTAGE_WINDOW_MS,
     DEFAULT_HEALTH_ALREADY_REPORTED_CAPACITY,
     type HealthOutageCoalescer,
-    type CreateHealthOutageCoalescerParams
+    type CreateHealthOutageCoalescerParams,
+    type CreateHealthNotificationListenerParams
 } from './health-notification';

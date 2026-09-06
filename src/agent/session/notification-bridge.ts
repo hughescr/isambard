@@ -8,24 +8,39 @@
  * `setupEmail`/the conductor-mode block (the real conductor does not exist yet at that point —
  * `createConversationConductor` itself consumes email's MCP server instance, so the dependency
  * runs the other way), and attaches the real conductor via {@link NotificationBridge.attachConductor}
- * once `createConversationConductor` resolves. Before that call — and after {@link
- * NotificationBridge.detach} — `notify()` is a safe no-op: a debug log, nothing queued, never a
- * throw.
+ * once `createConversationConductor` resolves. `createConversationConductor` resolving is NOT
+ * the same as the conductor being open: `bot.ts`'s `clientReady` calls `conductor.open()` later
+ * still, after the Discord login round-trip, so there is a real window — after attach, before
+ * open — during which a naive "attached, so deliver" `notify()` would burn a source's dedupe key
+ * (and, for a coalesced source, its own "already reported" memory) on a delivery that never
+ * happened, permanently losing it for as long as the underlying key stays the same (a health
+ * outage's key is stable for the epoch's whole lifetime — see `health-notification.ts`'s module
+ * doc). `notify()` therefore checks `conductor.status().opened` (not just whether a conductor is
+ * attached) and treats "attached but not yet open" exactly like "not attached": a debug log, no
+ * dedupe/memory consumed, `notify()` returns `false` so the caller knows to retry. Before attach
+ * — and after {@link NotificationBridge.detach} — `notify()` is the same safe no-op: a debug
+ * log, nothing queued, never a throw.
  *
- * One notify contract (plan amendment B2): `notify({ source, text, wake, dedupeKey, at? })`.
- * `dedupeKey` is REQUIRED — it is the sole dedupe key every source (and Q5's own
- * `createHealthOutageCoalescer`) keys on. `wake` selects the routing, mirroring `Envelope`'s
- * `hostPriority`/`shouldQuery` split (see `./envelope.ts`'s `buildNotificationEnvelope`):
- * `true` submits a turn-opening envelope via `conductor.submit(envelope, { priority: 'other' })`
- * — never `'human'`, so a notification can never preempt a live Discord turn (`conductor.ts`'s
- * human-only fast-path at enqueue/routeIncoming); `false` appends via
- * `conductor.appendWithoutTurn(envelope)`, the accumulate-only seam — `conductor.submit()`
- * unconditionally opens a turn regardless of `shouldQuery`, and the SDK contract for
- * `shouldQuery:false` is "appended to the transcript without triggering an assistant turn" (no
- * result frame), so routing an accumulate envelope through `submit()` would permanently wedge
- * the one-turn-in-flight invariant. Both routes are fire-and-forget from the caller's point of
- * view: `notify()` itself never throws and never returns a rejected promise — failures are
- * logged via the injected `logger`.
+ * One notify contract (plan amendment B2): `notify({ source, text, wake, dedupeKey, at? }):
+ * boolean`. `dedupeKey` is REQUIRED — it is the sole dedupe key every source (and Q5's own
+ * `createHealthOutageCoalescer`) keys on. The boolean return is `true` once this `dedupeKey` has
+ * been (or was already) handed to the conductor, and `false` only when delivery could not be
+ * attempted right now (see the readiness paragraph above) — a caller with its own delivery
+ * memory reads this to decide whether THIS occurrence may be forgotten or must be retried on the
+ * next one. `wake` selects the routing, mirroring `Envelope`'s `hostPriority`/`shouldQuery` split
+ * (see `./envelope.ts`'s `buildNotificationEnvelope`): `true` submits a turn-opening envelope via
+ * `conductor.submit(envelope, { priority: 'other' })` — never `'human'`, so a notification can
+ * never preempt a live Discord turn (`conductor.ts`'s human-only fast-path at
+ * enqueue/routeIncoming); `false` appends via `conductor.appendWithoutTurn(envelope)`, the
+ * accumulate-only seam — `conductor.submit()` unconditionally opens a turn regardless of
+ * `shouldQuery`, and the SDK contract for `shouldQuery:false` is "appended to the transcript
+ * without triggering an assistant turn" (no result frame), so routing an accumulate envelope
+ * through `submit()` would permanently wedge the one-turn-in-flight invariant. Both routes are
+ * fire-and-forget from the caller's point of view once readiness is confirmed: `notify()` itself
+ * never throws and never returns a rejected promise — a submit/append failure past that point
+ * (rather than the conductor simply not being open yet) is logged via the injected `logger` and
+ * still reports back `true`, since a genuine mid-flight failure is not the "not open yet, please
+ * retry" case this return value exists for.
  *
  * `timeHeader` is `() => string` and is called fresh inside every `notify()` call — matching
  * every existing envelope call site (perch-driver.ts, discord/handlers.ts,
@@ -55,8 +70,16 @@ export interface NotifyParams {
     at?:       Date
 }
 
-/** A source-agnostic notification submission function — the single shared contract every notification source imports (plan amendment B2). */
-export type NotifyFn = (params: NotifyParams) => void;
+/**
+ * A source-agnostic notification submission function — the single shared contract every
+ * notification source imports (plan amendment B2). Returns `true` once this `dedupeKey` has
+ * been (or was already, via an earlier call) handed to the conductor, and `false` only when it
+ * could not be attempted right now — no conductor attached, or one is attached but has not
+ * finished `open()` yet (see `createNotificationBridge`'s module doc) — so a caller with its own
+ * retry memory (e.g. {@link import('./health-notification').createHealthOutageCoalescer}) knows
+ * to try again on the next occurrence instead of treating a dropped notification as delivered.
+ */
+export type NotifyFn = (params: NotifyParams) => boolean;
 
 /** Dependencies for {@link createNotificationBridge}. */
 export interface CreateNotificationBridgeParams {
@@ -70,8 +93,12 @@ export interface CreateNotificationBridgeParams {
     logger:          Pick<Logger, 'debug' | 'warn'>
 }
 
-/** The narrow slice of {@link Conductor} the bridge actually calls. */
-export type NotificationConductor = Pick<Conductor, 'submit' | 'appendWithoutTurn'>;
+/**
+ * The narrow slice of {@link Conductor} the bridge actually calls. `status` is read (not just
+ * `submit`/`appendWithoutTurn`) so `notify()` can tell "attached to a conductor that hasn't
+ * finished `open()` yet" apart from "actually ready to receive" — see `notify()`'s doc.
+ */
+export type NotificationConductor = Pick<Conductor, 'submit' | 'appendWithoutTurn' | 'status'>;
 
 /** What {@link createNotificationBridge} returns. */
 export interface NotificationBridge {
@@ -108,15 +135,24 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
         }
     }
 
-    function notify(notifyParams: NotifyParams): void {
+    function notify(notifyParams: NotifyParams): boolean {
         const { source, text, wake, dedupeKey, at } = notifyParams;
 
-        if(conductor === undefined) {
-            logger.debug({ source, dedupeKey }, 'Notification bridge not attached to a conductor; dropping notify');
-            return;
+        // Not attached, or attached to a conductor whose open() hasn't resolved yet: treat
+        // exactly like the unattached case (debug-log, drop, no dedupe burn) rather than
+        // attempting delivery — conductor.submit() would only reject ('Conductor is not open')
+        // and conductor.appendWithoutTurn() would silently no-op, and in both cases the dedupe
+        // key below would already be burned by the time that was discovered. Returning `false`
+        // here (see the module doc / review finding) lets a caller with its own "already
+        // reported" memory — e.g. the health-outage coalescer — hold off marking this occurrence
+        // handled, so the outage is retried on its next occurrence instead of being silently and
+        // permanently dropped for the life of the current epoch.
+        if(!conductor?.status().opened) {
+            logger.debug({ source, dedupeKey }, 'Notification bridge not attached to an open conductor; dropping notify');
+            return false;
         }
         if(dedupeSeen.has(dedupeKey)) {
-            return;
+            return true;
         }
         rememberKey(dedupeKey);
 
@@ -135,6 +171,7 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
                 logger.warn({ err, source, dedupeKey }, 'Failed to append accumulate notification');
             }
         }
+        return true;
     }
 
     function attachConductor(newConductor: NotificationConductor): void {

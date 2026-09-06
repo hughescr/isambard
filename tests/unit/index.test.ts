@@ -10,7 +10,22 @@ import { mockLogger, resetMockSstResource } from '../setup';
 // pushing tests close enough to the 60ms CI timeout cap to risk a mid-test timeout (see CI
 // failure: "should throw fatal error when ChannelRegistryBackend construction fails" at
 // 64.40ms on macOS).
-import { initialLedger, createNotificationBridge as importedCreateNotificationBridge, type CompactionTelemetry, type Conductor, type ContextPolicy, type Ledger, type LedgerEvent, type LedgerStore, type NotificationBridge, type NotifyFn } from '@/agent';
+import {
+    initialLedger,
+    createNotificationBridge as importedCreateNotificationBridge,
+    createHealthOutageCoalescer as importedCreateHealthOutageCoalescer,
+    createHealthNotificationListener as importedCreateHealthNotificationListener,
+    shouldNotifyHealthChange,
+    systemClock,
+    type CompactionTelemetry,
+    type Conductor,
+    type ContextPolicy,
+    type Ledger,
+    type LedgerEvent,
+    type LedgerStore,
+    type NotificationBridge,
+    type NotifyFn
+} from '@/agent';
 import * as staticAgentIndexModule from '@/agent';
 import * as staticAgentModule from '@/agent/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
@@ -42,6 +57,8 @@ import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setu
 import * as staticStateModule from '@/integrations/discord/state';
 import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
+import type { HealthChangeListener } from '@/services';
+import * as staticServicesModule from '@/services';
 import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
@@ -54,6 +71,8 @@ import * as staticTaskSessionModule from '@/storage/task-session';
 // name (a live binding to that same export) would recurse into its own spy forever. This copy
 // is a normal value, immune to that later mutation.
 const realCreateNotificationBridge = importedCreateNotificationBridge;
+const realCreateHealthOutageCoalescer = importedCreateHealthOutageCoalescer;
+const realCreateHealthNotificationListener = importedCreateHealthNotificationListener;
 
 const sessionConfig: SessionConfig = {
     mode:                    'oneshot',
@@ -922,7 +941,10 @@ describe('createApp', () => {
                 open:              mock(async () => ({ sessionId, resumed: false })),
                 submit:            mock(async () => ({})),
                 appendWithoutTurn: mock(() => undefined),
-                status:            mock(() => ({ sessionId: undefined })),
+                // opened:true — these tests model a conductor whose open() has already resolved;
+                // the "attached but not open yet" gap has its own dedicated coverage in
+                // notification-bridge.test.ts.
+                status:            mock(() => ({ sessionId: undefined, opened: true })),
             } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
         }
 
@@ -1040,6 +1062,119 @@ describe('createApp', () => {
 
             expect(createBridgeSpy).toHaveBeenCalledTimes(1);
             expect(attachSpy).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Health-outage notification source (Q6)', () => {
+        test('subscribes exactly once to healthRegistry with a listener built from the real predicate, coalescer, and bridge notify; unsubscribes on stop()', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            // app.stop() reaches storage.holder.destroy() -> client.destroy(); the shared
+            // happy-path mock's bare `{}` client has no such method (see the equivalent stub on
+            // the Q5 "app.stop() detaches the notification bridge" test above).
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+
+            let capturedBridge: NotificationBridge | undefined;
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
+                    const bridge = realCreateNotificationBridge(bridgeParams);
+                    capturedBridge = bridge;
+                    return bridge;
+                }
+            );
+
+            const coalescerReturns: ReturnType<typeof realCreateHealthOutageCoalescer>[] = [];
+            const createCoalescerSpy = spyOn(staticAgentIndexModule, 'createHealthOutageCoalescer').mockImplementation(
+                (coalescerParams: Parameters<typeof realCreateHealthOutageCoalescer>[0]) => {
+                    const coalescer = realCreateHealthOutageCoalescer(coalescerParams);
+                    coalescerReturns.push(coalescer);
+                    return coalescer;
+                }
+            );
+
+            const listenerReturns: HealthChangeListener[] = [];
+            const createListenerSpy = spyOn(staticAgentIndexModule, 'createHealthNotificationListener').mockImplementation(
+                (listenerParams: Parameters<typeof realCreateHealthNotificationListener>[0]) => {
+                    const listener = realCreateHealthNotificationListener(listenerParams);
+                    listenerReturns.push(listener);
+                    return listener;
+                }
+            );
+
+            const subscribedListeners: HealthChangeListener[] = [];
+            const subscriptionUnsubscribes: ReturnType<typeof mock>[] = [];
+            const subscribeSpy = spyOn(staticServicesModule.ServiceHealthRegistryImpl.prototype, 'subscribe').mockImplementation(
+                (listener: HealthChangeListener) => {
+                    subscribedListeners.push(listener);
+                    const unsubscribe = mock(() => undefined);
+                    subscriptionUnsubscribes.push(unsubscribe);
+                    return unsubscribe;
+                }
+            );
+
+            spies.push(createBridgeSpy, createCoalescerSpy, createListenerSpy, subscribeSpy);
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+
+            // The coalescer is constructed exactly once, from systemClock and the bridge's own
+            // notify function (plan amendments B1-B2) — not a hand-rolled closure.
+            expect(createCoalescerSpy).toHaveBeenCalledTimes(1);
+            expect(createCoalescerSpy.mock.calls[0]?.[0]).toMatchObject({ clock: systemClock, notify: capturedBridge!.notify });
+
+            // The listener is built from the real (unmocked) shouldNotifyHealthChange predicate,
+            // the coalescer just constructed, and the bridge's notify — never a hand-rolled
+            // closure over the conductor.
+            expect(createListenerSpy).toHaveBeenCalledTimes(1);
+            const listenerParams = createListenerSpy.mock.calls[0]?.[0];
+            expect(listenerParams.shouldNotifyHealthChange).toBe(shouldNotifyHealthChange);
+            expect(listenerParams.notify).toBe(capturedBridge!.notify);
+            expect(listenerParams.coalescer).toBe(coalescerReturns[0]);
+
+            // Subscribed exactly once, at the same unconditional composition-root scope as
+            // unsubscribeOutboxDrain/unsubscribeSagaRetry.
+            const ourListener = listenerReturns[0];
+            const subscriptionIndex = subscribedListeners.indexOf(ourListener);
+            expect(subscribedListeners.filter(listener => listener === ourListener)).toHaveLength(1);
+
+            const unsubscribeHealthNotifications = subscriptionUnsubscribes[subscriptionIndex];
+            expect(unsubscribeHealthNotifications).not.toHaveBeenCalled();
+
+            await app.stop();
+
+            expect(unsubscribeHealthNotifications).toHaveBeenCalledTimes(1);
+        });
+
+        test('wires the subscription unconditionally: still subscribed once in oneshot mode with no conductor', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
+
+            const listenerReturns: HealthChangeListener[] = [];
+            const createListenerSpy = spyOn(staticAgentIndexModule, 'createHealthNotificationListener').mockImplementation(
+                (listenerParams: Parameters<typeof realCreateHealthNotificationListener>[0]) => {
+                    const listener = realCreateHealthNotificationListener(listenerParams);
+                    listenerReturns.push(listener);
+                    return listener;
+                }
+            );
+
+            const subscribedListeners: HealthChangeListener[] = [];
+            const subscribeSpy = spyOn(staticServicesModule.ServiceHealthRegistryImpl.prototype, 'subscribe').mockImplementation(
+                (listener: HealthChangeListener) => {
+                    subscribedListeners.push(listener);
+                    return mock(() => undefined);
+                }
+            );
+
+            spies.push(createListenerSpy, subscribeSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createListenerSpy).toHaveBeenCalledTimes(1);
+            expect(subscribedListeners).toContain(listenerReturns[0]);
         });
     });
 

@@ -7,7 +7,7 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, createCostCeiling, createCostCeilingStore, createNotificationBridge, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
+import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, createCostCeiling, createCostCeilingStore, createNotificationBridge, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
@@ -1079,6 +1079,17 @@ export async function createApp(): Promise<App> {
     });
     // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,ObjectLiteral
 
+    // Q6 / plan amendments B1-B2: health-outage notification source. Same unconditional
+    // composition-root scope as unsubscribeOutboxDrain/unsubscribeSagaRetry above — this wiring
+    // never branches on session mode, and notificationBridge.notify is a safe no-op until the
+    // real conductor has attached (see notification-bridge.ts's doc comment).
+    const healthOutageCoalescer = createHealthOutageCoalescer({ clock: systemClock, notify: notificationBridge.notify });
+    const unsubscribeHealthNotifications = healthRegistry.subscribe(createHealthNotificationListener({
+        shouldNotifyHealthChange,
+        coalescer: healthOutageCoalescer,
+        notify:    notificationBridge.notify,
+    }));
+
     // Subscribe to health changes: run recovery phase when Discord reconnects.
     // Registered inside app.start() AFTER bot.start() so it only fires on reconnects.
     // Catch-up on first connection is handled by setupInboxAndCatchUp in bot.ts clientReady.
@@ -1222,6 +1233,10 @@ export async function createApp(): Promise<App> {
             // Unsubscribe health listeners
             unsubscribeOutboxDrain();
             unsubscribeSagaRetry();
+            unsubscribeHealthNotifications();
+            // Cancels any still-pending flush timer so a batch can never fire (and try to
+            // deliver) after the notification bridge is detached below (Q6 review finding).
+            healthOutageCoalescer.stop();
 
             // Q5 / B1: detach the notification bridge from the conductor — subsequent notify()
             // calls (there should be none once shutdown starts, but any straggler) revert to the

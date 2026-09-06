@@ -3,6 +3,7 @@ import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import '../setup'; // SST mock is applied via side effects
 import type { CompactionTelemetry, Conductor, ContextPolicy, LedgerStore } from '@/agent';
+import * as agentIndexModule from '@/agent';
 import * as agentAgent from '@/agent/agent';
 import type { ClaudeAgent } from '@/agent/agent';
 import * as contextBuilder from '@/agent/context-builder';
@@ -599,7 +600,7 @@ describe('Bot Lifecycle Integration', () => {
             const mockDocClient = { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient;
             const mockContextBuilder = {} as ContextBuilder;
             const mockMemoryMcp = {};
-            const conductor = { open: mock(async () => ({ sessionId: 'conv-sess', resumed: false })), submit: mock(async () => ({})), appendWithoutTurn: mock(() => undefined), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
+            const conductor = { open: mock(async () => ({ sessionId: 'conv-sess', resumed: false })), submit: mock(async () => ({})), appendWithoutTurn: mock(() => undefined), status: mock(() => ({ sessionId: undefined, opened: true })) } as unknown as Conductor & { submit: ReturnType<typeof mock>, appendWithoutTurn: ReturnType<typeof mock> };
 
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
@@ -750,6 +751,39 @@ describe('Bot Lifecycle Integration', () => {
 
             expect(mockDiscordBot.start).toHaveBeenCalledTimes(2);
             expect(mockDiscordBot.stop).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    describe('Health-outage notification wiring (Q6)', () => {
+        it('subscribes the health-outage notification listener once during createApp() and survives a full start/stop cycle', async () => {
+            spies.push(
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: mockSessionConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
+                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
+            );
+            // Deliberately no mockImplementation: this calls through to the real factory, so the
+            // assertion below proves the composition root actually reaches it (not just that the
+            // call was skipped) while still counting invocations.
+            const createListenerSpy = spyOn(agentIndexModule, 'createHealthNotificationListener');
+            spies.push(createListenerSpy);
+
+            const app = await createApp();
+
+            expect(createListenerSpy).toHaveBeenCalledTimes(1);
+
+            await app.start();
+            await app.stop();
+
+            // A full start/stop cycle with the real ServiceHealthRegistryImpl and the real
+            // health-outage listener/coalescer/bridge chain wired in (only the Discord bot and
+            // DynamoDB client are mocked in this file's heavier integration harness) completes
+            // without throwing.
+            expect(mockDiscordBot.stop).toHaveBeenCalledTimes(1);
         });
     });
 
