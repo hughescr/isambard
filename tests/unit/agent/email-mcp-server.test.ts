@@ -2,11 +2,30 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { buildAdminRejectedSubsection, buildGaveUpSubsection } from '../../../src/agent/context-builder';
 import { createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
 import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
+import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
+import type { ServiceHealthEntry } from '../../../src/services/types';
 import type { PersonAllowlist } from '../../../src/storage';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
+
+/** Minimal offline-state ServiceHealthRegistry double for the getRejectedDrafts health-guard test. */
+function makeOfflineHealthRegistry(): ServiceHealthRegistry {
+    const offlineEntry: ServiceHealthEntry = { state: 'offline', epoch: 0, failureCount: 1 };
+    return {
+        isAvailable:        mock(() => false),
+        getEntry:           mock(() => offlineEntry),
+        getState:           mock(() => 'offline' as const),
+        getAll:             mock(() => ({}) as ReturnType<ServiceHealthRegistry['getAll']>),
+        isWriteAvailable:   mock(() => false),
+        sendEvent:          mock(() => undefined),
+        subscribe:          mock(() => () => undefined),
+        buildStatusSummary: mock(() => undefined),
+        stop:               mock(() => undefined),
+    };
+}
 
 interface RegisteredTool {
     handler:     (...args: unknown[]) => Promise<CallToolResult>
@@ -108,9 +127,10 @@ describe('createEmailMCPServer', () => {
         });
 
         test.each([
-            ['checkInbox',      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
-            ['getEmailContent', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
-            ['archiveEmail',    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+            ['checkInbox',       { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
+            ['getEmailContent',  { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+            ['archiveEmail',     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+            ['getRejectedDrafts', { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false }],
         ])('should have %s tool with correct annotations', (toolName, expectedAnnotations) => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -2921,6 +2941,132 @@ describe('createEmailMCPServer', () => {
                 'Drafts',
                 expect.objectContaining({ subject: '', text: '' })
             );
+        });
+    });
+
+    describe('getRejectedDrafts tool', () => {
+        test('should return an empty-but-valid result when both searches are empty', async () => {
+            const wildDuckClient = {
+                searchByKeyword: mock(async () => []),
+                getMessage:      mock(() => Promise.resolve(null)),
+            } as unknown as WildDuckClient;
+
+            const server = createEmailMCPServer({ wildDuckClient });
+            const handler = getToolHandler(server, 'getRejectedDrafts');
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toBe('No rejected or gave-up drafts.');
+            expect(wildDuckClient.searchByKeyword).toHaveBeenCalledWith('Drafts', 'SendRejectedByAdmin');
+            expect(wildDuckClient.searchByKeyword).toHaveBeenCalledWith('Drafts', 'DiscordNotifyGaveUp');
+        });
+
+        test('should return the same empty result when both searches return UIDs whose messages format to no line', async () => {
+            // rejectedUids and gaveUpUids are both non-empty, but the admin-rejected message is
+            // missing rejectedAt (so buildAdminRejectedSubsection returns undefined) and the
+            // gave-up message is unfetchable (so buildGaveUpSubsection also returns undefined) —
+            // this exercises the `if(sub)` guards on both branches, not just the length checks.
+            const wildDuckClient = {
+                searchByKeyword: mock(async (_folder: string, keyword: string) => (keyword === 'SendRejectedByAdmin' ? [55] : [101])),
+                getMessage:      mock((_folder: string, uid: number) => Promise.resolve(
+                    uid === 55
+                        ? { id: 55, subject: 'Pending', to: [{ address: 'alice@example.com' }], metaData: {} }
+                        : null
+                )),
+            } as unknown as WildDuckClient;
+
+            const server = createEmailMCPServer({ wildDuckClient });
+            const handler = getToolHandler(server, 'getRejectedDrafts');
+            const result = await handler({});
+
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toBe('No rejected or gave-up drafts.');
+        });
+
+        test('should render admin-rejected-only output byte-identical to buildAdminRejectedSubsection', async () => {
+            const wildDuckClient = {
+                searchByKeyword: mock(async (_folder: string, keyword: string) => (keyword === 'SendRejectedByAdmin' ? [99] : [])),
+                getMessage:      mock(async () => ({
+                    id:       99,
+                    subject:  'Hi there',
+                    to:       [{ address: 'bob@example.com' }],
+                    metaData: { rejectedAt: '2024-01-01T00:00:00.000Z', reason: 'Inappropriate content' },
+                })),
+            } as unknown as WildDuckClient;
+
+            const expected = await buildAdminRejectedSubsection([99], wildDuckClient);
+
+            const server = createEmailMCPServer({ wildDuckClient });
+            const handler = getToolHandler(server, 'getRejectedDrafts');
+            const result = await handler({});
+
+            expect(expected).toBeDefined();
+            expect(getText(result)).toBe(expected!);
+        });
+
+        test('should render gave-up-only output byte-identical to buildGaveUpSubsection', async () => {
+            const wildDuckClient = {
+                searchByKeyword: mock(async (_folder: string, keyword: string) => (keyword === 'DiscordNotifyGaveUp' ? [101] : [])),
+                getMessage:      mock(async () => ({
+                    id:      101,
+                    subject: 'Urgent email',
+                    to:      [{ address: 'frank@example.com' }],
+                })),
+            } as unknown as WildDuckClient;
+
+            const expected = await buildGaveUpSubsection([101], wildDuckClient);
+
+            const server = createEmailMCPServer({ wildDuckClient });
+            const handler = getToolHandler(server, 'getRejectedDrafts');
+            const result = await handler({});
+
+            expect(expected).toBeDefined();
+            expect(getText(result)).toBe(expected!);
+        });
+
+        test('should render both-populated output byte-identical to the joined builder outputs', async () => {
+            const messages: Record<number, { id: number, subject: string, to: { address: string }[], metaData?: Record<string, unknown> }> = {
+                '99':  { id: 99, subject: 'Hi there', to: [{ address: 'bob@example.com' }], metaData: { rejectedAt: '2024-01-01T00:00:00.000Z', reason: 'Spam' } },
+                '101': { id: 101, subject: 'Urgent email', to: [{ address: 'frank@example.com' }] },
+            };
+            const wildDuckClient = {
+                searchByKeyword: mock(async (_folder: string, keyword: string) => {
+                    if(keyword === 'SendRejectedByAdmin') {
+                        return [99];
+                    }
+                    if(keyword === 'DiscordNotifyGaveUp') {
+                        return [101];
+                    }
+                    return [];
+                }),
+                getMessage: mock((_folder: string, uid: number) => Promise.resolve(messages[uid] ?? null)),
+            } as unknown as WildDuckClient;
+
+            const expectedAdminRejected = await buildAdminRejectedSubsection([99], wildDuckClient);
+            const expectedGaveUp = await buildGaveUpSubsection([101], wildDuckClient);
+
+            const server = createEmailMCPServer({ wildDuckClient });
+            const handler = getToolHandler(server, 'getRejectedDrafts');
+            const result = await handler({});
+
+            expect(expectedAdminRejected).toBeDefined();
+            expect(expectedGaveUp).toBeDefined();
+            expect(getText(result)).toBe(`${expectedAdminRejected!}\n\n${expectedGaveUp!}`);
+        });
+
+        test('should return the unavailable result when email is offline, without calling WildDuck', async () => {
+            const wildDuckClient = {
+                searchByKeyword: mock(async () => []),
+                getMessage:      mock(() => Promise.resolve(null)),
+            } as unknown as WildDuckClient;
+            const healthRegistry = makeOfflineHealthRegistry();
+
+            const server = createEmailMCPServer({ wildDuckClient, healthRegistry });
+            const handler = getToolHandler(server, 'getRejectedDrafts');
+            const result = await handler({});
+
+            expect(result.isError).toBe(true);
+            expect(wildDuckClient.searchByKeyword).not.toHaveBeenCalled();
         });
     });
 });

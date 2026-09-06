@@ -6,6 +6,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
+import { buildAdminRejectedSubsection, buildGaveUpSubsection } from './context-builder';
 import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
 import { EmailProcessingError } from '@/errors';
 import { EmailFolder, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
@@ -871,6 +872,53 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     })),
                 // Stryker disable next-line ObjectLiteral,BooleanLiteral: Tool annotations are MCP server configuration
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
+            ),
+
+            // getRejectedDrafts is a pull-tool twin of ContextBuilder#buildRejectedDraftSection
+            // (the perch push section, context-builder.ts) — both search the same two keywords
+            // and render through the same two exported subsection builders below, so the two
+            // paths cannot drift on formatting even though the composition is duplicated. The
+            // push section is deliberately left as-is (see docs/plans/long-lived-session-phase2-4.md,
+            // Gaps item on Q1/Q2): it still fires unconditionally on every perch turn, and this
+            // tool exists so the conversation session (and perch on demand) can pull the same
+            // information without waiting for one.
+            // Stryker disable StringLiteral: Tool name and description are MCP server configuration
+            tool(
+                'getRejectedDrafts',
+                'List drafts rejected by admin review, and drafts that could not be sent for approval after multiple attempts.',
+                // Stryker restore StringLiteral
+                {},
+                withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
+                    // Stryker disable next-line StringLiteral: tool name is used for logging only
+                    withToolErrorHandling('getRejectedDrafts', async (): Promise<CallToolResult> => {
+                        const rejectedUids = await wildDuckClient.searchByKeyword(EmailFolder.Drafts, 'SendRejectedByAdmin');
+                        const gaveUpUids   = await wildDuckClient.searchByKeyword(EmailFolder.Drafts, 'DiscordNotifyGaveUp');
+
+                        // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for sections
+                        const sections: string[] = [];
+
+                        // buildAdminRejectedSubsection/buildGaveUpSubsection already no-op (return
+                        // undefined) for an empty uid list, so there is no separate length guard
+                        // here — an outer `if(uids.length > 0)` would be an equivalent mutant.
+                        const adminRejectedSection = await buildAdminRejectedSubsection(rejectedUids, wildDuckClient);
+                        if(adminRejectedSection) {
+                            sections.push(adminRejectedSection);
+                        }
+
+                        const gaveUpSection = await buildGaveUpSubsection(gaveUpUids, wildDuckClient);
+                        if(gaveUpSection) {
+                            sections.push(gaveUpSection);
+                        }
+
+                        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no sections found = friendly empty message
+                        if(sections.length === 0) {
+                            return mcpTextResult('No rejected or gave-up drafts.');
+                        }
+
+                        return mcpTextResult(sections.join('\n\n'));
+                    })),
+                // Stryker disable next-line ObjectLiteral: Tool annotations are MCP server configuration
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
             ),
         ],
     });

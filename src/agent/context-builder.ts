@@ -212,7 +212,7 @@ function formatRejectedDraftLine(
 /**
  * Build the admin-rejected subsection: messages sent by Izzy that were rejected by admin.
  */
-async function buildAdminRejectedSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
+export async function buildAdminRejectedSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
     // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for rejectionLines
     const rejectionLines: string[] = [];
     for(const uid of uids) {
@@ -235,7 +235,7 @@ async function buildAdminRejectedSubsection(uids: number[], wdc: WildDuckService
 /**
  * Build the gave-up escalation subsection: drafts that could not reach Discord for approval.
  */
-async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
+export async function buildGaveUpSubsection(uids: number[], wdc: WildDuckService): Promise<string | undefined> {
     // Stryker disable next-line ArrayDeclaration: Equivalent - empty array is initial value for gaveUpLines
     const gaveUpLines: string[] = [];
     for(const uid of uids) {

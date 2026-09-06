@@ -440,7 +440,9 @@ Discord tools take explicit \`channelId\` and user-id arguments read from the en
  */
 export const CONVERSATION_ROLE_PROMPT = `## This session: conversation
 
-This session's transcript is a shared transcript — several people can message you here, in different channels, and their conversations interleave in the same working memory. Before replying, check the envelope for who you are answering and which channel the message came from, then reply in that channel, addressed to that user's id.`;
+This session's transcript is a shared transcript — several people can message you here, in different channels, and their conversations interleave in the same working memory. Before replying, check the envelope for who you are answering and which channel the message came from, then reply in that channel, addressed to that user's id.
+
+Call \`getRejectedDrafts\` any time to see admin-rejected and gave-up email drafts on demand — you do not need to wait for a perch turn to review them.`;
 
 /**
  * Role prompt for the perch session: a solo, time-boxed slot for reflection and background

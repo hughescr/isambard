@@ -353,6 +353,22 @@ describe.concurrent('system-prompt', () => {
             expect(prompt.split('unique-identity-marker')).toHaveLength(2);
         });
 
+        test('conversation role tells Izzy getRejectedDrafts is available on demand without waiting for a perch turn; perch does not have email tools and is not told about it', () => {
+            const conversation = buildSessionSystemPrompt({ role: 'conversation', identity: 'id' });
+            const perch = buildSessionSystemPrompt({ role: 'perch', identity: 'id' });
+
+            expect(conversation).toContain('getRejectedDrafts');
+            expect(conversation).toContain('admin-rejected');
+            expect(conversation).toContain('gave-up');
+            expect(conversation).toContain('perch turn');
+            assertPromptHygiene(conversation);
+
+            // The perch conductor attaches no email MCP server (see src/app/sessions.ts,
+            // createPerchConductor), so perch must never be told to call an unreachable tool.
+            expect(perch).not.toContain('getRejectedDrafts');
+            assertPromptHygiene(perch);
+        });
+
         test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {
             expect(SESSION_BASE_PROMPT.length).toBeGreaterThan(0);
             expect(CONVERSATION_ROLE_PROMPT.length).toBeGreaterThan(0);
