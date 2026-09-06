@@ -76,6 +76,26 @@ export {
     type BskySetupResult
 } from './setup/bsky-setup';
 
+// P9: conversation conductor for Discord turns
+export {
+    createConductorProcessor,
+    type CreateConductorProcessorParams,
+    type DiscordEnvelopeProvider
+} from './setup/conductor-processor';
+
+export {
+    CHANNEL_LIST_HYDRATING_MARKER,
+    channelListProvider,
+    resolveNames,
+    toEnvelopeInput,
+    type ResolvedDiscordNames
+} from './setup/discord-envelope-provider';
+
+export {
+    installLedgerShim,
+    type InstallLedgerShimParams
+} from './state/ledger-shim';
+
 // Contact commands
 export {
     ContactCommandHandler,

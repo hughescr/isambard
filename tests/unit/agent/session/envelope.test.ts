@@ -112,6 +112,33 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text).toContain('[Channels]\n#general, #random');
     });
 
+    test('renders a resumeNote verbatim, between [Channels] and the message texts', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:    [makeMessage({ content: 'second message' })],
+            authorId:    'a',
+            authorName:  'craig',
+            channelId:   'c',
+            channelName: 'general',
+            isDM:        false,
+            now,
+            timezone,
+            timeHeader,
+            channelList: '#general, #random',
+            resumeNote:  '[RESUME NOTE]\n\n[You were composing this response:]\npartial reply',
+        });
+
+        expect(envelope.text).toContain('[Channels]\n#general, #random\n\n[RESUME NOTE]');
+        expect(envelope.text.indexOf('[RESUME NOTE]')).toBeLessThan(envelope.text.indexOf('second message'));
+    });
+
+    test('omits any resume-note section when resumeNote is not given', () => {
+        const envelope = buildDiscordEnvelope({
+            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+        });
+
+        expect(envelope.text).not.toContain('[RESUME NOTE]');
+    });
+
     test('does not render [Recent events] for an empty array', () => {
         const envelope = buildDiscordEnvelope({
             messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader, newEvents: [],

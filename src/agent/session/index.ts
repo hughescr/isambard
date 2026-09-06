@@ -77,6 +77,8 @@ export { buildCatchupText, type CatchupSummary } from './catchup-text';
 
 export type { SessionJournal, ResumeStore } from './ports';
 
+export type { DiscordEnvelopeInput } from './discord-envelope-input';
+
 export { createSessionJournal, type CreateSessionJournalParams } from './journal';
 
 export {

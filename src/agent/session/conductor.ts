@@ -81,6 +81,17 @@ export type SubmitPriority = 'human' | 'other';
 export interface SubmitOptions {
     priority:             SubmitPriority
     requestingChannelId?: string
+    /**
+     * Ties this submission to the caller's abort contract (P9, design section 6): aborting while
+     * the envelope is still held host-side (queued behind another turn) withdraws it — `submit()`
+     * resolves `{ wasInterrupted: true, response: null, outcome: 'withdrawn' }` and nothing ever
+     * reaches the SDK; aborting while this envelope's own turn is already running calls
+     * {@link Conductor.interruptCurrent} scoped to `requestingChannelId` and resolves with
+     * `outcome: 'interrupted'`; aborting while a DIFFERENT channel's turn is running never
+     * interrupts that turn — this envelope is still only queued, so it is withdrawn like any
+     * other held envelope.
+     */
+    signal?:              AbortSignal
 }
 
 /** Options accepted by {@link Conductor.interruptCurrent}. */
@@ -97,13 +108,30 @@ export interface ShutdownOptions {
 
 /** The outcome of one submitted turn, resolved by {@link Conductor.submit}. */
 export interface TurnResult {
-    envelopeId:     string
+    envelopeId:          string
     /** The final assistant text, or `null` when the turn errored or was interrupted before producing one. */
-    response:       string | null
-    wasInterrupted: boolean
-    partialWork:    StreamProgress
-    sessionId:      string | undefined
-    isError:        boolean
+    response:            string | null
+    wasInterrupted:      boolean
+    partialWork:         StreamProgress
+    sessionId:           string | undefined
+    isError:             boolean
+    /**
+     * The context-usage percentage most recently known to the conductor's ledger at the moment
+     * this turn settled (design 3.3/P9: 'every result logs the getContextUsage percentage'). This
+     * is the value as of the END of the PREVIOUS turn's {@link CompactionGuard.onTurnEnd} poll,
+     * not a fresh poll for this specific turn: that poll always runs after this result has
+     * already settled (see `afterResult`), so fetching a same-turn value here would delay every
+     * `submit()` resolution on an extra SDK round trip. `0` before any turn has ever completed.
+     */
+    contextUsagePercent: number
+    /**
+     * Set only when this turn ended via the caller's {@link SubmitOptions.signal}: `'withdrawn'`
+     * when the envelope was still queued and never reached the SDK, `'interrupted'` when its turn
+     * was already running. Absent for an ordinary completion, a retry-exhausted failure, or an
+     * interrupt from any other source (a same-channel human envelope, the human-wait ceiling, a
+     * shutdown) — those are already fully described by `wasInterrupted`/`isError`.
+     */
+    outcome?:            'withdrawn' | 'interrupted'
 }
 
 /** A snapshot of the conductor's current state, returned by {@link Conductor.status}. */
@@ -209,11 +237,25 @@ interface Deferred {
 
 /** One envelope waiting in the host-side priority queue, or already promoted to the active turn. */
 interface QueuedItem {
-    envelope:             Envelope
-    priority:             SubmitPriority
-    requestingChannelId?: string
-    attempts:             number
-    deferred:             Deferred
+    envelope:               Envelope
+    priority:               SubmitPriority
+    requestingChannelId?:   string
+    attempts:               number
+    deferred:               Deferred
+    /** Removes this item's `abort` listener from the caller's {@link SubmitOptions.signal}, when one was given. Set by `submit()`, cleared once run so it fires at most once per item — including across retries, which reuse the same `QueuedItem`. */
+    abortCleanup?:          () => void
+    /** True once `handleSubmitAbort` has called {@link interruptCurrentTurnInternal} for this item's own running turn — distinguishes an interrupt this signal caused from one triggered by any other source, so only the former settles with `outcome: 'interrupted'`. */
+    abortedViaSignal?:      boolean
+    /**
+     * True once `handleSubmitAbort` withdrew this item while it was neither the running turn nor
+     * in `pendingQueue` — i.e. waiting out a `scheduleRetry` backoff timer between attempts.
+     * `submit()`'s abort contract withdraws an envelope that is merely "held" regardless of why
+     * it's held, but the backoff window has no queue entry to remove it from, so the item's own
+     * `deferred` is resolved immediately here and this flag tells {@link routeIncoming} (the
+     * retry timer's eventual callback) to drop the item instead of resubmitting a stale envelope
+     * whose caller has already been told it was withdrawn.
+     */
+    withdrawnWhileWaiting?: boolean
 }
 
 /** The one turn currently running against the session, if any. */
@@ -499,6 +541,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function routeIncoming(item: QueuedItem): void {
+        if(item.withdrawnWhileWaiting) {
+            return;
+        }
         if(currentTurn === null) {
             enqueue(item);
             processQueue();
@@ -540,19 +585,26 @@ export function createConductor(params: CreateConductorParams): Conductor {
         routeIncoming(item);
     }
 
+    /** Removes `item`'s abort listener (added by `submit()` when a `signal` was given), a no-op when there is none. Called at every point a `QueuedItem` reaches its FINAL settlement — resolved or rejected — so a caller's `AbortSignal` is never held onto past that item's lifetime. */
+    function clearAbortListener(item: QueuedItem): void {
+        item.abortCleanup?.();
+        item.abortCleanup = undefined;
+    }
+
     /** Resolves `item`'s `submit()` promise as a non-retryable failure and journals `turn_failed`. */
-    function failTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, error: Error): void {
+    function failTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, error: Error, contextUsagePercent: number): void {
+        clearAbortListener(item);
         journal.append({ type: 'turn_failed', at: now(), envelopeId: item.envelope.id, kind: turn.kind, error: error.message });
-        item.deferred.resolve({ envelopeId: item.envelope.id, response: null, wasInterrupted: false, partialWork: progress, sessionId: currentSessionId, isError: true });
+        item.deferred.resolve({ envelopeId: item.envelope.id, response: null, wasInterrupted: false, partialWork: progress, sessionId: currentSessionId, isError: true, contextUsagePercent });
     }
 
     /** An `is_error` result: retries per `retryPolicy` when the classified error is transient/rate-limited and attempts remain, else fails the turn. */
-    function settleErroredTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, frame: ResultFrame): void {
+    function settleErroredTurn(turn: ActiveTurn, item: QueuedItem, progress: StreamProgress, frame: ResultFrame, contextUsagePercent: number): void {
         const error = resultFrameToError(frame);
         const classification = classifyError(error);
         const canRetry = (classification.category === 'transient' || classification.category === 'rate_limited') && item.attempts < retryPolicy.maxAttempts;
         if(!canRetry) {
-            failTurn(turn, item, progress, error);
+            failTurn(turn, item, progress, error, contextUsagePercent);
             return;
         }
         item.attempts += 1;
@@ -569,12 +621,19 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return;
         }
         const { item } = turn;
+        // The percentage most recently polled by the compaction guard's OWN onTurnEnd call, from
+        // the end of the PREVIOUS turn — that poll for THIS turn always runs after this result has
+        // already settled (see afterResult, below), so reading it here (rather than issuing a
+        // second, blocking getContextUsage round trip) surfaces per-turn usage on every TurnResult
+        // with no extra latency or SDK call.
+        const contextUsagePercent = ledgerStore.get().context.percentage;
 
         if(!wasInterrupted && frame.is_error) {
-            settleErroredTurn(turn, item, progress, frame);
+            settleErroredTurn(turn, item, progress, frame, contextUsagePercent);
             return;
         }
 
+        clearAbortListener(item);
         const response = !wasInterrupted && frame.subtype === 'success' ? frame.result : null;
         const truncated = response !== null && response.length > TURN_RESPONSE_TEXT_CAP;
         journal.append({
@@ -582,7 +641,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
             ...(response === null ? {} : { responseText: truncated ? response.slice(0, TURN_RESPONSE_TEXT_CAP) : response }),
             ...(truncated ? { truncated: true } : {}),
         });
-        item.deferred.resolve({ envelopeId: item.envelope.id, response, wasInterrupted, partialWork: progress, sessionId: currentSessionId, isError: false });
+        item.deferred.resolve({
+            envelopeId: item.envelope.id, response, wasInterrupted, partialWork: progress, sessionId: currentSessionId, isError: false, contextUsagePercent,
+            ...(item.abortedViaSignal === true ? { outcome: 'interrupted' as const } : {}),
+        });
     }
 
     async function afterResult(frame: ResultFrame): Promise<void> {
@@ -725,6 +787,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     function rejectAllQueued(error: Error): void {
         const queued = pendingQueue.splice(0);
         for(const item of queued) {
+            clearAbortListener(item);
             item.deferred.reject(error);
         }
     }
@@ -782,6 +845,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             const failure = toError(reopenError, 'Conductor failed to reopen the session');
             logger.error({ error: failure }, 'Conductor could not reopen the session after it closed unexpectedly; giving up');
             if(inFlightItem !== undefined) {
+                clearAbortListener(inFlightItem);
                 inFlightItem.deferred.reject(failure);
             }
             rejectAllQueued(failure);
@@ -818,6 +882,53 @@ export function createConductor(params: CreateConductorParams): Conductor {
         return { sessionId, resumed: false };
     }
 
+    /** The `TurnResult` for an envelope withdrawn (never reached the SDK) because its `signal` aborted while it was still held. */
+    function withdrawnResult(item: QueuedItem): TurnResult {
+        return {
+            envelopeId:          item.envelope.id,
+            response:            null,
+            wasInterrupted:      true,
+            partialWork:         new StreamTracker().getProgress(),
+            sessionId:           currentSessionId,
+            isError:             false,
+            contextUsagePercent: ledgerStore.get().context.percentage,
+            outcome:             'withdrawn',
+        };
+    }
+
+    /**
+     * Handles `item`'s `signal` firing `abort` (see {@link SubmitOptions.signal}): when `item` is
+     * the turn currently running, interrupts it (scoped to `requestingChannelId` like any other
+     * interrupt) and marks it so {@link settleTurn} reports `outcome: 'interrupted'` once it ends;
+     * otherwise `item` is still only queued (whether idle, behind this envelope's own channel's
+     * prior turn, or behind an unrelated channel's turn — the abort contract withdraws rather than
+     * interrupting in every one of those cases) — removed from `pendingQueue` and resolved as
+     * `'withdrawn'` without ever reaching `beginTurn`/the SDK. A no-op if `item` has already
+     * settled by some other path (its listener is removed the moment it does, so this only runs
+     * for an item still genuinely in flight).
+     */
+    function handleSubmitAbort(item: QueuedItem): void {
+        clearAbortListener(item);
+        if(currentTurn?.item === item) {
+            item.abortedViaSignal = true;
+            void interruptCurrentTurnInternal('submit() signal aborted');
+            return;
+        }
+        const index = pendingQueue.indexOf(item);
+        if(index !== -1) {
+            pendingQueue.splice(index, 1);
+            item.deferred.resolve(withdrawnResult(item));
+            return;
+        }
+        // Neither the running turn nor queued: either already settled by some other path (a
+        // harmless no-op — resolving an already-settled deferred a second time is a no-op) or
+        // waiting out a scheduleRetry backoff timer between attempts. Mark it so routeIncoming
+        // (the timer's eventual callback) drops it instead of resubmitting a stale envelope whose
+        // caller has already been told it was withdrawn.
+        item.withdrawnWhileWaiting = true;
+        item.deferred.resolve(withdrawnResult(item));
+    }
+
     function submit(envelope: Envelope, options: SubmitOptions): Promise<TurnResult> {
         if(shuttingDown) {
             return Promise.reject(new Error('Conductor is shutting down'));
@@ -826,9 +937,24 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return Promise.reject(new Error('Conductor is not open'));
         }
         return new Promise<TurnResult>((resolve, reject) => {
-            routeIncoming({
+            const item: QueuedItem = {
                 envelope, priority: options.priority, requestingChannelId: options.requestingChannelId, attempts: 1, deferred: { resolve, reject },
-            });
+            };
+            const { signal } = options;
+            if(signal !== undefined) {
+                if(signal.aborted) {
+                    resolve(withdrawnResult(item));
+                    return;
+                }
+                const onAbort = (): void => {
+                    handleSubmitAbort(item);
+                };
+                signal.addEventListener('abort', onAbort, { once: true });
+                item.abortCleanup = () => {
+                    signal.removeEventListener('abort', onAbort);
+                };
+            }
+            routeIncoming(item);
         });
     }
 

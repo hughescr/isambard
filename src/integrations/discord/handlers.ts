@@ -148,6 +148,14 @@ interface MessageHandlerOptions {
      * Optional DM tracker for tracking DM channels.
      */
     dmTracker?: DMTracker
+
+    /**
+     * When true (conductor mode, P9), the idle -> processing_message transition is skipped —
+     * the ledger shim owns that transition instead (installLedgerShim, driven by the conductor's
+     * own turn lifecycle). The legacy perch/catch-up suspension (`handleModeInterruptions`) is
+     * unaffected: those runners keep owning their own modes until P12 retires them.
+     */
+    conductorMode?: boolean
 }
 
 /**
@@ -273,11 +281,13 @@ function handleStateAndInbox(
     message: Message,
     botStateManager: BotStateManager | undefined,
     inboxManager: InboxManager | undefined,
-    shouldRespond: boolean
+    shouldRespond: boolean,
+    conductorMode = false
 ): void {
-    // Transition state manager to processing_message mode when in idle mode
-    // This ensures BotStateManager is the single source of truth for state
-    if(botStateManager?.getMode() === 'idle') {
+    // Transition state manager to processing_message mode when in idle mode — skipped in
+    // conductor mode, where the ledger shim (installLedgerShim) is the sole writer of this
+    // transition, driven by the conductor's own turn lifecycle rather than by this handler.
+    if(!conductorMode && botStateManager?.getMode() === 'idle') {
         botStateManager.startProcessingMessage(
             createChannelId(message.channel.id),
             message.cleanContent
@@ -506,7 +516,7 @@ async function handlePendingQuestion(
 }
 
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker } = options;
+    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, conductorMode } = options;
 
     // Helper to create DiscordMessageContext from Discord.js Message
     const createContext = (message: Message): DiscordMessageContext => {
@@ -595,7 +605,7 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         );
 
         // Handle state transitions and inbox updates
-        handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond);
+        handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond, conductorMode);
 
         // Track this message for context-aware idle status
         addRecentMessage?.(message.cleanContent, 'user');

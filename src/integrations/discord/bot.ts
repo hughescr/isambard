@@ -22,7 +22,9 @@ import {
 import { DiscordRateLimiter } from './rate-limiter';
 import type { BskySetupResult } from './setup/bsky-setup';
 import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
+import type { DiscordEnvelopeProvider } from './setup/conductor-processor';
 import { setupCoordinatorIntegration } from './setup/coordinator-setup';
+import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeInput } from './setup/discord-envelope-provider';
 import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
@@ -31,7 +33,8 @@ import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel  } from '@/agent';
+import { installLedgerShim } from './state/ledger-shim';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -50,6 +53,32 @@ declare global {
 /** Rolling window for activity-log signals fed to LiveSignals (2 hours in ms). */
 // Stryker disable next-line ArithmeticOperator: window duration constant — mutation would change the window size, not the logic
 const ACTIVITY_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Bound on how long `conversationConductor.open()` may take in `clientReady` before it is
+ * treated as failed. `open()` only rejects on an explicit session-closed error — a wedged CLI
+ * child (hung auth prompt, stalled network, never emitting an init frame) leaves it pending
+ * forever, and `initialized` is already set to `true` earlier in `clientReady`, so nothing would
+ * ever retry the rest of setup (`setupCoordinatorIntegration`, message-handler registration,
+ * catch-up/perch) on a plain rejection-only guard. Racing against this timeout turns a hang into
+ * the same degrade-to-legacy-processor path a rejection already takes.
+ */
+const CONDUCTOR_OPEN_TIMEOUT_MS = 30_000;
+
+/** Resolves with `result` from `promise`, or rejects with a timeout error after `ms` — whichever comes first. Does not cancel `promise` itself; a late resolution after the timeout is simply ignored. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+            reject(new Error(message));
+        }, ms);
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 /**
  * Options for configuring the Discord bot.
@@ -209,6 +238,20 @@ export interface DiscordBotOptions {
      * whenever an identity-layer write commits.
      */
     identityCache?: IdentityCache
+
+    /**
+     * P9: the long-lived conversation conductor, BUILT but not yet OPENED (see
+     * `src/app/sessions.ts`'s own doc). `clientReady` opens it, after `initializeChannelRegistry`
+     * and before `setupCoordinatorIntegration`, under the existing idempotency guard; if `open()`
+     * rejects the error is logged and the process degrades to the legacy `agent` processor above
+     * without a restart — every one of these five fields is then simply never used.
+     */
+    conversationConductor?: Conductor
+    /** The conductor's own ledger — `installLedgerShim` subscribes to it, and `lastSessionId` is seeded from `ledgerStore.get().sessionId` after a successful `open()`. */
+    ledgerStore?:           LedgerStore
+    contextPolicy?:         ContextPolicy
+    deliveryGuard?:         DeliveryGuard
+    journal?:               SessionJournal
 }
 
 /**
@@ -286,7 +329,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, deliveryGuard, journal } = options;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -319,6 +362,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Capture unsubscribe functions for cleanup
     let unsubscribeModeTransition: (() => void) | undefined;
     let unsubscribeActivityPhase: (() => void) | undefined;
+
+    // P9: true once conversationConductor.open() has succeeded this process — gates whether
+    // setupCoordinatorIntegration/setupMessageProcessing take the conductor branch, and whether
+    // stop() has a shim/conductor to tear down. Stays false (legacy path) if conductorConductor
+    // was never provided, or if open() rejected.
+    let conductorOpened = false;
+    let unsubscribeLedgerShim: (() => void) | undefined;
 
     // Use provided bot state manager or create a new one
     const botStateManager: BotStateManager = providedBotStateManager ?? new BotStateManagerImpl({
@@ -708,6 +758,27 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // The registry-ready gate in MessageCoordinator drops messages until hydration completes.
             initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter, healthRegistry);
 
+            // P9: open the long-lived conversation conductor now that the guild cache and
+            // channel registry exist, but BEFORE setupCoordinatorIntegration/setupMessageProcessing
+            // pick a processor — a rejected open() (or one that never settles at all — see
+            // CONDUCTOR_OPEN_TIMEOUT_MS) must degrade to the legacy `agent` processor below
+            // without ever having switched either of those over to the conductor branch.
+            // Stryker disable all: Composition root — conductor-open wiring is a bot.test.ts behavioural describe block (real timers/promises/callback wiring); a mutant here changes call ORDER or the timeout bound, not a value the unit tests below assert on
+            if(conversationConductor && ledgerStore && contextPolicy && deliveryGuard && journal) {
+                try {
+                    await withTimeout(conversationConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'conductor.open() timed out');
+                    setLastSessionId(ledgerStore.get().sessionId);
+                    unsubscribeLedgerShim = installLedgerShim({ ledgerStore, botStateManager, logger });
+                    conductorOpened = true;
+                } catch (err) {
+                    logger.error({
+                        error: err instanceof Error ? err.message : String(err),
+                        msg:   'Conductor open() failed — degrading to the legacy oneshot processor without a restart',
+                    });
+                }
+            }
+            // Stryker restore all
+
             // Mute admin email channel so Craig's messages there don't reach Izzy
             if(emailSetup?.adminChannelId) {
                 // Stryker disable BlockStatement: try-catch wraps admin channel mute - non-fatal startup step
@@ -727,6 +798,18 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
             // Create message coordinator if agent is provided (MUST be before setupMessageProcessing)
             if(agent) {
+                // P9: once the conductor has opened, its Discord-facing dependencies bind to this
+                // readyClient/channelRegistry — built here (not earlier) because both only exist
+                // from clientReady onward.
+                // Stryker disable next-line ConditionalExpression: bot.ts IS in the mutate glob (see stryker.conf.mjs's mutate array) — this disables only the condition itself; the object it builds is asserted by 'wires envelopeProvider ... once the conductor opens' (conductorOpened true) and 'degrades to the legacy processor without a shim when open() rejects' (conductorOpened false), which assert envelopeProvider is present vs undefined respectively
+                const envelopeProvider: DiscordEnvelopeProvider | undefined = conductorOpened
+                    ? {
+                        resolveNames: resolveEnvelopeNames(channelRegistry, readyClient),
+                        toEnvelopeInput,
+                        channelList:  channelListProvider(channelRegistry, readyClient),
+                    }
+                    : undefined;
+
                 coordinator = setupCoordinatorIntegration({
                     agent,
                     presenceManager,
@@ -746,6 +829,16 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     activityLogger,
                     historyCoordinator,
                     discordCapability,
+                    ...(conductorOpened
+                        ? {
+                            conversationConductor: conversationConductor!,
+                            contextPolicy:         contextPolicy!,
+                            deliveryGuard:         deliveryGuard!,
+                            journal:               journal!,
+                            envelopeProvider,
+                            contextBuilder,
+                        }
+                        : {}),
                 });
 
                 // Register message handler AFTER channel registry is initialized and coordinator is created
@@ -763,6 +856,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     botStateManager,
                     perchSessionRunner,
                     dmTracker,
+                    conductorMode: conductorOpened,
                 });
             }
 
@@ -797,11 +891,35 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await client.login(config.botToken);
         },
 
+        // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- shutdown coordinates coordinator, conductor, shim, question registry, presence, sessions, and the client in a fixed order; branching is inherent
         async stop(): Promise<void> {
             // Stop coordinator if it exists
             if(coordinator) {
                 coordinator.stop();
             }
+            // P9: coordinator.stop() -> conductor.shutdown() -> shim unsubscribe, ahead of the
+            // legacy runner aborts and botStateManager.stop() below — best-effort (wait bounded
+            // for the running turn, else interrupt; the full graceful-drain sequence is P10's).
+            // Stryker disable all: bot.ts IS in the mutate glob (stryker.conf.mjs) — this block is
+            // disabled because the shutdown() call ORDER (asserted by bot.test.ts's 'stop order'
+            // conductor-mode test) is the behaviour that matters; the catch's error-message
+            // formatting and the exact turnWaitMs/deadlineMs literals are not independently
+            // asserted and are accepted as untested composition-root wiring.
+            if(conductorOpened && conversationConductor) {
+                try {
+                    await conversationConductor.shutdown({ turnWaitMs: 5000, deadlineMs: 10_000 });
+                } catch (err) {
+                    logger.warn({
+                        error: err instanceof Error ? err.message : String(err),
+                        msg:   'Conductor shutdown() failed — continuing with the rest of stop()',
+                    });
+                }
+            }
+            if(unsubscribeLedgerShim) {
+                unsubscribeLedgerShim();
+                unsubscribeLedgerShim = undefined;
+            }
+            // Stryker restore all
             // Stop question registry (always exists now)
             questionRegistry.stop();
             // Unsubscribe from botStateManager subscriptions

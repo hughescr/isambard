@@ -18,13 +18,17 @@ import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
+import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
 import { createPresenceStreamHandler, type PresenceStreamHandler } from './presence-stream-handler';
-import { type ClaudeAgent, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, generateText  } from '@/agent';
+import {
+    type ClaudeAgent, type PerchSessionRunner, type EventDeltaTracker, type MessageContext, type PlatformImage, type ActivityLogger, type PersonHistoryCoordinator, type Conductor, type ContextPolicy, type ContextBuilder, type DeliveryGuard, type SessionJournal, generateText
+} from '@/agent';
+import { resolveTimezone } from '@/utils';
 
 /**
  * Result of processing Discord message attachments
  */
-interface ProcessedAttachments {
+export interface ProcessedAttachments {
     /** Fetched image attachments ready for Claude */
     images:           FetchedImage[]
     /** Text descriptions of saved non-image attachments */
@@ -41,7 +45,7 @@ interface ProcessedAttachments {
  */
 // Stryker disable all: Integration function with external dependencies - tested via bot integration tests
 // eslint-disable-next-line sonarjs/cognitive-complexity -- attachment pipeline: image fetching, non-image file saving, and video hints require distinct branching per attachment type
-async function processAttachments(contexts: DiscordMessageContext[]): Promise<ProcessedAttachments> {
+export async function processAttachments(contexts: DiscordMessageContext[]): Promise<ProcessedAttachments> {
     const allAttachments = contexts.flatMap(ctx => ctx.attachments ?? []);
     let images: FetchedImage[] = [];
     const contentAdditions: string[] = [];
@@ -120,6 +124,15 @@ async function processAttachments(contexts: DiscordMessageContext[]): Promise<Pr
 // Stryker restore all
 
 /**
+ * Sentinel thrown from inside the `send` callback passed to `conversationConductor.deliver`
+ * (conductor branch's `onResponse`, below) when `sendResponse` reports `sent: false` — an
+ * expected outcome (outbox-queued while Discord is offline, or routing skipped the send), not a
+ * failure. Distinguishes that case from a genuine delivery error so `deliver`'s caller logs only
+ * the latter.
+ */
+class ResponseNotSentError extends Error {}
+
+/**
  * Parameters for setting up coordinator integration.
  */
 interface SetupCoordinatorParams {
@@ -142,6 +155,30 @@ interface SetupCoordinatorParams {
     activityLogger?:          ActivityLogger
     historyCoordinator?:      PersonHistoryCoordinator
     discordCapability?:       DiscordCapability
+
+    /**
+     * P9 conductor-mode dependencies. When `conversationConductor` is present, the coordinator's
+     * processor is `createConductorProcessor(...)` instead of `agent.handleInput`, and `onResponse`
+     * delivers exactly once via `conversationConductor.deliver` (keyed on the conductor's own
+     * envelope id, idempotent against the same guard `open()` seeds from crash recovery at boot)
+     * and never calls `botStateManager.goIdle()` — the ledger shim (`../state/ledger-shim.ts`) is
+     * the sole writer of that transition in conductor mode. `deliveryGuard`/`journal` are accepted
+     * for backward-compatible wiring but unused by the conductor branch, which delivers entirely
+     * through `conversationConductor.deliver` instead. `conversationConductor`/`contextPolicy`/
+     * `envelopeProvider`/`contextBuilder` travel together: providing `conversationConductor`
+     * without the rest is a caller error (asserted via the non-null assertions below, deliberately
+     * — this file stays Stryker-disabled so no test exercises the assertion itself, only bot.ts's
+     * own wiring, which always supplies all four).
+     */
+    conversationConductor?: Conductor
+    contextPolicy?:         ContextPolicy
+    /** @deprecated Unused by the conductor branch (P9's delivery-keying fix) — delivery now goes entirely through `conversationConductor.deliver`'s own internal guard. Kept only so existing callers that still pass it do not need to change. */
+    deliveryGuard?:         DeliveryGuard
+    /** @deprecated Unused by the conductor branch (P9's delivery-keying fix) — `conversationConductor.deliver` journals `response_delivered` itself. Kept only so existing callers that still pass it do not need to change. */
+    journal?:               SessionJournal
+    envelopeProvider?:      DiscordEnvelopeProvider
+    /** Only needed in conductor mode, for `createConductorProcessor`'s own timezone dependency. */
+    contextBuilder?:        Pick<ContextBuilder, 'loadUserTimezone' | 'loadUserMemories'>
 }
 
 /**
@@ -187,7 +224,7 @@ function prependRequestingUserLine(contexts: DiscordMessageContext[]): DiscordMe
 /**
  * Maps Discord fetched images to platform-agnostic image format for the agent.
  */
-function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
+export function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
     return images.map(img => ({
         filename:     img.filename,
         mediaType:    img.mediaType,
@@ -207,6 +244,10 @@ function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
  */
 // Stryker disable all: Integration function coordinating multiple components with callbacks - tested via bot integration tests
 export function setupCoordinatorIntegration(params: SetupCoordinatorParams): MessageCoordinator {
+    if(params.conversationConductor) {
+        return setupConductorCoordinator(params, params.conversationConductor);
+    }
+
     const {
         agent,
         presenceManager,
@@ -470,6 +511,148 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
 
         return result;
     });
+
+    return coordinator;
+}
+
+/**
+ * The conductor-mode branch of {@link setupCoordinatorIntegration}: the processor is
+ * `createConductorProcessor(...)` (never `agent.handleInput`), `onProcessingEnd` never calls
+ * `goIdle` (the ledger shim — `../state/ledger-shim.ts` — is the sole writer of that transition
+ * in conductor mode), and `onResponse` delivers exactly once through
+ * `conversationConductor.deliver` — keyed on `result.envelopeId`, the CONDUCTOR's own envelope
+ * id (`conductor-processor.ts` passes it through on every `ProcessResult`), not the triggering
+ * Discord message id: a merged multi-message batch has one envelope id and potentially several
+ * Discord message ids, and `deliver`'s guard is the same one `open()` seeds from crash-recovery
+ * at boot (`params.deliveryGuard` is unused here — see conductor.ts's own module doc for why a
+ * second, independently-seeded guard cannot provide the same idempotency). An explicit
+ * `sessionTypeOverride` still guards against a deferred perch/catch-up transition firing on the
+ * shim's idle transition between the turn settling and this call re-routing the reply (see
+ * response-sender.ts's own note). `addRecentMessage`/the activity-log write and the perch/
+ * catch-up resume-after-suspension blocks are kept unchanged from the legacy branch (folded gap:
+ * the idle-status generator's inputs, and the two legacy runners' own suspend/resume lifecycle,
+ * are unaffected by which processor is wired in).
+ * @param params The same params `setupCoordinatorIntegration` received.
+ * @param conversationConductor Non-optional here — `setupCoordinatorIntegration` only calls this
+ * when `params.conversationConductor` is defined.
+ * @returns The conductor-backed `MessageCoordinator`.
+ */
+function setupConductorCoordinator(params: SetupCoordinatorParams, conversationConductor: Conductor): MessageCoordinator {
+    const {
+        botStateManager, catchUpSessionRunner, perchSessionRunner, responseRouter, rateLimiter, readyClient,
+        contextPolicy, envelopeProvider, contextBuilder,
+    } = params;
+
+    const coordinator = new MessageCoordinator({
+        debounceMs:      250,
+        registryReady:   () => params.channelRegistry.isReady(),
+        onProcessingEnd: () => {
+            // No-op: startProcessingMessage/goIdle in conductor mode are owned entirely by
+            // ../state/ledger-shim.ts, driven by the conductor's own ledger — never by the
+            // coordinator's processing-end signal.
+        },
+        // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- onResponse coordinates idempotent delivery, ring-buffer, activity-log, session-resume; branching is inherent
+        onResponse: async (result, discordMessage) => {
+            if(result.response && discordMessage) {
+                params.addRecentMessage?.(result.response, 'izzy');
+
+                const { envelopeId } = result;
+                if(envelopeId === undefined) {
+                    // Should not happen in practice — createConductorProcessor always sets it —
+                    // but delivering under a fabricated id would break deliver()'s idempotency
+                    // guarantee, so skip the send entirely rather than guess.
+                    logger.warn({ msg: 'Conductor response has no envelopeId — cannot deliver idempotently, skipping send' });
+                } else {
+                    try {
+                        const deliverResult = await conversationConductor.deliver(envelopeId, async () => {
+                            const sendResult = await sendResponse({
+                                responseRouter,
+                                botStateManager,
+                                response:            result.response!,
+                                message:             discordMessage,
+                                rateLimiter,
+                                client:              readyClient,
+                                useFallbackOnError:  false,
+                                discordCapability:   params.discordCapability,
+                                sessionTypeOverride: discordMessage.channel.isDMBased() ? 'dm' : 'processing_message',
+                            });
+                            if(!sendResult.sent) {
+                                // Not an error (outbox-queued while Discord is offline, or
+                                // routing skipped the send) — throwing here is deliver()'s only
+                                // way to learn the send did not actually happen, so it does not
+                                // journal a response_delivered row or mark the guard for
+                                // something that was never actually delivered.
+                                throw new ResponseNotSentError();
+                            }
+                            return { channelId: discordMessage.channelId, messageIds: [] };
+                        });
+                        if(deliverResult.delivered) {
+                            params.addRecentChannel?.(createChannelId(discordMessage.channelId));
+                        }
+                    } catch (err) {
+                        if(!(err instanceof ResponseNotSentError)) {
+                            logger.error({ err, envelopeId, msg: 'Conductor response delivery failed' });
+                        }
+                    }
+                }
+
+                // Log the exchange as activity (fire-and-forget with Haiku summary) — identical to
+                // the legacy branch, per the folded idle-status-inputs gap.
+                if(params.activityLogger) {
+                    const userContent = discordMessage.content;
+                    const botResponse = result.response;
+                    const actLogger = params.activityLogger;
+                    void (async () => {
+                        try {
+                            let summary = 'Discord exchange in channel';
+                            const generated = await generateText(
+                                `Summarize this Discord exchange in one sentence (max 30 words):\nUser: ${userContent.slice(0, 500)}\nIzzy: ${botResponse.slice(0, 500)}`
+                            );
+                            if(generated) {
+                                summary = generated;
+                            }
+                            await actLogger.log({
+                                type: 'discord-exchange',
+                                summary,
+                            });
+                        } catch (err) {
+                            logger.warn({ err, channelId: discordMessage.channelId, msg: 'Activity log failed for Discord exchange' });
+                        }
+                    })();
+                }
+            }
+
+            params.setLastSessionId?.(result.sessionId);
+
+            // Resume catch-up/perch if suspended — identical to the legacy branch.
+            if(botStateManager.getMode() === 'idle' && catchUpSessionRunner?.isSuspended()) {
+                logger.info({ msg: 'Resuming catch-up after suspension' });
+                void catchUpSessionRunner.resumeAfterSuspension().catch((error) => {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after suspension' });
+                    catchUpSessionRunner.clearSuspension();
+                });
+            }
+
+            if(botStateManager.getMode() === 'idle' && perchSessionRunner?.isSuspended()) {
+                logger.info({ msg: 'Resuming perch after suspension' });
+                void perchSessionRunner.resumeAfterSuspension().catch((error) => {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    logger.error({ error: errorMsg, msg: 'Failed to resume perch after suspension' });
+                    perchSessionRunner.clearSuspension();
+                });
+            }
+        },
+    });
+
+    coordinator.setProcessor(createConductorProcessor({
+        conductor:        conversationConductor,
+        contextPolicy:    contextPolicy!,
+        envelopeProvider: envelopeProvider!,
+        contextBuilder:   contextBuilder!,
+        resolveTimezone,
+        logger,
+    }));
 
     return coordinator;
 }

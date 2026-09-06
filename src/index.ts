@@ -1,18 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { logger, setTimezone } from '@hughescr/logger';
 import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMCPServers, loadIdentityContext } from '@/app';
+import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal } from '@/agent';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, loadIdentityContext } from '@/app';
 import { loadConfig, loadDynamoDBConfig } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, createCatchUpSignalAdapter, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, createCatchUpSignalAdapter, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
@@ -712,7 +713,12 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore all
 
-    const mcpServers = createMCPServers({
+    // Shared once (P9 verifier correction): built here so both the legacy agent's own
+    // 'conversation'-role MCP instance set (below, unchanged from the old createMCPServers()
+    // wrapper's behaviour) and createConversationConductor's own, separate instance set (built
+    // further below, in conductor mode only) reuse the same singleton state (DMTracker,
+    // BskyCheckpointManager) rather than constructing it twice.
+    const mcpSharedDeps = createMcpSharedDeps({
         memoryBackend:             storage.memoryBackend,
         messageSearchService:      discordInfra.messageSearchService,
         discordClient:             discordInfra.discordClient,
@@ -744,6 +750,10 @@ export async function createApp(): Promise<App> {
         embedder,
         discordAllowlist:          personAllowlist,
     });
+    // Identical to the old createMCPServers(options) wrapper (createMcpSharedDeps +
+    // createMcpServerInstances(shared, {role: 'conversation'})) — the one-shot path's behaviour
+    // is unchanged.
+    const mcpServers = createMcpServerInstances(mcpSharedDeps, { role: 'conversation' });
     // Stryker restore ObjectLiteral,OptionalChaining
 
     // Load plugins and create agent
@@ -799,6 +809,68 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore all
 
+    // P9: build (never open) the long-lived conversation conductor when conductor mode is
+    // selected — after the OAuth env write (top of this function) and mcpSharedDeps (above), and
+    // before createDiscordBot so the bot can open it itself once the guild cache and channel
+    // registry exist (P9/P10). The legacy agent above is still created unconditionally: it is
+    // the fallback createDiscordBot degrades to if open() ever rejects. Oneshot mode: none of
+    // this runs, matching the byte-for-byte-unchanged requirement for SESSION_MODE unset.
+    // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
+    let conversationConductor: Conductor | undefined;
+    let conversationLedgerStore: LedgerStore | undefined;
+    let conversationContextPolicy: ContextPolicy | undefined;
+    let conversationJournal: SessionJournal | undefined;
+    const conversationDeliveryGuard = createDeliveryGuard([]);
+    if(config.session.mode === 'conductor') {
+        // eslint-disable-next-line prefer-const -- assigned once, immediately after createConversationConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
+        let conductorForTaskReader: Conductor | undefined;
+        const conversationTaskListReader = createTaskListReader({
+            getCurrentSessionId: () => conductorForTaskReader?.status().sessionId,
+            logger,
+        });
+        conversationJournal = storage.createJournal('conversation', systemClock);
+        const conversationResumeStoreRole = storage.createResumeStore('conversation');
+        // A RoleResumeStore (role bound at construction) must never be assigned directly to a
+        // ResumeStore-typed value — see resume-store.ts's own warning: the two ports' `save`
+        // signatures differ only in parameter count, which TS's assignability rules would
+        // otherwise accept and silently mis-bind. Adapt explicitly instead.
+        const conversationResumeStore: ResumeStore = {
+            load: () => conversationResumeStoreRole.load(),
+            save: (_role, sessionId) => conversationResumeStoreRole.save(sessionId),
+        };
+        // discord-envelope-provider.ts's own channelListProvider (unmuted only, '(guild)' suffix,
+        // '[well-known: type]' annotations, a 'registry hydrating' marker before the channel
+        // registry warms), bound to this process's channel registry/client and adapted from its
+        // native `Promise<string[]>` to the boot-bundle's `Promise<string | undefined>` shape
+        // (joined into one already-formatted section, matching boot-bundle.ts's own rendering).
+        const rawChannelListProvider = discordChannelListProvider(discordInfra.channelRegistry, discordInfra.discordClient);
+        const conversationChannelListProvider = async (): Promise<string | undefined> => {
+            const channels = await rawChannelListProvider();
+            return channels.length > 0 ? channels.join('\n') : undefined;
+        };
+
+        const builtConductor = await createConversationConductor({
+            config:              config.session,
+            queryFn:             query,
+            mcpShared:           mcpSharedDeps,
+            emailServerFactory:  emailSetup?.createEmailMcpServerInstance,
+            plugins,
+            contextBuilder:      contextLayer.contextBuilder,
+            identityCache:       identityCacheSlot.cache,
+            taskListReader:      conversationTaskListReader,
+            journal:             conversationJournal,
+            resumeStore:         conversationResumeStore,
+            channelListProvider: conversationChannelListProvider,
+            clock:               systemClock,
+            logger,
+        });
+        conductorForTaskReader = builtConductor.conductor;
+        conversationConductor = builtConductor.conductor;
+        conversationLedgerStore = builtConductor.ledgerStore;
+        conversationContextPolicy = builtConductor.contextPolicy;
+    }
+    // Stryker restore all
+
     // Construct allowlist command handler using the unified PersonAllowlist
     // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
     const allowlistHandler = new AllowlistCommandHandler(
@@ -838,6 +910,14 @@ export async function createApp(): Promise<App> {
         historyCoordinator,
         healthRegistry,
         discordCapability,
+        // P9: conductor-mode dependencies, undefined in oneshot mode. bot.ts's clientReady opens
+        // conversationConductor once the guild cache and channel registry exist and degrades to
+        // the legacy agent above if open() rejects (implementer B's slice of this package).
+        conversationConductor,
+        ledgerStore:       conversationLedgerStore,
+        contextPolicy:     conversationContextPolicy,
+        deliveryGuard:     conversationDeliveryGuard,
+        journal:           conversationJournal,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');

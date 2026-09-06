@@ -24,25 +24,34 @@ function hasSkipResult(routeResult: unknown): routeResult is { skipResult: SendR
  */
 interface SendResponseConfig {
     /** Response router for routing decisions */
-    responseRouter:     ResponseRouter
+    responseRouter:       ResponseRouter
     /** Bot state manager to determine session type */
-    botStateManager:    BotStateManager
+    botStateManager:      BotStateManager
     /** The response text to send */
-    response:           string
+    response:             string
     /** The Discord message this is responding to */
-    message:            Message
+    message:              Message
     /** Rate limiter for Discord API calls */
-    rateLimiter:        DiscordRateLimiter
+    rateLimiter:          DiscordRateLimiter
     /** Discord client for fetching channels */
-    client:             Client
+    client:               Client
     /** Whether to use fallback or skip on error (handlers.ts uses fallback, bot.ts skips) */
-    useFallbackOnError: boolean
+    useFallbackOnError:   boolean
     /**
      * Optional Discord capability facade.
      * When provided, each chunk is sent via the facade (with outbox fallback when Discord is offline)
      * instead of directly via the rate limiter.
      */
-    discordCapability?: DiscordCapability
+    discordCapability?:   DiscordCapability
+    /**
+     * When given, used verbatim as this response's session type instead of calling
+     * `botStateManager.getSessionType()` (P9, conductor mode). Closes the window where a
+     * deferred perch/catch-up transition can fire on the bot-state shim between a conductor
+     * turn finishing and this call routing its reply — without an override, that race would
+     * route the conductor's own reply as perch/catch-up output instead of to the requesting
+     * channel.
+     */
+    sessionTypeOverride?: SessionType
 }
 
 /**
@@ -247,10 +256,10 @@ async function resolveRouting(
  * @returns Result indicating success/failure and routing metadata
  */
 export async function sendResponse(config: SendResponseConfig): Promise<SendResponseResult> {
-    const { responseRouter, botStateManager, response, message, rateLimiter, client, useFallbackOnError } = config;
+    const { responseRouter, botStateManager, response, message, rateLimiter, client, useFallbackOnError, sessionTypeOverride } = config;
 
-    // Determine session type from bot state
-    const sessionType = botStateManager.getSessionType(message.channel.isDMBased());
+    // Determine session type: an explicit override wins over bot state (see SendResponseConfig.sessionTypeOverride).
+    const sessionType = sessionTypeOverride ?? botStateManager.getSessionType(message.channel.isDMBased());
 
     // Route response based on session type
     const routeResult = await resolveRouting(responseRouter, sessionType, response, message, useFallbackOnError);

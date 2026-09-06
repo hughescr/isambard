@@ -7,6 +7,7 @@
  */
 import { describe, test, expect, mock, jest, afterEach, spyOn } from 'bun:test';
 import type { Client, Message } from 'discord.js';
+import { mockGenerateText } from '../../../../setup';
 import type { ClaudeAgent, StreamTracker } from '@/agent';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
@@ -286,5 +287,265 @@ describe('setupCoordinatorIntegration — explicit requesting user', () => {
         const handleInputMock = agent.handleInput as unknown as ReturnType<typeof mock>;
         const [passedContexts] = handleInputMock.mock.calls[0] as [unknown[], unknown];
         expect(passedContexts).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// P9: conductor-mode branch — createConductorProcessor selected instead of agent.handleInput;
+// onResponse delivers idempotently, never calls goIdle, keeps the resume-after-suspension blocks.
+// ---------------------------------------------------------------------------
+
+describe('setupCoordinatorIntegration — conductor branch', () => {
+    const spies: ReturnType<typeof spyOn>[] = [];
+
+    afterEach(() => {
+        for(const spy of spies) {
+            try {
+                spy.mockRestore();
+            } catch{
+                // already restored
+            }
+        }
+        spies.length = 0;
+        jest.restoreAllMocks();
+    });
+
+    function makeConductorParams(overrides: Record<string, unknown> = {}) {
+        const agent = makeMockAgentForConductor();
+        return {
+            agent,
+            presenceManager:        undefined,
+            dynamicStatusGenerator: undefined,
+            botStateManager:        makeMockBotStateManager(),
+            catchUpSessionRunner:   undefined,
+            perchSessionRunner:     undefined,
+            responseRouter:         makeMockResponseRouter(),
+            rateLimiter:            makeMockRateLimiter(),
+            readyClient:            makeMockClient(),
+            channelRegistry:        makeMockChannelRegistry(),
+            conversationConductor:  {
+                submit: mock(() => Promise.resolve({
+                    envelopeId: 'env-1', response: 'ok', wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null }, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
+                })),
+                subscribeTurn: mock(() => mock(() => undefined)),
+                deliver:       mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+                    await send();
+                    return { delivered: true };
+                }),
+            },
+            contextPolicy:    { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), resetAll: mock(() => undefined) },
+            deliveryGuard:    { alreadyDelivered: mock(() => false), markDelivered: mock(() => undefined) },
+            journal:          { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+            envelopeProvider: {
+                resolveNames:    mock(() => Promise.resolve({ channelName: 'general', authorName: 'craig', isDM: false })),
+                toEnvelopeInput: mock(() => ({
+                    messageId: 'msg-1', channelId: 'chan-1', channelName: 'general', authorId: 'user-1', authorName: 'craig', content: 'hello', createdAt: new Date(0), isDM: false, channelList: [],
+                })),
+                channelList: mock(() => Promise.resolve([])),
+            },
+            contextBuilder: { loadUserTimezone: mock(() => Promise.resolve(undefined)), loadUserMemories: mock(() => Promise.resolve('')) },
+            ...overrides,
+        } as unknown as Parameters<typeof setupCoordinatorIntegration>[0];
+    }
+
+    function makeMockAgentForConductor(): ClaudeAgent {
+        return { handleInput: mock(async () => ({ response: 'unused', sessionId: 'x', wasInterrupted: false, streamTracker: {} })) } as unknown as ClaudeAgent;
+    }
+
+    /** Mocks the MessageCoordinator constructor and captures the whole config it was built with. */
+    function captureConfig(params: Parameters<typeof setupCoordinatorIntegration>[0]): MessageCoordinatorConfig {
+        let captured: MessageCoordinatorConfig | undefined;
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((config: MessageCoordinatorConfig): messageCoordinatorModule.MessageCoordinator => {
+            captured = config;
+            return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as messageCoordinatorModule.MessageCoordinator;
+        }));
+        setupCoordinatorIntegration(params);
+        return captured!;
+    }
+
+    function makeMinimalContext(): DiscordMessageContext {
+        return {
+            guildId:   createGuildId('1'),
+            channelId: createChannelId('chan-1'),
+            userId:    createUserId('user-1'),
+            username:  'craig',
+            messageId: 'msg-1',
+            content:   'hello',
+            timestamp: new Date(0).toISOString(),
+            botUserId: createUserId('bot-1'),
+        };
+    }
+
+    test('selects createConductorProcessor and never calls agent.handleInput', () => {
+        const params = makeConductorParams();
+        let capturedProcessor: MessageProcessor | undefined;
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+            setProcessor: mock((fn: MessageProcessor) => { capturedProcessor = fn; }),
+            stop:         mock(() => undefined),
+        } as unknown as messageCoordinatorModule.MessageCoordinator)));
+
+        setupCoordinatorIntegration(params);
+
+        expect(capturedProcessor).toBeDefined();
+        expect(params.agent.handleInput).not.toHaveBeenCalled();
+    });
+
+    test('the selected processor actually routes through conductor.submit, never agent.handleInput, when invoked', async () => {
+        const params = makeConductorParams();
+        let capturedProcessor: MessageProcessor | undefined;
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+            setProcessor: mock((fn: MessageProcessor) => { capturedProcessor = fn; }),
+            stop:         mock(() => undefined),
+        } as unknown as messageCoordinatorModule.MessageCoordinator)));
+
+        setupCoordinatorIntegration(params);
+        expect(capturedProcessor).toBeDefined();
+
+        await capturedProcessor!([makeMinimalContext()], null, new AbortController().signal);
+
+        expect(params.conversationConductor!.submit).toHaveBeenCalled();
+        expect(params.agent.handleInput).not.toHaveBeenCalled();
+    });
+
+    test('onProcessingEnd never calls goIdle in conductor mode', () => {
+        const params = makeConductorParams();
+        const config = captureConfig(params);
+
+        config.onProcessingEnd?.({ wasInterrupted: true, willResume: false });
+
+        expect(params.botStateManager.goIdle).not.toHaveBeenCalled();
+    });
+
+    test('onResponse delivers through conversationConductor.deliver keyed on the CONDUCTOR'
+      + "'s envelope id (not the triggering Discord message id), with sessionTypeOverride \"processing_message\" for a guild channel", async () => {
+        const params = makeConductorParams();
+        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-999',
+        }, discordMessage);
+
+        expect(responseSenderModule.sendResponse).toHaveBeenCalledWith(expect.objectContaining({ sessionTypeOverride: 'processing_message' }));
+        const conductorDeliver = (params.conversationConductor as unknown as { deliver: ReturnType<typeof mock> }).deliver;
+        expect(conductorDeliver).toHaveBeenCalledWith('env-999', expect.any(Function));
+    });
+
+    test('onResponse uses sessionTypeOverride "dm" for a DM channel', async () => {
+        const params = makeConductorParams();
+        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => true },
+        } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-999',
+        }, discordMessage);
+
+        expect(responseSenderModule.sendResponse).toHaveBeenCalledWith(expect.objectContaining({ sessionTypeOverride: 'dm' }));
+    });
+
+    test('onResponse refuses a duplicate delivery for an already-delivered envelope id (conversationConductor.deliver\'s own idempotency)', async () => {
+        const deliver = mock(async () => ({ delivered: false }));
+        const params = makeConductorParams({
+            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
+        });
+        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage);
+
+        expect(responseSenderModule.sendResponse).not.toHaveBeenCalled();
+    });
+
+    test('onResponse keeps the catch-up resume-after-suspension block', async () => {
+        const resumeAfterSuspension = mock(() => Promise.resolve());
+        const catchUpSessionRunner = {
+            isSuspended: mock(() => true), resumeAfterSuspension, clearSuspension: mock(() => undefined),
+        };
+        const params = makeConductorParams({ catchUpSessionRunner });
+        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage);
+        await Promise.resolve();
+
+        expect(resumeAfterSuspension).toHaveBeenCalled();
+    });
+
+    test('onResponse keeps addRecentMessage(\'izzy\') and the discord-exchange activity-log write (folded idle-status-inputs gap)', async () => {
+        const addRecentMessage = mock(() => undefined);
+        const activityLogger = { log: mock(() => Promise.resolve()) };
+        const params = makeConductorParams({ addRecentMessage, activityLogger });
+        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        mockGenerateText.mockResolvedValueOnce('Craig asked about the weather; Izzy answered.');
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'what\'s the weather', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+
+        await config.onResponse?.({
+            response: 'It\'s sunny.', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(addRecentMessage).toHaveBeenCalledWith('It\'s sunny.', 'izzy');
+        expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'discord-exchange', summary: 'Craig asked about the weather; Izzy answered.' }));
+    });
+
+    test('legacy branch (no conversationConductor) still uses agent.handleInput', () => {
+        const agent = makeMockAgentForConductor();
+        let capturedProcessor: MessageProcessor | undefined;
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+            setProcessor: mock((fn: MessageProcessor) => { capturedProcessor = fn; }),
+            stop:         mock(() => undefined),
+        } as unknown as messageCoordinatorModule.MessageCoordinator)));
+
+        setupCoordinatorIntegration({ ...makeSetupParams(mock(() => undefined)), agent });
+
+        expect(capturedProcessor).toBeDefined();
+        expect(agent.handleInput).not.toHaveBeenCalled();
+    });
+
+    test('the legacy branch\'s selected processor actually routes through agent.handleInput when invoked (no conductor to route through)', async () => {
+        const agent = makeMockAgentForConductor();
+        let capturedProcessor: MessageProcessor | undefined;
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+            setProcessor: mock((fn: MessageProcessor) => { capturedProcessor = fn; }),
+            stop:         mock(() => undefined),
+        } as unknown as messageCoordinatorModule.MessageCoordinator)));
+
+        setupCoordinatorIntegration({ ...makeSetupParams(mock(() => undefined)), agent });
+        expect(capturedProcessor).toBeDefined();
+
+        await capturedProcessor!([makeMinimalContext()], null, new AbortController().signal);
+
+        expect(agent.handleInput).toHaveBeenCalled();
     });
 });

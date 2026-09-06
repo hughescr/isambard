@@ -10,6 +10,7 @@ import { mockLogger, resetMockSstResource } from '../setup';
 // pushing tests close enough to the 60ms CI timeout cap to risk a mid-test timeout (see CI
 // failure: "should throw fatal error when ChannelRegistryBackend construction fails" at
 // 64.40ms on macOS).
+import type { Conductor, ContextPolicy, LedgerStore } from '@/agent';
 import * as staticAgentModule from '@/agent/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
 import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
@@ -23,6 +24,7 @@ import type { StreamTracker } from '@/agent/stream-tracker';
 import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
 import * as staticTaskCopierModule from '@/agent/task-directory-copier';
 import * as staticTaskCoordinatorModule from '@/agent/task-persistence-coordinator';
+import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
 import * as staticIndexModule from '@/index';
@@ -556,6 +558,51 @@ describe('createApp', () => {
 
             expect(pruneStaleSessionsSpy).not.toHaveBeenCalled();
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ error: lookupFailure }), expect.any(String));
+        });
+    });
+
+    describe('Conversation conductor build (P9)', () => {
+        test('conductor mode: createConversationConductor is called once, after the OAuth env write, and its (unopened) conductor is handed to createDiscordBot before it is created', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+
+            let oauthTokenAtCallTime: string | undefined;
+            const fakeOpen = mock(async () => ({ sessionId: 'sess-1', resumed: false }));
+            const fakeConductor = { open: fakeOpen, submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockImplementation(async () => {
+                oauthTokenAtCallTime = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+                return { conductor: fakeConductor, ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy };
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createConversationConductorSpy).toHaveBeenCalledTimes(1);
+            expect(oauthTokenAtCallTime).toBe('test-oauth-token-123');
+            expect(fakeOpen).not.toHaveBeenCalled();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { conversationConductor?: unknown };
+            expect(botOptions.conversationConductor).toBe(fakeConductor);
+
+            const conductorOrder = createConversationConductorSpy.mock.invocationCallOrder[0];
+            const botOrder = createBotSpy.mock.invocationCallOrder[0];
+            expect(conductorOrder).toBeDefined();
+            expect(botOrder).toBeDefined();
+            expect(conductorOrder).toBeLessThan(botOrder);
+        });
+
+        test('oneshot mode: createConversationConductor is never called', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor');
+            spies.push(createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createConversationConductorSpy).not.toHaveBeenCalled();
         });
     });
 

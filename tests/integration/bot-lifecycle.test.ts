@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:te
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import '../setup'; // SST mock is applied via side effects
+import type { Conductor, ContextPolicy, LedgerStore } from '@/agent';
 import * as agentAgent from '@/agent/agent';
 import type { ClaudeAgent } from '@/agent/agent';
 import * as contextBuilder from '@/agent/context-builder';
@@ -10,6 +11,7 @@ import * as memoryMcpServer from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import type { StreamTracker } from '@/agent/stream-tracker';
 import * as mcpServersModule from '@/app/mcp-servers';
+import * as sessionsModule from '@/app/sessions';
 import * as configLoader from '@/config/loader';
 import { sessionConfigSchema, type DiscordConfig, type DynamoDBConfig, type AgentConfig, type Config, type SessionConfig } from '@/config/schemas';
 import { createApp, type App } from '@/index';
@@ -349,6 +351,65 @@ describe('Bot Lifecycle Integration', () => {
 
             // channelRegistry is REQUIRED and needs DynamoDB, so app creation should fail
             expect(createApp()).rejects.toThrow('Failed to connect to DynamoDB');
+        });
+    });
+
+    describe('Conductor mode component wiring (P9)', () => {
+        it('builds (but never opens) the conversation conductor and hands it to createDiscordBot, unopened', async () => {
+            const mockClient = {} as DynamoDBClient;
+            const mockDocClient = {} as DynamoDBDocumentClient;
+            const mockContextBuilder = {} as ContextBuilder;
+            const mockMemoryMcp = {};
+            const fakeOpen = mock(async () => ({ sessionId: 'sess-1', resumed: false }));
+            const fakeConductor = { open: fakeOpen, submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
+
+            spies.push(
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: { ...mockSessionConfig, mode: 'conductor' },
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
+                    client: mockClient, docClient: mockDocClient, tableName: 'IsambardMemory',
+                }),
+                spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
+                spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
+                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
+                // @ts-expect-error - Mocking constructor
+                spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
+            );
+            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor, ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
+            spies.push(createConversationConductorSpy, createDiscordBotSpy);
+
+            await createApp();
+
+            expect(createConversationConductorSpy).toHaveBeenCalledTimes(1);
+            expect(fakeOpen).not.toHaveBeenCalled();
+            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { conversationConductor?: unknown };
+            expect(botOptions.conversationConductor).toBe(fakeConductor);
+        });
+
+        it('oneshot mode (default): never calls createConversationConductor', async () => {
+            spies.push(
+                spyOn(configLoader, 'loadConfig').mockReturnValue({
+                    discord: mockDiscordConfig,
+                    agent:   mockAgentConfig,
+                    session: mockSessionConfig,
+                } as unknown as Config),
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
+                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
+                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
+            );
+            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor');
+            spies.push(createConversationConductorSpy);
+
+            await createApp();
+
+            expect(createConversationConductorSpy).not.toHaveBeenCalled();
         });
     });
 

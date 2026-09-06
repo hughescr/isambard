@@ -33,6 +33,14 @@ export interface ProcessResult {
     sessionId?:     string
     wasInterrupted: boolean
     streamTracker:  StreamTracker
+    /**
+     * The submitted envelope's own id (P9's conductor-mode processor only — see
+     * `setup/conductor-processor.ts`), passed through to `onResponse` verbatim so the caller can
+     * deliver idempotently keyed on the actual submitted envelope rather than on some other id
+     * (e.g. a triggering Discord message id, which does not identify a merged multi-message
+     * batch). Undefined on the legacy (`agent.handleInput`) path.
+     */
+    envelopeId?:    string
 }
 
 /** Processor function type - called to process batched messages */

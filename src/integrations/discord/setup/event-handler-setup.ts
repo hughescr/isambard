@@ -196,6 +196,8 @@ interface SetupMessageProcessingParams {
     botStateManager:      BotStateManager
     perchSessionRunner:   PerchSessionRunner | undefined
     dmTracker:            DMTracker
+    /** P9: forwarded to `createMessageHandler` — when true, `handleStateAndInbox` skips `startProcessingMessage` (the ledger shim owns that transition in conductor mode). */
+    conductorMode?:       boolean
 }
 
 /**
@@ -217,6 +219,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         botStateManager,
         perchSessionRunner,
         dmTracker,
+        conductorMode,
     } = params;
 
     // Register message handler AFTER channel registry is initialized
@@ -234,6 +237,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         botStateManager,
         perchSessionRunner,
         dmTracker,
+        conductorMode,
     }), logger, 'messageCreate handler'));
     // Stryker restore StringLiteral
 }

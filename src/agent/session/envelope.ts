@@ -64,6 +64,14 @@ export interface BuildDiscordEnvelopeParams {
     channelList?:     string
     healthNote?:      string
     images?:          PlatformImage[]
+    /**
+     * A pre-composed `[RESUME NOTE]` block (see `buildResumeNote` in resume-prompt-builder.ts),
+     * rendered verbatim after `[Channels]` and before the message texts — the coordinator's own
+     * partial-work summary for a turn this envelope's messages interrupted, so an interrupted
+     * turn's progress still reaches Claude even though the interrupting messages arrive as a
+     * fresh envelope rather than a continuation of the old one.
+     */
+    resumeNote?:      string
 }
 
 /**
@@ -78,7 +86,7 @@ export interface BuildDiscordEnvelopeParams {
 export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelope {
     const {
         messages, authorId, authorName, channelId, channelName, guildName, isDM,
-        now, timezone, timeHeader, newEvents, userMemoryBlock, channelList, healthNote, images,
+        now, timezone, timeHeader, newEvents, userMemoryBlock, channelList, healthNote, images, resumeNote,
     } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
@@ -92,6 +100,7 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
         renderSection('About this user', userMemoryBlock),
         newEvents && newEvents.length > 0 ? renderSection('Recent events', newEvents.join('\n')) : undefined,
         renderSection('Channels', channelList),
+        resumeNote,
         ...messages.map(message => message.content),
     ]);
 

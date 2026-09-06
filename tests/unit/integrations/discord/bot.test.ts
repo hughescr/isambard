@@ -2,10 +2,12 @@ import { describe, test, expect, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
+import * as agentModule from '@/agent';
+import type { Conductor, LedgerStore } from '@/agent';
 import type { ClaudeAgent } from '@/agent/agent';
 import type { DiscordConfig } from '@/config/schemas';
 import type { AllowlistCommandHandler } from '@/integrations/discord/allowlist-commands';
-import { createDiscordBot } from '@/integrations/discord/bot';
+import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord/bot';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as clientModule from '@/integrations/discord/client';
@@ -13,7 +15,9 @@ import * as messageCoordinatorModule from '@/integrations/discord/message-coordi
 import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import * as coordinatorSetupModule from '@/integrations/discord/setup/coordinator-setup';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
+import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-handler-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state/manager';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
 
@@ -61,6 +65,7 @@ describe('createDiscordBot', () => {
         }
         spies.length = 0;
         jest.restoreAllMocks();
+        jest.useRealTimers();
         // Clear global Discord client state to prevent test pollution
         globalThis.__discordClient = undefined;
     });
@@ -1599,6 +1604,302 @@ describe('createDiscordBot', () => {
             expect(stopIdx).toBeLessThan(listenerIdx);
         });
     });
+
+    describe('Conductor mode (P9)', () => {
+        function makeMockClientForConductor(): Client {
+            const client = {
+                on:                 mock(() => client),
+                once:               mock(() => client),
+                login:              mock(async () => 'mock-token'),
+                destroy:            mock(async () => undefined),
+                removeAllListeners: mock(() => undefined),
+                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+                rest:               null,
+                guilds:             { cache: { get: mock(() => undefined) } },
+            } as unknown as Client;
+            return client;
+        }
+
+        /** Returns a plain object satisfying the shape tests need to observe — cast to `Conductor` at each call site, since only `open`/`shutdown`/`subscribeTurn` are ever exercised here. */
+        function makeFakeConductor(overrides: Record<string, unknown> = {}) {
+            return {
+                open:                    mock(async () => ({ sessionId: 'sess-1', resumed: false })),
+                submit:                  mock(async () => ({})),
+                deliver:                 mock(async () => ({ delivered: true })),
+                recordCompactionSummary: mock(async () => undefined),
+                interruptCurrent:        mock(async () => undefined),
+                subscribeTurn:           mock(() => mock(() => undefined)),
+                status:                  mock(() => ({})),
+                shutdown:                mock(async () => undefined),
+                ...overrides,
+            } as unknown as Conductor & { open: ReturnType<typeof mock>, shutdown: ReturnType<typeof mock>, subscribeTurn: ReturnType<typeof mock> };
+        }
+
+        function makeFakeLedgerStore(sessionId: string | undefined = 'ledger-sess-1', unsubscribe: ReturnType<typeof mock> = mock(() => undefined)) {
+            return {
+                get:       mock(() => ({ sessionId, tasks: [] })),
+                dispatch:  mock(() => undefined),
+                subscribe: mock(() => unsubscribe),
+            } as unknown as LedgerStore & { get: ReturnType<typeof mock> };
+        }
+
+        function conductorDeps(overrides: Record<string, unknown> = {}): Partial<DiscordBotOptions> {
+            return {
+                conversationConductor: makeFakeConductor(),
+                ledgerStore:           makeFakeLedgerStore(),
+                contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), resetAll: mock(() => undefined) },
+                deliveryGuard:         { alreadyDelivered: mock(() => false), markDelivered: mock(() => undefined) },
+                journal:               { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+                ...overrides,
+            };
+        }
+
+        /** Fires the registered clientReady handler and waits for its async body to settle. */
+        async function triggerReady(client: Client): Promise<void> {
+            const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void | Promise<void>][];
+            const handler = calls.find(([event]) => event === 'clientReady')?.[1];
+            if(handler) {
+                await handler(client);
+            }
+        }
+
+        function stubCoordinator() {
+            // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+                setProcessor: mock(() => undefined),
+                stop:         mock(() => undefined),
+            } as unknown as messageCoordinatorModule.MessageCoordinator)));
+        }
+
+        test('opens the conductor after initializeChannelRegistry and before setupCoordinatorIntegration', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            const callOrder: string[] = [];
+            spies.push(
+                spyOn(eventHandlerSetupModule, 'initializeChannelRegistry').mockImplementation(() => {
+                    callOrder.push('initializeChannelRegistry');
+                }),
+                spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation(() => {
+                    callOrder.push('setupCoordinatorIntegration');
+                    return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+                })
+            );
+
+            const deps = conductorDeps({
+                conversationConductor: makeFakeConductor({
+                    open: mock(async () => {
+                        callOrder.push('conductor.open');
+                        return { sessionId: 'sess-1', resumed: false };
+                    }),
+                }),
+            });
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            expect(callOrder).toEqual(['initializeChannelRegistry', 'conductor.open', 'setupCoordinatorIntegration']);
+        });
+
+        test('degrades to the legacy processor without a shim when open() rejects', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            let capturedParams: { conversationConductor?: unknown, envelopeProvider?: unknown } | undefined;
+            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: typeof capturedParams) => {
+                capturedParams = params;
+                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+            }));
+
+            const conductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('boom'))) });
+            const deps = conductorDeps({ conversationConductor: conductor });
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            // setupCoordinatorIntegration ran (the legacy branch is always reachable — agent was
+            // provided), but never received conductor deps: rejection degrades to the legacy
+            // processor without ever switching setupCoordinatorIntegration to the conductor branch.
+            expect(capturedParams?.conversationConductor).toBeUndefined();
+            expect(capturedParams?.envelopeProvider).toBeUndefined();
+            expect(conductor.subscribeTurn).not.toHaveBeenCalled();
+        });
+
+        test('degrades to the legacy processor without hanging forever when open() never settles', async () => {
+            jest.useFakeTimers();
+
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            let capturedParams: { conversationConductor?: unknown } | undefined;
+            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { conversationConductor?: unknown }) => {
+                capturedParams = params;
+                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+            }));
+
+            // Never resolves and never rejects — a wedged CLI child.
+            const conductor = makeFakeConductor({
+                open: mock(() => new Promise<{ sessionId: string, resumed: boolean }>(() => {
+                    // Deliberately never settles.
+                })),
+            });
+            const deps = conductorDeps({ conversationConductor: conductor });
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void | Promise<void>][];
+            const handler = calls.find(([event]) => event === 'clientReady')?.[1];
+            const readyPromise = handler ? Promise.resolve(handler(client)) : Promise.resolve();
+
+            jest.advanceTimersByTime(30_000);
+            for(let i = 0; i < 10; i += 1) {
+                // eslint-disable-next-line no-await-in-loop -- deterministic microtask-drain, not a real async loop
+                await Promise.resolve();
+            }
+            await readyPromise;
+
+            expect(capturedParams?.conversationConductor).toBeUndefined();
+            expect(conductor.subscribeTurn).not.toHaveBeenCalled();
+        });
+
+        test('wires envelopeProvider (resolveNames/toEnvelopeInput/channelList) into setupCoordinatorIntegration once the conductor opens', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            let capturedParams: { envelopeProvider?: { resolveNames?: unknown, toEnvelopeInput?: unknown, channelList?: unknown } } | undefined;
+            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: typeof capturedParams) => {
+                capturedParams = params;
+                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+            }));
+
+            const deps = conductorDeps();
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            expect(typeof capturedParams?.envelopeProvider?.resolveNames).toBe('function');
+            expect(typeof capturedParams?.envelopeProvider?.toEnvelopeInput).toBe('function');
+            expect(typeof capturedParams?.envelopeProvider?.channelList).toBe('function');
+        });
+
+        test('calls open() only once across repeated clientReady (reconnect) events', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const deps = conductorDeps();
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await triggerReady(client);
+
+            expect((deps.conversationConductor as ReturnType<typeof makeFakeConductor>).open).toHaveBeenCalledTimes(1);
+        });
+
+        test('seeds lastSessionId from the ledger after a successful open()', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const ledgerStore = makeFakeLedgerStore('from-the-ledger');
+            const deps = conductorDeps({ ledgerStore });
+            let capturedGetCurrentSessionId: (() => string | undefined) | undefined;
+            spies.push(spyOn(agentModule, 'createTaskListReader').mockImplementation((params: { getCurrentSessionId: () => string | undefined }) => {
+                capturedGetCurrentSessionId = params.getCurrentSessionId;
+                return { buildTaskListSummary: mock(() => Promise.resolve(undefined)) };
+            }));
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            // createTaskListReader's getCurrentSessionId is the SAME closure bot.ts calls
+            // setLastSessionId(ledgerStore.get().sessionId) through — reading it after open()
+            // resolves proves the ledger's actual value was seeded, not merely that get() ran.
+            expect(capturedGetCurrentSessionId?.()).toBe('from-the-ledger');
+        });
+
+        test('stop order: coordinator.stop -> conductor.shutdown -> shim unsubscribe -> botStateManager.stop', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            const callOrder: string[] = [];
+            const coordinatorStub = {
+                setProcessor: mock(() => undefined),
+                stop:         mock(() => {
+                    callOrder.push('coordinator.stop');
+                }),
+            };
+            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation(() => coordinatorStub as unknown as MessageCoordinator));
+
+            const conductor = makeFakeConductor({
+                shutdown: mock(async () => {
+                    callOrder.push('conductor.shutdown');
+                }),
+            });
+            const shimUnsubscribe = mock(() => {
+                callOrder.push('shim unsubscribe');
+            });
+            const ledgerStore = makeFakeLedgerStore('ledger-sess-1', shimUnsubscribe);
+            const deps = conductorDeps({ conversationConductor: conductor, ledgerStore });
+
+            const mockBotStateManager = new BotStateManagerImpl({ logger: mockLogger });
+            const originalStop = mockBotStateManager.stop.bind(mockBotStateManager);
+            mockBotStateManager.stop = () => {
+                callOrder.push('botStateManager.stop');
+                originalStop();
+            };
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                botStateManager: mockBotStateManager,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await bot.stop();
+
+            expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'shim unsubscribe', 'botStateManager.stop']);
+            expect(shimUnsubscribe).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('Channel Cleanup Events', () => {
         test('should call coordinator.removeChannel() on channelDelete event', async () => {
             const mockRemoveChannel = mock(() => undefined);

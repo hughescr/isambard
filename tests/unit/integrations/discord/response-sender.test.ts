@@ -216,6 +216,84 @@ describe('sendResponse', () => {
                 'origin-channel-123'
             );
         });
+
+        test('sessionTypeOverride wins over botStateManager.getSessionType() when given', async () => {
+            (mockBotStateManager.getMode as ReturnType<typeof mock>).mockReturnValue('perching');
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'origin-channel-123' as ChannelId,
+                shouldSend:      true,
+                content:         'response',
+                isFallback:      false,
+            });
+
+            await sendResponse({
+                responseRouter:      mockResponseRouter,
+                botStateManager:     mockBotStateManager,
+                response:            'test response',
+                message:             mockMessage,
+                rateLimiter:         mockRateLimiter,
+                client:              mockClient,
+                useFallbackOnError:  true,
+                sessionTypeOverride: 'processing_message',
+            });
+
+            expect(mockRouteResponse).toHaveBeenCalledWith(
+                'processing_message',
+                'test response',
+                'origin-channel-123'
+            );
+            expect(mockBotStateManager.getSessionType).not.toHaveBeenCalled();
+        });
+
+        test('a reply sent while mode is "perching" with sessionTypeOverride "processing_message" is routed to the requesting channel, not the perch/catch-up destination', async () => {
+            (mockBotStateManager.getMode as ReturnType<typeof mock>).mockReturnValue('perching');
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'origin-channel-123' as ChannelId,
+                shouldSend:      true,
+                content:         'response',
+                isFallback:      false,
+            });
+
+            const result = await sendResponse({
+                responseRouter:      mockResponseRouter,
+                botStateManager:     mockBotStateManager,
+                response:            'test response',
+                message:             mockMessage,
+                rateLimiter:         mockRateLimiter,
+                client:              mockClient,
+                useFallbackOnError:  true,
+                sessionTypeOverride: 'processing_message',
+            });
+
+            expect(result.sent).toBe(true);
+            expect(mockReplyToMessage).toHaveBeenCalled();
+        });
+
+        test('sessionTypeOverride "dm" is used verbatim even for a non-DM message', async () => {
+            mockRouteResponse.mockResolvedValue({
+                targetChannelId: 'origin-channel-123' as ChannelId,
+                shouldSend:      true,
+                content:         'response',
+                isFallback:      false,
+            });
+
+            await sendResponse({
+                responseRouter:      mockResponseRouter,
+                botStateManager:     mockBotStateManager,
+                response:            'test response',
+                message:             mockMessage,
+                rateLimiter:         mockRateLimiter,
+                client:              mockClient,
+                useFallbackOnError:  true,
+                sessionTypeOverride: 'dm',
+            });
+
+            expect(mockRouteResponse).toHaveBeenCalledWith(
+                'dm',
+                'test response',
+                'origin-channel-123'
+            );
+        });
     });
 
     describe('WellKnownChannelNotFoundError handling', () => {

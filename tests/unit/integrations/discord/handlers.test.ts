@@ -1039,6 +1039,28 @@ describe('Discord Event Handlers', () => {
             // Verify onMessage was NOT called (coordinator handles it)
             // onMessage no longer exists in coordinator flow;
         });
+
+        it('conductorMode true still suspends an active catch-up session (perch/catch-up suspension is unaffected)', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(() => 'catching_up' as const),
+                startProcessingMessage: mock(() => undefined),
+            };
+            const mockCatchUpSessionRunner = { suspend: mock(() => undefined) };
+
+            const handler = createMessageHandler({
+                channelRegistry:      { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                botUserId,
+                coordinator:          createMockCoordinator(),
+                catchUpSessionRunner: mockCatchUpSessionRunner as unknown as CatchUpSessionRunner,
+                botStateManager:      mockBotStateManager as unknown as BotStateManager,
+                conductorMode:        true,
+            });
+
+            const message = createMockMessageForCatchUp();
+            await handler(message);
+
+            expect(mockCatchUpSessionRunner.suspend).toHaveBeenCalled();
+        });
     });
 
     describe('State manager idle mode transition', () => {
@@ -1143,6 +1165,47 @@ describe('Discord Event Handlers', () => {
 
             const message = createMockMessageForState();
             // Should not throw when botStateManager is undefined; message still reaches coordinator
+            await handler(message);
+
+            expect(coordinator.handleMessage).toHaveBeenCalled();
+        });
+
+        it('should NOT call startProcessingMessage when conductorMode is true, even while bot state is idle', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(() => 'idle' as const),
+                startProcessingMessage: mock(() => undefined),
+            };
+
+            const handler = createMessageHandler({
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                botUserId,
+                coordinator:     createMockCoordinator(),
+                botStateManager: mockBotStateManager as unknown as BotStateManager,
+                conductorMode:   true,
+            });
+
+            const message = createMockMessageForState();
+            await handler(message);
+
+            expect(mockBotStateManager.startProcessingMessage).not.toHaveBeenCalled();
+        });
+
+        it('conductorMode still reaches the coordinator (the shim owns the processing_message transition, not the handler)', async () => {
+            const mockBotStateManager = {
+                getMode:                mock(() => 'idle' as const),
+                startProcessingMessage: mock(() => undefined),
+            };
+            const coordinator = createMockCoordinator();
+
+            const handler = createMessageHandler({
+                channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                botUserId,
+                coordinator,
+                botStateManager: mockBotStateManager as unknown as BotStateManager,
+                conductorMode:   true,
+            });
+
+            const message = createMockMessageForState();
             await handler(message);
 
             expect(coordinator.handleMessage).toHaveBeenCalled();

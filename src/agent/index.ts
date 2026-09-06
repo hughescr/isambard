@@ -10,6 +10,7 @@ export { createStreamEventLogger, createRoleLogger, type StreamEventLogger, type
 export { createCompactionHooks, createBotStateCompactionSink, type CompactionSink, type CompactionStateManager } from './hooks/compaction';
 export { createBootBundleHooks } from './hooks/boot-bundle';
 export { createSessionLifecycleHooks, type SessionLifecycleHooksDeps } from './hooks/lifecycle';
+export { createTaskTrackingHooks } from './hooks/task-tracking';
 export { mergeHookMaps } from './hooks/index';
 export { createContextBuilder, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from './context-builder';
 export { EventDeltaTracker } from './event-delta-tracker';
@@ -17,6 +18,7 @@ export { summarizeEventBatches } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
 export { createDiscordMCPServer } from './discord-mcp-server';
 export { loadPlugins } from './plugin-loader';
+export { buildSessionSystemPrompt, type BuildSessionSystemPromptOptions } from './prompts/index.js';
 export type { MessageContext, PlatformImage, AgentStreamEvent, MCPMessageSearchService, MCPChannelRegistry, MCPDMTracker, MCPChannelInfo, ChannelId } from './types';
 
 export { createTaskDirectoryCopier } from './task-directory-copier';
