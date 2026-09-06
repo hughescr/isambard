@@ -50,3 +50,26 @@ export const bskyNotificationCheckpointSchema = z.object({
 // Stryker restore StringLiteral
 
 export type BskyNotificationCheckpoint = z.infer<typeof bskyNotificationCheckpointSchema>;
+
+/**
+ * Bluesky direct-message checkpoint schema.
+ * Tracks the last-seen state for DM conversations. `processedUris` holds `lastMessage.id`
+ * values (not AT URIs) — the field name is kept for reuse with the existing generic
+ * save/FIFO helpers, which only know about a `processedUris: string[]` shape.
+ */
+// Stryker disable StringLiteral: All .describe() calls and literal schema values are documentation/configuration
+export const bskyDmCheckpointSchema = z.object({
+    /** Service identifier (always 'bsky') */
+    service:        z.literal('bsky'),
+    /** Checkpoint type (always 'dm') */
+    type:           z.literal('dm'),
+    /** High-water mark: latest lastMessage.sentAt from candidate conversations */
+    lastSeenSentAt: z.iso.datetime().optional(),
+    /** Bounded set of processed lastMessage.id values (FIFO-evicted at MAX_PROCESSED_URIS) */
+    processedUris:  z.array(z.string()),
+    /** ISO 8601 timestamp when this checkpoint was last updated */
+    updatedAt:      z.iso.datetime(),
+});
+// Stryker restore StringLiteral
+
+export type BskyDmCheckpoint = z.infer<typeof bskyDmCheckpointSchema>;

@@ -46,6 +46,7 @@ import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
 import { sessionConfigSchema } from '@/config/schemas';
 import * as staticIndexModule from '@/index';
+import * as staticBskyModule from '@/integrations/bsky';
 import * as staticDiscordModule from '@/integrations/discord/bot';
 import * as staticChannelRegistryModule from '@/integrations/discord/channel-registry';
 import * as staticDiscordClientModule from '@/integrations/discord/client';
@@ -53,6 +54,7 @@ import * as staticCheckpointModule from '@/integrations/discord/inbox';
 import * as staticMessageFetcherModule from '@/integrations/discord/message-history/fetcher';
 import * as staticMessageSearchModule from '@/integrations/discord/message-history/search';
 import * as staticMessageSummarizerModule from '@/integrations/discord/message-history/summarizer';
+import * as staticBskySetupModule from '@/integrations/discord/setup/bsky-setup';
 import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setup';
 import * as staticStateModule from '@/integrations/discord/state';
 import { createGuildId } from '@/integrations/discord/types';
@@ -109,13 +111,19 @@ const defaultPerchConfig = {
  * and storage creation. `sessionOverrides` lets each test pick `session.mode`; `perchOverrides`
  * lets a test disable perch or tweak a field (P12); the returned `getSessionIdForRole` mock lets
  * the conductor-mode test control what the two role-keyed `TASK_SESSION#<role>` rows resolve to.
+ * `bskyEnabled` (Q8) additionally configures `config.bsky`, mocks `BlueskyClient` (constructor +
+ * no-op `login`) and `setupBsky` (resolving with a stubbed `dmPoller`, captured via the returned
+ * `dmPollerStart`/`dmPollerStop` mocks) so the bsky composition-root block actually runs.
  */
-function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}): {
+function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false): {
     cleanupAllStaleSessionsSpy: ReturnType<typeof spyOn>
     pruneStaleSessionsSpy:      ReturnType<typeof spyOn>
     getSessionIdForRole:        ReturnType<typeof mock>
     createBotSpy:               ReturnType<typeof spyOn>
     emailSetupSpy:              ReturnType<typeof spyOn>
+    bskySetupSpy?:              ReturnType<typeof spyOn>
+    dmPollerStart:              ReturnType<typeof mock>
+    dmPollerStop:               ReturnType<typeof mock>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
@@ -135,6 +143,31 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         sendApprovalRequest:          mock(async () => {}),
         createEmailMcpServerInstance: mock(() => ({} as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['emailMcpServer'])),
     });
+
+    const dmPollerStart = mock(() => undefined);
+    const dmPollerStop  = mock(() => undefined);
+    const bskySetupSpy  = bskyEnabled
+        ? spyOn(staticBskySetupModule, 'setupBsky').mockResolvedValue({
+            client:                  {} as unknown as Awaited<ReturnType<typeof staticBskySetupModule.setupBsky>>['client'],
+            allowlist:               {} as unknown as Awaited<ReturnType<typeof staticBskySetupModule.setupBsky>>['allowlist'],
+            rateLimiter:             {} as unknown as Awaited<ReturnType<typeof staticBskySetupModule.setupBsky>>['rateLimiter'],
+            rejectionBackend:        {} as unknown as Awaited<ReturnType<typeof staticBskySetupModule.setupBsky>>['rejectionBackend'],
+            outboundApprovalHandler: {} as unknown as Awaited<ReturnType<typeof staticBskySetupModule.setupBsky>>['outboundApprovalHandler'],
+            sendApprovalRequest:     mock(async () => {}),
+            sendDMApprovalRequest:   mock(async () => {}),
+            dmPoller:                { start: dmPollerStart, stop: dmPollerStop },
+        })
+        : undefined;
+
+    if(bskyEnabled) {
+        spies.push(
+            // @ts-expect-error - Mocking constructor
+            spyOn(staticBskyModule, 'BlueskyClient').mockImplementation(() => ({
+                login: mock(async () => {}),
+            } as unknown as InstanceType<typeof staticBskyModule.BlueskyClient>)),
+            bskySetupSpy!
+        );
+    }
 
     spies.push(
         spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
@@ -219,6 +252,9 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
             },
             perch:              { ...defaultPerchConfig, ...perchOverrides },
             adminDiscordUserId: '423276934781468692',
+            ...(bskyEnabled
+                ? { bsky: { handle: 'isambard.bsky.social', appPassword: 'app-password', serviceUrl: 'https://bsky.social' } }
+                : {}),
         }),
         spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
             tableName: 'IsambardMemory',
@@ -227,7 +263,9 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         pruneStaleSessionsSpy
     );
 
-    return { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy, emailSetupSpy };
+    return {
+        cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy, emailSetupSpy, bskySetupSpy, dmPollerStart, dmPollerStop,
+    };
 }
 
 describe('createApp', () => {
@@ -992,6 +1030,59 @@ describe('createApp', () => {
             expect(capturedBridge).toBeDefined();
             const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as { notify?: NotifyFn };
             expect(emailOptions.notify).toBe(capturedBridge!.notify);
+        });
+
+        test('threads memoryBackend, healthRegistry, and notificationBridge.notify into setupBsky\'s options (Q8)', async () => {
+            let capturedBridge: NotificationBridge | undefined;
+            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
+                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
+                    const bridge = realCreateNotificationBridge(bridgeParams);
+                    capturedBridge = bridge;
+                    return bridge;
+                }
+            );
+            const { bskySetupSpy } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, {}, true);
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            spies.push(createBridgeSpy, createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(capturedBridge).toBeDefined();
+            expect(bskySetupSpy).toBeDefined();
+            const bskyOptions = bskySetupSpy!.mock.calls[0]?.[0] as { memoryBackend?: unknown, healthRegistry?: unknown, notify?: NotifyFn };
+            expect(bskyOptions.notify).toBe(capturedBridge!.notify);
+            expect(bskyOptions.memoryBackend).toBeDefined();
+            expect(bskyOptions.healthRegistry).toBeDefined();
+        });
+
+        test('starts the dmPoller during app.start() and stops it during app.stop() (Q8)', async () => {
+            const { dmPollerStart, dmPollerStop } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, {}, true);
+            // app.start() fires real healthRegistry.sendEvent transitions, which independently wake
+            // the outbox drainer's health subscription — it needs a docClient.send that resolves
+            // (see the identically-named helper in the "Lifecycle seams (P10)" describe block below).
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    { destroy: mock(() => {}) } as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
+            spies.push(createConversationConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+            expect(dmPollerStart).not.toHaveBeenCalled();
+
+            await app.start();
+            expect(dmPollerStart).toHaveBeenCalledTimes(1);
+            expect(dmPollerStop).not.toHaveBeenCalled();
+
+            await app.stop();
+            expect(dmPollerStop).toHaveBeenCalledTimes(1);
         });
 
         test('notify() called while createConversationConductor is still resolving is a safe no-op; once attached (after resolution) it reaches the real conductor via the createDiscordBot options', async () => {

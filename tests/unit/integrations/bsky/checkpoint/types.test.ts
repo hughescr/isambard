@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
     bskyFeedCheckpointSchema,
     bskyNotificationCheckpointSchema,
+    bskyDmCheckpointSchema,
     MAX_PROCESSED_URIS
 } from '@/integrations/bsky/checkpoint/types';
 
@@ -110,6 +111,64 @@ describe('bskyNotificationCheckpointSchema', () => {
 
     test('rejects missing required fields', () => {
         const result = bskyNotificationCheckpointSchema.safeParse({});
+        expect(result.success).toBe(false);
+    });
+});
+
+describe('bskyDmCheckpointSchema', () => {
+    const VALID_DM_CHECKPOINT = {
+        service:        'bsky',
+        type:           'dm',
+        lastSeenSentAt: '2026-03-07T12:00:00.000Z',
+        processedUris:  ['3juj3x2qmuf2z'],
+        updatedAt:      '2026-03-07T12:00:01.000Z',
+    };
+
+    test('accepts valid dm checkpoint', () => {
+        const result = bskyDmCheckpointSchema.safeParse(VALID_DM_CHECKPOINT);
+        expect(result.success).toBe(true);
+    });
+
+    test('accepts dm checkpoint without lastSeenSentAt', () => {
+        const { lastSeenSentAt: _, ...checkpoint } = VALID_DM_CHECKPOINT;
+        const result = bskyDmCheckpointSchema.safeParse(checkpoint);
+        expect(result.success).toBe(true);
+    });
+
+    test('accepts dm checkpoint with empty processedUris', () => {
+        const result = bskyDmCheckpointSchema.safeParse({
+            ...VALID_DM_CHECKPOINT,
+            processedUris: [],
+        });
+        expect(result.success).toBe(true);
+    });
+
+    test('rejects wrong service literal', () => {
+        const result = bskyDmCheckpointSchema.safeParse({
+            ...VALID_DM_CHECKPOINT,
+            service: 'discord',
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('rejects wrong type literal', () => {
+        const result = bskyDmCheckpointSchema.safeParse({
+            ...VALID_DM_CHECKPOINT,
+            type: 'notification',
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('rejects invalid datetime for updatedAt', () => {
+        const result = bskyDmCheckpointSchema.safeParse({
+            ...VALID_DM_CHECKPOINT,
+            updatedAt: 'not-a-date',
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test('rejects missing required fields', () => {
+        const result = bskyDmCheckpointSchema.safeParse({});
         expect(result.success).toBe(false);
     });
 });

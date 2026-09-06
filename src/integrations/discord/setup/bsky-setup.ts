@@ -1,9 +1,10 @@
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import type { ActivityLogger } from '@/agent';
+import type { ActivityLogger, NotifyFn } from '@/agent';
 import { ChannelNotAccessibleError } from '@/errors';
 import {
+    BskyCheckpointManager,
     BskyOutboundApprovalHandler,
     BskyRejectionBackend,
     buildBskyApprovalEmbed,
@@ -11,8 +12,9 @@ import {
 } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
-import { TokenBucketRateLimiter, type ApprovalSagaBackend } from '@/services';
-import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
+import { createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPoller } from '@/integrations/discord/setup/bsky-dm-poller';
+import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ServiceHealthRegistry } from '@/services';
+import type { DynamoDBClientHolder, MemoryToolBackend, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
@@ -48,6 +50,14 @@ export interface BskySetupOptions {
     personAllowlist:             PersonAllowlist
     /** Allowlist interaction handler for the saga-based allowlist flow */
     allowlistInteractionHandler: AllowlistInteractionHandler
+    /** Backend for the Q8 DM checkpoint manager (same backend as every other memory-tool consumer) */
+    memoryBackend:               MemoryToolBackend
+    /** Health registry the Q8 DM poller gates its tick on ('bluesky' service) */
+    healthRegistry:              ServiceHealthRegistry
+    /** Notification bridge's `notify` — threaded into both the outbound approval handler (rejection wake) and the DM poller (accumulate) */
+    notify:                      NotifyFn
+    /** Overrides the DM poller's tick interval; defaults to {@link DEFAULT_DM_POLL_INTERVAL_MS} */
+    dmPollIntervalMs?:           number
 }
 
 export interface BskySetupResult {
@@ -57,6 +67,8 @@ export interface BskySetupResult {
     rateLimiter:             TokenBucketRateLimiter
     rejectionBackend:        BskyRejectionBackend
     outboundApprovalHandler: BskyOutboundApprovalHandler
+    /** Q8: health-gated DM poller, returned unstarted — the caller decides when to start/stop it. */
+    dmPoller:                BskyDmPoller
     /** sendApprovalRequest callback for MCP server integration */
     sendApprovalRequest: (
         text:         string,
@@ -199,6 +211,20 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         sagaBackend:                 options.approvalSagaBackend,
         activityLogger:              options.activityLogger,
         allowlistInteractionHandler: options.allowlistInteractionHandler,
+        notify:                      options.notify,
+    });
+
+    // Q8: DM checkpoint manager + health-gated poller. Built here but not started — the caller
+    // (src/index.ts) starts/stops it alongside the other Bluesky lifecycle pieces.
+    const checkpointManager = new BskyCheckpointManager({ backend: options.memoryBackend });
+    // Stryker disable next-line ObjectLiteral: DM poller wiring is integration-only
+    const dmPoller = createBskyDmPoller({
+        client:         bskyClient,
+        checkpointManager,
+        notify:         options.notify,
+        healthRegistry: options.healthRegistry,
+        intervalMs:     options.dmPollIntervalMs ?? DEFAULT_DM_POLL_INTERVAL_MS,
+        logger,
     });
 
     // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -213,5 +239,6 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
         outboundApprovalHandler,
         sendApprovalRequest,
         sendDMApprovalRequest,
+        dmPoller,
     };
 }

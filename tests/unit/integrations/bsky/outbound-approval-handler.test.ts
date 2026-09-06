@@ -930,6 +930,65 @@ describe('BskyOutboundApprovalHandler', () => {
             expect(recorded.reason).toBe('Not appropriate');
         });
 
+        test('should notify with wake:true and a rejection-keyed dedupeKey after a reply rejection', async () => {
+            const notify  = mock((_params: unknown) => true);
+            const deps    = makeDeps({ notify });
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction } = makeModalInteraction(
+                `bsky-send-reject-reason:${TEST_UUID}`,
+                'Too aggressive',
+                { description: POST_TEXT, fields: makeEmbedFields() }
+            );
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(notify).toHaveBeenCalledTimes(1);
+            expect(notify.mock.calls[0]?.[0]).toMatchObject({
+                source:    'bsky-approval',
+                wake:      true,
+                dedupeKey: `bsky-approval:${TEST_UUID}:rejected`,
+            });
+        });
+
+        test('should notify with wake:true and a rejection-keyed dedupeKey after a DM rejection', async () => {
+            const notify  = mock((_params: unknown) => true);
+            const deps    = makeDeps({ notify });
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction } = makeModalInteraction(
+                `bsky-dm-reject-reason:${TEST_UUID}`,
+                'Not appropriate',
+                {
+                    description: DM_TEXT,
+                    fields:      [
+                        { name: 'Recipients',      value: JSON.stringify([DM_HANDLE_ALICE, DM_HANDLE_BOB]) },
+                        { name: 'Conversation ID', value: DM_CONVO_ID },
+                    ],
+                }
+            );
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(notify).toHaveBeenCalledTimes(1);
+            expect(notify.mock.calls[0]?.[0]).toMatchObject({
+                source:    'bsky-approval',
+                wake:      true,
+                dedupeKey: `bsky-approval:${TEST_UUID}:rejected`,
+            });
+        });
+
+        test('should resolve normally when notify is not provided on a reply rejection', async () => {
+            const deps    = makeDeps();
+            const handler = new BskyOutboundApprovalHandler(deps);
+            const { interaction } = makeModalInteraction(
+                `bsky-send-reject-reason:${TEST_UUID}`,
+                'Too aggressive',
+                { description: POST_TEXT, fields: makeEmbedFields() }
+            );
+
+            await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
+            expect(deps.rejectionBackend.recordRejection).toHaveBeenCalledTimes(1);
+        });
+
         test('should log info with rejection details after successful reply rejection', async () => {
             const deps    = makeDeps();
             const handler = new BskyOutboundApprovalHandler(deps);

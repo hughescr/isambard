@@ -486,6 +486,9 @@ export async function createApp(): Promise<App> {
                 approvalSagaBackend,
                 personAllowlist,
                 allowlistInteractionHandler,
+                memoryBackend:         storage.memoryBackend,
+                healthRegistry,
+                notify:                notificationBridge.notify,
             });
         } catch (err) {
             // Stryker disable ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
@@ -1197,6 +1200,14 @@ export async function createApp(): Promise<App> {
             // Start saga executor polling loop
             sagaExecutor.start();
 
+            // Q8: start the Bluesky DM poller once safety rails are in place
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional startup - equivalent mutant
+            if(bskySetup) {
+                bskySetup.dmPoller.start();
+                // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
+                logger.info('Bluesky DM poller started');
+            }
+
             // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
             logger.info('Isambard application started successfully');
         },
@@ -1225,6 +1236,10 @@ export async function createApp(): Promise<App> {
             // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
             if(bskyReconnectionLoop) {
                 bskyReconnectionLoop.stop();
+            }
+            // Stryker disable next-line ConditionalExpression,BlockStatement: Optional shutdown - equivalent mutant
+            if(bskySetup) {
+                bskySetup.dmPoller.stop();
             }
 
             // Stop outbox drainer and saga executor

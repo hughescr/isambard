@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder } from 'discord.js';
+import type { NotifyFn } from '@/agent';
 import { InvariantViolationError } from '@/errors';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
@@ -15,6 +16,8 @@ export interface BskyOutboundApprovalHandlerDeps {
     sagaBackend:                 SagaWriter
     activityLogger?:             ApprovalActivityLogger
     allowlistInteractionHandler: AllowlistSagaStarter
+    /** Q8: wakes the conductor after an admin rejects a Bluesky reply/DM. Omitted means `performRejection` never notifies (still resolves normally). */
+    notify?:                     NotifyFn
 }
 
 /**
@@ -39,6 +42,7 @@ export interface BskyOutboundApprovalHandlerDeps {
 export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<string> {
     private readonly client:           BlueskyClient;
     private readonly rejectionBackend: BskyRejectionBackend;
+    private readonly notify?:          NotifyFn;
 
     private static readonly KNOWN_BUTTON_PREFIXES = new Set([
         'bsky-send-approve', 'bsky-send-approveallowlist', 'bsky-send-reject',
@@ -53,6 +57,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         });
         this.client           = deps.client;
         this.rejectionBackend = deps.rejectionBackend;
+        this.notify           = deps.notify;
     }
 
     // ---------------------------------------------------------------------------
@@ -154,6 +159,17 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
         // Gate: persist to DynamoDB — must succeed before updating Discord to "Rejected"
         await this.rejectionBackend.recordRejection(rejectionItem);
+
+        // Q8: wake the conductor now that the rejection is durably recorded. Keyed on the
+        // rejection's own uuid so a retried/duplicate delivery of the same rejection cannot
+        // wake the conductor twice.
+        this.notify?.({
+            source:    'bsky-approval',
+            // Stryker disable next-line StringLiteral: notification body text is informational only
+            text:      `Bluesky ${rejectionItem.type} rejected: ${reason}`,
+            wake:      true,
+            dedupeKey: `bsky-approval:${uuid}:rejected`,
+        });
 
         // Stryker disable next-line StringLiteral,EqualityOperator,ConditionalExpression: activity log type selection and summary text are informational only
 
