@@ -136,7 +136,7 @@ ${basePrompt}`;
  * @param slot - The slot to format
  * @returns Human-readable slot name
  */
-function formatSlotName(slot: PerchSlot): string {
+export function formatSlotName(slot: PerchSlot): string {
     switch(slot) {
         case 'pre-dawn': {
             return 'Pre-Dawn (5-7am Pacific)';

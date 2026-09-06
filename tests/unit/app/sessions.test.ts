@@ -13,9 +13,10 @@ import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
 import { mockLogger } from '../../setup';
 import type { ContextBuilder } from '@/agent';
+import type { JournalEntry } from '@/agent/session/types';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
-import { createConversationConductor, type CreateConversationConductorParams } from '@/app/sessions';
+import { createConversationConductor, createPerchConductor, type CreateConversationConductorParams, type CreatePerchConductorParams } from '@/app/sessions';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
 
 type MCPServers = ReturnType<typeof mcpServersModule.createMcpServerInstances>;
@@ -343,6 +344,277 @@ describe('createConversationConductor', () => {
         mockLogger.debug.mockClear();
 
         const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        options?.stderr?.('Operation aborted\nstack trace...');
+
+        expect(mockLogger.error).toHaveBeenCalledTimes(1);
+        expect(mockLogger.debug).not.toHaveBeenCalled();
+    });
+});
+
+function buildPerch(overrides: Partial<CreatePerchConductorParams> = {}) {
+    const { queryFn, instances } = fakeQueryFn();
+    const clock = new FakeClock(0);
+    const journal = new FakeJournal();
+    const resumeStore = new FakeResumeStore();
+    const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    const identityGet = jest.fn(() => Promise.resolve('I am Izzy'));
+    const contextBuilder = fakeContextBuilder();
+    const taskListReader = { buildTaskListSummary: jest.fn(() => Promise.resolve(undefined)) };
+
+    const params: CreatePerchConductorParams = {
+        config:        DEFAULT_CONFIG,
+        queryFn,
+        mcpShared:     {} as McpSharedDeps,
+        contextBuilder,
+        identityCache: { get: identityGet },
+        taskListReader,
+        journal,
+        resumeStore,
+        clock,
+        logger,
+        ...overrides,
+    };
+
+    return {
+        params, instances, clock, journal, resumeStore, logger, identityGet, contextBuilder, taskListReader,
+    };
+}
+
+describe('createPerchConductor', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('builds MCP server instances exactly once, with role \'perch\' — distinct from conversation\'s \'conversation\' role', async () => {
+        const h = buildPerch();
+        const createInstancesSpy = jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        await createPerchConductor(h.params);
+
+        expect(createInstancesSpy).toHaveBeenCalledTimes(1);
+        expect(createInstancesSpy).toHaveBeenCalledWith(h.params.mcpShared, { role: 'perch' });
+    });
+
+    it('gets its own MCP server instance set, distinct from a conversation conductor built alongside it', async () => {
+        const createInstancesSpy = jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const conversation = build();
+        const perch = buildPerch();
+
+        await createConversationConductor(conversation.params);
+        await createPerchConductor(perch.params);
+
+        expect(createInstancesSpy).toHaveBeenCalledTimes(2);
+        expect(createInstancesSpy).toHaveBeenNthCalledWith(1, conversation.params.mcpShared, { role: 'conversation' });
+        expect(createInstancesSpy).toHaveBeenNthCalledWith(2, perch.params.mcpShared, { role: 'perch' });
+    });
+
+    it('wires no browser and no email MCP server for perch (unlike a fully-populated conversation set)', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FULL_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const mcpServersOption = h.instances[0].receivedParams?.options.mcpServers as Record<string, unknown>;
+        expect(mcpServersOption.browser).toBeUndefined();
+        expect(mcpServersOption.email).toBeUndefined();
+        expect(mcpServersOption.memory).toBe(FULL_MCP_SERVERS.memoryMcpServer);
+        expect(mcpServersOption.wikipedia).toBe(FULL_MCP_SERVERS.wikipediaMcpServer);
+    });
+
+    it('builds the perch system prompt once from IdentityCache', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createPerchConductor(h.params);
+        expect(h.identityGet).toHaveBeenCalledTimes(1);
+
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('I am Izzy');
+        expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('This session: perch');
+    });
+
+    it('passes the stored resume id through to the SDK options on open() — a distinct role-keyed resume store from conversation', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        await h.resumeStore.save('perch', 'sess-stored-perch');
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-stored-perch'));
+        await openPromise;
+
+        expect(h.instances[0].receivedParams?.options.resume).toBe('sess-stored-perch');
+    });
+
+    it('returns a Conductor and a LedgerStore for role \'perch\'', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const result = await createPerchConductor(h.params);
+
+        expect(result.ledgerStore.get().role).toBe('perch');
+        expect(typeof result.conductor.submit).toBe('function');
+    });
+
+    it('merges a SessionStart boot-bundle hook (perch variant) carrying the task list and perch context', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        (h.contextBuilder.buildPerchContext as ReturnType<typeof jest.fn>).mockResolvedValue('## Perch context\nQuiet night.');
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        expect(hookFn).toBeDefined();
+
+        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(startupContext).toContain('[BOOT BUNDLE · perch]');
+        expect(startupContext).toContain('Quiet night.');
+    });
+
+    it('reports lost perch-started background tasks (recovery from the perch journal) in its boot bundle', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
+        ]);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(startupContext).toContain('Summarize last week');
+    });
+
+    it('falls back to the taskId when a lost task has no description', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            // A `task_started` row missing `description` cannot be constructed as a well-typed
+            // `JournalEntry` (the field is required there) — this simulates real-world data that
+            // predates the field or was written by a misbehaving caller, at the deserialization
+            // boundary `readSince` actually returns through.
+            { type: 'task_started', at: new Date(0), taskId: 'task-no-description' } as unknown as JournalEntry,
+        ]);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(startupContext).toContain('task-no-description');
+    });
+
+    it('falls back to "<kind> envelope <id>" when an undelivered envelope has no completed response text', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+        ]);
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(startupContext).toContain('discord envelope env-no-text');
+    });
+
+    it('degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSinceRejection(new Error('DynamoDB unavailable'));
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await expect(openPromise).resolves.toBeDefined();
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(startupContext).toContain('[BOOT BUNDLE · perch]');
+        expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Perch boot-bundle recovery read failed; continuing with an empty recovery section');
+    });
+
+    it('PreCompact dispatches compaction_started onto the ledger; PostCompact records the compaction summary', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const preCompact = options?.hooks?.PreCompact?.[0]?.hooks[0];
+        const postCompact = options?.hooks?.PostCompact?.[0]?.hooks[0];
+        expect(preCompact).toBeDefined();
+        expect(postCompact).toBeDefined();
+
+        await preCompact?.({ trigger: 'auto', session_id: 'sess-1', hook_event_name: 'PreCompact' } as never, undefined, undefined as never);
+        expect(ledgerStore.get().compaction).toBe('compacting');
+
+        // PostCompact's own hook only reports the summary (recordCompactionSummary) — the ledger's
+        // `compaction` field returns to 'none' only on an actual `compact_boundary` SDK frame
+        // (ledger.ts's own reducer), which this test never emits; asserting the hook resolves
+        // without throwing is the meaningful behaviour to pin here (no ContextPolicy to reset).
+        await expect(postCompact?.({ compact_summary: 'summary text', session_id: 'sess-1', hook_event_name: 'PostCompact' } as never, undefined, undefined as never)).resolves.toBeDefined();
+        expect(ledgerStore.get().compaction).toBe('compacting');
+    });
+
+    it('classifies the SDK\'s "Operation aborted" stderr as an error, never debug — like conversation, perch has no per-open interrupt flag threaded into isInterrupting', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        mockLogger.error.mockClear();
+        mockLogger.debug.mockClear();
+
+        const { conductor } = await createPerchConductor(h.params);
         const openPromise = conductor.open();
         await flush();
         h.instances[0].emit(frames.init('sess-1'));

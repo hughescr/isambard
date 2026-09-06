@@ -8,7 +8,7 @@ import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
@@ -878,6 +878,47 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore all
 
+    // P12: build (never open) the perch conductor, AFTER the conversation conductor above and
+    // only when perch is actually configured/enabled — an unused conductor would still spend a
+    // whole CLI child session for nothing. bot.ts's clientReady opens it (after the conversation
+    // conductor) and degrades to the legacy perch scheduler/runner if open() rejects.
+    // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
+    let perchConductor: Conductor | undefined;
+    let perchLedgerStore: LedgerStore | undefined;
+    let perchJournal: SessionJournal | undefined;
+    if(config.session.mode === 'conductor' && config.perch?.enabled) {
+        // eslint-disable-next-line prefer-const -- assigned once, immediately after createPerchConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
+        let perchConductorForTaskReader: Conductor | undefined;
+        const perchTaskListReader = createTaskListReader({
+            getCurrentSessionId: () => perchConductorForTaskReader?.status().sessionId,
+            logger,
+        });
+        perchJournal = storage.createJournal('perch', systemClock);
+        const perchResumeStoreRole = storage.createResumeStore('perch');
+        const perchResumeStore: ResumeStore = {
+            load: () => perchResumeStoreRole.load(),
+            save: (_role, sessionId) => perchResumeStoreRole.save(sessionId),
+        };
+
+        const builtPerchConductor = await createPerchConductor({
+            config:         config.session,
+            queryFn:        query,
+            mcpShared:      mcpSharedDeps,
+            plugins,
+            contextBuilder: contextLayer.contextBuilder,
+            identityCache:  identityCacheSlot.cache,
+            taskListReader: perchTaskListReader,
+            journal:        perchJournal,
+            resumeStore:    perchResumeStore,
+            clock:          systemClock,
+            logger,
+        });
+        perchConductorForTaskReader = builtPerchConductor.conductor;
+        perchConductor = builtPerchConductor.conductor;
+        perchLedgerStore = builtPerchConductor.ledgerStore;
+    }
+    // Stryker restore all
+
     // Construct allowlist command handler using the unified PersonAllowlist
     // Stryker disable next-line ObjectLiteral: Composition root — AllowlistCommandHandler is integration wiring
     const allowlistHandler = new AllowlistCommandHandler(
@@ -925,6 +966,12 @@ export async function createApp(): Promise<App> {
         contextPolicy:      conversationContextPolicy,
         deliveryGuard:      conversationDeliveryGuard,
         journal:            conversationJournal,
+        // P12: the perch conductor's own build-only-then-open trio, undefined unless conductor
+        // mode AND perch are both enabled. bot.ts's clientReady opens it after the conversation
+        // conductor and degrades to the legacy perch scheduler/runner if open() rejects.
+        perchConductor,
+        perchLedgerStore,
+        perchJournal,
         // P10: own config.session.shutdownTurnWaitMs/shutdownDeadlineMs — without these,
         // createShutdown falls back to its hard-coded 60s/120s defaults regardless of config.
         shutdownTurnWaitMs: config.session.shutdownTurnWaitMs,

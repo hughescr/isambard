@@ -77,12 +77,13 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
         },
         perch: env.get('PERCH_ENABLED').default('true').asBool()
             ? {
-                enabled:           true,
-                timezone:          resolveTimezone(),
-                intervalMinutes:   60,
-                jitterMinutes:     15,
-                maxSessionMinutes: 45,
-                testMode:          env.get('PERCH_TEST_MODE_TRIGGER_ON_STARTUP').default('false').asBool()
+                enabled:               true,
+                timezone:              resolveTimezone(),
+                intervalMinutes:       60,
+                jitterMinutes:         15,
+                maxSessionMinutes:     45,
+                interruptGraceMinutes: env.get('PERCH_INTERRUPT_GRACE_MINUTES').default('2').asIntPositive(),
+                testMode:              env.get('PERCH_TEST_MODE_TRIGGER_ON_STARTUP').default('false').asBool()
                     ? {
                         triggerOnStartup: true,
                         forceSlot:        env.get('PERCH_TEST_MODE_FORCE_SLOT').asString() as 'pre-dawn' | 'mid-morning' | 'afternoon' | 'evening' | 'late-night' | undefined,

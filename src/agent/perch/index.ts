@@ -23,3 +23,14 @@ export {
     type PerchSessionRunner,
     createPerchSessionRunner
 } from './session-runner';
+
+// Perch driver (conductor mode): owns slot-turn lifecycle, wrap-up/interrupt timers, overlap deferral
+export {
+    type PerchDriver,
+    type PerchDriverDeps,
+    type RunSlotOutcome,
+    createPerchDriver
+} from './perch-driver';
+
+// computeSlotEndsAt: pure helper shared with anything else that needs a slot's endsAt
+export { computeSlotEndsAt } from './envelope';

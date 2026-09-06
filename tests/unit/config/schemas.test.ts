@@ -662,6 +662,53 @@ describe('perchConfigSchema', () => {
             expect(result.data?.testMode?.triggerOnStartup).toBe(true);
         }
     });
+
+    test('should apply default interruptGraceMinutes = 2 when not provided', () => {
+        const configWithoutInterruptGrace = {
+            enabled:           true,
+            timezone:          'America/Los_Angeles',
+            intervalMinutes:   60,
+            jitterMinutes:     15,
+            maxSessionMinutes: 45,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithoutInterruptGrace);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.interruptGraceMinutes).toBe(2);
+        }
+    });
+
+    test('should accept a custom interruptGraceMinutes', () => {
+        const configWithCustomInterruptGrace = {
+            enabled:               true,
+            timezone:              'America/Los_Angeles',
+            intervalMinutes:       60,
+            jitterMinutes:         15,
+            maxSessionMinutes:     45,
+            interruptGraceMinutes: 7,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithCustomInterruptGrace);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data?.interruptGraceMinutes).toBe(7);
+        }
+    });
+
+    test('should reject a non-positive interruptGraceMinutes', () => {
+        const configWithInvalidInterruptGrace = {
+            enabled:               true,
+            timezone:              'America/Los_Angeles',
+            intervalMinutes:       60,
+            jitterMinutes:         15,
+            maxSessionMinutes:     45,
+            interruptGraceMinutes: 0,
+        };
+
+        const result = perchConfigSchema.safeParse(configWithInvalidInterruptGrace);
+        expect(result.success).toBe(false);
+    });
 });
 
 describe('reconciliationConfigSchema', () => {

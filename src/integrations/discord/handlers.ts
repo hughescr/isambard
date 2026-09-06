@@ -1,16 +1,20 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message, TextChannel } from 'discord.js';
 import type { AttachmentMetadata } from './attachments/types';
+import type { DiscordCapability } from './capability';
 import type { CatchUpSessionRunner } from './catchup';
-import type { ChannelRegistryManager, DMTracker } from './channel-registry';
+import type { ChannelRegistryManager, DMTracker, ResponseRouter } from './channel-registry';
 import { inferImageContentType } from './content-type';
 import type { InboxManager } from './inbox';
 import type { IngressGate } from './ingress-gate';
 import type { MessageCoordinator } from './message-coordinator';
+import type { DiscordRateLimiter } from './rate-limiter';
+import { sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
 import type { BotStateManager } from './state';
 import { type DiscordMessageContext, type UserId, type ChannelId, createGuildId, createChannelId, createUserId  } from './types';
-import type { QuestionRegistry, AnswerClassifier, PerchSessionRunner } from '@/agent';
+import { buildDiscordEnvelope, type QuestionRegistry, type AnswerClassifier, type PerchSessionRunner, type Conductor, type ContextBuilder } from '@/agent';
+import { formatTimeHeader, resolveTimezone } from '@/utils';
 
 /** Type guard: check if a channel supports typing indicators (has sendTyping). */
 function isTypingChannel(channel: unknown): channel is { sendTyping(): Promise<void> } {
@@ -160,14 +164,53 @@ interface MessageHandlerOptions {
 
     /**
      * Optional ingress gate (P10, conductor mode). When supplied, the checkpoint is written
-     * first (receipt-time lastSeen, unconditionally), then the gate decides whether the message
-     * dispatches to the coordinator now ('pass'), or is buffered/dropped by the boot sequence's
-     * gate — a message arriving during boot's replay is answered exactly once via the gate's
-     * `onDrain`, not by this handler. Omitted entirely on the oneshot path, which keeps its
-     * original dispatch-then-checkpoint order unchanged.
+     * first (receipt-time lastSeen, unconditionally), then the state/inbox bookkeeping
+     * (`handleStateAndInbox`, `addRecentMessage`) also runs unconditionally — regardless of what
+     * the gate decides — before the gate decides whether the message dispatches now ('pass') or
+     * is buffered/dropped by the boot sequence's gate. A message arriving during boot's replay is
+     * routed to the coordinator (or the perch conductor) exactly once via the gate's `onDrain`,
+     * not by this handler — but its checkpoint/state/inbox bookkeeping already happened here at
+     * receipt time even when the boot sequence's replay later excludes it from `onDrain` entirely
+     * (see `dispatchAdmittedMessage`'s own doc for why those two are NOT gated on admission).
+     * Omitted entirely on the oneshot path, which keeps its original dispatch-then-checkpoint
+     * order unchanged.
      */
     ingressGate?: IngressGate<Message>
+
+    /**
+     * Optional perch-channel routing (P12, conductor mode). When supplied, an ADMITTED message
+     * (see {@link dispatchAdmittedMessage}'s own doc for why this is gated by `ingressGate` first)
+     * in the well-known `perch-time` channel is submitted to the perch conductor instead of the
+     * (conversation) coordinator — the mode machine and `coordinator` are never touched for that
+     * message. Omitted entirely on the oneshot path and whenever no perch conductor exists.
+     */
+    perch?: PerchRoutingDeps
 }
+
+/**
+ * The perch conductor's own delivery surface (P12): `submit` to run the perch-channel turn,
+ * `deliver` for the same idempotent, journal-backed delivery the conversation coordinator uses
+ * (`setup/coordinator-setup.ts`) — never a raw `sendEnvelopeResponse` call, so a crash between
+ * `submit` resolving and the response landing is recovered exactly like any other conductor
+ * delivery (see `createPerchConductor`'s own boot-bundle recovery, `src/app/sessions.ts`).
+ */
+export interface PerchRoutingDeps {
+    conductor:          Pick<Conductor, 'submit' | 'deliver'>
+    responseRouter:     ResponseRouter
+    client:             Client
+    rateLimiter:        DiscordRateLimiter
+    discordCapability?: DiscordCapability
+    /**
+     * Resolves the author's stored timezone for the envelope stamp — the same `discord`-kind
+     * envelope convention `conductor-processor.ts` uses for the conversation path. Omitted (or a
+     * lookup that resolves `undefined`) falls back to `resolveTimezone()`'s own server-zone
+     * default, exactly as before this field existed.
+     */
+    contextBuilder?:    Pick<ContextBuilder, 'loadUserTimezone'>
+}
+
+/** Sentinel thrown inside {@link PerchRoutingDeps.conductor}'s `deliver` callback to skip the journal write when nothing was actually sent (the `@@NO_RESPONSE@@` sentinel or a missing well-known channel) — mirrors `coordinator-setup.ts`'s identical `ResponseNotSentError`. */
+class PerchResponseNotSentError extends Error {}
 
 /**
  * Creates a handler for the Discord 'messageCreate' event.
@@ -554,8 +597,177 @@ export function dispatchToCoordinator(
     coordinator.handleMessage(context, message, channel);
 }
 
+/**
+ * Submits `message` (already known to be in the well-known `perch-time` channel) to the perch
+ * conductor as a `discord`-kind envelope: priority `'other'` so it never interrupts a running
+ * perch slot turn (see `perch-driver.ts`'s own overlap contract — this is a completely separate
+ * queue from the slot/wrap-up envelopes it submits). On a settled turn with a response, delivers
+ * it back to the originating channel through `perch.conductor.deliver` (the same idempotent,
+ * journal-backed path `coordinator-setup.ts` uses for conversation turns) rather than a raw send,
+ * so a crash between the turn settling and the send landing is recovered on the next boot instead
+ * of silently lost or double-sent. Either way, the channel's HANDLED watermark advances via
+ * `inboxManager.recordHandled` — a perch-channel batch (one message here; the coordinator's own
+ * batching does not apply to this path) is "handled" once its turn has settled, whether or not it
+ * produced a reply.
+ */
+async function submitPerchChannelMessage(
+    message: Message,
+    botUserId: UserId,
+    perch: PerchRoutingDeps,
+    inboxManager?: InboxManager
+): Promise<void> {
+    const channelId = createChannelId(message.channel.id);
+    const channel = message.channel as TextChannel;
+    // Same `discord`-kind envelope convention conductor-processor.ts uses for the conversation
+    // path: the author's own stored timezone, falling back to resolveTimezone()'s server-zone
+    // default when nothing is stored (or no contextBuilder was supplied at all).
+    const storedTimezone = await perch.contextBuilder?.loadUserTimezone(message.author.id);
+    const timezone = resolveTimezone(storedTimezone);
+
+    const envelope = buildDiscordEnvelope({
+        messages: [{
+            channelId: message.channel.id,
+            userId:    message.author.id,
+            messageId: message.id,
+            content:   `${message.author.username}: ${message.cleanContent}`,
+            timestamp: message.createdAt.toISOString(),
+            botUserId,
+            guildId:   message.guild?.id,
+        }],
+        authorId:    message.author.id,
+        authorName:  message.author.username,
+        channelId:   message.channel.id,
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: DM channels have null name despite TextChannel cast
+        channelName: channel.name ?? message.channel.id,
+        isDM:        false,
+        now:         new Date(),
+        timezone,
+        timeHeader:  formatTimeHeader(timezone),
+    });
+
+    // Not `return`ed on a submit failure: this channel is entirely excluded from
+    // replayUnhandled (bot.ts's own excludeChannelIds, applied whenever `perch` is even
+    // constructed — see PerchRoutingDeps's own doc), so a submit rejection has no OTHER recovery
+    // path — leaving the watermark stuck "unhandled" here would not enable a retry, only leave a
+    // permanent phantom entry. recordHandled below always runs so the watermark reflects "this
+    // message's perch turn was attempted" regardless of outcome.
+    let result: { response: string | null } | undefined;
+    try {
+        result = await perch.conductor.submit(envelope, { priority: 'other', requestingChannelId: message.channel.id });
+    } catch (err) {
+        logger.error({ err, channelId: message.channel.id, msg: 'Perch-channel envelope submission failed' });
+    }
+
+    if(result?.response) {
+        try {
+            await perch.conductor.deliver(envelope.id, async () => {
+                const sendResult = await sendEnvelopeResponse({
+                    envelopeId:        envelope.id,
+                    kind:              'discord',
+                    channelId,
+                    text:              result.response!,
+                    responseRouter:    perch.responseRouter,
+                    client:            perch.client,
+                    rateLimiter:       perch.rateLimiter,
+                    discordCapability: perch.discordCapability,
+                });
+                if(!sendResult.sent && !sendResult.queued) {
+                    throw new PerchResponseNotSentError();
+                }
+                return { channelId: message.channel.id, messageIds: [] };
+            });
+        } catch (err) {
+            if(!(err instanceof PerchResponseNotSentError)) {
+                logger.error({ err, channelId: message.channel.id, msg: 'Perch-channel response delivery failed' });
+            }
+        }
+    }
+
+    if(inboxManager) {
+        try {
+            await inboxManager.recordHandled(channelId, message.id, message.createdAt.toISOString());
+        } catch (err) {
+            logger.warn({ err, channelId: message.channel.id, msg: 'Failed to record handled watermark for perch-channel message' });
+        }
+    }
+}
+
+/**
+ * The subset of {@link MessageHandlerOptions} {@link dispatchAdmittedMessage} needs. Neither
+ * `addRecentMessage` nor `conductorMode` appears here — both only mattered for
+ * `handleStateAndInbox`/`addRecentMessage`, which now run at receipt time in
+ * {@link createMessageHandler} itself; see {@link dispatchAdmittedMessage}'s own doc for why.
+ */
+interface DispatchAdmittedMessageOptions {
+    channelRegistry:       ChannelRegistryManager
+    botStateManager?:      BotStateManager
+    catchUpSessionRunner?: CatchUpSessionRunner
+    perchSessionRunner?:   PerchSessionRunner
+    inboxManager?:         InboxManager
+    perch?:                PerchRoutingDeps
+}
+
+/**
+ * Everything that happens for a message ONCE it is admitted — passed straight through by the
+ * handler's own 'pass' branch, or replayed later by the boot sequence's ingress-gate drain — so a
+ * perch-channel message arriving during boot is buffered exactly like any other (the folded gap
+ * this function closes): the ingress gate decides admission FIRST, and only an admitted message
+ * ever reaches the legacy mode-interruption side effects or the perch-vs-coordinator routing
+ * decision below.
+ *
+ * `handleStateAndInbox`/`addRecentMessage` are deliberately NOT here — the caller
+ * (`createMessageHandler`) runs those at RECEIPT time, ahead of the ingress gate, alongside
+ * `updateInboxCheckpoint` (P10's own contract). If they lived here instead, a message the boot
+ * sequence's `replayUnhandled` already covers is excluded from `onDrain` entirely
+ * (`ingress-gate.ts`'s own `open()`), so this function would never run for it — losing its channel
+ * metadata refresh and idle-status ring-buffer entry for every replayed message, not just the
+ * ones this function actually gets called for.
+ * @param message The admitted Discord message.
+ * @param botUserId The bot's own user id (mention detection upstream; envelope authorship here).
+ * @param coordinator The (conversation) message coordinator — untouched for a perch-channel message.
+ * @param options See {@link DispatchAdmittedMessageOptions}.
+ */
+export async function dispatchAdmittedMessage(
+    message: Message,
+    botUserId: UserId,
+    coordinator: MessageCoordinator,
+    options: DispatchAdmittedMessageOptions
+): Promise<void> {
+    const { channelRegistry, botStateManager, catchUpSessionRunner, perchSessionRunner, inboxManager, perch } = options;
+
+    await handleModeInterruptions(message, botStateManager, catchUpSessionRunner, perchSessionRunner);
+
+    if(perch) {
+        // Guarded: a rejection here (the backend read inside getWellKnownChannel is not itself
+        // try/caught — see channel-registry/manager.ts) must not drop this message outright.
+        // Falling back to "not the perch channel" routes it to the (conversation) coordinator
+        // below instead — the same degrade bot.ts's own clientReady lookup uses for the same
+        // failure — rather than losing it with no reply and no coordinator dispatch.
+        //
+        // Known follow-up, not fixed here: ChannelRegistryManager only caches a SUCCESSFUL
+        // well-known-channel lookup (manager.ts's own `wellKnownCache`) — while no `perch-time`
+        // channel is registered, every admitted message re-hits the backend (a per-message
+        // DynamoDB read in the hot path). Fixing that means caching (with a TTL, so a
+        // later-registered channel is still picked up) inside manager.ts itself, out of this
+        // package's scope; the correctness half (never dropping a message on a rejected lookup)
+        // is handled by the try/catch below regardless.
+        let perchChannel: Awaited<ReturnType<typeof channelRegistry.getWellKnownChannel>> = null;
+        try {
+            perchChannel = await channelRegistry.getWellKnownChannel('perch-time');
+        } catch (err) {
+            logger.error({ err, channelId: message.channel.id, msg: 'Failed to resolve the well-known perch-time channel; routing to the coordinator instead' });
+        }
+        if(perchChannel !== null && perchChannel.channelId === message.channel.id) {
+            await submitPerchChannelMessage(message, botUserId, perch, inboxManager);
+            return;
+        }
+    }
+
+    dispatchToCoordinator(message, botUserId, coordinator);
+}
+
 export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, conductorMode, ingressGate } = options;
+    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, conductorMode, ingressGate, perch } = options;
 
     return async (message: Message) => {
         logger.debug({
@@ -618,34 +830,38 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
             }
         }
 
-        // Handle mode-based interruptions (catch-up or perch)
-        // This interrupts the session as a side-effect; the message continues to the coordinator below
-        await handleModeInterruptions(
-            message,
-            botStateManager,
-            catchUpSessionRunner,
-            perchSessionRunner
-        );
-
-        // Handle state transitions and inbox updates
-        handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond, conductorMode);
-
-        // Track this message for context-aware idle status
-        addRecentMessage?.(message.cleanContent, 'user');
-
         if(ingressGate) {
-            // Conductor mode: checkpoint lastSeen on receipt FIRST (unconditionally, before the
-            // gate is consulted), then let the ingress gate decide whether this message dispatches
-            // now or is buffered/dropped for the boot sequence to handle via replay + gate.open().
+            // Conductor mode: the ingress gate is checked FIRST — before the legacy
+            // mode-interruption side effects and the perch-vs-coordinator routing decision, both
+            // of which live in dispatchAdmittedMessage — so a perch-channel message arriving
+            // during boot is buffered exactly like any other (folded gap). The receipt-time
+            // checkpoint (lastSeen), channel-metadata refresh, and idle-status ring-buffer entry
+            // all happen unconditionally here, ahead of the gate, matching P10's own contract —
+            // NOT gated on admission, so a message the boot sequence's replay later excludes from
+            // onDrain entirely (see dispatchAdmittedMessage's own doc) still gets them, exactly as
+            // it would have before this handler had a gate at all.
             await updateInboxCheckpoint(message, inboxManager, shouldRespond);
+            handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond, conductorMode);
+            addRecentMessage?.(message.cleanContent, 'user');
 
             if(ingressGate.admit(message) !== 'pass') {
                 return;
             }
 
-            dispatchToCoordinator(message, botUserId, coordinator);
+            await dispatchAdmittedMessage(message, botUserId, coordinator, {
+                channelRegistry, botStateManager, catchUpSessionRunner, perchSessionRunner, inboxManager, perch,
+            });
         } else {
-            // Oneshot mode (no gate supplied): unchanged — dispatch first, checkpoint after.
+            // Oneshot mode (no gate supplied): unchanged — mode interruptions, state/inbox,
+            // addRecentMessage, dispatch, checkpoint after.
+            await handleModeInterruptions(
+                message,
+                botStateManager,
+                catchUpSessionRunner,
+                perchSessionRunner
+            );
+            handleStateAndInbox(message, botStateManager, inboxManager, shouldRespond, conductorMode);
+            addRecentMessage?.(message.cleanContent, 'user');
             dispatchToCoordinator(message, botUserId, coordinator);
             await updateInboxCheckpoint(message, inboxManager, shouldRespond);
         }

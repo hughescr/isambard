@@ -1522,3 +1522,105 @@ describe('PerchScheduler', () => {
         });
     });
 });
+
+describe('PerchScheduler without a stateManager', () => {
+    let mockLogger: Logger;
+    let mockOnPerchTrigger: ReturnType<typeof mock>;
+    let config: PerchConfig;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.clearAllTimers();
+        jest.setSystemTime(1000);
+
+        mockLogger = createMockLogger();
+        mockOnPerchTrigger = mock(() => undefined);
+        config = {
+            enabled:              true,
+            timezone:             'America/Los_Angeles',
+            intervalMinutes:      60,
+            jitterMinutes:        15,
+            maxSessionMinutes:    45,
+            wrapUpTimeoutMinutes: 5,
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('a scheduled trigger calls onPerchTrigger unconditionally, with no idle check', () => {
+        const deps: PerchSchedulerDeps = {
+            logger:              mockLogger,
+            config,
+            onPerchTrigger:      mockOnPerchTrigger,
+            getCurrentLocalHour: () => 10, // mid-morning
+        };
+
+        const scheduler = createPerchScheduler(deps);
+        scheduler.start();
+
+        jest.advanceTimersByTime(3_600_000); // 1 hour — H-jitter fires somewhere in it
+
+        expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
+        scheduler.stop();
+    });
+
+    test('triggerNow() triggers immediately with no stateManager to consult', () => {
+        const deps: PerchSchedulerDeps = {
+            logger:              mockLogger,
+            config,
+            onPerchTrigger:      mockOnPerchTrigger,
+            getCurrentLocalHour: () => 18, // evening
+        };
+
+        const scheduler = createPerchScheduler(deps);
+        scheduler.triggerNow();
+
+        expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
+        expect(scheduler.getState().perchPending).toBe(false);
+    });
+
+    test('triggerTestPerch() triggers immediately with no stateManager to consult', () => {
+        const deps: PerchSchedulerDeps = {
+            logger:         mockLogger,
+            config:         { ...config, testMode: { forceSlot: 'pre-dawn' } },
+            onPerchTrigger: mockOnPerchTrigger,
+        };
+
+        const scheduler = createPerchScheduler(deps);
+        scheduler.triggerTestPerch();
+
+        expect(mockOnPerchTrigger).toHaveBeenCalledWith('pre-dawn');
+        expect(scheduler.getState().perchPending).toBe(false);
+    });
+
+    test('keeps no pending state across repeated triggers', () => {
+        const deps: PerchSchedulerDeps = {
+            logger:              mockLogger,
+            config,
+            onPerchTrigger:      mockOnPerchTrigger,
+            getCurrentLocalHour: () => 10,
+        };
+
+        const scheduler = createPerchScheduler(deps);
+        scheduler.triggerNow();
+        scheduler.triggerNow();
+
+        expect(mockOnPerchTrigger).toHaveBeenCalledTimes(2);
+        expect(scheduler.getState()).toEqual({ perchPending: false });
+    });
+
+    test('start() never subscribes: it does not throw with no stateManager to subscribe to', () => {
+        const deps: PerchSchedulerDeps = {
+            logger:              mockLogger,
+            config,
+            onPerchTrigger:      mockOnPerchTrigger,
+            getCurrentLocalHour: () => 10,
+        };
+
+        const scheduler = createPerchScheduler(deps);
+        expect(() => scheduler.start()).not.toThrow();
+        scheduler.stop();
+    });
+});

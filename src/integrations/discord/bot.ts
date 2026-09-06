@@ -11,7 +11,7 @@ import {
 import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
 import { createDiscordClient } from './client';
 import type { ContactCommandHandler, ContactApprovalHandler } from './contact-commands';
-import { createReadyHandler, createErrorHandler, dispatchToCoordinator } from './handlers';
+import { createReadyHandler, createErrorHandler, dispatchAdmittedMessage, type PerchRoutingDeps } from './handlers';
 import type { InboxManager } from './inbox';
 import { createIngressGate, type IngressGate } from './ingress-gate';
 import { createInteractionHandler } from './interactions';
@@ -29,16 +29,15 @@ import { setupCoordinatorIntegration } from './setup/coordinator-setup';
 import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeInput } from './setup/discord-envelope-provider';
 import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
-import { setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
+import { setupPerchDriverAndScheduler, setupPerchSessionRunnerAndScheduler } from './setup/perch-setup';
 import { setupConductorPresence, setupPresence, type PresenceSetupResult } from './setup/presence-setup';
 import {
     BotStateManagerImpl,
     type BotStateManager
 } from './state';
 import { installLedgerShim } from './state/ledger-shim';
-import { createLegacyPerchLedger } from './state/legacy-perch-ledger';
-import { createChannelId, createUserId } from './types';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal, type Clock, type Shutdown  } from '@/agent';
+import { createChannelId, createUserId, type ChannelId } from './types';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal, type Clock, type Shutdown, type ShutdownSession  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -257,6 +256,18 @@ export interface DiscordBotOptions {
     deliveryGuard?:         DeliveryGuard
     journal?:               SessionJournal
     /**
+     * P12: the perch conductor, BUILT but not yet OPENED (`src/app/sessions.ts`'s
+     * `createPerchConductor`), mirroring `conversationConductor`'s own contract exactly.
+     * `clientReady` opens it AFTER the conversation conductor; a rejected (or omitted) `open()`
+     * degrades perch to the legacy `PerchSessionRunner`/scheduler without a restart — the
+     * mode machine and the (conversation) coordinator are never touched by the perch conductor.
+     */
+    perchConductor?:        Conductor
+    /** The perch conductor's own ledger — folded into the presence composer's `ledgers` array alongside `ledgerStore` (design doc section 8) whenever it is present, whether or not `perchConductor.open()` itself succeeded (an untouched ledger simply composes as idle). */
+    perchLedgerStore?:      LedgerStore
+    /** The perch conductor's own role-keyed journal — required, alongside `perchLedgerStore`, before `perchConductor.open()` is attempted. */
+    perchJournal?:          SessionJournal
+    /**
      * P10: forwarded verbatim to `conversationConductor.shutdown` via `createShutdown` — see
      * `config.session.shutdownTurnWaitMs`/`shutdownDeadlineMs`. Defaults match the config
      * schema's own defaults (60s/120s) so a test or caller that omits them still gets a sane
@@ -352,7 +363,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, deliveryGuard, journal, shutdownTurnWaitMs, shutdownDeadlineMs, clock: providedClock } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, deliveryGuard, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, clock: providedClock } = options;
     const clock: Clock = providedClock ?? systemClock;
 
     // Hot reload protection: Reuse existing client if available in global state
@@ -380,6 +391,12 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let catchUpSessionRunner: CatchUpSessionRunner | undefined;
     let perchScheduler: PerchScheduler | undefined;
     let perchSessionRunner: PerchSessionRunner | undefined;
+    // P12: true once perchConductor.open() has succeeded this process — gates whether the perch
+    // section below wires the conductor-mode driver (setupPerchDriverAndScheduler) or falls back
+    // to the legacy PerchSessionRunner/scheduler. Stays false if perchConductor was never
+    // provided, or if its open() rejected — the fallback runner then owns perch exactly as today.
+    let perchConductorOpened = false;
+    let perchDriver: PerchDriver | undefined;
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? new QuestionRegistry();
 
@@ -635,17 +652,25 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Stryker restore BlockStatement
     });
 
-    // P11: in conductor mode, the ring buffers are fed from the session ledgers (conversation +
-    // the throwaway legacy-perch adapter) instead of BotStateManager — ledger-shim.ts no longer
-    // forwards activity phases at all, so the botStateManager-based subscriptions below would
-    // silently starve the moment a Discord turn migrates to the conductor. `legacyPerchLedger` is
-    // deleted in P12 once perch opens its own real conductor/ledger.
-    const legacyPerchLedger = ledgerStore ? createLegacyPerchLedger(botStateManager, () => new Date()) : undefined;
+    // P11: in conductor mode, the ring buffers are fed from the session ledger(s) instead of
+    // BotStateManager — ledger-shim.ts no longer forwards activity phases at all, so the
+    // botStateManager-based subscriptions below would silently starve the moment a Discord turn
+    // migrates to the conductor. P12: the perch conductor's own ledger (`perchLedgerStore`) folds
+    // in here whenever it is present — replacing the throwaway legacy-perch-ledger adapter this
+    // package deletes — regardless of whether `perchConductor.open()` itself later succeeds (an
+    // untouched ledger simply never emits, contributing nothing rather than something wrong).
+    function buildConductorLedgers(): readonly LedgerStore[] | undefined {
+        if(!ledgerStore) {
+            return undefined;
+        }
+        return perchLedgerStore ? [ledgerStore, perchLedgerStore] : [ledgerStore];
+    }
+    const conductorLedgers: readonly LedgerStore[] | undefined = buildConductorLedgers();
     // Stryker disable BlockStatement: Composition root — ring-buffer subscriptions are integration-wiring, not unit-testable
     let unsubscribeToolTracking: () => void;
     let unsubscribeChannelTracking: () => void;
-    if(ledgerStore && legacyPerchLedger) {
-        const ledgers: readonly LedgerStore[] = [ledgerStore, legacyPerchLedger];
+    if(conductorLedgers) {
+        const ledgers = conductorLedgers;
         const lastToolNameByLedger = new Map<LedgerStore, string | undefined>();
         const lastTurnIdByLedger = new Map<LedgerStore, string | undefined>();
         const unsubscribes = ledgers.map(store => store.subscribe((ledger) => {
@@ -767,6 +792,20 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // The registry-ready gate in MessageCoordinator drops messages until hydration completes.
             initializeChannelRegistry(readyClient, channelRegistry, responseRouter, rateLimiter, healthRegistry);
 
+            // P12: the perch conductor's own delivery surface for a live perch-channel Discord
+            // message — built lazily (read at CALL time, like `onDrain`'s own `coordinator` read
+            // below) so it always reflects perchConductorOpened's FINAL value, not whatever it was
+            // when the closure was created. `undefined` whenever conversation itself never opened
+            // (the ingress-gate/conductor-mode machinery this rides on is anchored to the
+            // conversation conductor's own boot flow) or the perch conductor did not.
+            function perchRoutingDeps(): PerchRoutingDeps | undefined {
+                return conductorOpened && perchConductorOpened && perchConductor
+                    ? {
+                        conductor: perchConductor, responseRouter, client: readyClient, rateLimiter, discordCapability, contextBuilder,
+                    }
+                    : undefined;
+            }
+
             // P9: open the long-lived conversation conductor now that the guild cache and
             // channel registry exist, but BEFORE setupCoordinatorIntegration/setupMessageProcessing
             // pick a processor — a rejected open() (or one that never settles at all — see
@@ -782,22 +821,34 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     // pick a processor) so both can be handed the SAME gate/shutdown instances.
                     // `onDrain` reads the outer `coordinator` variable at CALL time (gate.open()
                     // only ever runs from the boot sequence, well after setupCoordinatorIntegration
-                    // has assigned it below), not at this closure's definition time.
+                    // has assigned it below), not at this closure's definition time. P12: routed
+                    // through the same `dispatchAdmittedMessage` the live handler uses, so a
+                    // perch-channel message buffered during boot is answered by the perch
+                    // conductor exactly like a live one, once drained.
+                    //
+                    // `drainChain` serialises dispatch across a whole drained batch: `gate.open()`
+                    // calls `onDrain` synchronously per buffered message in arrival order, but each
+                    // call now does async work first (handleModeInterruptions, and — with perch
+                    // routing active — a getWellKnownChannel lookup) whose await depth varies per
+                    // message (a cache hit resolves sooner than a cache miss). Without this chain,
+                    // a later message's dispatch could resolve before an earlier one's, delivering
+                    // a boot-buffered burst to the coordinator out of arrival order. Each link
+                    // swallows its own error (logged) so one failed dispatch never blocks the rest
+                    // of the chain.
+                    let drainChain: Promise<void> = Promise.resolve();
                     ingressGate = createIngressGate<Message>({
                         onDrain: (message) => {
                             if(coordinator) {
-                                dispatchToCoordinator(message, createUserId(readyClient.user!.id), coordinator);
+                                const currentCoordinator = coordinator;
+                                drainChain = drainChain
+                                    .then(() => dispatchAdmittedMessage(message, createUserId(readyClient.user!.id), currentCoordinator, {
+                                        channelRegistry, botStateManager, catchUpSessionRunner, perchSessionRunner, inboxManager, perch: perchRoutingDeps(),
+                                    }))
+                                    .catch((err: unknown) => {
+                                        logger.error({ err, msg: 'dispatchAdmittedMessage failed for a gate-drained message' });
+                                    });
                             }
                         },
-                    });
-                    shutdownRef = createShutdown({
-                        sessions:    [{ name: 'conversation', shutdown: opts => conversationConductor.shutdown(opts) }],
-                        journal,
-                        stopIngress: () => ingressGate?.stop(),
-                        clock,
-                        turnWaitMs:  shutdownTurnWaitMs ?? 60_000,
-                        deadlineMs:  shutdownDeadlineMs ?? 120_000,
-                        logger,
                     });
                     conductorOpened = true;
                 } catch (err) {
@@ -806,6 +857,53 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         msg:   'Conductor open() failed — degrading to the legacy oneshot processor without a restart',
                     });
                 }
+            }
+
+            // P12: open the perch conductor next — independent of whether the conversation
+            // conductor above succeeded — mirroring its build-only-then-open contract exactly. A
+            // rejected (or omitted) open() degrades perch to the legacy PerchSessionRunner/
+            // scheduler below without a restart; the mode machine and the conversation coordinator
+            // are never touched by the perch conductor either way.
+            if(perchConductor && perchLedgerStore && perchJournal) {
+                try {
+                    await withTimeout(perchConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'perch conductor.open() timed out');
+                    perchConductorOpened = true;
+                } catch (err) {
+                    logger.error({
+                        error: err instanceof Error ? err.message : String(err),
+                        msg:   'Perch conductor open() failed — degrading to the legacy perch scheduler/runner without a restart',
+                    });
+                }
+            }
+
+            // P10/P12: build the cross-session shutdown orchestrator once both open attempts above
+            // have settled, covering whichever conductor(s) actually opened under ONE shared
+            // turnWaitMs/deadlineMs budget (createShutdown's own `sessions` array already
+            // anticipates a second 'perch' entry — see shutdown.ts's own doc).
+            if(conductorOpened || perchConductorOpened) {
+                const sessions: ShutdownSession[] = [];
+                if(conductorOpened && conversationConductor) {
+                    sessions.push({ name: 'conversation', shutdown: opts => conversationConductor.shutdown(opts) });
+                }
+                if(perchConductorOpened && perchConductor) {
+                    sessions.push({ name: 'perch', shutdown: opts => perchConductor.shutdown(opts) });
+                }
+                shutdownRef = createShutdown({
+                    sessions,
+                    journal: {
+                        flush: async () => {
+                            await Promise.allSettled([
+                                conductorOpened && journal ? journal.flush() : Promise.resolve(),
+                                perchConductorOpened && perchJournal ? perchJournal.flush() : Promise.resolve(),
+                            ]);
+                        },
+                    },
+                    stopIngress: () => ingressGate?.stop(),
+                    clock,
+                    turnWaitMs:  shutdownTurnWaitMs ?? 60_000,
+                    deadlineMs:  shutdownDeadlineMs ?? 120_000,
+                    logger,
+                });
             }
             // Stryker restore all
 
@@ -838,16 +936,19 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     getPreviousStatus,
                     setPreviousStatus,
                 };
-                // P11: in conductor mode, presence composes from the session ledgers instead of
-                // bridging BotStateManager (design doc section 8) — see setupConductorPresence's
-                // own doc for exactly what it deliberately omits versus the oneshot bridge below.
-                if(conductorOpened && legacyPerchLedger && presenceThrottle && ledgerStore) {
+                // P11/P12: in conductor mode, presence composes from the session ledger(s) —
+                // conversation always, perch too whenever its ledger exists — instead of bridging
+                // BotStateManager (design doc section 8); see setupConductorPresence's own doc for
+                // exactly what it deliberately omits versus the oneshot bridge below.
+                if(conductorOpened && presenceThrottle && ledgerStore) {
                     const conductorPresence = setupConductorPresence({
                         ...sharedPresenceParams,
-                        ledgers:  [ledgerStore, legacyPerchLedger],
+                        // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorLedgers() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorLedgers` can never be undefined here; the `?? [ledgerStore]` exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
+                        ledgers:  conductorLedgers ?? [ledgerStore],
                         throttle: presenceThrottle,
-                        // Keeps the still-legacy perch runner's own presence throttle clock ticking
-                        // (see setupConductorPresence's own doc) — never subscribed to.
+                        // Keeps the DEGRADED-FALLBACK legacy perch runner's own presence throttle
+                        // clock ticking (see setupConductorPresence's own doc) when perchConductor
+                        // was omitted or its own open() rejected — never subscribed to.
                         botStateManager,
                     });
                     presenceManager = conductorPresence.presenceManager;
@@ -886,27 +987,47 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             // Stryker restore BlockStatement
 
-            // Create perch session runner and scheduler if config provided
+            // Create the perch driver+scheduler (conductor mode, once perchConductor has
+            // successfully opened) or fall back to the legacy session runner+scheduler exactly as
+            // before — P12's degrade-without-a-restart contract (see the perch conductor-open
+            // block's own doc, above).
             // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
             if(agent && options.perchConfig?.enabled) {
-                const perchSetup = setupPerchSessionRunnerAndScheduler({
-                    agent,
-                    perchConfig:             options.perchConfig,
-                    botStateManager,
-                    presenceManager,
-                    dynamicStatusGenerator,
-                    responseRouter,
-                    rateLimiter,
-                    client:                  readyClient,
-                    contextBuilder,
-                    onThinkingContentUpdate: setLastThinkingContent,
-                    setLastSessionId,
-                    addRecentMessage,
-                    activityLogger,
-                    discordCapability,
-                });
-                perchSessionRunner = perchSetup.runner;
-                perchScheduler = perchSetup.scheduler;
+                if(perchConductorOpened && perchConductor) {
+                    const perchSetup = setupPerchDriverAndScheduler({
+                        conductor:   perchConductor,
+                        perchConfig: options.perchConfig,
+                        clock,
+                        contextBuilder,
+                        activityLogger,
+                        channelRegistry,
+                        responseRouter,
+                        client:      readyClient,
+                        rateLimiter,
+                        discordCapability,
+                    });
+                    perchDriver = perchSetup.driver;
+                    perchScheduler = perchSetup.scheduler;
+                } else {
+                    const perchSetup = setupPerchSessionRunnerAndScheduler({
+                        agent,
+                        perchConfig:             options.perchConfig,
+                        botStateManager,
+                        presenceManager,
+                        dynamicStatusGenerator,
+                        responseRouter,
+                        rateLimiter,
+                        client:                  readyClient,
+                        contextBuilder,
+                        onThinkingContentUpdate: setLastThinkingContent,
+                        setLastSessionId,
+                        addRecentMessage,
+                        activityLogger,
+                        discordCapability,
+                    });
+                    perchSessionRunner = perchSetup.runner;
+                    perchScheduler = perchSetup.scheduler;
+                }
             }
             // Stryker restore BlockStatement
 
@@ -994,6 +1115,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     dmTracker,
                     conductorMode: conductorOpened,
                     ingressGate,
+                    perch:         perchRoutingDeps(),
                 });
             }
 
@@ -1007,6 +1129,30 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Initialize inbox on startup and then check for catch-up
             // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
             if(inboxManager) {
+                // P12: the well-known perch-time channel's replay is owned by the perch conductor,
+                // not the conversation one — excluded from replayUnhandled entirely (documented
+                // skip: this package does not route perch-channel replay to the perch conductor,
+                // only its LIVE messages — see handlers.ts's own dispatchAdmittedMessage) whenever
+                // the perch conductor actually opened. If it did not, conversation's own replay
+                // keeps trying that channel exactly as before P12 (the safer fallback).
+                //
+                // Guarded: a rejection here (the backend read inside getWellKnownChannel is not
+                // itself try/caught — see channel-registry/manager.ts) must NOT abort the rest of
+                // this async clientReady handler, which has no surrounding try/catch of its own —
+                // an unguarded throw here would skip setupInboxAndCatchUp entirely, so the ingress
+                // gate would never open and every Discord message would buffer forever. Degrading
+                // to "no exclusion" (conversation's replay tries that channel too) is the safe
+                // fallback, exactly like the omitted-perchConductor case above.
+                let perchTimeChannelId: ChannelId | undefined;
+                if(perchConductorOpened) {
+                    try {
+                        const perchTimeChannel = await channelRegistry.getWellKnownChannel('perch-time');
+                        perchTimeChannelId = perchTimeChannel?.channelId;
+                    } catch (err) {
+                        logger.error({ err, msg: 'Failed to resolve the well-known perch-time channel for replay exclusion — continuing without it' });
+                    }
+                }
+
                 void setupInboxAndCatchUp({
                     inboxManager,
                     readyClient,
@@ -1024,6 +1170,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             rateLimiter,
                             ingressGate:           ingressGate!,
                             discordCapability,
+                            excludeChannelIds:     perchTimeChannelId ? new Set([perchTimeChannelId]) : undefined,
                         }
                         : {}),
                 });
@@ -1044,19 +1191,33 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(coordinator) {
                 coordinator.stop();
             }
-            // P10: coordinator.stop() -> gate.stop() -> shutdown.run() (the cross-session
-            // wait/interrupt/flush/close sequence, bounded by config.session.shutdownTurnWaitMs/
-            // shutdownDeadlineMs — see createShutdown) -> shim unsubscribe, ahead of the legacy
-            // runner aborts and botStateManager.stop() below.
+            // P12: stop the conductor-mode perch driver's own timers (wrap-up/interrupt/pending)
+            // and the scheduler BEFORE shutdownRef.run() below waits out the shared turn-wait
+            // budget — otherwise an interrupt or wrap-up timer can still fire while shutdown is
+            // politely waiting for the very turn it is about to interrupt anyway, re-submitting a
+            // fresh slot envelope (onSlotSettled's `pending` resolution) into a conductor that is
+            // mid-shutdown and logs a spurious "shutting down" rejection. A no-op when the legacy
+            // perchSessionRunner path was used instead (perchDriver/perchScheduler stay undefined).
+            if(perchScheduler) {
+                perchScheduler.stop();
+            }
+            if(perchDriver) {
+                perchDriver.stop();
+            }
+            // P10/P12: coordinator.stop() -> perch driver/scheduler stop() -> gate.stop() ->
+            // shutdown.run() (the cross-session wait/interrupt/flush/close sequence, covering both
+            // conductors under ONE shared config.session.shutdownTurnWaitMs/shutdownDeadlineMs
+            // budget — see createShutdown) -> shim unsubscribe, ahead of the legacy runner aborts
+            // and botStateManager.stop() below.
             // Stryker disable all: bot.ts IS in the mutate glob (stryker.conf.mjs) — this block is
             // disabled because the shutdown() call ORDER (asserted by bot.test.ts's 'stop order'
             // conductor-mode test) is the behaviour that matters; the catch's error-message
             // formatting is not independently asserted and is accepted as untested
             // composition-root wiring.
-            if(conductorOpened && conversationConductor) {
+            if(shutdownRef) {
                 ingressGate?.stop();
                 try {
-                    await shutdownRef?.run();
+                    await shutdownRef.run();
                 } catch (err) {
                     logger.warn({
                         error: err instanceof Error ? err.message : String(err),
@@ -1092,10 +1253,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     controller.abort();
                 }
             }
-            // Stop perch scheduler if it exists
-            if(perchScheduler) {
-                perchScheduler.stop();
-            }
+            // Perch scheduler/driver (conductor mode) are already stopped above, before
+            // shutdownRef.run() — see that comment. Only the legacy perchSessionRunner (oneshot
+            // fallback) needs an abort here.
             // Abort any running perch session
             if(perchSessionRunner) {
                 const controller = perchSessionRunner.getAbortController();

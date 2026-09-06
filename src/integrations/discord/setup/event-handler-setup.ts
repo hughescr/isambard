@@ -9,7 +9,7 @@ import {
     type DMTracker,
     type ResponseRouter
 } from '../channel-registry';
-import { createMessageHandler } from '../handlers';
+import { createMessageHandler, type PerchRoutingDeps } from '../handlers';
 import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { MessageCoordinator } from '../message-coordinator';
@@ -201,6 +201,8 @@ interface SetupMessageProcessingParams {
     conductorMode?:       boolean
     /** P10: forwarded to `createMessageHandler` — gates live messages during boot in conductor mode. Omitted on the oneshot path. */
     ingressGate?:         IngressGate<Message>
+    /** P12: forwarded to `createMessageHandler` — routes a well-known `perch-time` channel message to the perch conductor instead of `coordinator`. Omitted whenever no perch conductor exists (oneshot, or a rejected/omitted perch `open()`). */
+    perch?:               PerchRoutingDeps
 }
 
 /**
@@ -224,6 +226,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         dmTracker,
         conductorMode,
         ingressGate,
+        perch,
     } = params;
 
     // Register message handler AFTER channel registry is initialized
@@ -243,6 +246,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         dmTracker,
         conductorMode,
         ingressGate,
+        perch,
     }), logger, 'messageCreate handler'));
     // Stryker restore StringLiteral
 }

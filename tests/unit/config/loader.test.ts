@@ -383,6 +383,7 @@ describe('loadConfig - Perch Config', () => {
         delete process.env.PERCH_ENABLED;
         delete process.env.PERCH_TEST_MODE_TRIGGER_ON_STARTUP;
         delete process.env.PERCH_TEST_MODE_FORCE_SLOT;
+        delete process.env.PERCH_INTERRUPT_GRACE_MINUTES;
     });
 
     test('should load perch config when PERCH_ENABLED is true', () => {
@@ -397,6 +398,24 @@ describe('loadConfig - Perch Config', () => {
         expect(config.perch?.jitterMinutes).toBe(15);
         expect(config.perch?.maxSessionMinutes).toBe(45);
         expect(config.perch?.testMode).toBeUndefined();
+    });
+
+    test('should default interruptGraceMinutes to 2 when PERCH_INTERRUPT_GRACE_MINUTES is unset', () => {
+        process.env.PERCH_ENABLED = 'true';
+        delete process.env.PERCH_INTERRUPT_GRACE_MINUTES;
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.interruptGraceMinutes).toBe(2);
+    });
+
+    test('should load interruptGraceMinutes from PERCH_INTERRUPT_GRACE_MINUTES', () => {
+        process.env.PERCH_ENABLED = 'true';
+        process.env.PERCH_INTERRUPT_GRACE_MINUTES = '9';
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.perch?.interruptGraceMinutes).toBe(9);
     });
 
     test('should load perch test mode when triggerOnStartup is true', () => {

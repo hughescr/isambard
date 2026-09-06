@@ -905,4 +905,63 @@ describe('setupMessageProcessing', () => {
         const callArgs = createMessageHandlerSpy.mock.calls[0][0];
         expect(callArgs.ingressGate).toBeUndefined();
     });
+
+    test('forwards perch routing deps (P12) to createMessageHandler when supplied', () => {
+        const createMessageHandlerSpy = spyOn(handlersModule, 'createMessageHandler');
+        const { client } = makeClientMock();
+        const readyClient = { user: { id: '999999999999999999' } } as unknown as Client;
+        const coordinator = {} as unknown as MessageCoordinator;
+        const channelRegistry = {} as unknown as ChannelRegistryManager;
+        const botStateManager = {} as unknown as BotStateManager;
+        const perch = { conductor: {}, responseRouter: {}, client: readyClient, rateLimiter: {} } as unknown as Parameters<typeof handlersModule.createMessageHandler>[0]['perch'];
+
+        setupMessageProcessing({
+            client,
+            readyClient,
+            channelRegistry,
+            addRecentMessage:     mock(),
+            coordinator,
+            questionRegistry:     undefined as never,
+            answerClassifier:     undefined as never,
+            inboxManager:         undefined,
+            catchUpSessionRunner: undefined,
+            botStateManager,
+            perchSessionRunner:   undefined,
+            dmTracker:            undefined as never,
+            conductorMode:        true,
+            perch,
+        });
+
+        expect(createMessageHandlerSpy).toHaveBeenCalledTimes(1);
+        const callArgs = createMessageHandlerSpy.mock.calls[0][0];
+        expect(callArgs.perch).toBe(perch);
+    });
+
+    test('omits perch routing deps when not supplied', () => {
+        const createMessageHandlerSpy = spyOn(handlersModule, 'createMessageHandler');
+        const { client } = makeClientMock();
+        const readyClient = { user: { id: '999999999999999999' } } as unknown as Client;
+        const coordinator = {} as unknown as MessageCoordinator;
+        const channelRegistry = {} as unknown as ChannelRegistryManager;
+        const botStateManager = {} as unknown as BotStateManager;
+
+        setupMessageProcessing({
+            client,
+            readyClient,
+            channelRegistry,
+            addRecentMessage:     mock(),
+            coordinator,
+            questionRegistry:     undefined as never,
+            answerClassifier:     undefined as never,
+            inboxManager:         undefined,
+            catchUpSessionRunner: undefined,
+            botStateManager,
+            perchSessionRunner:   undefined,
+            dmTracker:            undefined as never,
+        });
+
+        expect(createMessageHandlerSpy).toHaveBeenCalledTimes(1);
+        const callArgs = createMessageHandlerSpy.mock.calls[0][0];
+        expect(callArgs.perch).toBeUndefined();
+    });
 });

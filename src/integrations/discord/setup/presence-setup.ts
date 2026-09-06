@@ -230,7 +230,7 @@ export function setupConductorPresence(params: {
     identityContext:         string
     presenceConfig:          NonNullable<DiscordConfig['presence']>
     readyClient:             Client
-    /** The session ledgers to compose from — conventionally `[conversationLedger, legacyPerchLedger]` (design doc section 8: conversation wins when both are live). */
+    /** The session ledgers to compose from — conventionally `[conversationLedger, perchLedger]` (P12: perch's own real conductor ledger, when present; design doc section 8: conversation wins when both are live). */
     ledgers:                 readonly LedgerStore[]
     /** The one process-wide throttle shared with the ledger-sink stream handler (P11). */
     throttle:                PresenceThrottle
@@ -249,11 +249,13 @@ export function setupConductorPresence(params: {
     setPreviousStatus?:      (text: string) => void
     /**
      * The still-legacy `BotStateManager` — used ONLY to call `recordPresenceUpdate()` on every
-     * applied update, never `subscribe`d to. Until P12 gives perch its own conductor, the legacy
-     * perch runner's own stream handler (`createStreamEventHandler`, wired through
-     * `perch-setup.ts`) still gates its Haiku calls on `botStateManager.shouldUpdatePresence()` —
-     * a throttle whose clock the removed oneshot bridge used to advance on every activity update.
-     * Omitted, the legacy perch runner's synopsis generation goes unthrottled (P11 review finding).
+     * applied update, never `subscribe`d to. P12 gives perch its own real conductor, but a
+     * rejected (or omitted) `perchConductor.open()` still falls back to the legacy
+     * `PerchSessionRunner`/scheduler (`perch-setup.ts`'s `setupPerchSessionRunnerAndScheduler`),
+     * whose own stream handler (`createPresenceStreamHandler`) still gates its Haiku calls on
+     * `botStateManager.shouldUpdatePresence()` — a throttle whose clock the removed oneshot
+     * bridge used to advance on every activity update. Omitted, that fallback runner's synopsis
+     * generation goes unthrottled (P11 review finding).
      */
     botStateManager?:        Pick<BotStateManager, 'recordPresenceUpdate'>
 }): ConductorPresenceSetupResult {

@@ -11,6 +11,7 @@ import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as clientModule from '@/integrations/discord/client';
+import * as handlersModule from '@/integrations/discord/handlers';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import * as ingressGateModule from '@/integrations/discord/ingress-gate';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
@@ -21,9 +22,18 @@ import * as catchupSetupModule from '@/integrations/discord/setup/catchup-setup'
 import * as coordinatorSetupModule from '@/integrations/discord/setup/coordinator-setup';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-handler-setup';
+import * as perchSetupModule from '@/integrations/discord/setup/perch-setup';
 import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state/manager';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
+
+/** Flushes enough microtask ticks for a chained promise sequence to settle. */
+async function flushMicrotasks(): Promise<void> {
+    for(let i = 0; i < 10; i += 1) {
+        // eslint-disable-next-line no-await-in-loop -- deterministic microtask-drain helper used only in tests, not a real async loop
+        await Promise.resolve();
+    }
+}
 
 describe('createDiscordBot', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
@@ -1954,6 +1964,65 @@ describe('createDiscordBot', () => {
             expect(gateStop).toHaveBeenCalled();
         });
 
+        test('onDrain serialises a drained batch: a later message never dispatches before an earlier one settles', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            let capturedOnDrain: ((message: { id: string }) => void) | undefined;
+            spies.push(spyOn(ingressGateModule, 'createIngressGate').mockImplementation((options) => {
+                capturedOnDrain = options.onDrain as unknown as (message: { id: string }) => void;
+                return {
+                    admit: mock(() => 'pass'), open: mock(() => undefined), stop: mock(() => undefined), state: mock(() => 'buffering'),
+                } as unknown as ReturnType<typeof ingressGateModule.createIngressGate>;
+            }));
+
+            const invokedOrder: string[] = [];
+            const settledOrder: string[] = [];
+            const deferreds = new Map<string, { resolve: () => void }>();
+            spies.push(spyOn(handlersModule, 'dispatchAdmittedMessage').mockImplementation(async (message) => {
+                const id = (message as { id: string }).id;
+                invokedOrder.push(id);
+                await new Promise<void>((resolve) => {
+                    deferreds.set(id, { resolve });
+                });
+                settledOrder.push(id);
+            }));
+
+            const deps = conductorDeps();
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            expect(capturedOnDrain).toBeDefined();
+
+            // Simulate gate.open() draining three buffered messages, in arrival order.
+            capturedOnDrain?.({ id: 'msg-1' });
+            capturedOnDrain?.({ id: 'msg-2' });
+            capturedOnDrain?.({ id: 'msg-3' });
+            await flushMicrotasks();
+
+            // Only the FIRST message's dispatch has started — the chain has not raced ahead to
+            // msg-2/msg-3 while msg-1 is still awaiting its own async work.
+            expect(invokedOrder).toEqual(['msg-1']);
+
+            deferreds.get('msg-1')?.resolve();
+            await flushMicrotasks();
+            expect(invokedOrder).toEqual(['msg-1', 'msg-2']);
+
+            deferreds.get('msg-2')?.resolve();
+            await flushMicrotasks();
+            expect(invokedOrder).toEqual(['msg-1', 'msg-2', 'msg-3']);
+
+            deferreds.get('msg-3')?.resolve();
+            await flushMicrotasks();
+            expect(settledOrder).toEqual(['msg-1', 'msg-2', 'msg-3']);
+        });
+
         test('exposes bot.shutdown once the conductor has opened; undefined before that', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
@@ -2211,7 +2280,7 @@ describe('createDiscordBot', () => {
                 expect(channels[0].channelId).toBe('chan-1');
             });
 
-            test('the ring buffers themselves never subscribe to botStateManager in conductor mode (only the legacy-perch-ledger adapter does)', async () => {
+            test('the ring buffers themselves never subscribe to botStateManager in conductor mode (P12: the legacy-perch-ledger adapter is retired — the perch ledger is real)', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
@@ -2231,10 +2300,10 @@ describe('createDiscordBot', () => {
 
                 await triggerReady(client);
 
-                // Exactly one subscription: `createLegacyPerchLedger`'s own internal mirror (a
-                // DIFFERENT concern — mirroring the legacy perch runner into a ledger, design doc
-                // section 8). Neither ring-buffer listener from the oneshot branch is present.
-                expect(subscribeSpy).toHaveBeenCalledTimes(1);
+                // No subscription at all: the ring buffers subscribe only to the session
+                // ledger(s), never to botStateManager, and the throwaway legacy-perch-ledger
+                // adapter (which used to subscribe once here) no longer exists.
+                expect(subscribeSpy).not.toHaveBeenCalled();
             });
         });
 
@@ -2252,7 +2321,8 @@ describe('createDiscordBot', () => {
                 spies.push(setupConductorPresenceSpy, setupPresenceSpy);
 
                 const ledgerStore = makeFakeLedgerStore();
-                const deps = conductorDeps({ ledgerStore });
+                const perchLedgerStore = makeFakeLedgerStore('perch-sess-1');
+                const deps = conductorDeps({ ledgerStore, perchLedgerStore });
 
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
@@ -2268,6 +2338,34 @@ describe('createDiscordBot', () => {
                 expect(setupPresenceSpy).not.toHaveBeenCalled();
                 const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[] } | undefined;
                 expect(call?.ledgers).toHaveLength(2);
+            });
+
+            test('composes from [ledgerStore] alone (length 1) when no perch conductor/ledger is configured', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers: mock(() => undefined),
+                });
+                spies.push(setupConductorPresenceSpy);
+
+                const ledgerStore = makeFakeLedgerStore();
+                const deps = conductorDeps({ ledgerStore });
+
+                createDiscordBot({
+                    config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    identityContext: 'Test identity',
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[] } | undefined;
+                expect(call?.ledgers).toHaveLength(1);
             });
 
             test('passes botStateManager through so the legacy perch runner\'s own presence throttle clock keeps ticking (P11 review finding)', async () => {
@@ -2394,6 +2492,280 @@ describe('createDiscordBot', () => {
 
                     expect(context).toBe('User: First message\nIzzy: Second reply');
                 });
+            });
+        });
+
+        describe('Perch conductor (P12)', () => {
+            const minimalPerchConfig = {
+                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2,
+            };
+
+            function fakePerchDriver() {
+                return { runSlot: mock(() => 'started' as const), stop: mock(() => undefined) };
+            }
+
+            function stubPerchSetup(driver: ReturnType<typeof fakePerchDriver> = fakePerchDriver()) {
+                const scheduler = { start: mock(() => undefined), stop: mock(() => undefined), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
+                const setupPerchDriverAndSchedulerSpy = spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({ driver, scheduler });
+                const setupPerchSessionRunnerAndSchedulerSpy = spyOn(perchSetupModule, 'setupPerchSessionRunnerAndScheduler').mockReturnValue({
+                    runner: { startPerch: mock(async () => undefined), suspend: mock(() => undefined), resumeAfterSuspension: mock(async () => undefined), isSuspended: mock(() => false), clearSuspension: mock(() => undefined) } as unknown as ReturnType<typeof perchSetupModule.setupPerchSessionRunnerAndScheduler>['runner'],
+                    scheduler,
+                });
+                spies.push(setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy);
+                return { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy, driver, scheduler };
+            }
+
+            test('opens the perch conductor AFTER the conversation conductor, within clientReady', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                stubPerchSetup();
+
+                const callOrder: string[] = [];
+                const conversationConductor = makeFakeConductor({
+                    open: mock(async () => {
+                        callOrder.push('conversation.open');
+                        return { sessionId: 'sess-1', resumed: false };
+                    }),
+                });
+                const perchConductor = makeFakeConductor({
+                    open: mock(async () => {
+                        callOrder.push('perch.open');
+                        return { sessionId: 'perch-sess-1', resumed: false };
+                    }),
+                });
+                const deps = conductorDeps({ conversationConductor, perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(callOrder).toEqual(['conversation.open', 'perch.open']);
+            });
+
+            test('a successfully-opened perch conductor uses setupPerchDriverAndScheduler, never the legacy runner', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy } = stubPerchSetup();
+
+                const perchConductor = makeFakeConductor();
+                const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(setupPerchDriverAndSchedulerSpy).toHaveBeenCalledTimes(1);
+                expect(setupPerchSessionRunnerAndSchedulerSpy).not.toHaveBeenCalled();
+                const driverArgs = setupPerchDriverAndSchedulerSpy.mock.calls[0]?.[0] as { conductor?: unknown } | undefined;
+                expect(driverArgs?.conductor).toBe(perchConductor);
+            });
+
+            test('a successfully-opened perch conductor excludes the well-known perch-time channel from the conversation replay boot sequence', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                stubPerchSetup();
+
+                const setupInboxAndCatchUpSpy = spyOn(catchupSetupModule, 'setupInboxAndCatchUp').mockResolvedValue(undefined);
+                spies.push(setupInboxAndCatchUpSpy);
+
+                const perchTimeChannel = {
+                    channelId: 'perch-time-channel-id', channelName: 'perch-time', guildId: 'guild-1', isMuted: false, isWellKnown: 'perch-time' as const, discoveredAt: '2025-01-01T00:00:00.000Z', lastSeenAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+                };
+                const channelRegistryWithPerch = {
+                    ...mockChannelRegistry,
+                    getWellKnownChannel: mock(async () => perchTimeChannel),
+                } as unknown as ChannelRegistryManager;
+
+                const perchConductor = makeFakeConductor();
+                const deps = conductorDeps({
+                    perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+                });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: channelRegistryWithPerch,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    inboxManager:    { getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
+                    memoryBackend:   { loadCompletionSignal: mock(async () => null) } as unknown as DiscordBotOptions['memoryBackend'],
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(setupInboxAndCatchUpSpy).toHaveBeenCalledTimes(1);
+                const call = setupInboxAndCatchUpSpy.mock.calls[0]?.[0] as { excludeChannelIds?: ReadonlySet<string> } | undefined;
+                expect(call?.excludeChannelIds).toEqual(new Set(['perch-time-channel-id']));
+            });
+
+            test('a rejected well-known perch-time channel lookup does not abort the rest of clientReady — setupInboxAndCatchUp still runs and the gate still opens', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                stubPerchSetup();
+
+                const setupInboxAndCatchUpSpy = spyOn(catchupSetupModule, 'setupInboxAndCatchUp').mockResolvedValue(undefined);
+                spies.push(setupInboxAndCatchUpSpy);
+
+                const channelRegistryRejecting = {
+                    ...mockChannelRegistry,
+                    getWellKnownChannel: mock(() => Promise.reject(new Error('DynamoDB throttled'))),
+                } as unknown as ChannelRegistryManager;
+
+                const perchConductor = makeFakeConductor();
+                const deps = conductorDeps({
+                    perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+                });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: channelRegistryRejecting,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    inboxManager:    { getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
+                    memoryBackend:   { loadCompletionSignal: mock(async () => null) } as unknown as DiscordBotOptions['memoryBackend'],
+                    ...deps,
+                });
+
+                await expect(triggerReady(client)).resolves.toBeUndefined();
+
+                // The clientReady handler must still reach setupInboxAndCatchUp — a throw here
+                // would previously abort everything after it, leaving the ingress gate stuck
+                // 'buffering' forever with every Discord message silently unanswered.
+                expect(setupInboxAndCatchUpSpy).toHaveBeenCalledTimes(1);
+                const call = setupInboxAndCatchUpSpy.mock.calls[0]?.[0] as { excludeChannelIds?: ReadonlySet<string> } | undefined;
+                expect(call?.excludeChannelIds).toBeUndefined();
+            });
+
+            test('a rejected perch conductor open() degrades to the legacy perch scheduler/runner, without throwing', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy } = stubPerchSetup();
+
+                const perchConductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('perch boom'))) });
+                const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await expect(triggerReady(client)).resolves.toBeUndefined();
+
+                expect(setupPerchSessionRunnerAndSchedulerSpy).toHaveBeenCalledTimes(1);
+                expect(setupPerchDriverAndSchedulerSpy).not.toHaveBeenCalled();
+            });
+
+            test('omitting the perch conductor entirely (oneshot-equivalent) still uses the legacy perch runner, unaffected', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy } = stubPerchSetup();
+
+                const deps = conductorDeps();
+
+                createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(setupPerchSessionRunnerAndSchedulerSpy).toHaveBeenCalledTimes(1);
+                expect(setupPerchDriverAndSchedulerSpy).not.toHaveBeenCalled();
+            });
+
+            test('stop() shuts down both conductors under one shared budget and stops the perch driver', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const driver = fakePerchDriver();
+                stubPerchSetup(driver);
+
+                const conversationShutdown = mock(async () => undefined);
+                const perchShutdown = mock(async () => undefined);
+                const conversationConductor = makeFakeConductor({ shutdown: conversationShutdown });
+                const perchConductor = makeFakeConductor({ shutdown: perchShutdown });
+                const deps = conductorDeps({ conversationConductor, perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
+
+                const bot = createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+                await bot.stop();
+
+                expect(conversationShutdown).toHaveBeenCalledTimes(1);
+                expect(perchShutdown).toHaveBeenCalledTimes(1);
+                expect(driver.stop).toHaveBeenCalledTimes(1);
+            });
+
+            test('stop() stops the perch driver and scheduler BEFORE waiting out the shared shutdown budget, so no timer can fire while a turn is being politely waited out', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                const callOrder: string[] = [];
+                const driver = {
+                    runSlot: mock(() => 'started' as const),
+                    stop:    mock(() => {
+                        callOrder.push('perchDriver.stop');
+                    }),
+                };
+                const scheduler = {
+                    start: mock(() => undefined),
+                    stop:  mock(() => {
+                        callOrder.push('perchScheduler.stop');
+                    }),
+                    getState: mock(), triggerNow: mock(), triggerTestPerch: mock(),
+                };
+                spies.push(spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({ driver, scheduler }));
+
+                const perchShutdown = mock(async () => {
+                    callOrder.push('perch.shutdown');
+                });
+                const perchConductor = makeFakeConductor({ shutdown: perchShutdown });
+                const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
+
+                const bot = createDiscordBot({
+                    config:          mockConfig,
+                    channelRegistry: mockChannelRegistry,
+                    agent:           {} as ClaudeAgent,
+                    perchConfig:     minimalPerchConfig,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+                await bot.stop();
+
+                expect(callOrder).toEqual(['perchScheduler.stop', 'perchDriver.stop', 'perch.shutdown']);
+                expect(driver.stop).toHaveBeenCalledTimes(1);
+                expect(scheduler.stop).toHaveBeenCalledTimes(1);
             });
         });
     });

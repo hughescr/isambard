@@ -6,7 +6,10 @@ export { createDiscordInfrastructure } from './discord-infrastructure';
 export { createMCPServers, createMcpSharedDeps, createMcpServerInstances } from './mcp-servers';
 export type { McpSharedDeps, McpServerRole, CreateMcpServerInstancesOptions } from './mcp-servers';
 export { loadIdentityContext } from './identity-loader';
-export { createConversationConductor, type CreateConversationConductorParams, type ConversationConductorResult } from './sessions';
+export {
+    createConversationConductor, type CreateConversationConductorParams, type ConversationConductorResult,
+    createPerchConductor, type CreatePerchConductorParams, type PerchConductorResult
+} from './sessions';
 export {
     registerSignalHandlers,
     createDiscordRecoveryHandler,

@@ -106,19 +106,27 @@ interface PerchTestModeConfig {
  */
 export interface PerchConfig {
     /** Whether perch time is enabled */
-    enabled:              boolean
+    enabled:                boolean
     /** Timezone for schedule (default: system timezone) */
-    timezone:             string
+    timezone:               string
     /** Minutes between perch triggers (default: 60) */
-    intervalMinutes:      number
+    intervalMinutes:        number
     /** @deprecated No longer used - cron-parser's H option provides full 0-59 minute range for jitter */
-    jitterMinutes:        number
+    jitterMinutes:          number
     /** Maximum session duration in minutes (default: 45) */
-    maxSessionMinutes:    number
+    maxSessionMinutes:      number
     /** Maximum duration for wrap-up session in minutes (default: 5) */
-    wrapUpTimeoutMinutes: number
+    wrapUpTimeoutMinutes:   number
+    /**
+     * Grace period after a slot's `endsAt` before the perch driver interrupts a still-running
+     * slot turn, in minutes (default: 2, see `perchConfigSchema`/`loadConfig` in `@/config`).
+     * Optional here (unlike the other perch timing fields) so existing `PerchConfig` literals
+     * built before this field existed keep type-checking; `createPerchDriver` falls back to the
+     * schema's own default of 2 when it is omitted.
+     */
+    interruptGraceMinutes?: number
     /** Test mode configuration for manual testing */
-    testMode?:            PerchTestModeConfig
+    testMode?:              PerchTestModeConfig
 }
 
 /**

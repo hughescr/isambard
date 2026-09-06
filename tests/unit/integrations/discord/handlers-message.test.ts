@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
 import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
 import type { AnswerClassifier } from '@/agent/answer-classifier/classifier';
@@ -6,12 +6,13 @@ import type { ClassificationResult, MessageToClassify } from '@/agent/answer-cla
 import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
-import type { DMTracker } from '@/integrations/discord/channel-registry/dm-tracker';
-import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
-import { createMessageHandler } from '@/integrations/discord/handlers';
+import type { ChannelRegistryManager, DMTracker, ResponseRouter } from '@/integrations/discord/channel-registry';
+import { createMessageHandler, dispatchAdmittedMessage } from '@/integrations/discord/handlers';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { IngressGate, IngressGateAdmitResult } from '@/integrations/discord/ingress-gate';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
+import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
+import * as responseSenderModule from '@/integrations/discord/response-sender';
 import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
 // Note: We don't need to mock the rate limiter module because:
@@ -1564,6 +1565,394 @@ describe('Discord Event Handlers', () => {
                 expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
                 expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
                 expect(callOrder).toEqual(['dispatch', 'checkpoint']);
+            });
+        });
+
+        describe('perch-channel routing (conductor mode, P12)', () => {
+            const PERCH_CHANNEL_ID = '333333333333333333'; // matches mockTextChannel/mockMessage.channel.id
+
+            afterEach(() => {
+                jest.restoreAllMocks();
+            });
+
+            function createMockInboxManager() {
+                return {
+                    updateChannelMetadata: mock(() => undefined),
+                    recordActivity:        mock(async () => undefined),
+                    recordHandled:         mock(async () => undefined),
+                } as unknown as InboxManager & {
+                    recordActivity: ReturnType<typeof mock>
+                    recordHandled:  ReturnType<typeof mock>
+                };
+            }
+
+            function createMockChannelRegistry(wellKnownChannelId: string | null) {
+                return {
+                    shouldProcess:       mock(() => true),
+                    getChannel:          mock(() => null),
+                    warmCache:           mock(() => Promise.resolve()),
+                    getWellKnownChannel: mock(async () => (wellKnownChannelId === null
+                        ? null
+                        : {
+                            channelId:    wellKnownChannelId, channelName:  'perch-time', guildId:      '222222222222222222', isMuted:      false, isWellKnown:  'perch-time',
+                            discoveredAt: '2025-01-15T00:00:00.000Z', lastSeenAt:   '2025-01-15T00:00:00.000Z', updatedAt:    '2025-01-15T00:00:00.000Z',
+                        })),
+                } as unknown as ChannelRegistryManager & { getWellKnownChannel: ReturnType<typeof mock> };
+            }
+
+            function createFakePerchConductor(turnResult: { response: string | null }) {
+                return {
+                    submit: mock(async (_envelope: { kind: string, authorId?: string }, _options: { priority: string, requestingChannelId?: string }) => ({
+                        envelopeId: 'env-perch-1', response: turnResult.response, wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined, uncollectedBackgroundTasks: 0 }, sessionId: 'perch-sess-1', isError: false, contextUsagePercent: 0,
+                    })),
+                    deliver: mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
+                        await send();
+                        return { delivered: true };
+                    }),
+                };
+            }
+
+            it('submits an admitted perch-channel message to the perch conductor with priority \'other\', never touching the coordinator or the mode machine', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: 'Nothing much to report.' });
+                const startProcessingMessage = mock(() => undefined);
+                const ingressGate = createMockIngressGate(() => 'pass');
+                const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: { getMode: mock(() => 'idle' as const), startProcessingMessage } as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(perchConductor.submit).toHaveBeenCalledTimes(1);
+                const [envelope, submitOptions] = perchConductor.submit.mock.calls[0];
+                expect(envelope.kind).toBe('discord');
+                expect(envelope.authorId).toBe('111111111111111111');
+                expect(submitOptions.priority).toBe('other');
+
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+                expect(startProcessingMessage).not.toHaveBeenCalled();
+
+                expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
+                    kind: 'discord', channelId: PERCH_CHANNEL_ID, text: 'Nothing much to report.',
+                }));
+                expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
+            });
+
+            it('still records inbox activity/checkpoint and addRecentMessage for a perch-channel message', async () => {
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const addRecentMessage = mock(() => undefined);
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     createMockCoordinator(),
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    addRecentMessage,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(addRecentMessage).toHaveBeenCalledWith('Test message', 'user');
+                // No response from the perch turn — nothing to deliver, but the batch is still handled.
+                expect(mockInboxManager.recordHandled).toHaveBeenCalledTimes(1);
+            });
+
+            it('swallows a recordHandled rejection for a perch-channel message and logs a warning, rather than throwing out of the handler', async () => {
+                const mockInboxManager = createMockInboxManager();
+                mockInboxManager.recordHandled.mockRejectedValueOnce(new Error('DynamoDB unavailable'));
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     createMockCoordinator(),
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await expect(handler(mockMessage)).resolves.toBeUndefined();
+
+                expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    expect.objectContaining({ err: expect.any(Error), channelId: PERCH_CHANNEL_ID, msg: 'Failed to record handled watermark for perch-channel message' })
+                );
+            });
+
+            it('leaves a non-perch channel message routed to the coordinator, unaffected', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID); // perch channel is a DIFFERENT id from mockMessage's channel
+                const perchConductor = createFakePerchConductor({ response: 'irrelevant' });
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const otherChannelMessage = { ...mockMessage, channel: { ...mockTextChannel, id: 'not-perch-channel' }, channelId: 'not-perch-channel' } as unknown as Message;
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(otherChannelMessage);
+
+                expect(perchConductor.submit).not.toHaveBeenCalled();
+                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+            });
+
+            it('a rejected well-known perch-time channel lookup routes the message to the coordinator instead of dropping it', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const perchConductor = createFakePerchConductor({ response: 'irrelevant' });
+                const ingressGate = createMockIngressGate(() => 'pass');
+                const channelRegistry = {
+                    shouldProcess:       mock(() => true),
+                    getChannel:          mock(() => null),
+                    warmCache:           mock(() => Promise.resolve()),
+                    getWellKnownChannel: mock(() => Promise.reject(new Error('DynamoDB throttled'))),
+                } as unknown as ChannelRegistryManager;
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(perchConductor.submit).not.toHaveBeenCalled();
+                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+            });
+
+            it('a perch-channel message buffered by the gate is NOT submitted to the perch conductor until admitted (gate runs first)', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: 'irrelevant' });
+                const ingressGate = createMockIngressGate(() => 'buffered');
+                const addRecentMessage = mock(() => undefined);
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    addRecentMessage,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(perchConductor.submit).not.toHaveBeenCalled();
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+                // The receipt-time checkpoint, channel-metadata refresh, and idle-status
+                // ring-buffer entry all still happen even though the message was buffered — they
+                // are NOT gated on admission (P12 folded gap: a message the boot sequence's replay
+                // later excludes from onDrain entirely must still get these).
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(mockInboxManager.updateChannelMetadata).toHaveBeenCalledTimes(1);
+                expect(addRecentMessage).toHaveBeenCalledWith('Test message', 'user');
+            });
+
+            it('dispatchAdmittedMessage (exported for the boot sequence\'s gate-drain callback) routes a perch-channel message the same way', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+
+                await dispatchAdmittedMessage(mockMessage, '999999999999999999' as UserId, mockCoordinator, {
+                    channelRegistry,
+                    perch: {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                expect(perchConductor.submit).toHaveBeenCalledTimes(1);
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+            });
+
+            it('stamps the envelope with the author\'s stored timezone, not the process/server one', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: null });
+                const ingressGate = createMockIngressGate(() => 'pass');
+                const loadUserTimezone = mock(async () => 'Europe/London');
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                        contextBuilder: { loadUserTimezone },
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(loadUserTimezone).toHaveBeenCalledWith('111111111111111111');
+                const [envelope] = perchConductor.submit.mock.calls[0] as unknown as [{ text: string }];
+                expect(envelope.text).toContain('GMT'); // Europe/London abbreviation, from tests/setup.ts's Intl mock table (fixed, no DST)
+            });
+
+            it('a perch conductor submit() failure still advances the HANDLED watermark (this channel has no other recovery path)', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const ingressGate = createMockIngressGate(() => 'pass');
+                const perchConductor = {
+                    submit:  mock(() => Promise.reject(new Error('perch conductor is shutting down'))),
+                    deliver: mock(async () => ({ delivered: true })),
+                };
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(perchConductor.deliver).not.toHaveBeenCalled();
+                expect(mockInboxManager.recordHandled).toHaveBeenCalledWith(PERCH_CHANNEL_ID, mockMessage.id, mockMessage.createdAt.toISOString());
+            });
+
+            it('the not-sent sentinel (sent:false, queued:false) is suppressed — no error log, watermark still advances', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: 'Nothing much to report.' });
+                const ingressGate = createMockIngressGate(() => 'pass');
+                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: false });
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(mockInboxManager.recordHandled).toHaveBeenCalledTimes(1);
+            });
+
+            it('a real delivery failure (not the not-sent sentinel) is logged but the watermark still advances', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
+                const perchConductor = createFakePerchConductor({ response: 'Nothing much to report.' });
+                const ingressGate = createMockIngressGate(() => 'pass');
+                spyOn(responseSenderModule, 'sendEnvelopeResponse').mockRejectedValue(new Error('Discord API down'));
+
+                const handler = createMessageHandler({
+                    channelRegistry,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                    perch:           {
+                        conductor:      perchConductor,
+                        responseRouter: {} as unknown as ResponseRouter,
+                        client:         {} as unknown as Client,
+                        rateLimiter:    {} as unknown as DiscordRateLimiter,
+                    },
+                });
+
+                await handler(mockMessage);
+
+                expect(mockInboxManager.recordHandled).toHaveBeenCalledTimes(1);
             });
         });
     });

@@ -60,16 +60,27 @@ const sessionConfig: SessionConfig = {
     debounceMs:              250,
 };
 
+/** Default `config.perch` for `wireHappyPathForCleanupTests` — perch enabled, matching production defaults. `perchOverrides` lets a test disable it (`{ enabled: false }`) or tweak a field. */
+const defaultPerchConfig = {
+    enabled:               true,
+    timezone:              'UTC',
+    intervalMinutes:       60,
+    jitterMinutes:         15,
+    maxSessionMinutes:     45,
+    wrapUpTimeoutMinutes:  5,
+    interruptGraceMinutes: 2,
+};
+
 /**
  * Wires the same full happy-path mock set the "Plugin loading path" test uses — storage layer
  * constructed for real against a mocked docClient, everything Discord/agent/email-side stubbed —
  * so `createApp()` can run to completion. Used by the P8 stale-session-cleanup tests, which need
  * `createApp()` to actually reach (and complete) the cleanup step it re-orders below `loadConfig`
- * and storage creation. `sessionOverrides` lets each test pick `session.mode`; the returned
- * `getSessionIdForRole` mock lets the conductor-mode test control what the two role-keyed
- * `TASK_SESSION#<role>` rows resolve to.
+ * and storage creation. `sessionOverrides` lets each test pick `session.mode`; `perchOverrides`
+ * lets a test disable perch or tweak a field (P12); the returned `getSessionIdForRole` mock lets
+ * the conductor-mode test control what the two role-keyed `TASK_SESSION#<role>` rows resolve to.
  */
-function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}): {
+function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}): {
     cleanupAllStaleSessionsSpy: ReturnType<typeof spyOn>
     pruneStaleSessionsSpy:      ReturnType<typeof spyOn>
     getSessionIdForRole:        ReturnType<typeof mock>
@@ -174,6 +185,7 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
                     idleRefreshIntervalMs: 300_000,
                 },
             },
+            perch:              { ...defaultPerchConfig, ...perchOverrides },
             adminDiscordUserId: '423276934781468692',
         }),
         spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
@@ -623,6 +635,86 @@ describe('createApp', () => {
             await createApp();
 
             expect(createConversationConductorSpy).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Perch conductor build (P12)', () => {
+        function fakeConductor(sessionId: string): Conductor {
+            return { open: mock(async () => ({ sessionId, resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
+        }
+
+        test('conductor mode with perch enabled: createPerchConductor is called once, AFTER createConversationConductor, and its (unopened) conductor is handed to createDiscordBot as perchConductor', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const fakePerch = fakeConductor('perch-sess');
+            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
+                conductor: fakePerch, ledgerStore: {} as LedgerStore,
+            });
+            const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+                start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+            });
+            spies.push(createConversationConductorSpy, createPerchConductorSpy, createBotSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createPerchConductorSpy).toHaveBeenCalledTimes(1);
+            const conversationOrder = createConversationConductorSpy.mock.invocationCallOrder[0];
+            const perchOrder = createPerchConductorSpy.mock.invocationCallOrder[0];
+            expect(conversationOrder).toBeDefined();
+            expect(perchOrder).toBeDefined();
+            expect(conversationOrder).toBeLessThan(perchOrder);
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0] as unknown as { perchConductor?: unknown };
+            expect(botOptions.perchConductor).toBe(fakePerch);
+        });
+
+        test('conductor mode with perch DISABLED (config.perch.enabled: false): createPerchConductor is never called', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, { enabled: false });
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor');
+            spies.push(createConversationConductorSpy, createPerchConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createPerchConductorSpy).not.toHaveBeenCalled();
+        });
+
+        test('oneshot mode: createPerchConductor is never called', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
+            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor');
+            spies.push(createPerchConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createPerchConductorSpy).not.toHaveBeenCalled();
+        });
+
+        test('passes a role-keyed journal/resume store distinct from the conversation conductor\'s own', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: {} as LedgerStore, contextPolicy: {} as ContextPolicy,
+            });
+            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
+                conductor: fakeConductor('perch-sess'), ledgerStore: {} as LedgerStore,
+            });
+            spies.push(createConversationConductorSpy, createPerchConductorSpy);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const conversationJournalArg = createConversationConductorSpy.mock.calls[0]?.[0].journal;
+            const perchJournalArg = createPerchConductorSpy.mock.calls[0]?.[0].journal;
+            expect(conversationJournalArg).toBeDefined();
+            expect(perchJournalArg).toBeDefined();
+            expect(perchJournalArg).not.toBe(conversationJournalArg);
         });
     });
 

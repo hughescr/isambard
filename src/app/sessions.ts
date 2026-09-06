@@ -27,6 +27,7 @@ import { createMcpServerInstances, type McpSharedDeps } from './mcp-servers';
 import {
     buildSessionQueryOptions,
     buildSessionSystemPrompt,
+    computeRecovery,
     createBootBundleBuilder,
     createBootBundleHooks,
     createCompactionHooks,
@@ -233,4 +234,169 @@ export async function createConversationConductor(params: CreateConversationCond
     };
 
     return { conductor, ledgerStore, contextPolicy };
+}
+
+/**
+ * How far back {@link createPerchConductor}'s own boot-bundle hook re-derives crash recovery
+ * from the perch journal — matches `conductor.ts`'s own (private) `RECOVERY_WINDOW_MS` and
+ * `catchup-setup.ts`'s copy: a deliberate, documented duplication of one read-only computation
+ * (see this module's own doc and `catchup-setup.ts`'s `runConductorInboxInit` for the same
+ * pattern), not of the journal-write/delivery-guard-seeding work `Conductor.open()` itself
+ * already does unconditionally on every open (P8).
+ */
+const PERCH_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Dependencies and configuration for {@link createPerchConductor}. */
+export interface CreatePerchConductorParams {
+    config:         SessionConfig
+    queryFn:        SessionQueryFn
+    /** Shared MCP dependencies (P2's `createMcpSharedDeps`); this module builds its OWN instance set from it — a second, distinct set from the conversation conductor's own (a shared instance cannot serve two concurrent sessions). */
+    mcpShared:      McpSharedDeps
+    plugins?:       SdkPluginConfig[]
+    contextBuilder: BootContextSource
+    identityCache:  IdentitySource
+    taskListReader: TaskListSource
+    journal:        SessionJournal
+    resumeStore:    ResumeStore
+    clock:          Clock
+    logger:         Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+}
+
+/** What {@link createPerchConductor} returns. */
+export interface PerchConductorResult {
+    conductor:   Conductor
+    ledgerStore: LedgerStore
+}
+
+/**
+ * Builds the perch conductor's OWN MCP server set (role `'perch'` — no browser, no email; see
+ * `createMcpServerInstances`'s own role-gating doc), system prompt, hooks, and ledger, and
+ * returns a {@link Conductor} that has NOT been opened — mirrors
+ * {@link createConversationConductor}'s own build-only contract exactly; the caller
+ * (`src/index.ts`/`bot.ts`'s `clientReady`) decides when opening is safe and degrades to the
+ * legacy perch scheduler/runner if `open()` rejects.
+ *
+ * Unlike the conversation conductor, perch's boot-bundle SessionStart hook re-derives crash
+ * recovery itself (a second, independent read of the SAME journal `Conductor.open()` already
+ * scanned internally on this process's boot — see {@link PERCH_RECOVERY_WINDOW_MS}'s doc) so a
+ * background task a prior process started but never finished, or a perch-channel Discord turn
+ * that finished but was never confirmed delivered, is actually reported in the next boot-bundle
+ * text — the folded "perch conductor boot" gap this package closes. Also unlike conversation,
+ * there is no `ContextPolicy`: perch's boot bundle carries no per-user memory block to gate (see
+ * `boot-bundle.ts`'s perch variant), so there is nothing for a compaction to reset.
+ * @param params See {@link CreatePerchConductorParams}.
+ * @returns `{ conductor, ledgerStore }` — see {@link PerchConductorResult}.
+ */
+export async function createPerchConductor(params: CreatePerchConductorParams): Promise<PerchConductorResult> {
+    const {
+        config, queryFn, mcpShared, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger,
+    } = params;
+
+    const mcpInstances = createMcpServerInstances(mcpShared, { role: 'perch' });
+    const sessionMcpServers: SessionMcpServers = {
+        memory:         mcpInstances.memoryMcpServer,
+        discord:        mcpInstances.discordMcpServer,
+        inbox:          mcpInstances.inboxMcpServer,
+        bsky:           mcpInstances.bskyMcpServer,
+        caldav:         mcpInstances.caldavMcpServer,
+        wikipedia:      mcpInstances.wikipediaMcpServer,
+        contacts:       mcpInstances.contactsMcpServer,
+        'user-context': mcpInstances.userContextMcpServer,
+        media:          mcpInstances.mediaMcpServer,
+        // No browser (single Bun.WebView — conversation only) and no email server for perch.
+    };
+
+    // Built once, here, from the injected IdentityCache — never rebuilt on a later reopen.
+    const identity = await identityCache.get();
+    const systemPrompt = buildSessionSystemPrompt({ role: 'perch', identity });
+
+    const ledgerStore = createLedgerStore('perch', { logger });
+    const bootBundleBuilder = createBootBundleBuilder({
+        role: 'perch', identityCache, contextBuilder, taskListReader, now: () => clock.now(), bootEventsWindowMs: config.bootEventsWindowMs,
+    });
+
+    /**
+     * Re-derives crash recovery from the perch journal (see {@link PERCH_RECOVERY_WINDOW_MS}'s
+     * doc) and feeds it, alongside the ledger's own live task descriptions, into the perch
+     * boot-bundle variant. Never rejects: a `readSince` failure degrades to an empty recovery
+     * section rather than blocking the boot-bundle hook.
+     */
+    async function buildBootBundleText(): Promise<string> {
+        let lostTasks: string[] = [];
+        let undelivered: string[] = [];
+        try {
+            const entries = await journal.readSince(clock.now() - PERCH_RECOVERY_WINDOW_MS);
+            const recovery = computeRecovery(entries);
+            lostTasks = recovery.lostTasks.map(task => task.description ?? task.taskId);
+            undelivered = recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`);
+        } catch (err) {
+            logger.warn({ err }, 'Perch boot-bundle recovery read failed; continuing with an empty recovery section');
+        }
+
+        return bootBundleBuilder.build({
+            lostTasks,
+            undelivered,
+            recentUsers: [],
+            activeTasks: ledgerStore.get().tasks.map(task => task.description),
+            resetNotice: true,
+        });
+    }
+
+    // Late-bound for the same reason as createConversationConductor's own conductorRef — see
+    // that function's comment for the circular build order this resolves.
+    // eslint-disable-next-line prefer-const -- assigned exactly once, but necessarily after compactionSink/hooks/buildOptions close over it
+    let conductorRef: Conductor | undefined;
+
+    const compactionSink: CompactionSink = {
+        onCompactionStart: (trigger) => {
+            ledgerStore.dispatch({ type: 'compaction_started', trigger, at: new Date(clock.now()) });
+        },
+        onCompactionEnd: (summary) => {
+            // No ContextPolicy to reset (perch injects no per-user memory block) — just report
+            // the summary, mirroring conversation's own PostCompact wiring otherwise.
+            void conductorRef?.recordCompactionSummary(summary);
+        },
+    };
+
+    const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
+        createBootBundleHooks(async () => buildBootBundleText()),
+        createCompactionHooks(compactionSink),
+        createSessionLifecycleHooks({}),
+        createTaskTrackingHooks()
+    );
+
+    function buildOptions(resume?: string): Options {
+        return buildSessionQueryOptions({
+            role:           'perch',
+            systemPrompt,
+            mcpServers:     sessionMcpServers,
+            plugins,
+            hooks,
+            resume,
+            mainModel:      'sonnet',
+            // See createConversationConductor's identical comment: no per-open InterruptFlag is
+            // threaded into this callback, so the stderr classifier cannot distinguish an
+            // expected interrupt-abort's stderr from a real error — log-level only, no functional effect.
+            isInterrupting: () => false,
+        });
+    }
+
+    const retryPolicy = loadRetryConfig().claude;
+
+    const conductor = createConductor({
+        role:    'perch',
+        queryFn,
+        buildOptions,
+        clock,
+        readRss: () => process.memoryUsage().rss,
+        ledgerStore,
+        config,
+        retryPolicy,
+        journal,
+        resumeStore,
+        logger,
+    });
+    conductorRef = conductor;
+
+    return { conductor, ledgerStore };
 }
