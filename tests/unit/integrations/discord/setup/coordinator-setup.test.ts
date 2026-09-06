@@ -126,8 +126,8 @@ describe('setupCoordinatorIntegration — FIX A: response-send channel tracking'
     /** Mock MessageCoordinator constructor and capture the onResponse config. */
     function captureOnResponse(
         addRecentChannel: (id: ChannelId) => void
-    ): ((result: ProcessResult, discordMessage: Message | null) => Promise<void>) | undefined {
-        let capturedOnResponse: ((result: ProcessResult, discordMessage: Message | null) => Promise<void>) | undefined;
+    ): ((result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>) | undefined {
+        let capturedOnResponse: ((result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>) | undefined;
 
         // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
         spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((config: MessageCoordinatorConfig): messageCoordinatorModule.MessageCoordinator => {
@@ -151,7 +151,7 @@ describe('setupCoordinatorIntegration — FIX A: response-send channel tracking'
         const onResponse = captureOnResponse(id => pushedChannels.push(id));
         expect(onResponse).toBeDefined();
 
-        await onResponse!(makeProcessResult('test response'), makeMockMessage(channelId));
+        await onResponse!(makeProcessResult('test response'), makeMockMessage(channelId), []);
 
         expect(pushedChannels).toContain(channelId);
     });
@@ -166,7 +166,7 @@ describe('setupCoordinatorIntegration — FIX A: response-send channel tracking'
         const onResponse = captureOnResponse(id => pushedChannels.push(id));
         expect(onResponse).toBeDefined();
 
-        await onResponse!(makeProcessResult('test response'), makeMockMessage(channelId));
+        await onResponse!(makeProcessResult('test response'), makeMockMessage(channelId), []);
 
         expect(pushedChannels).not.toContain(channelId);
     });
@@ -336,6 +336,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             contextPolicy:    { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), resetAll: mock(() => undefined) },
             deliveryGuard:    { alreadyDelivered: mock(() => false), markDelivered: mock(() => undefined) },
             journal:          { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+            inboxManager:     { recordHandled: mock(() => Promise.resolve()) },
             envelopeProvider: {
                 resolveNames:    mock(() => Promise.resolve({ channelName: 'general', authorName: 'craig', isDM: false })),
                 toEnvelopeInput: mock(() => ({
@@ -375,6 +376,11 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
             timestamp: new Date(0).toISOString(),
             botUserId: createUserId('bot-1'),
         };
+    }
+
+    /** A minimal batch Message — only the fields `onResponse`'s conductor branch reads. */
+    function makeBatchMessage(channelId: string, id: string, createdAt: Date): Message {
+        return { id, channelId, createdAt } as unknown as Message;
     }
 
     test('selects createConductorProcessor and never calls agent.handleInput', () => {
@@ -420,38 +426,43 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     });
 
     test('onResponse delivers through conversationConductor.deliver keyed on the CONDUCTOR'
-      + "'s envelope id (not the triggering Discord message id), with sessionTypeOverride \"processing_message\" for a guild channel", async () => {
+      + "'s envelope id (not the triggering Discord message id), sending via sendEnvelopeResponse to the origin channel", async () => {
         const params = makeConductorParams();
-        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const config = captureConfig(params);
 
         const discordMessage = {
             id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
         } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
 
         await config.onResponse?.({
             response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-999',
-        }, discordMessage);
+        }, discordMessage, batch);
 
-        expect(responseSenderModule.sendResponse).toHaveBeenCalledWith(expect.objectContaining({ sessionTypeOverride: 'processing_message' }));
+        expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId: 'env-999', kind: 'discord', channelId: '123', text: 'hello',
+        }));
         const conductorDeliver = (params.conversationConductor as unknown as { deliver: ReturnType<typeof mock> }).deliver;
         expect(conductorDeliver).toHaveBeenCalledWith('env-999', expect.any(Function));
     });
 
-    test('onResponse uses sessionTypeOverride "dm" for a DM channel', async () => {
-        const params = makeConductorParams();
-        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+    test('onResponse forwards params.discordCapability to sendEnvelopeResponse so a Discord outage queues to the real outbox instead of losing the response', async () => {
+        const discordCapability = { sendToChannel: mock(() => Promise.resolve({ status: 'sent' as const })) };
+        const params = makeConductorParams({ discordCapability });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const config = captureConfig(params);
 
         const discordMessage = {
-            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => true },
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
         } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
 
         await config.onResponse?.({
             response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-999',
-        }, discordMessage);
+        }, discordMessage, batch);
 
-        expect(responseSenderModule.sendResponse).toHaveBeenCalledWith(expect.objectContaining({ sessionTypeOverride: 'dm' }));
+        expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({ discordCapability }));
     });
 
     test('onResponse refuses a duplicate delivery for an already-delivered envelope id (conversationConductor.deliver\'s own idempotency)', async () => {
@@ -459,62 +470,266 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const params = makeConductorParams({
             conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
         });
-        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const config = captureConfig(params);
 
         const discordMessage = {
             id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
         } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
 
         await config.onResponse?.({
             response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
-        }, discordMessage);
+        }, discordMessage, batch);
 
-        expect(responseSenderModule.sendResponse).not.toHaveBeenCalled();
+        expect(responseSenderModule.sendEnvelopeResponse).not.toHaveBeenCalled();
     });
 
-    test('onResponse keeps the catch-up resume-after-suspension block', async () => {
+    test('onResponse resumes a suspended legacy catch-up/perch run once idle, same as the legacy branch (P12 has not yet retired these runners)', async () => {
         const resumeAfterSuspension = mock(() => Promise.resolve());
         const catchUpSessionRunner = {
             isSuspended: mock(() => true), resumeAfterSuspension, clearSuspension: mock(() => undefined),
         };
-        const params = makeConductorParams({ catchUpSessionRunner });
-        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        const perchResumeAfterSuspension = mock(() => Promise.resolve());
+        const perchSessionRunner = {
+            isSuspended: mock(() => true), resumeAfterSuspension: perchResumeAfterSuspension, clearSuspension: mock(() => undefined),
+        };
+        const params = makeConductorParams({ catchUpSessionRunner, perchSessionRunner });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const config = captureConfig(params);
 
         const discordMessage = {
             id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
         } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
 
         await config.onResponse?.({
             response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
-        }, discordMessage);
+        }, discordMessage, batch);
         await Promise.resolve();
 
         expect(resumeAfterSuspension).toHaveBeenCalled();
+        expect(perchResumeAfterSuspension).toHaveBeenCalled();
+    });
+
+    test('onResponse does NOT resume catch-up/perch while botStateManager is still busy (not idle)', async () => {
+        const resumeAfterSuspension = mock(() => Promise.resolve());
+        const catchUpSessionRunner = {
+            isSuspended: mock(() => true), resumeAfterSuspension, clearSuspension: mock(() => undefined),
+        };
+        const botStateManager = { ...makeMockBotStateManager(), getMode: mock(() => 'processing_message' as const) };
+        const params = makeConductorParams({ catchUpSessionRunner, botStateManager });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+        await Promise.resolve();
+
+        expect(resumeAfterSuspension).not.toHaveBeenCalled();
+    });
+
+    test('onResponse does not attempt to resume when the legacy runner is not suspended', async () => {
+        const resumeAfterSuspension = mock(() => Promise.resolve());
+        const catchUpSessionRunner = {
+            isSuspended: mock(() => false), resumeAfterSuspension, clearSuspension: mock(() => undefined),
+        };
+        const params = makeConductorParams({ catchUpSessionRunner });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+        await Promise.resolve();
+
+        expect(resumeAfterSuspension).not.toHaveBeenCalled();
+    });
+
+    test('onResponse clears suspension when the resume attempt itself fails', async () => {
+        const resumeAfterSuspension = mock(() => Promise.reject(new Error('resume failed')));
+        const clearSuspension = mock(() => undefined);
+        const catchUpSessionRunner = {
+            isSuspended: mock(() => true), resumeAfterSuspension, clearSuspension,
+        };
+        const params = makeConductorParams({ catchUpSessionRunner });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(clearSuspension).toHaveBeenCalled();
     });
 
     test('onResponse keeps addRecentMessage(\'izzy\') and the discord-exchange activity-log write (folded idle-status-inputs gap)', async () => {
         const addRecentMessage = mock(() => undefined);
         const activityLogger = { log: mock(() => Promise.resolve()) };
         const params = makeConductorParams({ addRecentMessage, activityLogger });
-        spies.push(spyOn(responseSenderModule, 'sendResponse').mockResolvedValue({ sent: true }));
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         mockGenerateText.mockResolvedValueOnce('Craig asked about the weather; Izzy answered.');
         const config = captureConfig(params);
 
         const discordMessage = {
             id: 'msg-1', content: 'what\'s the weather', channelId: '123', channel: { id: '123', isDMBased: () => false },
         } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(0))];
 
         await config.onResponse?.({
             response: 'It\'s sunny.', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
-        }, discordMessage);
+        }, discordMessage, batch);
         await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
         expect(addRecentMessage).toHaveBeenCalledWith('It\'s sunny.', 'izzy');
         expect(activityLogger.log).toHaveBeenCalledWith(expect.objectContaining({ type: 'discord-exchange', summary: 'Craig asked about the weather; Izzy answered.' }));
+    });
+
+    // ---------------------------------------------------------------------------
+    // P10: recordHandled watermark + journal-on-delivered-or-queued-only
+    // ---------------------------------------------------------------------------
+
+    test('onResponse records the HANDLED watermark on a sent response', async () => {
+        const recordHandled = mock(() => Promise.resolve());
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(1000))];
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+
+        expect(recordHandled).toHaveBeenCalledWith('123', 'msg-1', new Date(1000).toISOString());
+    });
+
+    test('onResponse records the HANDLED watermark on a no-response (@@NO_RESPONSE@@) skip', async () => {
+        const recordHandled = mock(() => Promise.resolve());
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, skipReason: 'no-response' }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(1000))];
+
+        await config.onResponse?.({
+            response: '@@NO_RESPONSE@@', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+
+        expect(recordHandled).toHaveBeenCalledWith('123', 'msg-1', new Date(1000).toISOString());
+    });
+
+    test('onResponse records the HANDLED watermark on an outbox-queued send', async () => {
+        const recordHandled = mock(() => Promise.resolve());
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: false, queued: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(1000))];
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+
+        expect(recordHandled).toHaveBeenCalledWith('123', 'msg-1', new Date(1000).toISOString());
+    });
+
+    test('onResponse records one HANDLED watermark per channel for a multi-channel batch, keyed to each channel\'s newest message', async () => {
+        const recordHandled = mock(() => Promise.resolve());
+        const params = makeConductorParams({ inboxManager: { recordHandled } });
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const config = captureConfig(params);
+
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [
+            makeBatchMessage('123', '100', new Date(1000)),
+            makeBatchMessage('123', '101', new Date(2000)),
+            makeBatchMessage('456', '200', new Date(1500)),
+        ];
+
+        await config.onResponse?.({
+            response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
+        }, discordMessage, batch);
+
+        expect(recordHandled).toHaveBeenCalledTimes(2);
+        expect(recordHandled).toHaveBeenCalledWith('123', '101', new Date(2000).toISOString());
+        expect(recordHandled).toHaveBeenCalledWith('456', '200', new Date(1500).toISOString());
+    });
+
+    test('onResponse does not journal (deliver\'s send callback throws) on a no-response skip, but does journal on sent/queued', async () => {
+        const deliverCalls: { threw: boolean }[] = [];
+        const deliver = mock(async (_envelopeId: string, send: () => Promise<unknown>) => {
+            try {
+                await send();
+                deliverCalls.push({ threw: false });
+                return { delivered: true };
+            } catch{
+                deliverCalls.push({ threw: true });
+                return { delivered: false };
+            }
+        });
+        const params = makeConductorParams({
+            conversationConductor: { submit: mock(() => Promise.resolve()), subscribeTurn: mock(() => mock(() => undefined)), deliver },
+        });
+        const discordMessage = {
+            id: 'msg-1', content: 'hi', channelId: '123', channel: { id: '123', isDMBased: () => false },
+        } as unknown as Message;
+        const batch = [makeBatchMessage('123', 'msg-1', new Date(1000))];
+
+        const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse');
+        spies.push(sendEnvelopeResponseSpy);
+
+        // Sent: the send callback resolves normally — deliver's real implementation would journal.
+        sendEnvelopeResponseSpy.mockResolvedValueOnce({ sent: true });
+        const config = captureConfig(params);
+        await config.onResponse?.({
+            response: 'a', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-a',
+        }, discordMessage, batch);
+
+        // Queued: also resolves normally — the outbox owns the retry, so this still journals.
+        sendEnvelopeResponseSpy.mockResolvedValueOnce({ sent: false, queued: true });
+        await config.onResponse?.({
+            response: 'b', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-b',
+        }, discordMessage, batch);
+
+        // No-response: the send callback throws — deliver's real implementation would NOT journal.
+        sendEnvelopeResponseSpy.mockResolvedValueOnce({ sent: false, skipReason: 'no-response' });
+        await config.onResponse?.({
+            response: '@@NO_RESPONSE@@', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-c',
+        }, discordMessage, batch);
+
+        expect(deliverCalls).toEqual([{ threw: false }, { threw: false }, { threw: true }]);
     });
 
     test('legacy branch (no conversationConductor) still uses agent.handleInput', () => {

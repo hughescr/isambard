@@ -11,10 +11,13 @@ import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import * as clientModule from '@/integrations/discord/client';
+import type { InboxManager } from '@/integrations/discord/inbox';
+import * as ingressGateModule from '@/integrations/discord/ingress-gate';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
 import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import * as catchupSetupModule from '@/integrations/discord/setup/catchup-setup';
 import * as coordinatorSetupModule from '@/integrations/discord/setup/coordinator-setup';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-handler-setup';
@@ -1897,6 +1900,217 @@ describe('createDiscordBot', () => {
 
             expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'shim unsubscribe', 'botStateManager.stop']);
             expect(shimUnsubscribe).toHaveBeenCalledTimes(1);
+        });
+
+        test('stop() calls the ingress gate\'s stop() (P10, gate.stop -> shutdown.run)', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const gateStop = mock(() => undefined);
+            spies.push(spyOn(ingressGateModule, 'createIngressGate').mockImplementation(() => ({
+                admit: mock(() => 'pass'),
+                open:  mock(() => undefined),
+                stop:  gateStop,
+                state: mock(() => 'buffering'),
+            } as unknown as ReturnType<typeof ingressGateModule.createIngressGate>)));
+
+            const deps = conductorDeps();
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await bot.stop();
+
+            expect(gateStop).toHaveBeenCalled();
+        });
+
+        test('exposes bot.shutdown once the conductor has opened; undefined before that', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const deps = conductorDeps();
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                ...deps,
+            });
+
+            expect(bot.shutdown).toBeUndefined();
+
+            await triggerReady(client);
+
+            expect(bot.shutdown).toBeDefined();
+            expect(typeof bot.shutdown?.run).toBe('function');
+        });
+
+        test('bot.shutdown is undefined in oneshot mode (no conductor deps provided)', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+            });
+
+            await triggerReady(client);
+
+            expect(bot.shutdown).toBeUndefined();
+        });
+
+        test('triggerCatchUp submits a catch-up envelope through the conductor in conductor mode when unread mail remains', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const submitConductorCatchUpSpy = spyOn(catchupSetupModule, 'submitConductorCatchUp').mockResolvedValue(undefined);
+            spies.push(submitConductorCatchUpSpy);
+
+            const inboxManager = {
+                loadUnread:        mock(async () => undefined),
+                getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })),
+                replayUnhandled:   mock(async () => []),
+                recordHandled:     mock(async () => undefined),
+                setBotUserId:      mock(() => undefined),
+            } as unknown as InboxManager;
+
+            const deps = conductorDeps();
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                inboxManager,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await bot.triggerCatchUp();
+
+            expect(submitConductorCatchUpSpy).toHaveBeenCalled();
+        });
+
+        test('triggerCatchUp does NOT submit a catch-up envelope on a reconnect with no unread mail (mirrors the legacy branch\'s shouldStartCatchUp gate)', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const submitConductorCatchUpSpy = spyOn(catchupSetupModule, 'submitConductorCatchUp').mockResolvedValue(undefined);
+            spies.push(submitConductorCatchUpSpy);
+
+            const inboxManager = {
+                loadUnread:        mock(async () => undefined),
+                getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })),
+                replayUnhandled:   mock(async () => []),
+                recordHandled:     mock(async () => undefined),
+                setBotUserId:      mock(() => undefined),
+            } as unknown as InboxManager;
+
+            const deps = conductorDeps();
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                inboxManager,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await bot.triggerCatchUp();
+
+            expect(inboxManager.loadUnread).toHaveBeenCalled();
+            expect(submitConductorCatchUpSpy).not.toHaveBeenCalled();
+        });
+
+        test('triggerCatchUp in conductor mode swallows and logs a reconnect-trigger failure (e.g. loadUnread rejects), never rejecting the caller', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const submitConductorCatchUpSpy = spyOn(catchupSetupModule, 'submitConductorCatchUp').mockResolvedValue(undefined);
+            spies.push(submitConductorCatchUpSpy);
+
+            const loadUnreadError = new Error('Discord search 500');
+            const inboxManager = {
+                loadUnread:        mock(async () => { throw loadUnreadError; }),
+                getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })),
+                replayUnhandled:   mock(async () => []),
+                recordHandled:     mock(async () => undefined),
+                setBotUserId:      mock(() => undefined),
+            } as unknown as InboxManager;
+
+            const deps = conductorDeps();
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                inboxManager,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await expect(bot.triggerCatchUp()).resolves.toBeUndefined();
+
+            expect(submitConductorCatchUpSpy).not.toHaveBeenCalled();
+        });
+
+        test('triggerCatchUp does not touch catchUpSessionRunner in conductor mode', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+            spies.push(spyOn(catchupSetupModule, 'submitConductorCatchUp').mockResolvedValue(undefined));
+
+            // A real catchUpSessionRunner is constructed by bot.ts's clientReady handler whenever
+            // inboxManager+agent+memoryBackend are all present — regardless of mode — so this test
+            // supplies memoryBackend and spies on the underlying runner's own shouldStartCatchUp/
+            // startCatchUp to prove the conductor branch genuinely never calls them, rather than
+            // merely asserting a resolved promise (which passes even with the whole branch deleted).
+            const shouldStartCatchUp = mock(async () => true);
+            const startCatchUp = mock(async () => undefined);
+            spies.push(spyOn(catchupSetupModule, 'setupCatchUpSessionRunner').mockReturnValue({
+                shouldStartCatchUp,
+                startCatchUp,
+                getAbortController: mock(() => new AbortController()),
+            } as unknown as ReturnType<typeof catchupSetupModule.setupCatchUpSessionRunner>));
+
+            const inboxManager = {
+                loadUnread:        mock(async () => undefined),
+                getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })),
+                replayUnhandled:   mock(async () => []),
+                recordHandled:     mock(async () => undefined),
+                setBotUserId:      mock(() => undefined),
+            } as unknown as InboxManager;
+
+            const memoryBackend = {
+                storeCompletionSignal:  mock(async () => undefined),
+                loadCompletionSignal:   mock(async () => null),
+                storeInProgressSignal:  mock(async () => undefined),
+                loadInProgressSignal:   mock(async () => null),
+                deleteInProgressSignal: mock(async () => undefined),
+            };
+
+            const deps = conductorDeps();
+            const bot = createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                agent:           {} as ClaudeAgent,
+                inboxManager,
+                memoryBackend,
+                ...deps,
+            });
+
+            await triggerReady(client);
+            await expect(bot.triggerCatchUp()).resolves.toBeUndefined();
+
+            expect(shouldStartCatchUp).not.toHaveBeenCalled();
+            expect(startCatchUp).not.toHaveBeenCalled();
         });
     });
 

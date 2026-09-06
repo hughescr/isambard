@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import type { Client } from 'discord.js';
+import type { Client, Message } from 'discord.js';
 import {
     fetchImages,
     saveNonImageAttachment,
@@ -12,10 +12,11 @@ import type { DiscordCapability } from '../capability';
 import type { CatchUpSessionRunner } from '../catchup';
 import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
 import type { ChannelMetadata } from '../channel-registry/types';
+import type { InboxManager } from '../inbox';
 import { MessageCoordinator } from '../message-coordinator';
 import { type createDynamicStatusGenerator, type PresenceManager } from '../presence';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { sendResponse } from '../response-sender';
+import { sendResponse, sendEnvelopeResponse } from '../response-sender';
 import type { BotStateManager } from '../state';
 import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from './conductor-processor';
@@ -155,6 +156,12 @@ interface SetupCoordinatorParams {
     activityLogger?:          ActivityLogger
     historyCoordinator?:      PersonHistoryCoordinator
     discordCapability?:       DiscordCapability
+    /**
+     * P10: only read by the conductor branch, to advance each channel's HANDLED watermark
+     * (`recordHandled`) once a batch's envelope has finished being handled (sent, `@@NO_RESPONSE@@`
+     * skip, or outbox-queued) — see `setupConductorCoordinator`'s own doc.
+     */
+    inboxManager?:            InboxManager
 
     /**
      * P9 conductor-mode dependencies. When `conversationConductor` is present, the coordinator's
@@ -233,6 +240,29 @@ export function toPlatformImages(images: FetchedImage[]): PlatformImage[] {
         width:        img.width,
         height:       img.height,
     }));
+}
+
+/**
+ * Groups `batch` by Discord channel id and picks, per channel, the message with the highest
+ * snowflake id — the "newest message of the batch" {@link InboxManager.recordHandled} advances
+ * the channel's HANDLED watermark to (P10). A batch normally spans one channel, but this groups
+ * defensively so a hypothetical multi-channel batch still advances every channel's watermark
+ * exactly once.
+ *
+ * Deliberately kept OUTSIDE the `Stryker disable all` region below: unlike that region's
+ * integration-glue functions, this is a pure, directly-testable helper with real branching logic
+ * (the snowflake comparison and the `!existing` guard), so it earns full mutation coverage rather
+ * than riding along with the composition-root disable.
+ */
+function newestMessagePerChannel(batch: Message[]): Map<string, Message> {
+    const newest = new Map<string, Message>();
+    for(const message of batch) {
+        const existing = newest.get(message.channelId);
+        if(!existing || BigInt(message.id) > BigInt(existing.id)) {
+            newest.set(message.channelId, message);
+        }
+    }
+    return newest;
 }
 
 /**
@@ -524,14 +554,31 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
  * id (`conductor-processor.ts` passes it through on every `ProcessResult`), not the triggering
  * Discord message id: a merged multi-message batch has one envelope id and potentially several
  * Discord message ids, and `deliver`'s guard is the same one `open()` seeds from crash-recovery
- * at boot (`params.deliveryGuard` is unused here — see conductor.ts's own module doc for why a
- * second, independently-seeded guard cannot provide the same idempotency). An explicit
- * `sessionTypeOverride` still guards against a deferred perch/catch-up transition firing on the
- * shim's idle transition between the turn settling and this call re-routing the reply (see
- * response-sender.ts's own note). `addRecentMessage`/the activity-log write and the perch/
- * catch-up resume-after-suspension blocks are kept unchanged from the legacy branch (folded gap:
- * the idle-status generator's inputs, and the two legacy runners' own suspend/resume lifecycle,
- * are unaffected by which processor is wired in).
+ * at boot (`params.deliveryGuard`/`params.journal` are unused here — `deliver` journals
+ * `response_delivered` on the conductor's own injected journal, the same object as
+ * `params.journal`, so there is no second write path — see conductor.ts's own module doc for why
+ * a second, independently-seeded guard cannot provide the same idempotency).
+ *
+ * P10: the actual send goes through {@link sendEnvelopeResponse} (client-based, no triggering
+ * `Message` to reply to/thread through) instead of the legacy `sendResponse`, and an
+ * outbox-queued send (`sent: false, queued: true`) counts as delivered too — the outbox now owns
+ * retrying it, so `deliver`'s journal write must still happen or a later boot's crash recovery
+ * would treat it as undelivered and resend a second copy. Only the `@@NO_RESPONSE@@` sentinel or
+ * a missing well-known channel (`sent: false` with no `queued`) skips the journal write. On every
+ * one of those three outcomes — sent, no-response skip, or outbox-queued — `inboxManager`'s
+ * per-channel HANDLED watermark advances (`recordHandled`, once per channel via
+ * {@link newestMessagePerChannel}): the outbox owns retrying a queued send, so the message is not
+ * "still unhandled" from the replay watermark's point of view. `addRecentMessage`/the
+ * activity-log write are kept unchanged from the legacy branch (folded gap: the idle-status
+ * generator's inputs are unaffected by which processor is wired in). The legacy branch's
+ * catch-up/perch resume-after-suspension calls ARE also kept here, unchanged: until P12 opens a
+ * perch conductor, `bot.ts` still constructs the legacy `catchUpSessionRunner`/`perchSessionRunner`
+ * (and, for perch, its scheduler) regardless of mode, and `handlers.ts`'s `handleModeInterruptions`
+ * still suspends them on a live Discord message — the ledger shim explicitly never touches
+ * `perching`/`catching_up` (see `ledger-shim.ts`'s own doc), so nothing else would ever resume a
+ * run this branch's own turn interrupted, leaving it suspended for the rest of the process
+ * lifetime. Only the conversation session's own `idle`/`processing_message` transitions are the
+ * ledger shim's exclusively, which is why the earlier `onProcessingEnd` above stays a no-op.
  * @param params The same params `setupCoordinatorIntegration` received.
  * @param conversationConductor Non-optional here — `setupCoordinatorIntegration` only calls this
  * when `params.conversationConductor` is defined.
@@ -539,8 +586,9 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
  */
 function setupConductorCoordinator(params: SetupCoordinatorParams, conversationConductor: Conductor): MessageCoordinator {
     const {
-        botStateManager, catchUpSessionRunner, perchSessionRunner, responseRouter, rateLimiter, readyClient,
-        contextPolicy, envelopeProvider, contextBuilder,
+        responseRouter, rateLimiter, readyClient, botStateManager,
+        contextPolicy, envelopeProvider, contextBuilder, inboxManager,
+        catchUpSessionRunner, perchSessionRunner,
     } = params;
 
     const coordinator = new MessageCoordinator({
@@ -551,8 +599,8 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
             // ../state/ledger-shim.ts, driven by the conductor's own ledger — never by the
             // coordinator's processing-end signal.
         },
-        // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- onResponse coordinates idempotent delivery, ring-buffer, activity-log, session-resume; branching is inherent
-        onResponse: async (result, discordMessage) => {
+        // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- onResponse coordinates idempotent delivery, the per-channel HANDLED watermark, ring-buffer, activity-log and legacy catch-up/perch resume writes (mirrors the legacy branch's own disable at line 306); branching is inherent
+        onResponse: async (result, discordMessage, batch) => {
             if(result.response && discordMessage) {
                 params.addRecentMessage?.(result.response, 'izzy');
 
@@ -565,23 +613,22 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
                 } else {
                     try {
                         const deliverResult = await conversationConductor.deliver(envelopeId, async () => {
-                            const sendResult = await sendResponse({
+                            const sendResult = await sendEnvelopeResponse({
+                                envelopeId,
+                                kind:              'discord',
+                                channelId:         createChannelId(discordMessage.channelId),
+                                text:              result.response!,
                                 responseRouter,
-                                botStateManager,
-                                response:            result.response!,
-                                message:             discordMessage,
+                                client:            readyClient,
                                 rateLimiter,
-                                client:              readyClient,
-                                useFallbackOnError:  false,
-                                discordCapability:   params.discordCapability,
-                                sessionTypeOverride: discordMessage.channel.isDMBased() ? 'dm' : 'processing_message',
+                                discordCapability: params.discordCapability,
                             });
-                            if(!sendResult.sent) {
-                                // Not an error (outbox-queued while Discord is offline, or
-                                // routing skipped the send) — throwing here is deliver()'s only
-                                // way to learn the send did not actually happen, so it does not
-                                // journal a response_delivered row or mark the guard for
-                                // something that was never actually delivered.
+                            if(!sendResult.sent && !sendResult.queued) {
+                                // Genuinely nothing to journal — the @@NO_RESPONSE@@ sentinel or a
+                                // missing well-known channel. Throwing here is deliver()'s only way
+                                // to learn the send did not happen at all, so it does not journal a
+                                // response_delivered row or mark the guard for something that was
+                                // never actually delivered (or queued for later delivery).
                                 throw new ResponseNotSentError();
                             }
                             return { channelId: discordMessage.channelId, messageIds: [] };
@@ -592,6 +639,21 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
                     } catch (err) {
                         if(!(err instanceof ResponseNotSentError)) {
                             logger.error({ err, envelopeId, msg: 'Conductor response delivery failed' });
+                        }
+                    }
+
+                    // P10: advance the per-channel HANDLED watermark on every one of the three
+                    // outcomes above (sent, no-response skip, or outbox-queued) — only an
+                    // interrupted turn with no response at all (the outer `if` above being false)
+                    // leaves a batch's messages unhandled for a future crash replay.
+                    if(inboxManager) {
+                        for(const [channelId, newestMessage] of newestMessagePerChannel(batch)) {
+                            try {
+                                // eslint-disable-next-line no-await-in-loop -- sequential per-channel watermark writes, bounded by the batch's small channel count
+                                await inboxManager.recordHandled(createChannelId(channelId), newestMessage.id, newestMessage.createdAt.toISOString());
+                            } catch (err) {
+                                logger.warn({ err, channelId, msg: 'Failed to record handled watermark' });
+                            }
                         }
                     }
                 }
@@ -624,10 +686,12 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
 
             params.setLastSessionId?.(result.sessionId);
 
-            // Resume catch-up/perch if suspended — identical to the legacy branch.
+            // Resume catch-up/perch if a live message interrupted a suspended legacy run — kept
+            // identical to the legacy branch (see this function's own doc for why the ledger shim
+            // does not make these unnecessary until P12 retires the legacy runners entirely).
             if(botStateManager.getMode() === 'idle' && catchUpSessionRunner?.isSuspended()) {
                 logger.info({ msg: 'Resuming catch-up after suspension' });
-                void catchUpSessionRunner.resumeAfterSuspension().catch((error) => {
+                void catchUpSessionRunner.resumeAfterSuspension().catch((error: unknown) => {
                     const errorMsg = error instanceof Error ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume catch-up after suspension' });
                     catchUpSessionRunner.clearSuspension();
@@ -636,7 +700,7 @@ function setupConductorCoordinator(params: SetupCoordinatorParams, conversationC
 
             if(botStateManager.getMode() === 'idle' && perchSessionRunner?.isSuspended()) {
                 logger.info({ msg: 'Resuming perch after suspension' });
-                void perchSessionRunner.resumeAfterSuspension().catch((error) => {
+                void perchSessionRunner.resumeAfterSuspension().catch((error: unknown) => {
                     const errorMsg = error instanceof Error ? error.message : String(error);
                     logger.error({ error: errorMsg, msg: 'Failed to resume perch after suspension' });
                     perchSessionRunner.clearSuspension();

@@ -93,6 +93,8 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
         session: {
             mode:                    env.get('SESSION_MODE').default('oneshot').asString(),
             compactThresholdPercent: env.get('SESSION_COMPACT_THRESHOLD_PERCENT').asIntPositive(),
+            shutdownDeadlineMs:      env.get('SESSION_SHUTDOWN_DEADLINE_MS').asIntPositive(),
+            shutdownTurnWaitMs:      env.get('SESSION_TURN_WAIT_MS').asIntPositive(),
         },
         adminDiscordUserId: resources.AdminDiscordUserId.value,
         email:              resources.EmailUser.value

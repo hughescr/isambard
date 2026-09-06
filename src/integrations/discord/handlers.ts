@@ -5,6 +5,7 @@ import type { CatchUpSessionRunner } from './catchup';
 import type { ChannelRegistryManager, DMTracker } from './channel-registry';
 import { inferImageContentType } from './content-type';
 import type { InboxManager } from './inbox';
+import type { IngressGate } from './ingress-gate';
 import type { MessageCoordinator } from './message-coordinator';
 import { withDiscordRetry } from './retry';
 import type { BotStateManager } from './state';
@@ -156,6 +157,16 @@ interface MessageHandlerOptions {
      * unaffected: those runners keep owning their own modes until P12 retires them.
      */
     conductorMode?: boolean
+
+    /**
+     * Optional ingress gate (P10, conductor mode). When supplied, the checkpoint is written
+     * first (receipt-time lastSeen, unconditionally), then the gate decides whether the message
+     * dispatches to the coordinator now ('pass'), or is buffered/dropped by the boot sequence's
+     * gate — a message arriving during boot's replay is answered exactly once via the gate's
+     * `onDrain`, not by this handler. Omitted entirely on the oneshot path, which keeps its
+     * original dispatch-then-checkpoint order unchanged.
+     */
+    ingressGate?: IngressGate<Message>
 }
 
 /**
@@ -329,7 +340,6 @@ async function handleModeInterruptions(
 /**
  * Helper function to update inbox checkpoint after message processing.
  */
-// Stryker disable StringLiteral,LogicalOperator,BlockStatement: Optional inbox integration - checkpoint update for catch-up tracking; BlockStatement equivalent (fire-and-forget checkpoint, no tests exercise this handler path)
 async function updateInboxCheckpoint(
     message: Message,
     inboxManager: InboxManager | undefined,
@@ -344,7 +354,6 @@ async function updateInboxCheckpoint(
         );
     }
 }
-// Stryker restore StringLiteral,LogicalOperator,BlockStatement
 
 /**
  * Helper function to check if a message should be ignored.
@@ -515,24 +524,38 @@ async function handlePendingQuestion(
     return true; // Early return - don't continue processing
 }
 
-export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
-    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, conductorMode } = options;
-
-    // Helper to create DiscordMessageContext from Discord.js Message
-    const createContext = (message: Message): DiscordMessageContext => {
-        const attachments = extractAttachmentMetadata(message);
-        return {
-            guildId:     createGuildId(message.guild?.id ?? 'DM'),
-            channelId:   createChannelId(message.channel.id),
-            userId:      createUserId(message.author.id),
-            username:    message.author.username,
-            messageId:   message.id,
-            content:     message.cleanContent,
-            timestamp:   message.createdAt.toISOString(),
-            botUserId,
-            attachments: attachments.length > 0 ? attachments : undefined,
-        };
+/**
+ * Converts a Discord.js Message into a DiscordMessageContext and hands it off to the message
+ * coordinator (batching, interruption, and onResponse are the coordinator's concern from here).
+ *
+ * Extracted so both call sites — the handler's own 'pass'/no-gate dispatch below, and the ingress
+ * gate's `onDrain` callback (wired up where the gate is constructed) — share exactly one path
+ * into the coordinator, rather than re-deriving the context independently.
+ */
+export function dispatchToCoordinator(
+    message: Message,
+    botUserId: UserId,
+    coordinator: MessageCoordinator
+): void {
+    const attachments = extractAttachmentMetadata(message);
+    const context: DiscordMessageContext = {
+        guildId:     createGuildId(message.guild?.id ?? 'DM'),
+        channelId:   createChannelId(message.channel.id),
+        userId:      createUserId(message.author.id),
+        username:    message.author.username,
+        messageId:   message.id,
+        content:     message.cleanContent,
+        timestamp:   message.createdAt.toISOString(),
+        botUserId,
+        attachments: attachments.length > 0 ? attachments : undefined,
     };
+
+    const channel = isTypingChannel(message.channel) ? message.channel : undefined;
+    coordinator.handleMessage(context, message, channel);
+}
+
+export function createMessageHandler(options: MessageHandlerOptions): (message: Message) => Promise<void> {
+    const { botUserId, channelRegistry, addRecentMessage, coordinator, questionRegistry, answerClassifier, inboxManager, catchUpSessionRunner, botStateManager, perchSessionRunner, dmTracker, conductorMode, ingressGate } = options;
 
     return async (message: Message) => {
         logger.debug({
@@ -610,13 +633,21 @@ export function createMessageHandler(options: MessageHandlerOptions): (message: 
         // Track this message for context-aware idle status
         addRecentMessage?.(message.cleanContent, 'user');
 
-        // Convert Discord.js Message to DiscordMessageContext
-        const context = createContext(message);
-        // Hand off to coordinator (it will handle batching, interruption, and onResponse)
-        const channel = isTypingChannel(message.channel) ? message.channel : undefined;
-        coordinator.handleMessage(context, message, channel);
+        if(ingressGate) {
+            // Conductor mode: checkpoint lastSeen on receipt FIRST (unconditionally, before the
+            // gate is consulted), then let the ingress gate decide whether this message dispatches
+            // now or is buffered/dropped for the boot sequence to handle via replay + gate.open().
+            await updateInboxCheckpoint(message, inboxManager, shouldRespond);
 
-        // Update checkpoint to mark this message as "seen" for catch-up purposes
-        await updateInboxCheckpoint(message, inboxManager, shouldRespond);
+            if(ingressGate.admit(message) !== 'pass') {
+                return;
+            }
+
+            dispatchToCoordinator(message, botUserId, coordinator);
+        } else {
+            // Oneshot mode (no gate supplied): unchanged — dispatch first, checkpoint after.
+            dispatchToCoordinator(message, botUserId, coordinator);
+            await updateInboxCheckpoint(message, inboxManager, shouldRespond);
+        }
     };
 }

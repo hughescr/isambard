@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import type { Client, TextChannel } from 'discord.js';
+import type { Client, Message, TextChannel } from 'discord.js';
 import { chain } from 'lodash-es';
 import type { CatchUpSessionRunner } from '../catchup';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../channel-registry';
 import { createMessageHandler } from '../handlers';
 import type { InboxManager } from '../inbox';
+import type { IngressGate } from '../ingress-gate';
 import type { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import type { BotStateManager } from '../state';
@@ -198,6 +199,8 @@ interface SetupMessageProcessingParams {
     dmTracker:            DMTracker
     /** P9: forwarded to `createMessageHandler` — when true, `handleStateAndInbox` skips `startProcessingMessage` (the ledger shim owns that transition in conductor mode). */
     conductorMode?:       boolean
+    /** P10: forwarded to `createMessageHandler` — gates live messages during boot in conductor mode. Omitted on the oneshot path. */
+    ingressGate?:         IngressGate<Message>
 }
 
 /**
@@ -220,6 +223,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         perchSessionRunner,
         dmTracker,
         conductorMode,
+        ingressGate,
     } = params;
 
     // Register message handler AFTER channel registry is initialized
@@ -238,6 +242,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         perchSessionRunner,
         dmTracker,
         conductorMode,
+        ingressGate,
     }), logger, 'messageCreate handler'));
     // Stryker restore StringLiteral
 }

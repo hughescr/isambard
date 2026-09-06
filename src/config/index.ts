@@ -17,6 +17,7 @@ export {
     type VectorIndexConfig,
     type SessionConfig,
     type SessionMode,
+    type Config,
     idleSignalsConfigSchema,
     type IdleSignalsConfig
 } from './schemas';

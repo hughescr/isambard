@@ -10,6 +10,7 @@ import type { DMTracker } from '@/integrations/discord/channel-registry/dm-track
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import { createMessageHandler } from '@/integrations/discord/handlers';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
+import type { IngressGate, IngressGateAdmitResult } from '@/integrations/discord/ingress-gate';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
@@ -25,6 +26,17 @@ function createMockCoordinator() {
     } as unknown as MessageCoordinator & {
         handleMessage: ReturnType<typeof mock>
     };
+}
+
+// Helper to create a mock ingress gate for tests — only admit()'s behaviour varies per test,
+// open()/stop()/state() are unused stubs so the mock satisfies IngressGate<Message>.
+function createMockIngressGate(admitResult: () => IngressGateAdmitResult) {
+    return {
+        admit: mock(admitResult),
+        open:  mock(() => undefined),
+        stop:  mock(() => undefined),
+        state: mock(() => 'open' as const),
+    } as unknown as IngressGate<Message> & { admit: ReturnType<typeof mock> };
 }
 
 describe('Discord Event Handlers', () => {
@@ -1400,6 +1412,158 @@ describe('Discord Event Handlers', () => {
                 // Third arg should be the channel itself
                 const thirdArg = mockCoordinator.handleMessage.mock.calls[0][2];
                 expect(thirdArg).toBe(mockTextChannel);
+            });
+        });
+
+        describe('ingress gate integration (conductor mode)', () => {
+            function createMockInboxManager() {
+                return {
+                    updateChannelMetadata: mock(() => undefined),
+                    recordActivity:        mock(async () => undefined),
+                } as unknown as InboxManager & { recordActivity: ReturnType<typeof mock> };
+            }
+
+            it('records activity with guildId \'DM\' for a direct message (no guild)', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const ingressGate = createMockIngressGate(() => 'buffered');
+                const dmMessage = { ...mockMessage, guild: null, channel: mockDMChannel, channelId: mockDMChannel.id } as unknown as Message;
+
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                });
+
+                await handler(dmMessage);
+
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledWith(
+                    expect.anything(),
+                    'DM',
+                    expect.anything(),
+                    expect.anything()
+                );
+            });
+
+            it('checkpoints but does not enqueue when the gate is buffering', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const ingressGate = createMockIngressGate(() => 'buffered');
+
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                });
+
+                await handler(mockMessage);
+
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(ingressGate.admit).toHaveBeenCalledWith(mockMessage);
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+            });
+
+            it('checkpoints and enqueues when the gate is open (pass)', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const ingressGate = createMockIngressGate(() => 'pass');
+
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                });
+
+                await handler(mockMessage);
+
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+            });
+
+            it('checkpoints only (does not enqueue) when the gate is stopped', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const ingressGate = createMockIngressGate(() => 'dropped');
+
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                });
+
+                await handler(mockMessage);
+
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
+            });
+
+            it('checkpoints strictly before the gate is consulted', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const callOrder: string[] = [];
+                mockInboxManager.recordActivity = mock(async () => {
+                    callOrder.push('checkpoint');
+                });
+                const ingressGate = createMockIngressGate(() => {
+                    callOrder.push('admit');
+                    return 'pass';
+                });
+
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                    conductorMode:   true,
+                    ingressGate,
+                });
+
+                await handler(mockMessage);
+
+                expect(callOrder).toEqual(['checkpoint', 'admit']);
+            });
+
+            it('without a gate (oneshot), behaviour is unchanged: dispatch happens, then checkpoint', async () => {
+                const mockCoordinator = createMockCoordinator();
+                const mockInboxManager = createMockInboxManager();
+                const callOrder: string[] = [];
+                mockCoordinator.handleMessage = mock(() => {
+                    callOrder.push('dispatch');
+                });
+                mockInboxManager.recordActivity = mock(async () => {
+                    callOrder.push('checkpoint');
+                });
+
+                const handler = createMessageHandler({
+                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
+                    botUserId:       '999999999999999999' as UserId,
+                    coordinator:     mockCoordinator,
+                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
+                    inboxManager:    mockInboxManager,
+                });
+
+                await handler(mockMessage);
+
+                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
+                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
+                expect(callOrder).toEqual(['dispatch', 'checkpoint']);
             });
         });
     });

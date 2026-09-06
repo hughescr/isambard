@@ -1,7 +1,9 @@
 export type {
     ServiceName,
     ServiceErrorCategory,
-    ServiceHealthEntry
+    ServiceHealthEntry,
+    ServiceHealthChange,
+    HealthChangeListener
 } from './types';
 
 export type { ServiceHealthRegistry } from './health-registry';

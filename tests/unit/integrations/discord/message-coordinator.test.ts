@@ -1269,6 +1269,74 @@ describe('MessageCoordinator', () => {
             await Promise.resolve(); // Flush again to ensure completion
         });
 
+        it('should invoke onResponse with a batch containing the single message on the fresh path', async () => {
+            const onResponseMock = mock(async () => undefined);
+            coordinator = new MessageCoordinator({
+                debounceMs: 100,
+                onResponse: onResponseMock
+            });
+            coordinator.setProcessor(processorMock);
+
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(50);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(onResponseMock).toHaveBeenCalledTimes(1);
+            const callArgs = onResponseMock.mock.calls[0] as unknown[];
+            const batch = callArgs[2] as Message[];
+            expect(batch).toEqual([mockMessage]);
+        });
+
+        it('should invoke onResponse with the batch of non-null Discord messages in arrival order on the resumed path', async () => {
+            const onResponseMock = mock(async () => undefined);
+            coordinator = new MessageCoordinator({
+                debounceMs: 100,
+                onResponse: onResponseMock
+            });
+
+            // Make processor slow to allow interruption
+            const slowProcessor: MessageProcessor = async (_contexts: DiscordMessageContext[], _resumeContext: ResumeContext | null, abortSignal: AbortSignal) => {
+                await new Promise((resolve) => {
+                    setTimeout(resolve, 200);
+                });
+                return {
+                    response:       'Batch response',
+                    wasInterrupted: abortSignal.aborted,
+                    streamTracker:  new StreamTracker(),
+                };
+            };
+            processorMock.mockImplementation(slowProcessor);
+            coordinator.setProcessor(processorMock);
+
+            // First (original) message — will be re-queued with discordMessage: null on interrupt
+            coordinator.handleMessage(mockContext, mockMessage);
+            jest.advanceTimersByTime(10);
+
+            // Second message arrives during processing (Case 1)
+            const msg2Context = { ...mockContext, messageId: 'msg-002', content: 'Second' };
+            const msg2 = { ...mockMessage, id: 'msg-002', content: 'Second' } as unknown as Message;
+            coordinator.handleMessage(msg2Context, msg2);
+            jest.advanceTimersByTime(10);
+
+            // Third message arrives before the debounce timer fires (still Case 1, resets debounce)
+            const msg3Context = { ...mockContext, messageId: 'msg-003', content: 'Third' };
+            const msg3 = { ...mockMessage, id: 'msg-003', content: 'Third' } as unknown as Message;
+            coordinator.handleMessage(msg3Context, msg3);
+
+            // Timeline: first processing finishes at 200ms (interrupted), debounce started fresh
+            // at t=20ms so fires at t=120ms (already elapsed by the time processing finishes),
+            // then resumed processing runs another 200ms.
+            jest.advanceTimersByTime(450);
+
+            expect(onResponseMock).toHaveBeenCalledTimes(1);
+            const callArgs = onResponseMock.mock.calls[0] as unknown[];
+            const batch = callArgs[2] as Message[];
+            // Original message (msg-001) was re-queued with discordMessage: null and is excluded;
+            // only the two new messages carry a real Message object, in arrival order.
+            expect(batch.map(m => m.id)).toEqual(['msg-002', 'msg-003']);
+        });
+
         it('should invoke onResponse with null message for re-queued messages', async () => {
             const onResponseMock = mock(async () => undefined);
             coordinator = new MessageCoordinator({

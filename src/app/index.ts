@@ -7,3 +7,9 @@ export { createMCPServers, createMcpSharedDeps, createMcpServerInstances } from 
 export type { McpSharedDeps, McpServerRole, CreateMcpServerInstancesOptions } from './mcp-servers';
 export { loadIdentityContext } from './identity-loader';
 export { createConversationConductor, type CreateConversationConductorParams, type ConversationConductorResult } from './sessions';
+export {
+    registerSignalHandlers,
+    createDiscordRecoveryHandler,
+    type RegisterSignalHandlersParams,
+    type CreateDiscordRecoveryHandlerParams
+} from './lifecycle';

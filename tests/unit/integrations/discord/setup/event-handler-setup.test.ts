@@ -12,9 +12,12 @@ import type { Client, Message } from 'discord.js';
 import * as channelRegistryModule from '@/integrations/discord/channel-registry/discovery';
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
+import * as handlersModule from '@/integrations/discord/handlers';
+import type { IngressGate } from '@/integrations/discord/ingress-gate';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
-import { initializeChannelRegistry, setupChannelCleanupHandlers } from '@/integrations/discord/setup/event-handler-setup';
+import { initializeChannelRegistry, setupChannelCleanupHandlers, setupMessageProcessing } from '@/integrations/discord/setup/event-handler-setup';
+import type { BotStateManager } from '@/integrations/discord/state';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { ServiceHealthRegistry } from '@/services';
 
@@ -836,5 +839,70 @@ describe('setupChannelCleanupHandlers', () => {
             expect(calledWith[0]).toBe(channelId);
             expect(calledWith.filter(item => typeof item === 'object' && item !== null)).toHaveLength(0);
         });
+    });
+});
+
+describe('setupMessageProcessing', () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('forwards the ingress gate to createMessageHandler', () => {
+        const createMessageHandlerSpy = spyOn(handlersModule, 'createMessageHandler');
+        const { client } = makeClientMock();
+        const readyClient = { user: { id: '999999999999999999' } } as unknown as Client;
+        const coordinator = {} as unknown as MessageCoordinator;
+        const channelRegistry = {} as unknown as ChannelRegistryManager;
+        const botStateManager = {} as unknown as BotStateManager;
+        const ingressGate = { admit: mock(), open: mock(), stop: mock(), state: mock() } as unknown as IngressGate<Message>;
+
+        setupMessageProcessing({
+            client,
+            readyClient,
+            channelRegistry,
+            addRecentMessage:     mock(),
+            coordinator,
+            questionRegistry:     undefined as never,
+            answerClassifier:     undefined as never,
+            inboxManager:         undefined,
+            catchUpSessionRunner: undefined,
+            botStateManager,
+            perchSessionRunner:   undefined,
+            dmTracker:            undefined as never,
+            conductorMode:        true,
+            ingressGate,
+        });
+
+        expect(createMessageHandlerSpy).toHaveBeenCalledTimes(1);
+        const callArgs = createMessageHandlerSpy.mock.calls[0][0];
+        expect(callArgs.ingressGate).toBe(ingressGate);
+    });
+
+    test('omits the ingress gate when not supplied (oneshot mode)', () => {
+        const createMessageHandlerSpy = spyOn(handlersModule, 'createMessageHandler');
+        const { client } = makeClientMock();
+        const readyClient = { user: { id: '999999999999999999' } } as unknown as Client;
+        const coordinator = {} as unknown as MessageCoordinator;
+        const channelRegistry = {} as unknown as ChannelRegistryManager;
+        const botStateManager = {} as unknown as BotStateManager;
+
+        setupMessageProcessing({
+            client,
+            readyClient,
+            channelRegistry,
+            addRecentMessage:     mock(),
+            coordinator,
+            questionRegistry:     undefined as never,
+            answerClassifier:     undefined as never,
+            inboxManager:         undefined,
+            catchUpSessionRunner: undefined,
+            botStateManager,
+            perchSessionRunner:   undefined,
+            dmTracker:            undefined as never,
+        });
+
+        expect(createMessageHandlerSpy).toHaveBeenCalledTimes(1);
+        const callArgs = createMessageHandlerSpy.mock.calls[0][0];
+        expect(callArgs.ingressGate).toBeUndefined();
     });
 });

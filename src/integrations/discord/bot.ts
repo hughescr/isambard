@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { MessageFlags, type Client } from 'discord.js';
+import { MessageFlags, type Client, type Message } from 'discord.js';
 import type { AllowlistCommandHandler } from './allowlist-commands';
 import type { AllowlistInteractionHandler } from './allowlist-interaction-handler';
 import type { DiscordCapability } from './capability';
@@ -11,8 +11,9 @@ import {
 import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
 import { createDiscordClient } from './client';
 import type { ContactCommandHandler, ContactApprovalHandler } from './contact-commands';
-import { createReadyHandler, createErrorHandler } from './handlers';
+import { createReadyHandler, createErrorHandler, dispatchToCoordinator } from './handlers';
 import type { InboxManager } from './inbox';
+import { createIngressGate, type IngressGate } from './ingress-gate';
 import { createInteractionHandler } from './interactions';
 import type { MessageCoordinator } from './message-coordinator';
 import {
@@ -21,7 +22,7 @@ import {
 } from './presence';
 import { DiscordRateLimiter } from './rate-limiter';
 import type { BskySetupResult } from './setup/bsky-setup';
-import { setupCatchUpSessionRunner, setupInboxAndCatchUp } from './setup/catchup-setup';
+import { setupCatchUpSessionRunner, setupInboxAndCatchUp, submitConductorCatchUp } from './setup/catchup-setup';
 import type { DiscordEnvelopeProvider } from './setup/conductor-processor';
 import { setupCoordinatorIntegration } from './setup/coordinator-setup';
 import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeInput } from './setup/discord-envelope-provider';
@@ -34,7 +35,8 @@ import {
     type BotStateManager
 } from './state';
 import { installLedgerShim } from './state/ledger-shim';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal  } from '@/agent';
+import { createUserId } from './types';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchScheduler, type PerchSessionRunner, type PerchConfig, type ClaudeAgent, type ContextBuilder, type EventDeltaTracker, type ActivityLogger, type PersonHistoryCoordinator, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type DeliveryGuard, type SessionJournal, type Clock, type Shutdown  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -252,6 +254,16 @@ export interface DiscordBotOptions {
     contextPolicy?:         ContextPolicy
     deliveryGuard?:         DeliveryGuard
     journal?:               SessionJournal
+    /**
+     * P10: forwarded verbatim to `conversationConductor.shutdown` via `createShutdown` — see
+     * `config.session.shutdownTurnWaitMs`/`shutdownDeadlineMs`. Defaults match the config
+     * schema's own defaults (60s/120s) so a test or caller that omits them still gets a sane
+     * bound rather than an unbounded wait.
+     */
+    shutdownTurnWaitMs?:    number
+    shutdownDeadlineMs?:    number
+    /** Injected for shutdown's own timer — defaults to the real wall clock. */
+    clock?:                 Clock
 }
 
 /**
@@ -277,6 +289,15 @@ export interface DiscordBot {
      * bot has never completed its first clientReady sequence).
      */
     triggerCatchUp(): Promise<void>
+
+    /**
+     * P10: the cross-session shutdown orchestrator built for conductor mode (`createShutdown`),
+     * exposed so a caller (the signal handlers in `src/app/lifecycle.ts`) can run it directly
+     * without going through the full `stop()` teardown when only the conductor's own bounded
+     * wait/interrupt/flush/close sequence is wanted. `undefined` in oneshot mode, or before the
+     * conductor has opened.
+     */
+    shutdown?: Shutdown
 
     /**
      * For testing - expose internal state manager (Phase 2).
@@ -329,7 +350,8 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, deliveryGuard, journal } = options;
+    const { config, identityContext, agent, client: providedClient, inboxManager, memoryBackend, botStateManager: providedBotStateManager, channelRegistry, eventDeltaTracker, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, historyCoordinator, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, deliveryGuard, journal, shutdownTurnWaitMs, shutdownDeadlineMs, clock: providedClock } = options;
+    const clock: Clock = providedClock ?? systemClock;
 
     // Hot reload protection: Reuse existing client if available in global state
     // During Bun hot reload, the module is re-executed but global state persists.
@@ -369,6 +391,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // was never provided, or if open() rejected.
     let conductorOpened = false;
     let unsubscribeLedgerShim: (() => void) | undefined;
+    // P10: the ingress gate (buffers live messages during boot), the cross-session shutdown
+    // orchestrator, and a captured reference to clientReady's own `responseRouter` (needed by
+    // `triggerCatchUp`'s conductor-mode branch, which runs outside clientReady's own scope) —
+    // all built once, inside the same conductor-open block as `conductorOpened = true` below,
+    // and all `undefined` in oneshot mode or before the conductor has opened.
+    let ingressGate: IngressGate<Message> | undefined;
+    let shutdownRef: Shutdown | undefined;
+    let responseRouterRef: ResponseRouter | undefined;
 
     // Use provided bot state manager or create a new one
     const botStateManager: BotStateManager = providedBotStateManager ?? new BotStateManagerImpl({
@@ -706,6 +736,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             const responseRouter = new ResponseRouter({
                 manager: channelRegistry,
             });
+            // P10: captured for triggerCatchUp's conductor-mode branch, which runs outside
+            // clientReady's own scope (see the outer `let responseRouterRef` declaration).
+            responseRouterRef = responseRouter;
 
             // Create catch-up session runner if all dependencies available (must be created before inbox init)
             // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
@@ -769,6 +802,27 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     await withTimeout(conversationConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'conductor.open() timed out');
                     setLastSessionId(ledgerStore.get().sessionId);
                     unsubscribeLedgerShim = installLedgerShim({ ledgerStore, botStateManager, logger });
+                    // P10: created here (before setupCoordinatorIntegration/setupMessageProcessing
+                    // pick a processor) so both can be handed the SAME gate/shutdown instances.
+                    // `onDrain` reads the outer `coordinator` variable at CALL time (gate.open()
+                    // only ever runs from the boot sequence, well after setupCoordinatorIntegration
+                    // has assigned it below), not at this closure's definition time.
+                    ingressGate = createIngressGate<Message>({
+                        onDrain: (message) => {
+                            if(coordinator) {
+                                dispatchToCoordinator(message, createUserId(readyClient.user!.id), coordinator);
+                            }
+                        },
+                    });
+                    shutdownRef = createShutdown({
+                        sessions:    [{ name: 'conversation', shutdown: opts => conversationConductor.shutdown(opts) }],
+                        journal,
+                        stopIngress: () => ingressGate?.stop(),
+                        clock,
+                        turnWaitMs:  shutdownTurnWaitMs ?? 60_000,
+                        deadlineMs:  shutdownDeadlineMs ?? 120_000,
+                        logger,
+                    });
                     conductorOpened = true;
                 } catch (err) {
                     logger.error({
@@ -837,6 +891,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                             journal:               journal!,
                             envelopeProvider,
                             contextBuilder,
+                            inboxManager,
                         }
                         : {}),
                 });
@@ -857,6 +912,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     perchSessionRunner,
                     dmTracker,
                     conductorMode: conductorOpened,
+                    ingressGate,
                 });
             }
 
@@ -870,7 +926,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Initialize inbox on startup and then check for catch-up
             // Stryker disable BlockStatement: composition root — optional dep wiring, not unit-testable
             if(inboxManager) {
-                setupInboxAndCatchUp({
+                void setupInboxAndCatchUp({
                     inboxManager,
                     readyClient,
                     botStateManager,
@@ -879,6 +935,16 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     memoryBackend:  memoryBackend!,
                     perchConfig:    options.perchConfig,
                     healthRegistry: options.healthRegistry,
+                    ...(conductorOpened
+                        ? {
+                            conversationConductor: conversationConductor!,
+                            journal:               journal!,
+                            responseRouter,
+                            rateLimiter,
+                            ingressGate:           ingressGate!,
+                            discordCapability,
+                        }
+                        : {}),
                 });
             }
             // Stryker restore BlockStatement
@@ -897,17 +963,19 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             if(coordinator) {
                 coordinator.stop();
             }
-            // P9: coordinator.stop() -> conductor.shutdown() -> shim unsubscribe, ahead of the
-            // legacy runner aborts and botStateManager.stop() below — best-effort (wait bounded
-            // for the running turn, else interrupt; the full graceful-drain sequence is P10's).
+            // P10: coordinator.stop() -> gate.stop() -> shutdown.run() (the cross-session
+            // wait/interrupt/flush/close sequence, bounded by config.session.shutdownTurnWaitMs/
+            // shutdownDeadlineMs — see createShutdown) -> shim unsubscribe, ahead of the legacy
+            // runner aborts and botStateManager.stop() below.
             // Stryker disable all: bot.ts IS in the mutate glob (stryker.conf.mjs) — this block is
             // disabled because the shutdown() call ORDER (asserted by bot.test.ts's 'stop order'
             // conductor-mode test) is the behaviour that matters; the catch's error-message
-            // formatting and the exact turnWaitMs/deadlineMs literals are not independently
-            // asserted and are accepted as untested composition-root wiring.
+            // formatting is not independently asserted and is accepted as untested
+            // composition-root wiring.
             if(conductorOpened && conversationConductor) {
+                ingressGate?.stop();
                 try {
-                    await conversationConductor.shutdown({ turnWaitMs: 5000, deadlineMs: 10_000 });
+                    await shutdownRef?.run();
                 } catch (err) {
                     logger.warn({
                         error: err instanceof Error ? err.message : String(err),
@@ -975,6 +1043,31 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
 
         // Stryker disable BlockStatement: Composition root — reconnect catch-up trigger is not unit-testable
         async triggerCatchUp(): Promise<void> {
+            // P10: conductor mode submits a catch-up envelope through the conductor — the same
+            // path the boot sequence uses (`submitConductorCatchUp`) — instead of the legacy
+            // catch-up-runner branch below.
+            if(conductorOpened && conversationConductor && inboxManager && responseRouterRef) {
+                try {
+                    await inboxManager.loadUnread();
+                    // Mirrors the legacy branch's shouldStartCatchUp() gate (and runBootSequence's
+                    // own unreadCount() > 0 gate) — without it, a flaky reconnect loop would submit
+                    // a full turn on every reconnect even with nothing new to report.
+                    if(inboxManager.getUnreadOverview().totalUnread > 0) {
+                        await submitConductorCatchUp({
+                            inboxManager,
+                            conversationConductor,
+                            responseRouter: responseRouterRef,
+                            client,
+                            rateLimiter,
+                            discordCapability,
+                        });
+                    }
+                } catch (err) {
+                    logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Reconnect catch-up trigger failed' });
+                }
+                return;
+            }
+
             if(!catchUpSessionRunner || !inboxManager) {
                 return;
             }
@@ -990,6 +1083,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
         },
         // Stryker restore BlockStatement
+
+        get shutdown(): Shutdown | undefined {
+            return shutdownRef;
+        },
 
         // For testing - expose internal state manager (Phase 2)
         _botStateManager: botStateManager,

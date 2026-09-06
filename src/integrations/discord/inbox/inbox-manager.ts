@@ -595,4 +595,110 @@ export class InboxManager {
     getChannelName(channelId: ChannelId): string | undefined {
         return this.channelMetadata.get(channelId)?.channelName;
     }
+
+    /**
+     * Advances the per-channel HANDLED watermark once a batch's envelope has finished being
+     * handled (sent, `@@NO_RESPONSE@@` skip, or outbox-queued). Delegates to
+     * {@link CheckpointManager.updateHandled}, which is a no-op when the existing watermark is
+     * already at or ahead of `messageId` and throws if the channel has no checkpoint yet.
+     *
+     * @param channelId - Discord channel ID
+     * @param messageId - Discord message ID (snowflake) of the newest message in the handled batch
+     * @param at - ISO 8601 timestamp when the batch was handled
+     *
+     * @example
+     * ```typescript
+     * await inboxManager.recordHandled(channelId, newestBatchMessage.id, newestBatchMessage.createdAt.toISOString());
+     * ```
+     */
+    async recordHandled(channelId: ChannelId, messageId: string, at: string): Promise<void> {
+        await this.checkpointManager.updateHandled(channelId, messageId, at);
+
+        // Stryker disable ObjectLiteral,StringLiteral: Logging for observability
+        logger.debug({
+            channelId,
+            messageId,
+            at,
+            msg: 'Channel handled watermark recorded',
+        });
+        // Stryker restore ObjectLiteral,StringLiteral
+    }
+
+    /**
+     * Replays messages that were received (checkpointed via `recordActivity`/`updateLastSeen`)
+     * but never handled before a crash — the gap between each channel's HANDLED watermark and its
+     * lastSeenAt. Used by the boot sequence (P10) to answer exactly the received-but-unhandled
+     * messages once, via a dedicated Discord search per channel rather than the in-memory unread
+     * map (`loadUnread`/`unreadMessages` are untouched by this method).
+     *
+     * A channel with no `handled` field (first boot after upgrading to the conductor path, or a
+     * channel that has never finished handling a batch) replays nothing. A channel whose
+     * `handled.at` is already at or after its `lastSeenAt` has nothing unhandled and is skipped
+     * without querying Discord.
+     *
+     * @param options.excludeChannelIds - Channels to skip entirely (e.g. a well-known channel
+     * routed to a different conductor, such as perch-time — P12 routes that channel's replay to
+     * the perch conductor instead).
+     * @returns Unread messages for every unhandled channel, channel-major (grouped per channel,
+     * each channel's messages in ascending snowflake/id order)
+     *
+     * @example
+     * ```typescript
+     * const replayed = await inboxManager.replayUnhandled({ excludeChannelIds: new Set([perchTimeChannelId]) });
+     * ```
+     */
+    async replayUnhandled(options?: { excludeChannelIds?: ReadonlySet<ChannelId> }): Promise<UnreadMessage[]> {
+        const excludeChannelIds = options?.excludeChannelIds;
+        const checkpoints = await this.checkpointManager.listAll();
+        const replayed: UnreadMessage[] = [];
+
+        for(const checkpoint of checkpoints) {
+            if(!checkpoint.handled) {
+                continue;
+            }
+
+            if(excludeChannelIds?.has(checkpoint.channelId)) {
+                continue;
+            }
+
+            if(checkpoint.handled.at >= checkpoint.lastSeenAt) {
+                continue;
+            }
+
+            const handled = checkpoint.handled;
+            const startTime = new Date(new Date(handled.at).getTime() + 1);
+            const endTime = new Date(checkpoint.lastSeenAt);
+
+            // eslint-disable-next-line no-await-in-loop -- sequential per-channel replay fetch, mirrors loadUnread's established pattern
+            const response = await this.messageSearchService.searchMessages({
+                channelId: checkpoint.channelId,
+                startTime,
+                endTime,
+                limit:     this.config.maxCatchUpMessages,
+            });
+
+            const handledMessageIdBig = BigInt(handled.messageId);
+            const filteredMessages = response.messages
+                .filter(msg => BigInt(msg.id) > handledMessageIdBig)
+                .filter(msg => !this.botUserId || msg.author.id !== this.botUserId)
+                .toSorted((a, b) => Number(BigInt(a.id) - BigInt(b.id)));
+
+            const metadata = this.channelMetadata.get(checkpoint.channelId);
+            const unreadMessages: UnreadMessage[] = filteredMessages.map(msg => ({
+                id:          msg.id,
+                channelId:   checkpoint.channelId,
+                channelName: metadata?.channelName ?? checkpoint.channelId,
+                guildId:     checkpoint.guildId,
+                author:      msg.author.displayName,
+                authorId:    msg.author.id,
+                content:     msg.content,
+                timestamp:   msg.timestamp,
+                isRead:      false,
+            }));
+
+            replayed.push(...unreadMessages);
+        }
+
+        return replayed;
+    }
 }

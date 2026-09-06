@@ -8,8 +8,8 @@ import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, loadIdentityContext } from '@/app';
-import { loadConfig, loadDynamoDBConfig } from '@/config';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
+import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
@@ -17,7 +17,7 @@ import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, Contact
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
-import { resolveTimezone, safeAsyncHandler } from '@/utils';
+import { resolveTimezone } from '@/utils';
 
 export interface App {
     /**
@@ -29,6 +29,13 @@ export interface App {
      * Stop the application gracefully.
      */
     stop: () => Promise<void>
+
+    /**
+     * The resolved config `createApp()` was built from — exposed so the entry point's own
+     * top-level wiring (`registerSignalHandlers`'s `deadlineMs`) can read
+     * `config.session.shutdownDeadlineMs` without loading config a second time (P10).
+     */
+    config: Config
 }
 
 /**
@@ -886,25 +893,25 @@ export async function createApp(): Promise<App> {
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Creating Discord bot...');
     const bot: DiscordBot = createDiscordBot({
-        config:            config.discord,
-        perchConfig:       config.perch,
+        config:             config.discord,
+        perchConfig:        config.perch,
         identityContext,
-        identityCache:     identityCacheSlot.cache,
+        identityCache:      identityCacheSlot.cache,
         agent,
-        client:            discordInfra.discordClient,
+        client:             discordInfra.discordClient,
         questionRegistry,
-        inboxManager:      discordInfra.inboxManager,
-        botStateManager:   discordInfra.botStateManager,
-        channelRegistry:   discordInfra.channelRegistry,
-        eventDeltaTracker: contextLayer.eventDeltaTracker,
-        contextBuilder:    contextLayer.contextBuilder,
-        memoryBackend:     createCatchUpSignalAdapter(storage.memoryBackend),
+        inboxManager:       discordInfra.inboxManager,
+        botStateManager:    discordInfra.botStateManager,
+        channelRegistry:    discordInfra.channelRegistry,
+        eventDeltaTracker:  contextLayer.eventDeltaTracker,
+        contextBuilder:     contextLayer.contextBuilder,
+        memoryBackend:      createCatchUpSignalAdapter(storage.memoryBackend),
         emailSetup,
         bskySetup,
         allowlistHandler,
         allowlistInteractionHandler,
         calendarHandler,
-        contactHandler:    contactCommandHandler,
+        contactHandler:     contactCommandHandler,
         contactApprovalHandler,
         activityLogger,
         historyCoordinator,
@@ -914,10 +921,14 @@ export async function createApp(): Promise<App> {
         // conversationConductor once the guild cache and channel registry exist and degrades to
         // the legacy agent above if open() rejects (implementer B's slice of this package).
         conversationConductor,
-        ledgerStore:       conversationLedgerStore,
-        contextPolicy:     conversationContextPolicy,
-        deliveryGuard:     conversationDeliveryGuard,
-        journal:           conversationJournal,
+        ledgerStore:        conversationLedgerStore,
+        contextPolicy:      conversationContextPolicy,
+        deliveryGuard:      conversationDeliveryGuard,
+        journal:            conversationJournal,
+        // P10: own config.session.shutdownTurnWaitMs/shutdownDeadlineMs — without these,
+        // createShutdown falls back to its hard-coded 60s/120s defaults regardless of config.
+        shutdownTurnWaitMs: config.session.shutdownTurnWaitMs,
+        shutdownDeadlineMs: config.session.shutdownDeadlineMs,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');
@@ -1023,25 +1034,17 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement,ObjectLiteral
 
             // Register recovery subscriber now — after initial bot.start() — so it only fires on reconnects.
-            // Catch-up on first connection is handled by setupInboxAndCatchUp inside bot.ts clientReady.
-            // Stryker disable BlockStatement,ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,ObjectLiteral: Composition root — recovery subscriber callback is not unit-testable
-            unsubscribeDiscordRecovery = healthRegistry.subscribe((change) => {
-                if(change.service === 'discord' && change.newState === 'online') {
-                    void (async () => {
-                        try {
-                            await discordInfra.channelRegistry.warmCache();
-                            const currentMode = discordInfra.botStateManager.getMode();
-                            if(currentMode === 'processing_message') {
-                                discordInfra.botStateManager.goIdle();
-                            }
-                            await bot.triggerCatchUp();
-                        } catch (err) {
-                            logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Discord recovery phase failed' });
-                        }
-                    })();
-                }
-            });
-            // Stryker restore BlockStatement,ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,ObjectLiteral
+            // Catch-up on first connection is handled by setupInboxAndCatchUp inside bot.ts clientReady
+            // (runConductorInboxInit in conductor mode). P10: extracted to src/app/lifecycle.ts's
+            // createDiscordRecoveryHandler, tested in isolation there — this is thin wiring only.
+            unsubscribeDiscordRecovery = healthRegistry.subscribe(createDiscordRecoveryHandler({
+                mode:            config.session.mode,
+                warmCache:       () => discordInfra.channelRegistry.warmCache(),
+                botStateManager: discordInfra.botStateManager,
+                bot,
+                submitCatchUp:   () => bot.triggerCatchUp(),
+                logger,
+            }));
 
             // Start email listener (independent of Discord — email works even if Discord is offline)
             // Stryker disable BlockStatement,ObjectLiteral,StringLiteral: try-catch wraps email listener start - composition root error handling; logger context objects not unit-testable
@@ -1212,6 +1215,7 @@ export async function createApp(): Promise<App> {
             logger.info('Isambard application stopped');
         },
         // Stryker restore BlockStatement
+        config,
     };
 }
 
@@ -1301,24 +1305,19 @@ if(import.meta.main) {
     // Start the application
     await app.start();
 
-    // Store handler references so we can remove them on hot reload
-    const sigintHandler = safeAsyncHandler(async () => {
-        logger.info('Received SIGINT, shutting down gracefully...');
-        await app.stop();
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- Graceful shutdown requires exit
-        process.exit(0);
-    }, logger, 'SIGINT handler');
-
-    const sigtermHandler = safeAsyncHandler(async () => {
-        logger.info('Received SIGTERM, shutting down gracefully...');
-        await app.stop();
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- Graceful shutdown requires exit
-        process.exit(0);
-    }, logger, 'SIGTERM handler');
-
-    // Handle graceful shutdown
-    process.on('SIGINT', sigintHandler);
-    process.on('SIGTERM', sigtermHandler);
+    // P10: SIGINT/SIGTERM handling extracted to src/app/lifecycle.ts's registerSignalHandlers,
+    // tested in isolation there — this is thin wiring only. `unregisterSignalHandlers` is used
+    // below by the bun --hot cleanup so a hot reload never leaves a stale pair of listeners
+    // registered alongside the fresh pair the next module evaluation installs.
+    const unregisterSignalHandlers = registerSignalHandlers({
+        proc:       process,
+        stop:       () => app.stop(),
+        deadlineMs: app.config.session.shutdownDeadlineMs,
+        clock:      systemClock,
+        logger,
+        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- registerSignalHandlers's own injected `exit`, the one place this process actually terminates on a signal
+        exit:       code => process.exit(code),
+    });
 
     // Hot reload cleanup for bun --hot
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: import.meta.hot is only available when running with bun --hot
@@ -1328,8 +1327,7 @@ if(import.meta.main) {
             // Remove error boundary handlers to prevent duplicate handlers on next hot reload
             errorBoundaryRegistration.unregister();
             // Remove signal handlers before cleanup to prevent duplicate calls
-            process.off('SIGINT', sigintHandler);
-            process.off('SIGTERM', sigtermHandler);
+            unregisterSignalHandlers();
             await app.stop();
         });
     }

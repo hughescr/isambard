@@ -59,6 +59,47 @@ describe.concurrent('discordChannelCheckpointSchema', () => {
         const result = discordChannelCheckpointSchema.safeParse(missingChannelId);
         expect(result.success).toBe(false);
     });
+
+    test('should accept checkpoint without handled (old items load unchanged)', () => {
+        const result = discordChannelCheckpointSchema.safeParse(validCheckpoint);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.handled).toBeUndefined();
+        }
+    });
+
+    test('should accept checkpoint with handled watermark', () => {
+        const withHandled = {
+            ...validCheckpoint,
+            handled: {
+                messageId: '222333444',
+                at:        '2025-01-24T10:05:00.000Z',
+            },
+        };
+        const result = discordChannelCheckpointSchema.safeParse(withHandled);
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.handled).toEqual(withHandled.handled);
+        }
+    });
+
+    test('should reject handled with invalid messageId snowflake', () => {
+        const invalid = {
+            ...validCheckpoint,
+            handled: { messageId: 'not-a-snowflake', at: '2025-01-24T10:05:00.000Z' },
+        };
+        const result = discordChannelCheckpointSchema.safeParse(invalid);
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject handled with invalid at datetime', () => {
+        const invalid = {
+            ...validCheckpoint,
+            handled: { messageId: '222333444', at: 'not-a-datetime' },
+        };
+        const result = discordChannelCheckpointSchema.safeParse(invalid);
+        expect(result.success).toBe(false);
+    });
 });
 
 describe.concurrent('unreadMessageSchema', () => {

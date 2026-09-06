@@ -124,3 +124,21 @@ export {
     type BuildBootBundleInput,
     type CreateBootBundleBuilderParams
 } from './boot-bundle';
+
+export {
+    runBootSequence,
+    type BootIngressGate,
+    type BootJournal,
+    type BootRecovery,
+    type RunBootSequenceParams,
+    type RunBootSequenceResult
+} from './boot-sequence';
+
+export {
+    createShutdown,
+    type CreateShutdownParams,
+    type Shutdown,
+    type ShutdownJournal,
+    type ShutdownResult,
+    type ShutdownSession
+} from './shutdown';

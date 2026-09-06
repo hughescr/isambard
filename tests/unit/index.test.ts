@@ -24,6 +24,7 @@ import type { StreamTracker } from '@/agent/stream-tracker';
 import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
 import * as staticTaskCopierModule from '@/agent/task-directory-copier';
 import * as staticTaskCoordinatorModule from '@/agent/task-persistence-coordinator';
+import * as staticAppLifecycleModule from '@/app/lifecycle';
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
@@ -72,11 +73,15 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
     cleanupAllStaleSessionsSpy: ReturnType<typeof spyOn>
     pruneStaleSessionsSpy:      ReturnType<typeof spyOn>
     getSessionIdForRole:        ReturnType<typeof mock>
+    createBotSpy:               ReturnType<typeof spyOn>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
     const cleanupAllStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'cleanupAllStaleSessions').mockResolvedValue(undefined);
     const pruneStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'pruneStaleSessions').mockResolvedValue(undefined);
+    const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
+        start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
+    });
 
     spies.push(
         spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
@@ -87,9 +92,7 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
             handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
         }),
         spyOn(staticCompactionModule, 'createBotStateCompactionSink'),
-        spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
-            start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
-        }),
+        createBotSpy,
         spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>),
         spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>),
         spyOn(staticDiscordClientModule, 'createDiscordClient').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordClientModule.createDiscordClient>),
@@ -180,7 +183,7 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         pruneStaleSessionsSpy
     );
 
-    return { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole };
+    return { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy };
 }
 
 describe('createApp', () => {
@@ -561,6 +564,23 @@ describe('createApp', () => {
         });
     });
 
+    describe('Shutdown config wiring (P10)', () => {
+        test('passes config.session.shutdownTurnWaitMs and shutdownDeadlineMs through to createDiscordBot, so an operator-configured budget actually reaches the conductor shutdown orchestrator', async () => {
+            const { createBotSpy } = wireHappyPathForCleanupTests(spies, {
+                shutdownTurnWaitMs: 5000,
+                shutdownDeadlineMs: 30_000,
+            });
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            expect(createBotSpy).toHaveBeenCalledWith(expect.objectContaining({
+                shutdownTurnWaitMs: 5000,
+                shutdownDeadlineMs: 30_000,
+            }));
+        });
+    });
+
     describe('Conversation conductor build (P9)', () => {
         test('conductor mode: createConversationConductor is called once, after the OAuth env write, and its (unopened) conductor is handed to createDiscordBot before it is created', async () => {
             wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
@@ -603,6 +623,58 @@ describe('createApp', () => {
             await createApp();
 
             expect(createConversationConductorSpy).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Lifecycle seams (P10)', () => {
+        test('app.config exposes the resolved config createApp() was built from', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+
+            expect(app.config.session.mode).toBe('conductor');
+        });
+
+        /**
+         * app.start() fires real `healthRegistry.sendEvent` transitions, which (independently of
+         * this seam) wake the outbox drainer's health subscription — it needs a `docClient.send`
+         * that resolves rather than `wireHappyPathForCleanupTests`'s bare `{}` docClient.
+         */
+        function stubDocClientSend(): void {
+            spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client:    {} as unknown as DynamoDBClient,
+                docClient: { send: mock(async () => ({ Items: [] })) } as unknown as DynamoDBDocumentClient,
+                tableName: 'IsambardMemory',
+            }));
+        }
+
+        test('app.start() wires createDiscordRecoveryHandler with the resolved session mode as the health registry\'s discord subscriber', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            stubDocClientSend();
+            const fakeHandler = mock(() => undefined);
+            const createDiscordRecoveryHandlerSpy = spyOn(staticAppLifecycleModule, 'createDiscordRecoveryHandler').mockReturnValue(fakeHandler);
+            spies.push(createDiscordRecoveryHandlerSpy);
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+            await app.start();
+
+            expect(createDiscordRecoveryHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'conductor' }));
+        });
+
+        test('app.start() wires createDiscordRecoveryHandler with mode "oneshot" in oneshot mode', async () => {
+            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
+            stubDocClientSend();
+            const fakeHandler = mock(() => undefined);
+            const createDiscordRecoveryHandlerSpy = spyOn(staticAppLifecycleModule, 'createDiscordRecoveryHandler').mockReturnValue(fakeHandler);
+            spies.push(createDiscordRecoveryHandlerSpy);
+
+            const { createApp } = staticIndexModule;
+            const app = await createApp();
+            await app.start();
+
+            expect(createDiscordRecoveryHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'oneshot' }));
         });
     });
 

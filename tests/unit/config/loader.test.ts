@@ -613,10 +613,14 @@ describe('loadDynamoDBConfig', () => {
 describe('loadConfig - Session Config', () => {
     let originalSessionMode: string | undefined;
     let originalCompactThresholdPercent: string | undefined;
+    let originalShutdownDeadlineMs: string | undefined;
+    let originalTurnWaitMs: string | undefined;
 
     beforeEach(() => {
         originalSessionMode = process.env.SESSION_MODE;
         originalCompactThresholdPercent = process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
+        originalShutdownDeadlineMs = process.env.SESSION_SHUTDOWN_DEADLINE_MS;
+        originalTurnWaitMs = process.env.SESSION_TURN_WAIT_MS;
     });
 
     afterEach(() => {
@@ -629,6 +633,16 @@ describe('loadConfig - Session Config', () => {
             delete process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
         } else {
             process.env.SESSION_COMPACT_THRESHOLD_PERCENT = originalCompactThresholdPercent;
+        }
+        if(originalShutdownDeadlineMs === undefined) {
+            delete process.env.SESSION_SHUTDOWN_DEADLINE_MS;
+        } else {
+            process.env.SESSION_SHUTDOWN_DEADLINE_MS = originalShutdownDeadlineMs;
+        }
+        if(originalTurnWaitMs === undefined) {
+            delete process.env.SESSION_TURN_WAIT_MS;
+        } else {
+            process.env.SESSION_TURN_WAIT_MS = originalTurnWaitMs;
         }
     });
 
@@ -645,5 +659,25 @@ describe('loadConfig - Session Config', () => {
     test('overrides compact threshold from SESSION_COMPACT_THRESHOLD_PERCENT', () => {
         process.env.SESSION_COMPACT_THRESHOLD_PERCENT = '20';
         expect(loadConfig(createMockResources()).session.compactThresholdPercent).toBe(20);
+    });
+
+    test('overrides shutdownDeadlineMs from SESSION_SHUTDOWN_DEADLINE_MS', () => {
+        process.env.SESSION_SHUTDOWN_DEADLINE_MS = '30000';
+        expect(loadConfig(createMockResources()).session.shutdownDeadlineMs).toBe(30_000);
+    });
+
+    test('defaults shutdownDeadlineMs to 120000 when SESSION_SHUTDOWN_DEADLINE_MS is unset', () => {
+        delete process.env.SESSION_SHUTDOWN_DEADLINE_MS;
+        expect(loadConfig(createMockResources()).session.shutdownDeadlineMs).toBe(120_000);
+    });
+
+    test('overrides turnWaitMs from SESSION_TURN_WAIT_MS', () => {
+        process.env.SESSION_TURN_WAIT_MS = '15000';
+        expect(loadConfig(createMockResources()).session.shutdownTurnWaitMs).toBe(15_000);
+    });
+
+    test('defaults shutdownTurnWaitMs to 60000 when SESSION_TURN_WAIT_MS is unset', () => {
+        delete process.env.SESSION_TURN_WAIT_MS;
+        expect(loadConfig(createMockResources()).session.shutdownTurnWaitMs).toBe(60_000);
     });
 });

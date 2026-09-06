@@ -44,6 +44,14 @@ describe('InboxManager', () => {
                 lastSeenAt: nowIso,
                 updatedAt:  nowIso,
             })),
+            updateHandled: mock(async () => ({
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: nowIso,
+                updatedAt:  nowIso,
+                handled:    { messageId: '111222333', at: nowIso },
+            })),
             listAll: mock(async () => []),
         } as unknown as CheckpointManager;
 
@@ -1947,6 +1955,183 @@ describe('InboxManager', () => {
             await managerWithChannel.markChannelRead(channelId);
 
             expect(managerWithChannel.hasUnread).toBe(false);
+        });
+    });
+
+    describe('recordHandled', () => {
+        test('should delegate to checkpointManager.updateHandled', async () => {
+            await manager.recordHandled(channelId, '555666777', '2025-01-25T13:00:00.000Z');
+
+            expect(mockCheckpointManager.updateHandled).toHaveBeenCalledTimes(1);
+            expect(mockCheckpointManager.updateHandled).toHaveBeenCalledWith(channelId, '555666777', '2025-01-25T13:00:00.000Z');
+        });
+    });
+
+    describe('replayUnhandled', () => {
+        const otherChannelId = createChannelId('222222222');
+
+        function makeCheckpoint(overrides: Partial<DiscordChannelCheckpoint>): DiscordChannelCheckpoint {
+            return {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: nowIso,
+                updatedAt:  nowIso,
+                ...overrides,
+            };
+        }
+
+        test('should query handled.at+1ms..lastSeenAt per channel with a watermark', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+
+            await manager.replayUnhandled();
+
+            expect(mockMessageSearchService.searchMessages).toHaveBeenCalledTimes(1);
+            const call = (mockMessageSearchService.searchMessages as ReturnType<typeof mock>).mock.calls[0][0] as { channelId: string, startTime: Date, endTime: Date, limit: number };
+            expect(call.channelId).toBe(channelId);
+            expect(call.startTime.toISOString()).toBe('2025-01-25T12:00:00.001Z');
+            expect(call.endTime.toISOString()).toBe('2025-01-25T13:00:00.000Z');
+            expect(call.limit).toBe(100);
+        });
+
+        test('should exclude messages with id <= handled.messageId and bot-authored messages', async () => {
+            const botUserId = createUserId('bot-user-999');
+            manager.setBotUserId(botUserId);
+
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '200', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: [
+                    { id: '150', channelId, guildId: null, author: { id: createUserId('u1'), username: 'a', displayName: 'A' }, content: 'stale', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                    { id: '200', channelId, guildId: null, author: { id: createUserId('u1'), username: 'a', displayName: 'A' }, content: 'equal-to-watermark', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                    { id: '250', channelId, guildId: null, author: { id: botUserId, username: 'izzy', displayName: 'Izzy' }, content: 'bot message', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                    { id: '300', channelId, guildId: null, author: { id: createUserId('u2'), username: 'b', displayName: 'B' }, content: 'new', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                ],
+                metadata: { totalFound: 4, timeRange: { start: nowIso, end: nowIso } },
+            }));
+
+            const result = await manager.replayUnhandled();
+
+            expect(result).toHaveLength(1);
+            expect(result[0].id).toBe('300');
+        });
+
+        test('should skip channels without a handled field (first boot after upgrade)', async () => {
+            const checkpoint = makeCheckpoint({ handled: undefined });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+
+            const result = await manager.replayUnhandled();
+
+            expect(result).toEqual([]);
+            expect(mockMessageSearchService.searchMessages).not.toHaveBeenCalled();
+        });
+
+        test('should skip channels where handled.at >= lastSeenAt', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T12:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+
+            const result = await manager.replayUnhandled();
+
+            expect(result).toEqual([]);
+            expect(mockMessageSearchService.searchMessages).not.toHaveBeenCalled();
+        });
+
+        test('should exclude channels listed in excludeChannelIds without querying them', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+
+            const result = await manager.replayUnhandled({ excludeChannelIds: new Set([channelId]) });
+
+            expect(result).toEqual([]);
+            expect(mockMessageSearchService.searchMessages).not.toHaveBeenCalled();
+        });
+
+        test('should return results channel-major in id order across multiple channels', async () => {
+            const checkpointA = makeCheckpoint({
+                channelId:  otherChannelId,
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            const checkpointB = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpointA, checkpointB]);
+
+            mockMessageSearchService.searchMessages = mock(async (params: { channelId: string }) => {
+                if(params.channelId === otherChannelId) {
+                    return {
+                        messages: [
+                            { id: '301', channelId: otherChannelId, guildId: null, author: { id: createUserId('u1'), username: 'a', displayName: 'A' }, content: 'later-arriving', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                            { id: '150', channelId: otherChannelId, guildId: null, author: { id: createUserId('u1'), username: 'a', displayName: 'A' }, content: 'earlier', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                        ],
+                        metadata: { totalFound: 2, timeRange: { start: nowIso, end: nowIso } },
+                    };
+                }
+                return {
+                    messages: [
+                        { id: '200', channelId, guildId: null, author: { id: createUserId('u2'), username: 'b', displayName: 'B' }, content: 'channel-b', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                    ],
+                    metadata: { totalFound: 1, timeRange: { start: nowIso, end: nowIso } },
+                };
+            });
+
+            const result = await manager.replayUnhandled();
+
+            // Channel-major: all of channel A's messages (in ascending id order) before channel B's
+            expect(result.map(m => m.id)).toEqual(['150', '301', '200']);
+        });
+
+        test('should carry the real Discord author id (a snowflake), not just the display name, so downstream envelope attribution never keys on a display name', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: [
+                    { id: '300', channelId, guildId: null, author: { id: createUserId('snowflake-42'), username: 'craig', displayName: 'Craig' }, content: 'new', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                ],
+                metadata: { totalFound: 1, timeRange: { start: nowIso, end: nowIso } },
+            }));
+
+            const result = await manager.replayUnhandled();
+
+            expect(result[0].authorId).toBe('snowflake-42');
+            expect(result[0].author).toBe('Craig');
+        });
+
+        test('should never touch the unread map', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: [
+                    { id: '300', channelId, guildId: null, author: { id: createUserId('u2'), username: 'b', displayName: 'B' }, content: 'new', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
+                ],
+                metadata: { totalFound: 1, timeRange: { start: nowIso, end: nowIso } },
+            }));
+
+            await manager.replayUnhandled();
+
+            expect(manager.hasUnread).toBe(false);
+            expect(manager.totalUnread).toBe(0);
+            expect(manager.getChannelMessages(channelId)).toEqual([]);
         });
     });
 });

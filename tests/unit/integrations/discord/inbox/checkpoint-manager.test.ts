@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { mockLogger } from '../../../../setup';
+import { InvariantViolationError } from '@/errors';
 import { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manager';
 import type { DiscordChannelCheckpoint } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
@@ -357,6 +358,207 @@ describe('CheckpointManager', () => {
             const result = await manager.updateLastSeen(channelId, 'DM', now, '111222333');
 
             expect(result.guildId).toBe('DM');
+        });
+
+        test('should preserve handled watermark set by a prior updateHandled', async () => {
+            const existingWithHandled: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: now,
+                updatedAt:  now,
+                handled:    { messageId: '111222333', at: now },
+            };
+
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     JSON.stringify(existingWithHandled),
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            const result = await manager.updateLastSeen(channelId, guildId, '2025-01-24T11:00:00.000Z', '999888777');
+
+            expect(result.handled).toEqual(existingWithHandled.handled);
+            expect(result.lastSeenAt).toBe('2025-01-24T11:00:00.000Z');
+            expect(result.lastSeenMessageId).toBe('999888777');
+        });
+    });
+
+    describe('updateHandled', () => {
+        test('should set handled watermark preserving lastSeen* and guildId', async () => {
+            const existing: DiscordChannelCheckpoint = {
+                service:           'discord',
+                channelId,
+                guildId,
+                lastSeenAt:        now,
+                lastSeenMessageId: '555666777',
+                updatedAt:         now,
+            };
+
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     JSON.stringify(existing),
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            const result = await manager.updateHandled(channelId, '555666777', '2025-01-24T10:01:00.000Z');
+
+            expect(result.handled).toEqual({ messageId: '555666777', at: '2025-01-24T10:01:00.000Z' });
+            expect(result.lastSeenAt).toBe(existing.lastSeenAt);
+            expect(result.lastSeenMessageId).toBe(existing.lastSeenMessageId);
+            expect(result.guildId).toBe(existing.guildId);
+            expect(mockBackend.update).toHaveBeenCalledTimes(1);
+        });
+
+        test('should no-op when the existing watermark messageId is already >= the new one (snowflake compare)', async () => {
+            const existing: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: now,
+                updatedAt:  now,
+                handled:    { messageId: '999999999999999999', at: now },
+            };
+
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     JSON.stringify(existing),
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            // Older messageId (numerically smaller, even though shorter string) must not regress the watermark
+            const result = await manager.updateHandled(channelId, '111111111', '2025-01-24T10:02:00.000Z');
+
+            expect(result.handled).toEqual(existing.handled);
+            expect(mockBackend.update).not.toHaveBeenCalled();
+        });
+
+        test('should no-op (not write) when the existing watermark messageId exactly equals the new one', async () => {
+            const existing: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: now,
+                updatedAt:  now,
+                handled:    { messageId: '555666777', at: '2025-01-24T09:00:00.000Z' },
+            };
+
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     JSON.stringify(existing),
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            // Same messageId as the existing watermark, but a different `at` — a retry of the
+            // same batch must not overwrite the watermark's `at` either (>= must include equal).
+            const result = await manager.updateHandled(channelId, '555666777', '2025-01-24T10:05:00.000Z');
+
+            expect(result.handled).toEqual(existing.handled);
+            expect(mockBackend.update).not.toHaveBeenCalled();
+        });
+
+        test('should throw InvariantViolationError when no checkpoint item exists', async () => {
+            mockBackend.get = mock(async () => undefined);
+
+            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(InvariantViolationError);
+        });
+
+        test('should throw InvariantViolationError when the existing checkpoint item is corrupt (invalid JSON)', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     'not json',
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(InvariantViolationError);
+        });
+
+        test('should throw InvariantViolationError when the existing checkpoint item fails schema validation', async () => {
+            mockBackend.get = mock(async () => ({
+                path:        '/state/services/discord/channels/123456789/checkpoint' as MemoryPath,
+                content:     JSON.stringify({ service: 'discord' }),
+                contentType: 'application/json' as ContentType,
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            }));
+
+            await expect(manager.updateHandled(channelId, '111222333', now)).rejects.toThrow(InvariantViolationError);
+        });
+
+        test('should not lose either field when updateLastSeen and updateHandled interleave for the same channel', async () => {
+            const path = '/state/services/discord/channels/123456789/checkpoint' as MemoryPath;
+            const initial: DiscordChannelCheckpoint = {
+                service:    'discord',
+                channelId,
+                guildId,
+                lastSeenAt: now,
+                updatedAt:  now,
+            };
+
+            // Stateful fake backend: get() reflects the latest create()/update(), and the FIRST
+            // get() call is gated behind a controllable promise so we can force the two
+            // operations' read-modify-write cycles to be attempted concurrently and prove the
+            // per-channel promise chain serialises them instead of interleaving.
+            let stored: MemoryToolItemData = {
+                path,
+                content:     JSON.stringify(initial),
+                contentType: 'application/json',
+                metadata:    {},
+                createdAt:   now,
+                updatedAt:   now,
+            };
+
+            let releaseFirstGet: (() => void) | undefined;
+            const firstGetGate = new Promise<void>((resolve) => {
+                releaseFirstGet = resolve;
+            });
+
+            let getCallCount = 0;
+            mockBackend.get = mock(async () => {
+                getCallCount++;
+                if(getCallCount === 1) {
+                    await firstGetGate;
+                }
+                return stored;
+            });
+            mockBackend.update = mock(async (_path: MemoryPath, patch: { content: string }) => {
+                stored = { ...stored, content: patch.content, updatedAt: new Date().toISOString() };
+                return stored;
+            });
+
+            // Kick off updateLastSeen first (its get is gated/delayed)
+            const lastSeenPromise = manager.updateLastSeen(channelId, guildId, '2025-01-24T11:00:00.000Z', '222222222');
+            // Kick off updateHandled second — per-channel serialisation must make it wait for
+            // updateLastSeen's write to finish before starting its own get/update cycle.
+            const handledPromise = manager.updateHandled(channelId, '111222333', '2025-01-24T10:05:00.000Z');
+
+            // Release the gated first get, allowing updateLastSeen to complete
+            releaseFirstGet!();
+
+            const [lastSeenResult, handledResult] = await Promise.all([lastSeenPromise, handledPromise]);
+
+            expect(lastSeenResult.lastSeenAt).toBe('2025-01-24T11:00:00.000Z');
+            expect(handledResult.handled).toEqual({ messageId: '111222333', at: '2025-01-24T10:05:00.000Z' });
+            // The final write must carry both the updated lastSeen and the handled watermark —
+            // neither operation's get/update cycle may have interleaved with the other's.
+            expect(handledResult.lastSeenAt).toBe('2025-01-24T11:00:00.000Z');
+            expect(getCallCount).toBe(2);
         });
     });
 

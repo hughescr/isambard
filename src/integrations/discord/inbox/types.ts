@@ -22,6 +22,20 @@ export const discordChannelCheckpointSchema = z
         lastSeenMessageId: snowflakeSchema.optional(),
         /** ISO 8601 timestamp when this checkpoint was last updated */
         updatedAt:         z.iso.datetime(),
+        /**
+         * Handled watermark: the newest message whose batch has finished being handled (sent,
+         * @@NO_RESPONSE@@ skip, or outbox-queued). Optional and non-strict so old items without it
+         * still load (first boot after upgrade replays nothing) and the oneshot path loads items
+         * written by the conductor path unchanged, ignoring this field.
+         */
+        handled:           z
+            .object({
+                /** Discord message ID (snowflake) of the newest handled message in the batch */
+                messageId: snowflakeSchema,
+                /** ISO 8601 timestamp when the batch was handled */
+                at:        z.iso.datetime(),
+            })
+            .optional(),
     })
     .describe('Last-seen checkpoint for a Discord channel');
 
@@ -43,6 +57,13 @@ export const unreadMessageSchema = z
         guildId:     z.union([guildIdSchema, z.literal('DM')]),
         /** Author's display name */
         author:      z.string().min(1, 'Author cannot be empty'),
+        /**
+         * Author's real Discord user id (snowflake) — optional and additive so `loadUnread`'s
+         * existing callers (which never set it) still validate unchanged. Populated by
+         * `replayUnhandled` (P10), whose envelope-attribution callers need an id, not a display
+         * name.
+         */
+        authorId:    snowflakeSchema.optional(),
         /** Message text content */
         content:     z.string(),
         /** ISO 8601 timestamp when the message was created */

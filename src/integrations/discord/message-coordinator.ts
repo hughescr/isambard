@@ -53,8 +53,13 @@ export type MessageProcessor = (
 /** Configuration for the coordinator */
 export interface MessageCoordinatorConfig {
     debounceMs?:        number  // Default: 2000ms
-    /** Optional callback invoked when processing completes (not on interruption) */
-    onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>
+    /**
+     * Optional callback invoked when processing completes (not on interruption). `batch` is the
+     * non-null Discord `Message` of every context in the completed batch (originals + resumed),
+     * in arrival order — a re-queued original message's `Message` reference is null (only its
+     * context survives interruption) and is therefore excluded.
+     */
+    onResponse?:        (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>
     /** Optional event delta tracker for capturing new events during processing */
     eventDeltaTracker?: EventDeltaTracker
     /** Optional callback invoked when processing ends, with info about whether it was interrupted and whether it will resume */
@@ -123,7 +128,7 @@ interface ChannelState {
  */
 export class MessageCoordinator {
     private readonly debounceMs:         number;
-    private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null) => Promise<void>;
+    private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>;
     private readonly eventDeltaTracker?: EventDeltaTracker;
     private readonly onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void;
     private readonly registryReady?:     () => boolean;
@@ -208,7 +213,8 @@ export class MessageCoordinator {
     private handleProcessingResult(
         result: ProcessResult,
         state: ChannelState,
-        firstDiscordMessage: Message | null
+        firstDiscordMessage: Message | null,
+        batch: Message[]
     ): Promise<void> | void {
         // If interrupted, capture partial work for resume context (human-readable summary only)
         if(result.wasInterrupted) {
@@ -221,7 +227,7 @@ export class MessageCoordinator {
         // Completed - invoke callback
         // Return the onResponse Promise directly so callers can await it without an extra tick,
         // or void if there is no callback (no extra tick needed)
-        return this.onResponse?.(result, firstDiscordMessage);
+        return this.onResponse?.(result, firstDiscordMessage, batch);
     }
 
     /**
@@ -239,6 +245,11 @@ export class MessageCoordinator {
         // Stryker restore all
 
         const state = this.getOrCreateState(channelId);
+
+        // Fresh (non-resumed) path: contexts is always the single triggering message, so the
+        // batch is just that message's Message object (never null — the only call site passes
+        // the real discord.js Message that triggered this processing run).
+        const batch: Message[] = firstDiscordMessage ? [firstDiscordMessage] : [];
 
         // Start typing indicator
         this.startTypingIndicator(state);
@@ -265,7 +276,7 @@ export class MessageCoordinator {
                 // Conditionally await: handleProcessingResult returns a Promise only when onResponse
                 // is invoked (completed path). For interrupted/no-callback paths it returns void,
                 // avoiding an extra microtask hop that would delay state.activeQuery cleanup.
-                const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage);
+                const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage, batch);
                 // Stryker disable next-line ConditionalExpression,BlockStatement: conditional await — if void, skip await to avoid extra microtask
                 if(postProcess) {
                     await postProcess;
@@ -324,6 +335,14 @@ export class MessageCoordinator {
         // Stryker disable next-line OptionalChaining: newMessages cannot be empty in reachable paths
         const firstDiscordMessage = state.interruptedFirstMessage ?? newMessages[0]?.discordMessage ?? null;
 
+        // The non-null Discord Message of every context in the batch (originals + resumed), in
+        // arrival order. Re-queued original messages carry discordMessage: null (only their
+        // context survives interruption — see the debounce-timer handler in handleMessage), so
+        // they're excluded here; only messages we still hold a real Message object for appear.
+        const batch: Message[] = [...originalMessages, ...newMessages]
+            .map(msg => msg.discordMessage)
+            .filter((message): message is Message => message !== null);
+
         // Build partial resume context (newEvents resolved async in processing block)
         const partialResumeContext = state.partialWork
             ? {
@@ -368,7 +387,7 @@ export class MessageCoordinator {
                 // Conditionally await: handleProcessingResult returns a Promise only when onResponse
                 // is invoked (completed path). For interrupted/no-callback paths it returns void,
                 // avoiding an extra microtask hop that would delay state.activeQuery cleanup.
-                const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage);
+                const postProcess = this.handleProcessingResult(result, state, firstDiscordMessage, batch);
                 // Stryker disable next-line ConditionalExpression,BlockStatement: conditional await — if void, skip await to avoid extra microtask
                 if(postProcess) {
                     await postProcess;
