@@ -388,6 +388,17 @@ describe.concurrent('system-prompt', () => {
             expect(SESSION_BASE_PROMPT).toMatch(/\[BOOT[^\n]*(no reply|nothing to do|not a request)/i);
         });
 
+        test('PERCH_ROLE_PROMPT carries the perch exploration philosophy the one-shot perch prompt used to send every slot, plus the suggestion-level legend', () => {
+            // Regression: the first conductor-mode perch turns ended with "light touch, ending here" —
+            // the slot envelope carries only the slot name, hint, level number and context, and the
+            // role prompt had none of BASE_PROMPT's exploration mandate.
+            for(const marker of ['Exploration, not output', 'Good activities', 'Minimum action floor', 'Stall recovery', 'TaskList', 'Suggestion level', '3 of 3', '1 of 3']) {
+                expect(PERCH_ROLE_PROMPT).toContain(marker);
+            }
+            expect(PERCH_ROLE_PROMPT).not.toContain('Sessions are ephemeral');
+            assertPromptHygiene(PERCH_ROLE_PROMPT);
+        });
+
         test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {
             expect(SESSION_BASE_PROMPT.length).toBeGreaterThan(0);
             expect(CONVERSATION_ROLE_PROMPT.length).toBeGreaterThan(0);
