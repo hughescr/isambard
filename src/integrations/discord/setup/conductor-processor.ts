@@ -29,7 +29,7 @@ import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
     buildDiscordEnvelope, buildResumeNote, StreamTracker,
-    type AgentStreamEvent, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage
+    type AgentStreamEvent, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage, type StateTopSetDelta
 } from '@/agent';
 import { formatTimeHeader } from '@/utils';
 
@@ -77,6 +77,11 @@ function emptyResult(): ProcessResult {
     };
 }
 
+/** `delta` itself when at least one of its three lists is non-empty, else `undefined` — the `stateChanged` param's "nothing to show" collapse, matching `newEvents`'s own empty-array-to-undefined pattern. */
+function stateChangedOrUndefined(delta: StateTopSetDelta): StateTopSetDelta | undefined {
+    return delta.added.length > 0 || delta.removed.length > 0 || delta.changed.length > 0 ? delta : undefined;
+}
+
 /**
  * Creates the conductor-backed `MessageProcessor` conductor-mode coordinator-setup.ts installs
  * in place of the legacy `agent.handleInput` processor.
@@ -108,11 +113,12 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             ? buildLedgerThinkingSynopsis(dynamicStatusGenerator, throttle, first.content)
             : Promise.resolve(undefined);
 
-        const [names, channelList, storedTimezone, newEvents, thinkingSynopsis] = await Promise.all([
+        const [names, channelList, storedTimezone, newEvents, stateTopSetDelta, thinkingSynopsis] = await Promise.all([
             envelopeProvider.resolveNames(first),
             envelopeProvider.channelList(),
             contextBuilder.loadUserTimezone(first.userId),
             contextPolicy.eventsDelta(),
+            contextPolicy.stateTopSetDelta(),
             thinkingSynopsisPromise,
         ]);
 
@@ -147,6 +153,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             timezone,
             timeHeader:      formatTimeHeader(timezone),
             newEvents:       newEvents.length > 0 ? newEvents : undefined,
+            stateChanged:    stateChangedOrUndefined(stateTopSetDelta),
             // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: an empty-string memory block must collapse to undefined too, not just null/undefined, so `??` would be wrong here
             userMemoryBlock: userMemoryBlock || undefined,
             channelList:     input.channelList.length > 0 ? input.channelList.join('\n') : undefined,
@@ -187,13 +194,24 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         }, 'Conductor turn settled');
 
         // Gap 2 (post-compaction reset inputs): only mark when the envelope actually reached the
-        // SDK — a withdrawn envelope's memory block/events delta were never shown to Claude, so
-        // marking them seen would wrongly skip the real injection next time. `markInjected` is
+        // SDK — a withdrawn envelope's memory block/events delta/state-top-set delta were never
+        // shown to Claude, so marking them seen would wrongly skip the real injection next time
+        // (Q9: `markStateTopSetSeen` gated here exactly like `markEventsSeen`). `markInjected` is
         // further gated on `shouldInjectMemory` itself: when the window hadn't elapsed and no
         // block was built, writing the mark here would reset the injection clock to now and
         // defer the real re-injection indefinitely for an active user.
         if(result.outcome !== 'withdrawn') {
             contextPolicy.markEventsSeen();
+            // Best-effort: unlike markEventsSeen/markInjected (synchronous, in-memory, cannot
+            // throw), markStateTopSetSeen performs a real DynamoDB query. The turn has already
+            // settled and its response is about to be handed back to the caller — a transient
+            // throttle/network error here must not take the completed reply down with it. A
+            // missed mark only costs one extra (harmless) delta on the next turn.
+            try {
+                await contextPolicy.markStateTopSetSeen();
+            } catch (err) {
+                logger.warn({ err, envelopeId: envelope.id }, 'markStateTopSetSeen failed; state top-set baseline not updated this turn');
+            }
             if(shouldInjectMemory) {
                 contextPolicy.markInjected(input.authorId);
             }

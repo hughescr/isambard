@@ -57,10 +57,11 @@ const FULL_MCP_SERVERS: Required<MCPServers> = {
 
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
 
-function fakeContextBuilder(overrides: Partial<ContextBuilder> = {}): Pick<ContextBuilder, 'loadHotState' | 'loadRecentEventsSince' | 'buildPerchContext'> {
+function fakeContextBuilder(overrides: Partial<ContextBuilder> = {}): Pick<ContextBuilder, 'loadHotState' | 'loadRecentEventsSince' | 'loadStateTopSet' | 'buildPerchContext'> {
     return {
         loadHotState:          jest.fn(() => Promise.resolve('')),
         loadRecentEventsSince: jest.fn(() => Promise.resolve([])),
+        loadStateTopSet:       jest.fn(() => Promise.resolve([])),
         buildPerchContext:     jest.fn(() => Promise.resolve('')),
         ...overrides,
     };

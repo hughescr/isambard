@@ -35,6 +35,7 @@ describe('createClaudeAgent context integration', () => {
         mockContextBuilder = {
             loadCoreIdentity:       mock(() => Promise.resolve('')),
             loadHotState:           mock(() => Promise.resolve('')),
+            loadStateTopSet:        mock(() => Promise.resolve([])),
             loadUserMemories:       mock(() => Promise.resolve('')),
             recordAccess:           mock(async () => {}),
             loadRecentEvents:       mock(() => Promise.resolve({ items: [], isFallback: false })),

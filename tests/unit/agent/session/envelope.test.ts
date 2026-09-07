@@ -76,7 +76,16 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text.startsWith('[DISCORD #general (Home Server) · 2026-09-04 14:07 PT · @craig]')).toBe(true);
     });
 
-    test('omits [Service health], [About this user], [Recent events] and [Channels] when their inputs are absent', () => {
+    test('joins only the sections that are actually present, with no blank-line gaps for absent optional sections', () => {
+        const envelope = buildDiscordEnvelope({
+            messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
+        });
+
+        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig]';
+        expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\nhello there`);
+    });
+
+    test('omits [Service health], [About this user], [Recent events], [State changed] and [Channels] when their inputs are absent', () => {
         const envelope = buildDiscordEnvelope({
             messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
@@ -84,7 +93,117 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text).not.toContain('[Service health]');
         expect(envelope.text).not.toContain('[About this user]');
         expect(envelope.text).not.toContain('[Recent events]');
+        expect(envelope.text).not.toContain('[State changed]');
         expect(envelope.text).not.toContain('[Channels]');
+    });
+
+    test('omits [State changed] when stateChanged is explicitly undefined', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:     [makeMessage()],
+            authorId:     'a',
+            authorName:   'craig',
+            channelId:    'c',
+            channelName:  'general',
+            isDM:         false,
+            now,
+            timezone,
+            timeHeader,
+            stateChanged: undefined,
+        });
+
+        expect(envelope.text).not.toContain('[State changed]');
+    });
+
+    test('omits [State changed] when stateChanged has all three lists empty', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:     [makeMessage()],
+            authorId:     'a',
+            authorName:   'craig',
+            channelId:    'c',
+            channelName:  'general',
+            isDM:         false,
+            now,
+            timezone,
+            timeHeader,
+            stateChanged: { added: [], removed: [], changed: [] },
+        });
+
+        expect(envelope.text).not.toContain('[State changed]');
+    });
+
+    test('renders [State changed] with only +added lines when only added is non-empty', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:     [makeMessage()],
+            authorId:     'a',
+            authorName:   'craig',
+            channelId:    'c',
+            channelName:  'general',
+            isDM:         false,
+            now,
+            timezone,
+            timeHeader,
+            stateChanged: { added: ['state/one', 'state/two'], removed: [], changed: [] },
+        });
+
+        expect(envelope.text).toContain('[State changed]\n+state/one\n+state/two');
+    });
+
+    test('renders [State changed] with only -removed lines when only removed is non-empty', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:     [makeMessage()],
+            authorId:     'a',
+            authorName:   'craig',
+            channelId:    'c',
+            channelName:  'general',
+            isDM:         false,
+            now,
+            timezone,
+            timeHeader,
+            stateChanged: { added: [], removed: ['state/three'], changed: [] },
+        });
+
+        expect(envelope.text).toContain('[State changed]\n-state/three');
+    });
+
+    test('renders [State changed] with only ~changed lines when only changed is non-empty', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:     [makeMessage()],
+            authorId:     'a',
+            authorName:   'craig',
+            channelId:    'c',
+            channelName:  'general',
+            isDM:         false,
+            now,
+            timezone,
+            timeHeader,
+            stateChanged: { added: [], removed: [], changed: ['state/four'] },
+        });
+
+        expect(envelope.text).toContain('[State changed]\n~state/four');
+    });
+
+    test('renders [State changed] with +/-/~ lines for added, removed and changed, and places it after [Recent events] and before [Channels]', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:     [makeMessage()],
+            authorId:     'a',
+            authorName:   'craig',
+            channelId:    'c',
+            channelName:  'general',
+            isDM:         false,
+            now,
+            timezone,
+            timeHeader,
+            newEvents:    ['- event one'],
+            channelList:  '#general, #random',
+            stateChanged: { added: ['state/one'], removed: ['state/two'], changed: ['state/three'] },
+        });
+
+        expect(envelope.text).toContain('[State changed]\n+state/one\n-state/two\n~state/three');
+        const recentEventsIndex = envelope.text.indexOf('[Recent events]');
+        const stateChangedIndex = envelope.text.indexOf('[State changed]');
+        const channelsIndex = envelope.text.indexOf('[Channels]');
+        expect(recentEventsIndex).toBeLessThan(stateChangedIndex);
+        expect(stateChangedIndex).toBeLessThan(channelsIndex);
     });
 
     test('includes [Service health]/[About this user]/[Recent events]/[Channels] only when provided, each with its content', () => {

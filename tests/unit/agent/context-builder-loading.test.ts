@@ -898,6 +898,112 @@ describe('createContextBuilder loading methods', () => {
         });
     });
 
+    describe('loadStateTopSet', () => {
+        test('returns [] when no state items exist', async () => {
+            backend.getStateItemsScored = mock(async () => []);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadStateTopSet();
+
+            expect(result).toEqual([]);
+        });
+
+        test('maps items to {path, contentFingerprint} in score order, deriving the fingerprint from content', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+
+            backend.getStateItemsScored = mock(async () => [
+                {
+                    item: {
+                        path:        createMemoryPath('/state/a.md'),
+                        content:     'A',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        createdAt:   '2025-01-15T09:00:00.000Z',
+                        updatedAt:   '2025-01-15T10:00:00.000Z',
+                    },
+                    score: 0.9,
+                },
+                {
+                    item: {
+                        path:        createMemoryPath('/state/b.md'),
+                        content:     'B',
+                        contentType: 'text/markdown' as const,
+                        metadata:    {},
+                        createdAt:   '2025-01-15T08:00:00.000Z',
+                        updatedAt:   '2025-01-15T09:00:00.000Z',
+                    },
+                    score: 0.5,
+                },
+            ]);
+
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadStateTopSet(now);
+
+            expect(result).toEqual([
+                { path: createMemoryPath('/state/a.md'), contentFingerprint: Bun.hash('A').toString() },
+                { path: createMemoryPath('/state/b.md'), contentFingerprint: Bun.hash('B').toString() },
+            ]);
+        });
+
+        test('two items with identical content produce the same fingerprint even when updatedAt differs (a read-only access bump must not register as a content change)', async () => {
+            // Two independent backends (rather than reassigning one backend's method between two
+            // awaited calls) so neither call risks racing the other's mock.
+            const backendAtFirstTouch = new MemoryToolBackend(mockDocClient, 'test-table');
+            backendAtFirstTouch.getStateItemsScored = mock(async () => [{
+                item: {
+                    path: createMemoryPath('/state/a.md'), content: 'unchanged content', contentType: 'text/markdown' as const, metadata: {}, createdAt: '2025-01-15T09:00:00.000Z', updatedAt: '2025-01-15T10:00:00.000Z',
+                },
+                score: 0.9,
+            }]);
+            const backendAfterReadOnlyAccess = new MemoryToolBackend(mockDocClient, 'test-table');
+            backendAfterReadOnlyAccess.getStateItemsScored = mock(async () => [{
+                item: {
+                    path: createMemoryPath('/state/a.md'), content: 'unchanged content', contentType: 'text/markdown' as const, metadata: {}, createdAt: '2025-01-15T09:00:00.000Z', updatedAt: '2025-01-15T11:30:00.000Z',
+                },
+                score: 0.9,
+            }]);
+
+            const [firstResult, secondResult] = await Promise.all([
+                createContextBuilder({ backend: backendAtFirstTouch }).loadStateTopSet(),
+                createContextBuilder({ backend: backendAfterReadOnlyAccess }).loadStateTopSet(),
+            ]);
+
+            expect(firstResult[0]?.contentFingerprint).toBe(secondResult[0]?.contentFingerprint);
+        });
+
+        test('passes the default maxStateFullItems + maxStatePreviewItems cap (38) as maxItems, along with now', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const getStateItemsScored = mock(async () => []);
+            backend.getStateItemsScored = getStateItemsScored;
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadStateTopSet(now);
+
+            expect(getStateItemsScored).toHaveBeenCalledWith({ now, maxItems: 38 });
+        });
+
+        test('custom maxStateFullItems/maxStatePreviewItems options change the cap', async () => {
+            const now = new Date('2025-01-15T12:00:00.000Z');
+            const getStateItemsScored = mock(async () => []);
+            backend.getStateItemsScored = getStateItemsScored;
+
+            const contextBuilder = createContextBuilder({ backend, maxStateFullItems: 3, maxStatePreviewItems: 5 });
+            await contextBuilder.loadStateTopSet(now);
+
+            expect(getStateItemsScored).toHaveBeenCalledWith({ now, maxItems: 8 });
+        });
+
+        test('defaults now to the current time when not provided', async () => {
+            const getStateItemsScored = mock(async () => []);
+            backend.getStateItemsScored = getStateItemsScored;
+
+            const contextBuilder = createContextBuilder({ backend });
+            await contextBuilder.loadStateTopSet();
+
+            expect(getStateItemsScored).toHaveBeenCalledWith({ now: expect.any(Date), maxItems: 38 });
+        });
+    });
+
     describe('loadUserMemories', () => {
         test('should return empty string when no user memories exist', async () => {
             backend.list = mock(async () => ({ items: [] }));

@@ -49,7 +49,8 @@ import {
     type ResumeStore,
     type SessionJournal,
     type SessionMcpServers,
-    type SessionQueryFn
+    type SessionQueryFn,
+    type StateTopSetSource
 } from '@/agent';
 import { type SessionConfig, loadRetryConfig  } from '@/config';
 
@@ -74,7 +75,8 @@ export interface CreateConversationConductorParams {
     /** Optional email MCP server factory (see `CreateMcpServerInstancesOptions`). */
     emailServerFactory?: () => McpServerConfig
     plugins?:            SdkPluginConfig[]
-    contextBuilder:      BootContextSource
+    /** Widened past the boot bundle's own `BootContextSource` to also cover `contextPolicy`'s `stateTopSetDelta`/`markStateTopSetSeen` gate (Q9) — perch's `CreatePerchConductorParams` stays at the narrower `BootContextSource` since it has no `ContextPolicy`. */
+    contextBuilder:      BootContextSource & StateTopSetSource
     identityCache:       IdentitySource
     taskListReader:      TaskListSource
     journal:             SessionJournal

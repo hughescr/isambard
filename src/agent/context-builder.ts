@@ -42,6 +42,19 @@ interface RecentEventsResult {
     isFallback: boolean
 }
 
+/** One entry of {@link ContextBuilder.loadStateTopSet}: a state item's path and content fingerprint. */
+interface StateTopSetItem {
+    path:               MemoryPath
+    /**
+     * A cheap, deterministic fingerprint of `item.content` (`Bun.hash(content).toString()`) —
+     * NOT `item.content`'s `updatedAt` field, which is a "last touched" stamp bumped by
+     * read-only access (`ContextBuilderImpl.recordAccess`, called on every `memory view` of a
+     * state item) as well as by real edits. Using `updatedAt` directly would report a path as
+     * "changed" whenever Claude merely reads it, even when its content is byte-identical.
+     */
+    contentFingerprint: string
+}
+
 interface ContextBuilderOptions {
     backend:                MemoryToolBackend
     maxIdentityTokens?:     number              // Default: 5000
@@ -73,6 +86,21 @@ export interface ContextBuilder {
      * @returns Formatted state context string with full content tier and preview tier
      */
     loadHotState: (now?: Date) => Promise<string>
+
+    /**
+     * Load the state top set: the same top-scored state items {@link loadHotState} renders
+     * (full tier + preview tier, `maxStateFullItems + maxStatePreviewItems` items — default
+     * 8 + 30 = 38), but as bare `{path, contentFingerprint}` entries instead of formatted text.
+     * Used by `ContextPolicy.stateTopSetDelta` to diff the set membership and per-path content
+     * fingerprint across turns, so it must use the exact same cap as `loadHotState` or the delta
+     * would report churn `loadHotState` never actually rendered. The fingerprint is derived from
+     * `item.content` itself (not `updatedAt`, which read-only access also bumps) so a path Claude
+     * merely reads is never reported as "changed".
+     * @param now Optional reference time for scoring (defaults to current time)
+     * @returns Each item's path and content fingerprint, in score order, capped at
+     *   `maxStateFullItems + maxStatePreviewItems`
+     */
+    loadStateTopSet: (now?: Date) => Promise<StateTopSetItem[]>
 
     /**
      * Load user-specific memories via path-based query
@@ -761,6 +789,15 @@ class ContextBuilderImpl implements ContextBuilder {
         const result = sections.join('\n');
         logger.debug({ fullTierCount, previewTierCount, overflowCount, stateLength: result.length }, 'Hot state loaded');
         return result;
+    }
+
+    async loadStateTopSet(now: Date = new Date()): Promise<StateTopSetItem[]> {
+        // Shared cap: must match loadHotState's own full+preview tier sizes exactly, so the
+        // delta tracker never reports churn outside what loadHotState actually renders.
+        const maxItems = this.#maxStateFullItems + this.#maxStatePreviewItems;
+        const scoredItems = await this.#backend.getStateItemsScored({ now, maxItems });
+
+        return scoredItems.map(({ item }) => ({ path: item.path, contentFingerprint: Bun.hash(item.content).toString() }));
     }
 
     async loadUserMemories(userId: string, now: Date = new Date()): Promise<string> {

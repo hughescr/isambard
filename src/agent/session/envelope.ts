@@ -38,6 +38,21 @@ function renderSection(title: string, body: string | undefined): string | undefi
     return body ? `[${title}]\n${body}` : undefined;
 }
 
+/** Renders the `[State changed]` section body (`+path`/`-path`/`~path` lines), or `undefined` when all three lists are empty. */
+function renderStateChangedSection(stateChanged: { added: string[], removed: string[], changed: string[] } | undefined): string | undefined {
+    if(!stateChanged) {
+        return undefined;
+    }
+    // No need to special-case "all three lists empty" here: an empty `lines` array joins to
+    // `''`, which `renderSection` already collapses to `undefined` on its own falsy check.
+    const lines = [
+        ...stateChanged.added.map(path => `+${path}`),
+        ...stateChanged.removed.map(path => `-${path}`),
+        ...stateChanged.changed.map(path => `~${path}`),
+    ];
+    return renderSection('State changed', lines.join('\n'));
+}
+
 /** `#channel-name (Guild)` for a guild channel, or `DM` for a direct message. */
 function formatDiscordChannelSegment(isDM: boolean, channelName: string, guildName: string | undefined): string {
     if(isDM) {
@@ -61,6 +76,14 @@ export interface BuildDiscordEnvelopeParams {
     timeHeader:       string
     newEvents?:       string[]
     userMemoryBlock?: string
+    /**
+     * State top-set delta since the last mark (Q9): paths that newly entered the top set
+     * (`added`), fell out of it (`removed`), or stayed in it with different content
+     * (`changed`). Rendered as a `[State changed]` section — `+path`/`-path`/`~path` lines,
+     * added then removed then changed — only when at least one list is non-empty; omitted
+     * entirely when `undefined` or when all three lists are empty.
+     */
+    stateChanged?:    { added: string[], removed: string[], changed: string[] }
     channelList?:     string
     healthNote?:      string
     images?:          PlatformImage[]
@@ -77,16 +100,16 @@ export interface BuildDiscordEnvelopeParams {
 /**
  * Builds a Discord turn envelope: `[DISCORD #channel · stamp · @author]` (or
  * `[DISCORD DM · stamp · @author]` for a direct message), followed by the caller-supplied time
- * header, the optional `[Service health]`/`[About this user]`/`[Recent events]`/`[Channels]`
- * sections (each rendered only when its input is provided/non-empty), then the message texts
- * in order.
+ * header, the optional `[Service health]`/`[About this user]`/`[Recent events]`/`[State
+ * changed]`/`[Channels]` sections (each rendered only when its input is provided/non-empty),
+ * then the message texts in order.
  * @param params Discord envelope inputs
  * @returns A `discord`-kind {@link Envelope}
  */
 export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelope {
     const {
         messages, authorId, authorName, channelId, channelName, guildName, isDM,
-        now, timezone, timeHeader, newEvents, userMemoryBlock, channelList, healthNote, images, resumeNote,
+        now, timezone, timeHeader, newEvents, userMemoryBlock, stateChanged, channelList, healthNote, images, resumeNote,
     } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
@@ -98,7 +121,12 @@ export function buildDiscordEnvelope(params: BuildDiscordEnvelopeParams): Envelo
         timeHeader,
         renderSection('Service health', healthNote),
         renderSection('About this user', userMemoryBlock),
-        newEvents && newEvents.length > 0 ? renderSection('Recent events', newEvents.join('\n')) : undefined,
+        // No need to special-case "empty array" here (mirrors renderStateChangedSection's own
+        // comment above): an empty `newEvents` joins to `''`, which `renderSection` already
+        // collapses to `undefined` on its own falsy check — a redundant `newEvents.length > 0`
+        // guard here would only produce a mutation-equivalent branch with no observable effect.
+        newEvents ? renderSection('Recent events', newEvents.join('\n')) : undefined,
+        renderStateChangedSection(stateChanged),
         renderSection('Channels', channelList),
         resumeNote,
         ...messages.map(message => message.content),

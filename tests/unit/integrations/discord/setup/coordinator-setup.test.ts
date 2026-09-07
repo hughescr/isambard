@@ -334,7 +334,7 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
                     return { delivered: true };
                 }),
             },
-            contextPolicy:    { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), resetAll: mock(() => undefined) },
+            contextPolicy:    { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined) },
             deliveryGuard:    { alreadyDelivered: mock(() => false), markDelivered: mock(() => undefined) },
             journal:          { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
             inboxManager:     { recordHandled: mock(() => Promise.resolve()) },

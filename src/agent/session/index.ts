@@ -119,7 +119,7 @@ export {
     type CreateCompactionTelemetryParams
 } from './compaction-telemetry';
 
-export { createContextPolicy, type ContextPolicy, type CreateContextPolicyParams, type EventsDeltaSource } from './context-policy';
+export { createContextPolicy, type ContextPolicy, type CreateContextPolicyParams, type EventsDeltaSource, type StateTopSetSource, type StateTopSetDelta } from './context-policy';
 
 export {
     createConductor,

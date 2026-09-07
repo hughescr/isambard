@@ -13,6 +13,7 @@ import {
 } from '@/agent';
 import type { Envelope } from '@/agent/session/types';
 import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
+import * as presenceModule from '@/integrations/discord/presence';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from '@/integrations/discord/setup/conductor-processor';
 import type { ResolvedDiscordNames } from '@/integrations/discord/setup/discord-envelope-provider';
 import { createChannelId, createGuildId, createUserId, type DiscordMessageContext } from '@/integrations/discord/types';
@@ -97,6 +98,8 @@ function makeContextPolicy(overrides: Partial<ContextPolicy> = {}): ContextPolic
         resetAll:               jest.fn(),
         eventsDelta:            jest.fn(() => Promise.resolve([])),
         markEventsSeen:         jest.fn(),
+        stateTopSetDelta:       jest.fn(() => Promise.resolve({ added: [], removed: [], changed: [] })),
+        markStateTopSetSeen:    jest.fn(() => Promise.resolve()),
         ...overrides,
     };
 }
@@ -316,7 +319,7 @@ describe('createConductorProcessor', () => {
         conductor.settleOldest({ contextUsagePercent: 17 });
         await flush();
 
-        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 17 }), expect.any(String));
+        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 17 }), 'Conductor turn settled');
 
         logger.info.mockClear();
 
@@ -326,7 +329,7 @@ describe('createConductorProcessor', () => {
         jest.advanceTimersByTime(100);
         await flush();
 
-        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 3, outcome: 'withdrawn' }), expect.any(String));
+        expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 3, outcome: 'withdrawn' }), 'Conductor turn settled');
     });
 
     it('marks the memory block injected only when it was actually shown, but still marks events seen for a completed turn', async () => {
@@ -367,6 +370,162 @@ describe('createConductorProcessor', () => {
 
         expect(contextPolicy.markInjected).not.toHaveBeenCalled();
         expect(contextPolicy.markEventsSeen).not.toHaveBeenCalled();
+    });
+
+    it('passes newEvents as undefined to buildDiscordEnvelope when eventsDelta() resolves an empty array', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        // makeContextPolicy's default eventsDelta already resolves [].
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ newEvents: undefined }));
+    });
+
+    it('passes newEvents through to buildDiscordEnvelope verbatim when eventsDelta() resolves a non-empty array', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const events = ['- event one', '- event two'];
+        contextPolicy = makeContextPolicy({ eventsDelta: jest.fn(() => Promise.resolve(events)) });
+        const eventsProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(eventsProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ newEvents: events }));
+    });
+
+    it('passes channelList as undefined to buildDiscordEnvelope when the resolved channel list is empty', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        envelopeProvider = makeEnvelopeProvider({ channelList: jest.fn(() => Promise.resolve([])) });
+        const emptyChannelsProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(emptyChannelsProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ channelList: undefined }));
+    });
+
+    it('joins a non-empty channel list with a newline before passing it to buildDiscordEnvelope', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        // makeEnvelopeProvider's default channelList() already resolves ['general', 'random'].
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ channelList: 'general\nrandom' }));
+    });
+
+    it('fetches stateTopSetDelta() alongside eventsDelta() and passes its resolved value through to buildDiscordEnvelope\'s stateChanged param', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const delta = { added: ['state/one'], removed: ['state/two'], changed: ['state/three'] };
+        contextPolicy = makeContextPolicy({ stateTopSetDelta: jest.fn(() => Promise.resolve(delta)) });
+        const stateChangedProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(stateChangedProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(contextPolicy.stateTopSetDelta).toHaveBeenCalledTimes(1);
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ stateChanged: delta }));
+    });
+
+    it('passes stateChanged as undefined to buildDiscordEnvelope when all three delta lists are empty', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ stateChanged: undefined }));
+    });
+
+    it('marks the state top set seen for a completed (non-withdrawn) turn', async () => {
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+        conductor.settleOldest();
+        await flush();
+
+        expect(contextPolicy.markStateTopSetSeen).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes stateChanged through to buildDiscordEnvelope when only added is non-empty', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const delta = { added: ['state/x'], removed: [], changed: [] };
+        contextPolicy = makeContextPolicy({ stateTopSetDelta: jest.fn(() => Promise.resolve(delta)) });
+        const addedOnlyProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(addedOnlyProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ stateChanged: delta }));
+    });
+
+    it('passes stateChanged through to buildDiscordEnvelope when only removed is non-empty', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const delta = { added: [], removed: ['state/y'], changed: [] };
+        contextPolicy = makeContextPolicy({ stateTopSetDelta: jest.fn(() => Promise.resolve(delta)) });
+        const removedOnlyProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(removedOnlyProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ stateChanged: delta }));
+    });
+
+    it('does not mark the state top set seen for a withdrawn turn', async () => {
+        coordinator.handleMessage(makeContext({ messageId: 'msg-2' }), makeDiscordMessage('chan-1', 'msg-2', 'held'));
+        await flush();
+        coordinator.handleMessage(makeContext({ messageId: 'msg-3', content: 'third' }), makeDiscordMessage('chan-1', 'msg-3', 'third'));
+        jest.advanceTimersByTime(100);
+        await flush();
+
+        expect(contextPolicy.markStateTopSetSeen).not.toHaveBeenCalled();
+    });
+
+    it('passes stateChanged through to buildDiscordEnvelope when only one of the three delta lists is non-empty', async () => {
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const delta = { added: [], removed: [], changed: ['state/x'] };
+        contextPolicy = makeContextPolicy({ stateTopSetDelta: jest.fn(() => Promise.resolve(delta)) });
+        const singleChangeProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(singleChangeProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ stateChanged: delta }));
+    });
+
+    it('does not drop a completed turn\'s response when markStateTopSetSeen rejects; logs a warning and still marks the memory injection instead', async () => {
+        const markStateTopSetSeenError = new Error('DynamoDB throttled');
+        contextPolicy = makeContextPolicy({ markStateTopSetSeen: jest.fn(() => Promise.reject(markStateTopSetSeenError)) });
+        const flakyProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+
+        const resultPromise = flakyProcessor([makeContext({ messageId: 'msg-1' })], null, new AbortController().signal);
+        await flush();
+        conductor.settleOldest({ response: 'the answer' });
+
+        const result = await resultPromise;
+
+        expect(result.response).toBe('the answer');
+        expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1');
+        expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: markStateTopSetSeenError }), 'markStateTopSetSeen failed; state top-set baseline not updated this turn');
     });
 
     it('resolves the author\'s stored timezone through resolveTimezone\'s fallback for the envelope stamp', async () => {
@@ -429,6 +588,86 @@ describe('createConductorProcessor', () => {
         await flush();
 
         expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ userMemoryBlock: undefined }));
+    });
+
+    it('unsubscribes from the turn stream and completes the ledger handler once submit resolves', async () => {
+        const ledgerStore = { dispatch: jest.fn() };
+        const throttle = { shouldUpdate: jest.fn(() => true), record: jest.fn() };
+
+        const unsubscribeSpies: ReturnType<typeof jest.fn>[] = [];
+        const originalSubscribeTurn = conductor.subscribeTurn.bind(conductor);
+        jest.spyOn(conductor, 'subscribeTurn').mockImplementation((handler) => {
+            const realUnsubscribe = originalSubscribeTurn(handler);
+            const wrapped = jest.fn(realUnsubscribe);
+            unsubscribeSpies.push(wrapped);
+            return wrapped;
+        });
+
+        const completeSpies: ReturnType<typeof jest.fn>[] = [];
+        const originalCreateLedgerStreamEventHandler = presenceModule.createLedgerStreamEventHandler;
+        jest.spyOn(presenceModule, 'createLedgerStreamEventHandler').mockImplementation((deps) => {
+            const real = originalCreateLedgerStreamEventHandler(deps);
+            const wrappedComplete = jest.fn(real.complete);
+            completeSpies.push(wrappedComplete);
+            return { ...real, complete: wrappedComplete };
+        });
+
+        const processorWithLedger = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle,
+        });
+        coordinator.setProcessor(processorWithLedger);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+
+        expect(unsubscribeSpies).toHaveLength(1);
+        expect(unsubscribeSpies[0]).not.toHaveBeenCalled();
+        expect(completeSpies[0]).not.toHaveBeenCalled();
+
+        conductor.settleOldest();
+        await flush();
+
+        expect(unsubscribeSpies[0]).toHaveBeenCalledTimes(1);
+        expect(completeSpies[0]).toHaveBeenCalledTimes(1);
+    });
+
+    it('unsubscribes from the turn stream and completes the ledger handler even when submit rejects', async () => {
+        const ledgerStore = { dispatch: jest.fn() };
+        const throttle = { shouldUpdate: jest.fn(() => true), record: jest.fn() };
+
+        const unsubscribeSpies: ReturnType<typeof jest.fn>[] = [];
+        const originalSubscribeTurn = conductor.subscribeTurn.bind(conductor);
+        jest.spyOn(conductor, 'subscribeTurn').mockImplementation((handler) => {
+            const realUnsubscribe = originalSubscribeTurn(handler);
+            const wrapped = jest.fn(realUnsubscribe);
+            unsubscribeSpies.push(wrapped);
+            return wrapped;
+        });
+
+        const completeSpies: ReturnType<typeof jest.fn>[] = [];
+        const originalCreateLedgerStreamEventHandler = presenceModule.createLedgerStreamEventHandler;
+        jest.spyOn(presenceModule, 'createLedgerStreamEventHandler').mockImplementation((deps) => {
+            const real = originalCreateLedgerStreamEventHandler(deps);
+            const wrappedComplete = jest.fn(real.complete);
+            completeSpies.push(wrappedComplete);
+            return { ...real, complete: wrappedComplete };
+        });
+
+        const submitError = new Error('conductor exploded');
+        jest.spyOn(conductor, 'submit').mockImplementation(() => Promise.reject(submitError));
+
+        const processorWithLedger = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger, ledgerStore, throttle,
+        });
+
+        const resultPromise = processorWithLedger([makeContext({ messageId: 'msg-1' })], null, new AbortController().signal);
+
+        await expect(resultPromise).rejects.toThrow('conductor exploded');
+
+        expect(unsubscribeSpies).toHaveLength(1);
+        expect(unsubscribeSpies[0]).toHaveBeenCalledTimes(1);
+        expect(completeSpies).toHaveLength(1);
+        expect(completeSpies[0]).toHaveBeenCalledTimes(1);
     });
 
     describe('P11: ledger-sink presence wiring', () => {
