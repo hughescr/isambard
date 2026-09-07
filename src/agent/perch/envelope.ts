@@ -5,6 +5,19 @@
  * {@link PerchSlotConfig}) onto the parameters those builders already expect, so the on-wire
  * `[PERCH ...]`/`[WRAP-UP ...]` text stays byte-for-byte whatever P6 defines.
  *
+ * Q12 perch decision (pinned, deliberate): perch turns carry the FULL context every time — the
+ * complete `buildPerchContext` block (full day agenda, full service health, top-3 state), passed
+ * in whole via {@link BuildPerchSlotEnvelopeParams.perchContext} and rendered verbatim — and
+ * receive NONE of the Discord conductor's memory-tuning deltas (`[Calendar]`/`[State changed]`/
+ * `[Service health]` sections that render only the CHANGE since a prior turn, `@/agent/session`'s
+ * `ContextPolicy`, Q9/Q12). This is a structural fact, not an oversight to fix: perch has no
+ * `ContextPolicy` of its own to source a delta from (`sessions.ts`'s `createPerchConductor` never
+ * builds one — see its own doc comment), `buildPerchSlotEnvelope`/`buildPerchEnvelope` have no
+ * `calendarChanged`/`stateChanged`/`healthNote` parameters to plumb one through even if one
+ * existed, and perch runs only a handful of turns per day (one per slot), so each turn's context
+ * must be self-contained rather than relying on a previous perch turn's baseline the way a
+ * same-day run of Discord conductor turns can.
+ *
  * @module agent/perch/envelope
  */
 import { formatSlotName } from './prompts';

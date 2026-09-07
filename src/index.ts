@@ -881,6 +881,7 @@ export async function createApp(): Promise<App> {
             emailServerFactory:  emailSetup?.createEmailMcpServerInstance,
             plugins,
             contextBuilder:      contextLayer.contextBuilder,
+            healthRegistry,
             identityCache:       identityCacheSlot.cache,
             taskListReader:      conversationTaskListReader,
             journal:             conversationJournal,

@@ -83,6 +83,23 @@ describe('buildPerchSlotEnvelope', () => {
         expect(envelope.text).toContain('Suggestion level: 0 of 3.');
         expect(envelope.text).toContain('[PERCH · Unscheduled slot ·');
     });
+
+    test('Q12 perch decision: renders the supplied perchContext verbatim, with no [Calendar]/[State changed]/[Service health] delta sections — perch has no ContextPolicy to source a delta from', () => {
+        const endsAt = computeSlotEndsAt(now, 45);
+        const perchContext = '## Calendar\n- All day: Something already full, not a delta\n\n## State\nfull top-3 dump, not a delta';
+        const envelope = buildPerchSlotEnvelope({
+            slot: 'evening', now, timezone, endsAt, timeHeader, perchContext,
+        });
+
+        // The FULL block passed in comes through unchanged...
+        expect(envelope.text).toContain(perchContext);
+        // ...and there is no bracketed Discord-delta-style section this builder could even
+        // render one of: buildPerchSlotEnvelope/buildPerchEnvelope have no calendarChanged/
+        // stateChanged/healthNote params to source one from (see BuildPerchSlotEnvelopeParams).
+        expect(envelope.text).not.toContain('[Calendar]');
+        expect(envelope.text).not.toContain('[State changed]');
+        expect(envelope.text).not.toContain('[Service health]');
+    });
 });
 
 describe('buildPerchWrapUpEnvelope', () => {

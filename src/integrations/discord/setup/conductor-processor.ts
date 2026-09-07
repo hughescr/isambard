@@ -21,6 +21,7 @@
  * @module integrations/discord/setup/conductor-processor
  */
 import type { Logger } from '@hughescr/logger';
+import { DateTime } from 'luxon';
 import { addAttachmentInfoToContexts } from '../attachments';
 import type { MessageProcessor, ProcessResult } from '../message-coordinator';
 import { buildLedgerThinkingSynopsis, createLedgerStreamEventHandler, type createDynamicStatusGenerator, type PresenceThrottle } from '../presence';
@@ -29,8 +30,9 @@ import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {
     buildDiscordEnvelope, buildResumeNote, StreamTracker,
-    type AgentStreamEvent, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage, type StateTopSetDelta
+    type AgendaEntry, type AgentStreamEvent, type BuildDiscordEnvelopeParams, type CalendarDelta, type Conductor, type ContextBuilder, type ContextPolicy, type DiscordEnvelopeInput, type LedgerStore, type PlatformImage, type StateTopSetDelta
 } from '@/agent';
+import { formatCalendarContext } from '@/integrations/caldav';
 import { formatTimeHeader } from '@/utils';
 
 /**
@@ -82,6 +84,44 @@ function stateChangedOrUndefined(delta: StateTopSetDelta): StateTopSetDelta | un
     return delta.added.length > 0 || delta.removed.length > 0 || delta.changed.length > 0 ? delta : undefined;
 }
 
+/** The empty, non-first delta `calendarDelta()` resolves to when it rejects — collapses onto no `[Calendar]` section this turn (a transient CalDAV failure costs one skipped calendar refresh, never a dropped turn). */
+// Stryker disable BooleanLiteral: equivalent given the empty agenda/events/added/removed/changed above -- calendarChangedOrUndefined's `delta.isFirst ? agendaText === '' : !hasChanges` collapses to `undefined` for either value of isFirst (agendaText is always '' and hasChanges is always false here), and `polled` is never read anywhere downstream of this constant in this file.
+const EMPTY_CALENDAR_DELTA: CalendarDelta = {
+    agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false,
+};
+// Stryker restore BooleanLiteral
+
+/** One `+`/`-`/`~` change-list line for an `AgendaEntry`: `HH:mm–HH:mm summary` in `timezone`, or `All day: summary` for an all-day entry — mirrors `formatCalendarContext`'s own `formatEventLine` convention so the change list and the full agenda text read consistently. */
+function formatAgendaLine(entry: AgendaEntry, timezone: string): string {
+    if(entry.isAllDay) {
+        return `All day: ${entry.summary}`;
+    }
+    const start = DateTime.fromISO(entry.start, { zone: timezone }).toFormat('HH:mm');
+    const end = DateTime.fromISO(entry.end, { zone: timezone }).toFormat('HH:mm');
+    return `${start}–${end} ${entry.summary}`;
+}
+
+/**
+ * `buildDiscordEnvelope`'s `calendarChanged` param from a `CalendarDelta`, or `undefined` when
+ * there is nothing worth injecting: an unchanged (non-first) delta, or a first-ever poll whose
+ * agenda is empty (no calendar configured, or a genuinely empty day). Otherwise the full agenda
+ * text (`agendaText`, built by the caller via `formatCalendarContext`) plus the `+/-/~` change
+ * list rendered via {@link formatAgendaLine}.
+ */
+function calendarChangedOrUndefined(delta: CalendarDelta, agendaText: string, timezone: string): BuildDiscordEnvelopeParams['calendarChanged'] {
+    const hasChanges = delta.added.length > 0 || delta.removed.length > 0 || delta.changed.length > 0;
+    if(delta.isFirst ? agendaText === '' : !hasChanges) {
+        return undefined;
+    }
+    return {
+        agenda:  agendaText,
+        added:   delta.added.map(entry => formatAgendaLine(entry, timezone)),
+        removed: delta.removed.map(entry => formatAgendaLine(entry, timezone)),
+        changed: delta.changed.map(entry => formatAgendaLine(entry, timezone)),
+        isFirst: delta.isFirst,
+    };
+}
+
 /**
  * Creates the conductor-backed `MessageProcessor` conductor-mode coordinator-setup.ts installs
  * in place of the legacy `agent.handleInput` processor.
@@ -113,25 +153,38 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             ? buildLedgerThinkingSynopsis(dynamicStatusGenerator, throttle, first.content)
             : Promise.resolve(undefined);
 
-        const [names, channelList, storedTimezone, newEvents, stateTopSetDelta, thinkingSynopsis] = await Promise.all([
+        // Gap 1/4 (timezone): every envelope stamp and time header uses the AUTHOR's own zone —
+        // resolveTimezone's fallback (server zone) only kicks in when nothing is stored for them.
+        // Resolved BEFORE the Promise.all below (rather than alongside it, as loadUserTimezone
+        // used to run) because Q12's calendarDelta() needs the resolved zone as an argument, not
+        // a promise of one.
+        const storedTimezone = await contextBuilder.loadUserTimezone(first.userId);
+        const timezone = resolveTimezone(storedTimezone);
+
+        const [names, channelList, newEvents, stateTopSetDelta, calendarDelta, thinkingSynopsis] = await Promise.all([
             envelopeProvider.resolveNames(first),
             envelopeProvider.channelList(),
-            contextBuilder.loadUserTimezone(first.userId),
             contextPolicy.eventsDelta(),
             contextPolicy.stateTopSetDelta(),
+            // Q12: a transient CalDAV failure must not take the whole turn down with it — logged
+            // and collapsed onto an empty, non-first delta, which calendarChangedOrUndefined then
+            // renders as no [Calendar] section at all this turn.
+            contextPolicy.calendarDelta(first.userId, timezone).catch((err: unknown) => {
+                logger.warn({ err }, 'calendarDelta failed; envelope sent without a calendar section this turn');
+                return EMPTY_CALENDAR_DELTA;
+            }),
             thinkingSynopsisPromise,
         ]);
 
         const input = envelopeProvider.toEnvelopeInput(enrichedContexts, names, platformImages, channelList);
-        // Gap 1 (timezone): every envelope stamp and time header uses the AUTHOR's own zone —
-        // resolveTimezone's fallback (server zone) only kicks in when nothing is stored for them.
-        const timezone = resolveTimezone(storedTimezone);
         const shouldInjectMemory = contextPolicy.shouldInjectUserMemory(input.authorId);
         const userMemoryBlock = shouldInjectMemory ? await contextBuilder.loadUserMemories(input.authorId) : undefined;
         // An interrupted turn's captured partial work (message-coordinator.ts's own resume-context
         // handling), rendered as a `[RESUME NOTE]` block so it still reaches Claude even though the
         // interrupting messages arrive as a fresh envelope rather than a continuation of the old one.
         const resumeNote = resumeContext ? buildResumeNote(resumeContext.partialWork) : undefined;
+        const now = new Date();
+        const calendarAgendaText = formatCalendarContext(calendarDelta.events, now, timezone);
 
         const envelope = buildDiscordEnvelope({
             messages: [{
@@ -149,11 +202,13 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             channelName:     input.channelName,
             guildName:       input.guildName,
             isDM:            input.isDM,
-            now:             new Date(),
+            now,
             timezone,
             timeHeader:      formatTimeHeader(timezone),
             newEvents:       newEvents.length > 0 ? newEvents : undefined,
             stateChanged:    stateChangedOrUndefined(stateTopSetDelta),
+            calendarChanged: calendarChangedOrUndefined(calendarDelta, calendarAgendaText, timezone),
+            healthNote:      contextPolicy.healthNote(),
             // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: an empty-string memory block must collapse to undefined too, not just null/undefined, so `??` would be wrong here
             userMemoryBlock: userMemoryBlock || undefined,
             channelList:     input.channelList.length > 0 ? input.channelList.join('\n') : undefined,
@@ -215,6 +270,10 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             if(shouldInjectMemory) {
                 contextPolicy.markInjected(input.authorId);
             }
+            // Q12: synchronous, in-memory marks (like markEventsSeen/markInjected above) — cannot
+            // throw, so no try/catch is needed here.
+            contextPolicy.markCalendarSeen(first.userId);
+            contextPolicy.markHealthSeen();
         }
 
         return {

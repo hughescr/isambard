@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { createContextBuilder } from '../../../src/agent/context-builder';
+import { createContextBuilder, type CalendarService } from '../../../src/agent/context-builder';
 import type { BlueskyClient } from '../../../src/integrations/bsky';
 import type { BskyRejectionBackend } from '../../../src/integrations/bsky/rejection-backend';
+import type { CalDAVClient, CalendarRegistryBackend, CalendarEventsResult, CalendarServerEntry } from '../../../src/integrations/caldav';
 import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { ListResult } from '../../../src/storage/memory-tool/backend-query';
 import { createMemoryPath, type MemoryToolItemData } from '../../../src/storage/memory-tool/types';
@@ -1001,6 +1002,124 @@ describe('createContextBuilder loading methods', () => {
             await contextBuilder.loadStateTopSet();
 
             expect(getStateItemsScored).toHaveBeenCalledWith({ now: expect.any(Date), maxItems: 38 });
+        });
+    });
+
+    describe('loadCalendarAgenda', () => {
+        const fakeServer: CalendarServerEntry = {
+            serverId:    '00000000-0000-0000-0000-000000000001' as CalendarServerEntry['serverId'],
+            description: 'Test server',
+            serverUrl:   'https://cal.example.com',
+            username:    'user',
+            password:    'pass',
+            calendars:   [{ calendarPath: '/calendars/main/', label: 'Main' }],
+        };
+
+        const fakeEvent = {
+            uid:           'evt-001',
+            summary:       'Team meeting',
+            start:         new Date('2026-03-18T10:00:00Z'),
+            end:           new Date('2026-03-18T11:00:00Z'),
+            isAllDay:      false,
+            calendarLabel: 'Main',
+            status:        'confirmed' as const,
+        };
+
+        let mockCalDAVClient: CalDAVClient;
+        let mockCalendarRegistry: CalendarRegistryBackend;
+
+        beforeEach(() => {
+            mockCalDAVClient = {
+                getContextEvents: mock(async (): Promise<CalendarEventsResult> => ({ events: [fakeEvent], failed: [] })),
+            } as unknown as CalDAVClient;
+
+            mockCalendarRegistry = {
+                getAllCalendars:       mock(async () => [fakeServer]),
+                listRegisteredUserIds: mock(async () => []),
+            } as unknown as CalendarRegistryBackend;
+        });
+
+        test('returns [] when no calendarService is configured', async () => {
+            const contextBuilder = createContextBuilder({ backend });
+            const result = await contextBuilder.loadCalendarAgenda('user123', new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toEqual([]);
+            // Distinguishes the early-return guard from the fallthrough case: without a
+            // calendarService, #fetchCalendarEvents would throw on `this.#calendarService!.registry`
+            // and the catch block would log a warning en route to the same [] result.
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('returns [] when the user has no registered calendar servers', async () => {
+            mockCalendarRegistry.getAllCalendars = mock(async () => []);
+            const calendarService: CalendarService = { client: mockCalDAVClient, registry: mockCalendarRegistry };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.loadCalendarAgenda('user123', new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toEqual([]);
+            expect(mockCalDAVClient.getContextEvents).not.toHaveBeenCalled();
+        });
+
+        test('returns the fetched events for the user', async () => {
+            const calendarService: CalendarService = { client: mockCalDAVClient, registry: mockCalendarRegistry };
+            const now = new Date('2026-03-18T10:00:00Z');
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.loadCalendarAgenda('user123', now);
+
+            expect(result).toEqual([fakeEvent]);
+            expect(mockCalendarRegistry.getAllCalendars).toHaveBeenCalledWith('user123');
+            expect(mockCalDAVClient.getContextEvents).toHaveBeenCalledWith([fakeServer], now);
+        });
+
+        test('returns [] and logs a warning when registry.getAllCalendars throws', async () => {
+            mockCalendarRegistry.getAllCalendars = mock(async () => {
+                throw new Error('DynamoDB timeout');
+            });
+            const calendarService: CalendarService = { client: mockCalDAVClient, registry: mockCalendarRegistry };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.loadCalendarAgenda('user123', new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toEqual([]);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ error: expect.any(Error), userId: 'user123' }),
+                'Failed to load calendar agenda'
+            );
+        });
+
+        test('returns [] and logs a warning when client.getContextEvents throws', async () => {
+            mockCalDAVClient.getContextEvents = mock(async () => {
+                throw new Error('CalDAV connection failed');
+            });
+            const calendarService: CalendarService = { client: mockCalDAVClient, registry: mockCalendarRegistry };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.loadCalendarAgenda('user123', new Date('2026-03-18T10:00:00Z'));
+
+            expect(result).toEqual([]);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ error: expect.any(Error), userId: 'user123' }),
+                'Failed to load calendar agenda'
+            );
+        });
+
+        test('does not affect #buildCalendarSection: the failed-note behavior still renders after the refactor', async () => {
+            mockCalDAVClient.getContextEvents = mock(async (): Promise<CalendarEventsResult> => ({
+                events: [fakeEvent],
+                failed: [{ uid: 'bad-recurring', reason: 'malformed RRULE' }],
+            }));
+            backend.list = mock(async () => ({ items: [] }));
+            backend.getStateItemsScored = mock(async () => []);
+            backend.searchByTimeRange = mock(async () => []);
+            backend.listByLayer = mock(async () => ({ items: [] }));
+            const calendarService: CalendarService = { client: mockCalDAVClient, registry: mockCalendarRegistry };
+
+            const contextBuilder = createContextBuilder({ backend, calendarService });
+            const result = await contextBuilder.buildUserMessagePrefix('user123');
+
+            expect(result).toContain("couldn't be parsed");
         });
     });
 

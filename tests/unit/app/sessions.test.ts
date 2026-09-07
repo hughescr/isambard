@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
 import { FakeClock } from '../../helpers/fake-clock';
+import { makeHealthRegistry } from '../../helpers/fake-health-registry';
 import { FakeJournal } from '../../helpers/fake-journal';
 import { fakeQueryFn } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
@@ -57,12 +58,13 @@ const FULL_MCP_SERVERS: Required<MCPServers> = {
 
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
 
-function fakeContextBuilder(overrides: Partial<ContextBuilder> = {}): Pick<ContextBuilder, 'loadHotState' | 'loadRecentEventsSince' | 'loadStateTopSet' | 'buildPerchContext'> {
+function fakeContextBuilder(overrides: Partial<ContextBuilder> = {}): Pick<ContextBuilder, 'loadHotState' | 'loadRecentEventsSince' | 'loadStateTopSet' | 'buildPerchContext' | 'loadCalendarAgenda'> {
     return {
         loadHotState:          jest.fn(() => Promise.resolve('')),
         loadRecentEventsSince: jest.fn(() => Promise.resolve([])),
         loadStateTopSet:       jest.fn(() => Promise.resolve([])),
         buildPerchContext:     jest.fn(() => Promise.resolve('')),
+        loadCalendarAgenda:    jest.fn(() => Promise.resolve([])),
         ...overrides,
     };
 }
@@ -228,6 +230,25 @@ describe('createConversationConductor', () => {
         expect(result.ledgerStore.get().role).toBe('conversation');
         expect(typeof result.conductor.submit).toBe('function');
         expect(typeof result.contextPolicy.resetAll).toBe('function');
+    });
+
+    it('Q12: threads a supplied healthRegistry into the context policy\'s healthNote gate', async () => {
+        const healthRegistry = makeHealthRegistry({ summary: 'Email is degraded.' });
+        const h = build({ healthRegistry });
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { contextPolicy } = await createConversationConductor(h.params);
+
+        expect(contextPolicy.healthNote()).toBe('Email is degraded.');
+    });
+
+    it('Q12: healthNote() always returns undefined when no healthRegistry is supplied', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { contextPolicy } = await createConversationConductor(h.params);
+
+        expect(contextPolicy.healthNote()).toBeUndefined();
     });
 
     it('returns a compactionTelemetry subscribed to the ledgerStore, recording a compaction_started/compact_boundary pair as one completed record', async () => {

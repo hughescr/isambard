@@ -85,7 +85,7 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\nhello there`);
     });
 
-    test('omits [Service health], [About this user], [Recent events], [State changed] and [Channels] when their inputs are absent', () => {
+    test('omits [Service health], [About this user], [Recent events], [State changed], [Calendar] and [Channels] when their inputs are absent', () => {
         const envelope = buildDiscordEnvelope({
             messages: [makeMessage()], authorId: 'a', authorName: 'craig', channelId: 'c', channelName: 'general', isDM: false, now, timezone, timeHeader,
         });
@@ -94,7 +94,106 @@ describe('buildDiscordEnvelope', () => {
         expect(envelope.text).not.toContain('[About this user]');
         expect(envelope.text).not.toContain('[Recent events]');
         expect(envelope.text).not.toContain('[State changed]');
+        expect(envelope.text).not.toContain('[Calendar]');
         expect(envelope.text).not.toContain('[Channels]');
+    });
+
+    test('omits [Calendar] when calendarChanged is explicitly undefined', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            calendarChanged: undefined,
+        });
+
+        expect(envelope.text).not.toContain('[Calendar]');
+    });
+
+    test('renders [Calendar] with only the full agenda text on isFirst, ignoring any populated added/removed/changed lists', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            // isFirst diffs are always empty in practice (see diffAgenda), but the builder is
+            // pinned to ignore the lists on isFirst regardless, so this catches a mutant that
+            // drops the isFirst branch entirely.
+            calendarChanged: { agenda: '09:00–10:00 Standup', added: ['14:00–15:00 Review'], removed: [], changed: [], isFirst: true },
+        });
+
+        expect(envelope.text).toContain('[Calendar]\n09:00–10:00 Standup');
+        expect(envelope.text).not.toContain('+14:00–15:00 Review');
+    });
+
+    test('renders [Calendar] with a +/-/~ change list followed by the full agenda text when not isFirst', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            calendarChanged: {
+                agenda:  '09:00–10:00 Standup\n14:00–15:00 Review',
+                added:   ['14:00–15:00 Review'],
+                removed: ['11:00–12:00 Old meeting'],
+                changed: ['09:00–10:00 Standup'],
+                isFirst: false,
+            },
+        });
+
+        expect(envelope.text).toContain(
+            '[Calendar]\n+14:00–15:00 Review\n-11:00–12:00 Old meeting\n~09:00–10:00 Standup\n09:00–10:00 Standup\n14:00–15:00 Review'
+        );
+    });
+
+    test('does not leave a dangling trailing newline when a change list is present but the agenda text is empty', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            calendarChanged: { agenda: '', added: [], removed: ['09:00–10:00 Standup'], changed: [], isFirst: false },
+        });
+
+        const header = '[DISCORD #general · 2026-09-04 14:07 PT · @craig]';
+        expect(envelope.text).toBe(`${header}\n\n${timeHeader}\n\n[Calendar]\n-09:00–10:00 Standup\n\nhello there`);
+    });
+
+    test('renders [Calendar] with just the full agenda text when not isFirst but nothing changed', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            calendarChanged: { agenda: '09:00–10:00 Standup', added: [], removed: [], changed: [], isFirst: false },
+        });
+
+        expect(envelope.text).toContain('[Calendar]\n09:00–10:00 Standup');
     });
 
     test('omits [State changed] when stateChanged is explicitly undefined', () => {
@@ -204,6 +303,29 @@ describe('buildDiscordEnvelope', () => {
         const channelsIndex = envelope.text.indexOf('[Channels]');
         expect(recentEventsIndex).toBeLessThan(stateChangedIndex);
         expect(stateChangedIndex).toBeLessThan(channelsIndex);
+    });
+
+    test('places [Calendar] after [State changed] and before [Channels]', () => {
+        const envelope = buildDiscordEnvelope({
+            messages:        [makeMessage()],
+            authorId:        'a',
+            authorName:      'craig',
+            channelId:       'c',
+            channelName:     'general',
+            isDM:            false,
+            now,
+            timezone,
+            timeHeader,
+            channelList:     '#general, #random',
+            stateChanged:    { added: ['state/one'], removed: [], changed: [] },
+            calendarChanged: { agenda: '09:00–10:00 Standup', added: [], removed: [], changed: [], isFirst: true },
+        });
+
+        const stateChangedIndex = envelope.text.indexOf('[State changed]');
+        const calendarIndex = envelope.text.indexOf('[Calendar]');
+        const channelsIndex = envelope.text.indexOf('[Channels]');
+        expect(stateChangedIndex).toBeLessThan(calendarIndex);
+        expect(calendarIndex).toBeLessThan(channelsIndex);
     });
 
     test('includes [Service health]/[About this user]/[Recent events]/[Channels] only when provided, each with its content', () => {

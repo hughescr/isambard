@@ -30,6 +30,7 @@ function createMockContextBuilder(overrides?: Partial<ContextBuilder>): ContextB
         loadCoreIdentity:       mock(() => Promise.resolve('')),
         loadHotState:           mock(() => Promise.resolve('')),
         loadStateTopSet:        mock(() => Promise.resolve([])),
+        loadCalendarAgenda:     mock(() => Promise.resolve([])),
         loadUserMemories:       mock(() => Promise.resolve('')),
         recordAccess:           mock(() => Promise.resolve()),
         loadRecentEvents:       mock(async () => ({ items: [], isFallback: false })),

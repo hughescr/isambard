@@ -7,11 +7,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import type { Message } from 'discord.js';
+import { DateTime } from 'luxon';
 import * as agentModule from '@/agent';
 import {
-    type Conductor, type ConductorStatus, type ContextPolicy, type DiscordEnvelopeInput, type SubmitOptions, type TurnResult, StreamTracker
+    type AgendaEntry, type Conductor, type ConductorStatus, type ContextPolicy, type DiscordEnvelopeInput, type SubmitOptions, type TurnResult, StreamTracker
 } from '@/agent';
 import type { Envelope } from '@/agent/session/types';
+import { formatCalendarContext, type CalendarEvent } from '@/integrations/caldav';
 import { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import * as presenceModule from '@/integrations/discord/presence';
 import { createConductorProcessor, type DiscordEnvelopeProvider } from '@/integrations/discord/setup/conductor-processor';
@@ -100,6 +102,10 @@ function makeContextPolicy(overrides: Partial<ContextPolicy> = {}): ContextPolic
         markEventsSeen:         jest.fn(),
         stateTopSetDelta:       jest.fn(() => Promise.resolve({ added: [], removed: [], changed: [] })),
         markStateTopSetSeen:    jest.fn(() => Promise.resolve()),
+        calendarDelta:          jest.fn(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })),
+        markCalendarSeen:       jest.fn(),
+        healthNote:             jest.fn(() => undefined),
+        markHealthSeen:         jest.fn(),
         ...overrides,
     };
 }
@@ -526,6 +532,269 @@ describe('createConductorProcessor', () => {
         expect(result.response).toBe('the answer');
         expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1');
         expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: markStateTopSetSeenError }), 'markStateTopSetSeen failed; state top-set baseline not updated this turn');
+    });
+
+    describe('Q12: calendar delta and health note wiring', () => {
+        function makeAgendaEntry(overrides: Partial<AgendaEntry> = {}): AgendaEntry {
+            return {
+                uid:      'evt-1',
+                start:    '2026-09-04T16:00:00.000Z',
+                end:      '2026-09-04T17:00:00.000Z',
+                summary:  'Team sync',
+                isAllDay: false,
+                ...overrides,
+            };
+        }
+
+        /** Mirrors `conductor-processor.ts`'s own `formatAgendaLine`: `HH:mm–HH:mm summary` in `America/Los_Angeles`, computed via luxon rather than hardcoded so it is not sensitive to the fake-timers-active DST-offset quirk (see the module's own note near `formatAgendaLine`). */
+        function expectedAgendaLine(entry: AgendaEntry): string {
+            if(entry.isAllDay) {
+                return `All day: ${entry.summary}`;
+            }
+            const start = DateTime.fromISO(entry.start, { zone: 'America/Los_Angeles' }).toFormat('HH:mm');
+            const end = DateTime.fromISO(entry.end, { zone: 'America/Los_Angeles' }).toFormat('HH:mm');
+            return `${start}–${end} ${entry.summary}`;
+        }
+
+        function makeCalendarEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
+            return {
+                uid:           'evt-1',
+                summary:       'Team sync',
+                start:         new Date('2026-09-04T16:00:00.000Z'),
+                end:           new Date('2026-09-04T17:00:00.000Z'),
+                isAllDay:      false,
+                calendarLabel: 'Work',
+                ...overrides,
+            };
+        }
+
+        it('resolves the author\'s own timezone before calling calendarDelta, not the server fallback', async () => {
+            contextBuilder = makeContextBuilder({ loadUserTimezone: jest.fn(() => Promise.resolve('Europe/London')) });
+            const calendarDeltaSpy = jest.fn(() => Promise.resolve({
+                agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false,
+            }));
+            contextPolicy = makeContextPolicy({ calendarDelta: calendarDeltaSpy });
+            const londonCalendarProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(londonCalendarProcessor);
+
+            coordinator.handleMessage(makeContext({ userId: createUserId('user-42') }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(calendarDeltaSpy).toHaveBeenCalledWith('user-42', 'Europe/London');
+        });
+
+        it('passes calendarChanged (agenda text via formatCalendarContext, +/-/~ lines from the AgendaEntry lists) and healthNote through to buildDiscordEnvelope', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            const event = makeCalendarEvent();
+            const addedEntry = makeAgendaEntry();
+            const removedEntry = makeAgendaEntry({ uid: 'evt-2', summary: 'Old meeting' });
+            const changedEntry = makeAgendaEntry({ uid: 'evt-3', summary: 'Moved lunch', isAllDay: true });
+            const delta = {
+                agenda: [addedEntry], events: [event], added: [addedEntry], removed: [removedEntry], changed: [changedEntry], isFirst: false, polled: true,
+            };
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve(delta)),
+                healthNote:    jest.fn(() => 'Email is degraded.'),
+            });
+            const calendarProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(calendarProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            const expectedAgendaText = formatCalendarContext([event], new Date(1000), 'America/Los_Angeles');
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                calendarChanged: {
+                    agenda:  expectedAgendaText,
+                    added:   [expectedAgendaLine(addedEntry)],
+                    removed: [expectedAgendaLine(removedEntry)],
+                    changed: [expectedAgendaLine(changedEntry)],
+                    isFirst: false,
+                },
+                healthNote: 'Email is degraded.',
+            }));
+        });
+
+        it('passes calendarChanged and healthNote as undefined with no calendar service and an all-online registry (byte-identical to Q9 output)', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            // makeContextPolicy's defaults already model "no calendar service, all-online
+            // registry": calendarDelta resolves an empty, non-first delta and healthNote()
+            // resolves undefined.
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ calendarChanged: undefined, healthNote: undefined }));
+        });
+
+        it('passes calendarChanged as undefined when isFirst is false, nothing changed, and the agenda is non-empty (must not re-inject an unchanged agenda every turn)', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            const event = makeCalendarEvent();
+            const entry = makeAgendaEntry();
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve({
+                    agenda: [entry], events: [event], added: [], removed: [], changed: [], isFirst: false, polled: true,
+                })),
+            });
+            const unchangedNonFirstProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(unchangedNonFirstProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ calendarChanged: undefined }));
+        });
+
+        it('passes calendarChanged through when only added is non-empty', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            const event = makeCalendarEvent();
+            const addedEntry = makeAgendaEntry();
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve({
+                    agenda: [addedEntry], events: [event], added: [addedEntry], removed: [], changed: [], isFirst: false, polled: true,
+                })),
+            });
+            const onlyAddedProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(onlyAddedProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                calendarChanged: expect.objectContaining({ added: [expectedAgendaLine(addedEntry)], removed: [], changed: [] }),
+            }));
+        });
+
+        it('passes calendarChanged through when only removed is non-empty', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            const removedEntry = makeAgendaEntry({ uid: 'evt-2', summary: 'Old meeting' });
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve({
+                    agenda: [], events: [], added: [], removed: [removedEntry], changed: [], isFirst: false, polled: true,
+                })),
+            });
+            const onlyRemovedProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(onlyRemovedProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                calendarChanged: expect.objectContaining({ added: [], removed: [expectedAgendaLine(removedEntry)], changed: [] }),
+            }));
+        });
+
+        it('passes calendarChanged through when only changed is non-empty', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            const changedEntry = makeAgendaEntry({ uid: 'evt-3', summary: 'Moved lunch', isAllDay: true });
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve({
+                    agenda: [], events: [], added: [], removed: [], changed: [changedEntry], isFirst: false, polled: true,
+                })),
+            });
+            const onlyChangedProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(onlyChangedProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                calendarChanged: expect.objectContaining({ added: [], removed: [], changed: [expectedAgendaLine(changedEntry)] }),
+            }));
+        });
+
+        it('passes calendarChanged as undefined on a genuine first poll with an empty agenda (nothing worth showing)', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve({
+                    agenda: [], events: [], added: [], removed: [], changed: [], isFirst: true, polled: true,
+                })),
+            });
+            const firstPollProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(firstPollProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ calendarChanged: undefined }));
+        });
+
+        it('passes calendarChanged through on a genuine first poll with a non-empty agenda', async () => {
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            const event = makeCalendarEvent();
+            const entry = makeAgendaEntry();
+            contextPolicy = makeContextPolicy({
+                calendarDelta: jest.fn(() => Promise.resolve({
+                    agenda: [entry], events: [event], added: [], removed: [], changed: [], isFirst: true, polled: true,
+                })),
+            });
+            const firstPollProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            coordinator.setProcessor(firstPollProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            const expectedAgendaText = formatCalendarContext([event], new Date(1000), 'America/Los_Angeles');
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                calendarChanged: {
+                    agenda: expectedAgendaText, added: [], removed: [], changed: [], isFirst: true,
+                },
+            }));
+        });
+
+        it('logs a warning and still sends the envelope without a calendar section when calendarDelta rejects', async () => {
+            const calendarDeltaError = new Error('CalDAV timeout');
+            contextPolicy = makeContextPolicy({ calendarDelta: jest.fn(() => Promise.reject(calendarDeltaError)) });
+            const flakyCalendarProcessor = createConductorProcessor({
+                conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+            });
+            const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+            coordinator.setProcessor(flakyCalendarProcessor);
+
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+
+            expect(conductor.submitCalls).toHaveLength(1);
+            expect(buildDiscordEnvelopeSpy).toHaveBeenCalledWith(expect.objectContaining({ calendarChanged: undefined }));
+            expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: calendarDeltaError }), expect.stringContaining('calendarDelta'));
+        });
+
+        it('marks the calendar and health seen for a completed (non-withdrawn) turn', async () => {
+            coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+            await flush();
+            conductor.settleOldest();
+            await flush();
+
+            expect(contextPolicy.markCalendarSeen).toHaveBeenCalledWith('user-1');
+            expect(contextPolicy.markHealthSeen).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not mark the calendar or health seen for a withdrawn turn', async () => {
+            coordinator.handleMessage(makeContext({ messageId: 'msg-2' }), makeDiscordMessage('chan-1', 'msg-2', 'held'));
+            await flush();
+            coordinator.handleMessage(makeContext({ messageId: 'msg-3', content: 'third' }), makeDiscordMessage('chan-1', 'msg-3', 'third'));
+            jest.advanceTimersByTime(100);
+            await flush();
+
+            expect(contextPolicy.markCalendarSeen).not.toHaveBeenCalled();
+            expect(contextPolicy.markHealthSeen).not.toHaveBeenCalled();
+        });
     });
 
     it('resolves the author\'s stored timezone through resolveTimezone\'s fallback for the envelope stamp', async () => {

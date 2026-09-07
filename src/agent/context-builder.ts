@@ -103,6 +103,18 @@ export interface ContextBuilder {
     loadStateTopSet: (now?: Date) => Promise<StateTopSetItem[]>
 
     /**
+     * Load a user's calendar events for the given reference time -- the same per-user fetch
+     * {@link ContextBuilder}'s internal `#buildCalendarSection` uses (`registry.getAllCalendars`
+     * then `client.getContextEvents`), returning the raw events with no formatting. Used by
+     * `ContextPolicy.calendarDelta` (Q12) to build the day's agenda for change detection.
+     * @param userId User whose registered calendar servers to fetch
+     * @param now Reference time passed through to `client.getContextEvents`
+     * @returns The user's calendar events, or `[]` when no calendar service is configured, the
+     *   user has no registered servers, or the fetch fails (logged at `warn`)
+     */
+    loadCalendarAgenda: (userId: string, now: Date) => Promise<CalendarEvent[]>
+
+    /**
      * Load user-specific memories via path-based query
      * @param userId User ID to load memories for
      * @param now Optional reference time for age calculation
@@ -434,6 +446,37 @@ class ContextBuilderImpl implements ContextBuilder {
     }
 
     /**
+     * The per-user calendar fetch shared by {@link loadCalendarAgenda} and
+     * `#buildCalendarSection`: registered servers, then their events for `now`. Does not catch --
+     * callers each apply their own error handling (the agenda primitive swallows to `[]` and logs
+     * a warning; the formatted section reports a classified `[Calendar unavailable: ...]` message).
+     * Assumes `this.#calendarService` is set; callers guard that first.
+     */
+    async #fetchCalendarEvents(userId: string, now: Date): Promise<{ events: CalendarEvent[], failed: FailedCalendarEvent[] }> {
+        const servers = await this.#calendarService!.registry.getAllCalendars(userId);
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no servers = no events
+        if(servers.length === 0) {
+            return { events: [], failed: [] };
+        }
+
+        return this.#calendarService!.client.getContextEvents(servers, now);
+    }
+
+    async loadCalendarAgenda(userId: string, now: Date): Promise<CalendarEvent[]> {
+        if(!this.#calendarService) {
+            return [];
+        }
+
+        try {
+            const { events } = await this.#fetchCalendarEvents(userId, now);
+            return events;
+        } catch (error) {
+            logger.warn({ error, userId }, 'Failed to load calendar agenda');
+            return [];
+        }
+    }
+
+    /**
      * Build the calendar context section for a specific user.
      * Returns formatted calendar section string, or undefined if no service, no calendars, or no events.
      * Appends a note when some recurring events could not be parsed.
@@ -445,13 +488,7 @@ class ContextBuilderImpl implements ContextBuilder {
 
         // Stryker disable BlockStatement: try-catch guards calendar errors from breaking user message prefix
         try {
-            const servers = await this.#calendarService.registry.getAllCalendars(userId);
-            // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no servers = no section
-            if(servers.length === 0) {
-                return undefined;
-            }
-
-            const { events, failed } = await this.#calendarService.client.getContextEvents(servers, now);
+            const { events, failed } = await this.#fetchCalendarEvents(userId, now);
             // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: no events = no section (failed-only is too sparse to display)
             if(events.length === 0) {
                 return undefined;

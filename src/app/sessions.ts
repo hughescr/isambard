@@ -51,9 +51,11 @@ import {
     type SessionJournal,
     type SessionMcpServers,
     type SessionQueryFn,
-    type StateTopSetSource
+    type StateTopSetSource,
+    type CalendarAgendaSource
 } from '@/agent';
 import { type SessionConfig, loadRetryConfig  } from '@/config';
+import type { ServiceHealthRegistry } from '@/services';
 
 /** The subset of `IdentityCache` the system prompt and boot bundle depend on. */
 type IdentitySource = CreateBootBundleBuilderParams['identityCache'];
@@ -76,8 +78,10 @@ export interface CreateConversationConductorParams {
     /** Optional email MCP server factory (see `CreateMcpServerInstancesOptions`). */
     emailServerFactory?: () => McpServerConfig
     plugins?:            SdkPluginConfig[]
-    /** Widened past the boot bundle's own `BootContextSource` to also cover `contextPolicy`'s `stateTopSetDelta`/`markStateTopSetSeen` gate (Q9) — perch's `CreatePerchConductorParams` stays at the narrower `BootContextSource` since it has no `ContextPolicy`. */
-    contextBuilder:      BootContextSource & StateTopSetSource
+    /** Widened past the boot bundle's own `BootContextSource` to also cover `contextPolicy`'s `stateTopSetDelta`/`markStateTopSetSeen` gate (Q9) and `calendarDelta` gate (Q12) — perch's `CreatePerchConductorParams` stays at the narrower `BootContextSource` since it has no `ContextPolicy`. */
+    contextBuilder:      BootContextSource & StateTopSetSource & CalendarAgendaSource
+    /** Q12: drives `contextPolicy.healthNote()`/`markHealthSeen()` — the `[Service health]` envelope section pushed on change. Omit to leave the gate permanently disabled (`healthNote()` always returns `undefined`), exactly like omitting `healthRegistry` from `CreateContextPolicyParams` itself. `getAll` feeds the non-volatile change-detection fingerprint; `buildStatusSummary` renders the body. */
+    healthRegistry?:     Pick<ServiceHealthRegistry, 'buildStatusSummary' | 'getAll'>
     identityCache:       IdentitySource
     taskListReader:      TaskListSource
     journal:             SessionJournal
@@ -105,7 +109,7 @@ export interface ConversationConductorResult {
  */
 export async function createConversationConductor(params: CreateConversationConductorParams): Promise<ConversationConductorResult> {
     const {
-        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder,
+        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, healthRegistry,
         identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger,
     } = params;
 
@@ -135,6 +139,7 @@ export async function createConversationConductor(params: CreateConversationCond
         now:                () => clock.now(),
         userMemoryWindowMs: config.userMemoryWindowMs,
         contextBuilder,
+        healthRegistry,
     });
     const bootBundleBuilder = createBootBundleBuilder({
         role: 'conversation', identityCache, contextBuilder, taskListReader, channelListProvider, now: () => clock.now(), bootEventsWindowMs: config.bootEventsWindowMs,
@@ -323,6 +328,14 @@ export interface PerchConductorResult {
  * text — the folded "perch conductor boot" gap this package closes. Also unlike conversation,
  * there is no `ContextPolicy`: perch's boot bundle carries no per-user memory block to gate (see
  * `boot-bundle.ts`'s perch variant), so there is nothing for a compaction to reset.
+ *
+ * Q12 perch decision (pinned, deliberate): this is also why perch gets none of the Discord
+ * conductor's memory-tuning deltas (Q9's `stateTopSetDelta`, Q12's `calendarDelta`/`healthNote`)
+ * — with no `ContextPolicy` here, there is no mark/delta baseline to diff against. Perch turns
+ * instead carry the FULL context every time (`buildPerchContext`: full agenda, full health, top-3
+ * state — see `agent/perch/envelope.ts`'s own module doc for the fuller rationale), which is the
+ * right tradeoff for a session that runs only a handful of turns per day rather than a wrong one
+ * to fix later.
  * @param params See {@link CreatePerchConductorParams}.
  * @returns `{ conductor, ledgerStore, compactionTelemetry }` — see {@link PerchConductorResult}.
  */

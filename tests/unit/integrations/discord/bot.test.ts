@@ -1685,7 +1685,7 @@ describe('createDiscordBot', () => {
             return {
                 conversationConductor: makeFakeConductor(),
                 ledgerStore:           makeFakeLedgerStore(),
-                contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined) },
+                contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined), calendarDelta: mock(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })), markCalendarSeen: mock(() => undefined), healthNote: mock(() => undefined), markHealthSeen: mock(() => undefined) },
                 deliveryGuard:         { alreadyDelivered: mock(() => false), markDelivered: mock(() => undefined) },
                 journal:               { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
                 ...overrides,

@@ -119,7 +119,17 @@ export {
     type CreateCompactionTelemetryParams
 } from './compaction-telemetry';
 
-export { createContextPolicy, type ContextPolicy, type CreateContextPolicyParams, type EventsDeltaSource, type StateTopSetSource, type StateTopSetDelta } from './context-policy';
+export {
+    createContextPolicy,
+    type ContextPolicy,
+    type CreateContextPolicyParams,
+    type EventsDeltaSource,
+    type StateTopSetSource,
+    type StateTopSetDelta,
+    type CalendarAgendaSource,
+    type CalendarDelta,
+    DEFAULT_CALENDAR_POLL_INTERVAL_MS
+} from './context-policy';
 
 export {
     computeTunedThreshold,
@@ -178,6 +188,15 @@ export {
     type NotifyParams,
     type CreateNotificationBridgeParams
 } from './notification-bridge';
+
+export {
+    agendaKey,
+    agendaFingerprint,
+    diffAgenda,
+    dayWindow,
+    toAgenda,
+    type AgendaEntry
+} from './calendar-delta';
 
 export {
     shouldNotifyHealthChange,
