@@ -253,6 +253,21 @@ describe('createConductor', () => {
             expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report.');
         });
 
+        it('a resumed open with no boot bundle says "Session resumed", and the fresh fallback after a failed resume says "Session opened"', async () => {
+            const h = build();
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openPromise = h.conductor.open();
+            await flush();
+            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('[BOOT] Session resumed at 1970-01-01T00:00:00.000Z.');
+            h.instances[0].fail(new Error('resume rejected by CLI'));
+            await flush();
+
+            expect(JSON.stringify(h.instances[1].consumedPrompts[0].message)).toContain('[BOOT] Session opened at 1970-01-01T00:00:00.000Z.');
+            h.instances[1].emit(frames.init('sess-new'));
+            await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
+        });
+
         it('a fallback fresh open after a failed resume pushes its own handshake onto the fresh handle', async () => {
             const h = build({ bootBundle: 'welcome back' });
             await h.resumeStore.save('conversation', 'sess-old');

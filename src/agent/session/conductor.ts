@@ -766,11 +766,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
         await resumeStore.save(role, sessionId);
     }
 
-    /** The opening handshake for {@link open}: the boot bundle when there is one, else a bare open marker. */
-    function openHandshakeText(): string {
-        return resolvedBootBundle === undefined || resolvedBootBundle === ''
-            ? `[BOOT] Session opened at ${now().toISOString()}. No boot context to report. Host handshake — nothing to do, no reply expected.`
-            : resolvedBootBundle;
+    /** The opening handshake for {@link open}: the boot bundle when there is one, else a bare open/resume marker. */
+    function openHandshakeText(resuming: boolean): string {
+        if(resolvedBootBundle !== undefined && resolvedBootBundle !== '') {
+            return resolvedBootBundle;
+        }
+        const verb = resuming ? 'resumed' : 'opened';
+        return `[BOOT] Session ${verb} at ${now().toISOString()}. No boot context to report. Host handshake — nothing to do, no reply expected.`;
     }
 
     function appendWithoutTurn(envelope: Envelope): void {
@@ -908,7 +910,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const stored = await resumeStore.load(role);
         if(stored !== undefined) {
             try {
-                const { handle, sessionId } = await openWithHandle(stored, openHandshakeText());
+                const { handle, sessionId } = await openWithHandle(stored, openHandshakeText(true));
                 try {
                     await finishOpen(sessionId, true, false);
                 } catch (finishError) {
@@ -920,7 +922,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 logger.warn({ error }, 'Resuming the stored session failed; opening a fresh session');
             }
         }
-        const { sessionId } = await openWithHandle(undefined, openHandshakeText());
+        const { sessionId } = await openWithHandle(undefined, openHandshakeText(false));
         await finishOpen(sessionId, false, stored !== undefined);
         return { sessionId, resumed: false };
     }
