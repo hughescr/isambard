@@ -8,8 +8,8 @@
  *
  * `bootBundle`/hook wiring for post-compaction re-injection and PostCompact->
  * `guard.onCompactionFinished()` plumbing belong to whoever builds the session's `Options`
- * (P9's `src/app/sessions.ts`) — this module only pushes the initial boot envelope once, right
- * after {@link Conductor.open} resolves, and drives the guard from every raw frame it observes,
+ * (P9's `src/app/sessions.ts`) — this module only pushes the initial boot envelope once, as the opening
+ * handshake of {@link Conductor.open} (the SDK emits no frame until it has read one), and drives the guard from every raw frame it observes,
  * which already covers every frame-observable release path (`compact_boundary`, the `/compact`
  * turn's own result, the `error-compacting-conversation` notification, and the clock ceiling).
  * {@link Conductor.recordCompactionSummary} is the one exception: it is a public entry point this
@@ -164,8 +164,8 @@ export interface CreateConductorParams {
     journal:          SessionJournal
     resumeStore:      ResumeStore
     /**
-     * Pre-formatted boot bundle text, pushed once as a `boot`-kind envelope right after
-     * `open()` succeeds. Ignored when {@link buildBootBundle} is provided.
+     * Pre-formatted boot bundle text, pushed once as the `boot`-kind opening handshake (see
+     * `openWithHandle`) on every fresh or resumed `open()`. Ignored when {@link buildBootBundle} is provided.
      */
     bootBundle?:      string
     /**
@@ -326,7 +326,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     let deliveryGuard: DeliveryGuard | undefined;
     /** Set by {@link recordCompactionSummary} when it successfully logs a summary; consumed (and cleared) the next time {@link journalCompactionOutcome} journals a successful `compaction_completed`. */
     let pendingCompactionSummaryPath: string | undefined;
-    /** The text {@link pushBootBundle} pushes — the static {@link bootBundle} until {@link runBootRecovery} replaces it with {@link buildBootBundle}'s output, when provided. */
+    /** The text {@link openHandshakeText} returns — the static {@link bootBundle} until {@link runBootRecovery} replaces it with {@link buildBootBundle}'s output, when provided. */
     let resolvedBootBundle = bootBundle;
     /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely. Gates {@link processQueue} and {@link submitCompact} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
     let reopening = false;
@@ -702,13 +702,27 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
     }
 
-    /** Opens exactly one fresh `queryFn` call, resolving once the session id is captured or rejecting on an immediate throw. Assigns `currentQueue`/`currentHandleRef` synchronously as part of settling, so a frame processed in the very same callback already sees the new handle as current. */
-    async function openWithHandle(resumeId: string | undefined): Promise<{ handle: SessionHandle, sessionId: string }> {
+    /**
+     * Opens exactly one fresh `queryFn` call, resolving once the session id is captured or
+     * rejecting on an immediate throw. Assigns `currentQueue`/`currentHandleRef` synchronously as
+     * part of settling, so a frame processed in the very same callback already sees the new
+     * handle as current.
+     *
+     * `handshakeText` is pushed onto the new handle's queue as a `boot`-kind (`shouldQuery:false`)
+     * envelope IMMEDIATELY, before any frame is awaited: with a streaming-input prompt the SDK CLI
+     * emits nothing at all — not even `system/init`, the frame that carries the session id — until
+     * it has read its first user message (verified against SDK 0.3.258 on 2026-09-06: a silent
+     * open sat frameless past 30 s; a `shouldQuery:false` first message produced `init` plus a
+     * bare `result` in under a second, with no model turn). Without this push, `open()` would
+     * never resolve.
+     */
+    async function openWithHandle(resumeId: string | undefined, handshakeText: string): Promise<{ handle: SessionHandle, sessionId: string }> {
         return new Promise((resolve, reject) => {
             let settled = false;
             const queue = new InputQueue();
             const interrupting = createInterruptFlag();
             const options = buildOptions(resumeId);
+            queue.push(toSdkUserMessage(buildBootEnvelope(handshakeText, now())));
             const handle = openSession({
                 role,
                 queryFn,
@@ -752,11 +766,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
         await resumeStore.save(role, sessionId);
     }
 
-    function pushBootBundle(): void {
-        if(resolvedBootBundle === undefined || resolvedBootBundle === '' || currentQueue === undefined) {
-            return;
-        }
-        currentQueue.push(toSdkUserMessage(buildBootEnvelope(resolvedBootBundle, now())));
+    /** The opening handshake for {@link open}: the boot bundle when there is one, else a bare open marker. */
+    function openHandshakeText(): string {
+        return resolvedBootBundle === undefined || resolvedBootBundle === ''
+            ? `[BOOT] Session opened at ${now().toISOString()}. No boot context to report.`
+            : resolvedBootBundle;
     }
 
     function appendWithoutTurn(envelope: Envelope): void {
@@ -850,9 +864,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
         currentTurn = null;
         resolveTurnEndedWaiters();
         const lastSessionId = currentSessionId;
+        const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly.`;
         try {
             try {
-                const { handle, sessionId } = await openWithHandle(lastSessionId);
+                const { handle, sessionId } = await openWithHandle(lastSessionId, handshake);
                 try {
                     await finishOpen(sessionId, true, false);
                 } catch (finishError) {
@@ -860,7 +875,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                     throw finishError;
                 }
             } catch{
-                const { sessionId } = await openWithHandle(undefined);
+                const { sessionId } = await openWithHandle(undefined, handshake);
                 await finishOpen(sessionId, false, true);
             }
         } catch (reopenError) {
@@ -893,22 +908,20 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const stored = await resumeStore.load(role);
         if(stored !== undefined) {
             try {
-                const { handle, sessionId } = await openWithHandle(stored);
+                const { handle, sessionId } = await openWithHandle(stored, openHandshakeText());
                 try {
                     await finishOpen(sessionId, true, false);
                 } catch (finishError) {
                     discardHandle(handle);
                     throw finishError;
                 }
-                pushBootBundle();
                 return { sessionId, resumed: true };
             } catch (error) {
                 logger.warn({ error }, 'Resuming the stored session failed; opening a fresh session');
             }
         }
-        const { sessionId } = await openWithHandle(undefined);
+        const { sessionId } = await openWithHandle(undefined, openHandshakeText());
         await finishOpen(sessionId, false, stored !== undefined);
-        pushBootBundle();
         return { sessionId, resumed: false };
     }
 

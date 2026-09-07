@@ -5,7 +5,7 @@
  * the P3/P7 in-memory port doubles ({@link FakeJournal}, {@link FakeResumeStore}).
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
-import type { SDKNotificationMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKNotificationMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { FakeClock } from '../../../helpers/fake-clock';
 import { FakeJournal } from '../../../helpers/fake-journal';
 import { fakeQueryFn, type FakeQuery } from '../../../helpers/fake-query';
@@ -136,6 +136,11 @@ async function openWith(h: Harness, sessionId = 'sess-1'): Promise<{ sessionId: 
     return result;
 }
 
+/** The prompts a fake instance consumed AFTER its opening handshake (always its first consumed prompt — see the open() describe block) — i.e. the ones real turns/appends pushed. */
+function turnPrompts(instance: FakeQuery): SDKUserMessage[] {
+    return instance.consumedPrompts.slice(1);
+}
+
 describe('createConductor', () => {
     afterEach(() => {
         jest.restoreAllMocks();
@@ -214,13 +219,67 @@ describe('createConductor', () => {
             );
         });
 
-        it('pushes the boot bundle as a boot envelope once open() resolves', async () => {
+        it('pushes the boot bundle as the opening handshake boot envelope', async () => {
             const h = build({ bootBundle: 'welcome back' });
 
             await openWith(h);
 
             expect(h.instances[0].consumedPrompts).toHaveLength(1);
             expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('welcome back');
+        });
+
+        it('pushes the opening handshake BEFORE the session id arrives: the SDK only emits system/init after its first user message, so a silent open never opens', async () => {
+            const h = build();
+
+            const openPromise = h.conductor.open();
+            await flush();
+
+            // Nothing has been emitted yet — this push is what makes the CLI emit init at all.
+            const [handshake, ...rest] = h.instances[0].consumedPrompts;
+            expect(rest).toHaveLength(0);
+            expect(handshake.shouldQuery).toBe(false);
+            expect(JSON.stringify(handshake.message)).toContain('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report.');
+
+            h.instances[0].emit(frames.init('sess-1'));
+            await expect(openPromise).resolves.toEqual({ sessionId: 'sess-1', resumed: false });
+        });
+
+        it('an empty boot bundle falls back to the bare open marker rather than pushing an empty handshake', async () => {
+            const h = build({ bootBundle: '' });
+
+            await openWith(h);
+
+            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('[BOOT] Session opened at 1970-01-01T00:00:00.000Z. No boot context to report.');
+        });
+
+        it('a fallback fresh open after a failed resume pushes its own handshake onto the fresh handle', async () => {
+            const h = build({ bootBundle: 'welcome back' });
+            await h.resumeStore.save('conversation', 'sess-old');
+
+            const openPromise = h.conductor.open();
+            await flush();
+            expect(JSON.stringify(h.instances[0].consumedPrompts[0]?.message)).toContain('welcome back');
+            h.instances[0].fail(new Error('resume rejected by CLI'));
+            await flush();
+
+            expect(h.instances[1].consumedPrompts).toHaveLength(1);
+            expect(JSON.stringify(h.instances[1].consumedPrompts[0]?.message)).toContain('welcome back');
+            h.instances[1].emit(frames.init('sess-new'));
+            await expect(openPromise).resolves.toEqual({ sessionId: 'sess-new', resumed: false });
+        });
+
+        it('a mid-life reopen pushes a reopen handshake so the replacement session emits init', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+
+            expect(h.instances).toHaveLength(2);
+            const [handshake] = h.instances[1].consumedPrompts;
+            expect(handshake.shouldQuery).toBe(false);
+            expect(JSON.stringify(handshake.message)).toContain('[BOOT] Session reopened');
         });
 
         it('rejects with the string itself as the message when the query fails with a plain non-empty string before opening', async () => {
@@ -494,8 +553,8 @@ describe('createConductor', () => {
             h.conductor.appendWithoutTurn(notificationEnvelope({ text: 'accumulate me' }));
             await flush();
 
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
-            expect(JSON.stringify(h.instances[0].consumedPrompts[0].message)).toContain('accumulate me');
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            expect(JSON.stringify(turnPrompts(h.instances[0])[0].message)).toContain('accumulate me');
             expect(h.conductor.status().turn).toBeNull();
 
             const resultPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
@@ -975,13 +1034,13 @@ describe('createConductor', () => {
             const resultPromise = h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
 
-            expect(h.instances[0].consumedPrompts).toHaveLength(0);
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
             expect(h.ledgerStore.get().turn).toBeNull();
 
             h.ledgerStore.dispatch({ type: 'compaction_finished', at: new Date(h.clock.now()) });
             await flush();
 
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
             expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'discord' });
 
             h.instances[0].emit(frames.resultSuccess());
@@ -1085,11 +1144,11 @@ describe('createConductor', () => {
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529 }));
             await flush();
-            expect(h.instances[0].consumedPrompts).toHaveLength(1); // not yet resubmitted — waiting on the backoff timer
+            expect(turnPrompts(h.instances[0])).toHaveLength(1); // not yet resubmitted — waiting on the backoff timer
 
             h.clock.advance(FAST_RETRY_POLICY.baseDelayMs);
             await flush();
-            expect(h.instances[0].consumedPrompts).toHaveLength(2); // resubmitted (attempt 2 of 2)
+            expect(turnPrompts(h.instances[0])).toHaveLength(2); // resubmitted (attempt 2 of 2)
 
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'still overloaded', api_error_status: 529 }));
             const result = await resultPromise;
@@ -1110,10 +1169,10 @@ describe('createConductor', () => {
             await flush();
 
             h.clock.advance(4999);
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
             h.clock.advance(1);
             await flush();
-            expect(h.instances[0].consumedPrompts).toHaveLength(2);
+            expect(turnPrompts(h.instances[0])).toHaveLength(2);
 
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
@@ -1133,7 +1192,7 @@ describe('createConductor', () => {
             const result = await resultPromise;
 
             expect(result.isError).toBe(true);
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
             expect(h.journal.byKind('turn_failed')).toEqual([
                 { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord', error: 'bad request' },
             ]);
@@ -1152,7 +1211,7 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'retry me', api_error_status: 429 }));
             await flush();
 
-            expect(h.instances[0].consumedPrompts).toHaveLength(2); // resubmitted with no clock.advance() call
+            expect(turnPrompts(h.instances[0])).toHaveLength(2); // resubmitted with no clock.advance() call
 
             h.instances[0].emit(frames.resultSuccess());
             const result = await resultPromise;
@@ -1171,7 +1230,7 @@ describe('createConductor', () => {
             await flush();
             // Waiting out the backoff timer: not the current turn (currentTurn is null between
             // turns) and not in pendingQueue (scheduleRetry holds it on clock.setTimer instead).
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
 
             controller.abort();
             await flush();
@@ -1183,7 +1242,7 @@ describe('createConductor', () => {
             // The stale retry timer still fires, but must not resubmit the withdrawn envelope.
             h.clock.advance(FAST_RETRY_POLICY.baseDelayMs);
             await flush();
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
         });
     });
 
@@ -1241,7 +1300,7 @@ describe('createConductor', () => {
                 { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', resumed: false },
                 { type: 'session_opened', at: expect.any(Date), role: 'conversation', sessionId: 'sess-1', resumed: true },
             ]);
-            expect(h.instances[1].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[1])).toHaveLength(1);
 
             h.instances[1].emit(frames.resultSuccess());
             const result = await resultPromise;
@@ -1281,13 +1340,13 @@ describe('createConductor', () => {
 
             // Neither the dead instance nor the not-yet-open replacement should have received it —
             // it must wait, held, for the reopen to actually finish.
-            expect(h.instances[0].consumedPrompts).toHaveLength(0);
-            expect(h.instances[1].consumedPrompts).toHaveLength(0);
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+            expect(turnPrompts(h.instances[1])).toHaveLength(0);
 
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
 
-            expect(h.instances[1].consumedPrompts).toHaveLength(1);
+            expect(turnPrompts(h.instances[1])).toHaveLength(1);
 
             h.instances[1].emit(frames.resultSuccess());
             const result = await pendingSubmit;
@@ -1361,7 +1420,7 @@ describe('createConductor', () => {
             const result = await h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1', signal: controller.signal });
 
             expect(result).toMatchObject({ response: null, wasInterrupted: true, isError: false, outcome: 'withdrawn' });
-            expect(h.instances[0].consumedPrompts).toHaveLength(0);
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
             expect(h.instances[0].interruptCalls).toBe(0);
         });
 

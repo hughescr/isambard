@@ -6,6 +6,12 @@
  * recorded for assertions. `FakeQuery` implements `SessionQuery` with no `as` casts — every
  * method below is a genuine implementation of the interface, not a stub coerced into shape.
  *
+ * Fidelity note: the real SDK emits NO frame (not even `system/init`) until it has read its first
+ * user message from the prompt iterable; this fake emits whatever a test `emit`s, whenever it does,
+ * so a test can model an impossible "init before any push" sequence. The conductor pins the real
+ * ordering in its own open() tests (the opening handshake is always each instance's first
+ * `consumedPrompts` entry).
+ *
  * @module tests/helpers/fake-query
  */
 import type { Options, SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
