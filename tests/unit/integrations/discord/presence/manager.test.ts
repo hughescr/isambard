@@ -1686,5 +1686,49 @@ describe('PresenceManager', () => {
 
             expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Fresh idle status', type: ActivityType.Custom });
         });
+
+        it('two idle views arriving while the first idle generation is still in flight (both sessions going idle at boot) start exactly ONE refresh loop and ONE generation', async () => {
+            const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
+            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
+                idleGeneratePromises.push({ resolve });
+            }));
+
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            void manager.applyView(idleView);
+            await Promise.resolve();
+            void manager.applyView(idleView);
+            await Promise.resolve();
+
+            // Same prefix, generation still in flight: the second view joins it rather than
+            // spending a second Haiku call on an identical status.
+            expect(idleGeneratePromises).toHaveLength(1);
+
+            idleGeneratePromises[0].resolve({ name: 'Once', type: ActivityType.Custom });
+            // Drain the generate → retry wrapper → setActivity → in-flight cleanup chain.
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            const startedLogs = (mockLogger.debug as ReturnType<typeof mock>).mock.calls.filter(call => call.at(-1) === 'Started idle status refresh');
+            expect(startedLogs).toHaveLength(1);
+
+            // Exactly one periodic loop: one tick later there is exactly one more generation.
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+            await Promise.resolve();
+            expect(idleGeneratePromises).toHaveLength(2);
+        });
     });
 });

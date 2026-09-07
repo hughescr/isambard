@@ -86,6 +86,8 @@ export interface PresenceManagerDeps {
 export class PresenceManager {
     private currentPhase:        PresencePhase | null = null; // Start uninitialized
     private idleRefreshInterval: NodeJS.Timeout | null = null;
+    /** The idle generation currently in flight, keyed by the composed prefix it was started for, so concurrent refreshes for the same prefix share one Haiku call (see refreshIdleStatus). */
+    private inFlightIdleRefresh: { prefix: string | null, promise: Promise<void> } | null = null;
     private presenceDisplayMode: PresenceDisplayMode = 'none'; // Track presence display mode for status prefixes
     // P11: set only by applyView(), never by the oneshot updatePhase/transitionPresenceDisplayMode paths.
     // Non-null means the idle refresh loop should render via the composed prefix, not the legacy '💤 ' default.
@@ -145,6 +147,25 @@ export class PresenceManager {
         const modeAtStart = this.presenceDisplayMode;
         const prefixAtStart = this.composedPrefix;
 
+        // Coalesce concurrent refreshes for the SAME prefix: at boot both sessions go idle a few
+        // hundred ms apart, and each idle view calls in here while the first Haiku generation is
+        // still in flight — a second generation for an identical prefix would only produce a
+        // second, redundant Haiku call and presence update. A DIFFERENT prefix still starts its
+        // own generation (the in-flight one then discards itself as stale below).
+        if(this.inFlightIdleRefresh !== null && this.inFlightIdleRefresh.prefix === prefixAtStart) {
+            return this.inFlightIdleRefresh.promise;
+        }
+        const promise = this.generateAndApplyIdle(modeAtStart, prefixAtStart).finally(() => {
+            if(this.inFlightIdleRefresh?.promise === promise) {
+                this.inFlightIdleRefresh = null;
+            }
+        });
+        this.inFlightIdleRefresh = { prefix: prefixAtStart, promise };
+        return promise;
+    }
+
+    /** The generate-then-apply half of {@link refreshIdleStatus}, split out so the in-flight coalescing above can hold its promise. */
+    private async generateAndApplyIdle(modeAtStart: PresenceDisplayMode, prefixAtStart: string | null): Promise<void> {
         // P11: once applyView() has composed a prefix, every idle refresh renders through it
         // instead of the legacy bare '💤 ' default.
         const activity = prefixAtStart === null
@@ -197,21 +218,23 @@ export class PresenceManager {
      * Returns a promise that resolves after the first refresh completes.
      */
     private async startIdleRefresh(): Promise<void> {
-        // Stryker disable ConditionalExpression,BlockStatement: Async race condition guard — two concurrent callers could both see null before either sets idleRefreshInterval; no reliable test for this
         if(this.idleRefreshInterval) {
             return; // Already running
         }
-        // Stryker restore ConditionalExpression,BlockStatement
 
-        // Generate immediately and wait for it
-        await this.refreshIdleStatus();
-
-        // Then refresh periodically
+        // The periodic loop is registered SYNCHRONOUSLY, before the first (awaited) generation:
+        // registering it only after that await let a second caller arriving mid-generation (the
+        // second session going idle at boot) see a still-null interval and start a second loop —
+        // two Haiku idle refreshes every interval for the life of the process. Any caller that
+        // now sees the interval set goes through refreshIdleStatus() instead, which coalesces
+        // onto the generation already in flight.
         this.idleRefreshInterval = setInterval(() => {
             void this.refreshIdleStatus();
         }, this.deps.config.idleRefreshIntervalMs);
-
         this.deps.logger.debug({ intervalMs: this.deps.config.idleRefreshIntervalMs }, 'Started idle status refresh');
+
+        // Generate immediately and wait for it
+        await this.refreshIdleStatus();
     }
 
     /**
