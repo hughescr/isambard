@@ -12,7 +12,7 @@ import { fakeQueryFn } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
 import { mockLogger } from '../../setup';
-import type { ContextBuilder } from '@/agent';
+import { DEFAULT_STEP_PERCENT, type ContextBuilder } from '@/agent';
 import type { JournalEntry } from '@/agent/session/types';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
@@ -255,6 +255,48 @@ describe('createConversationConductor', () => {
 
         expect(compactionTelemetry.getRecords()).toHaveLength(1);
         expect(compactionTelemetry.getRecords()[0].thresholdAtStart).toBe(77);
+    });
+
+    // Q11: createConversationConductor wires createCompactionThresholdTuner to the ledgerStore
+    // (and Q4's compactionTelemetry), so observed compaction intervals move the guard's live
+    // threshold once a band is configured -- and the wrapped conductor object (the `submit`
+    // spread wrapper) still exposes the change through its own getCompactionThresholdPercent.
+    it('constructs a compaction threshold tuner that adjusts the wrapped conductor\'s threshold once a band is configured', async () => {
+        const h = build({
+            config: {
+                ...DEFAULT_CONFIG,
+                compactThresholdMinPercent: 10,
+                compactThresholdMaxPercent: 90,
+                compactTargetIntervalMs:    100,
+            },
+        });
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore } = await createConversationConductor(h.params);
+        expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
+
+        // Three compaction cycles 1000ms apart -- far longer than the 100ms target -- give the
+        // tuner two observed intervals, enough to take one bounded step down.
+        for(let i = 0; i < 3; i += 1) {
+            ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
+            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 500) });
+        }
+
+        expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent - DEFAULT_STEP_PERCENT);
+    });
+
+    it('with all three tuner band fields unset, the guard threshold never leaves compactThresholdPercent across many observed compactions', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore } = await createConversationConductor(h.params);
+
+        for(let i = 0; i < 5; i += 1) {
+            ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
+            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 1) });
+        }
+
+        expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
     });
 
     it('wires all twelve MCP server instances into the session\'s SDK options, correctly keyed', async () => {
@@ -527,6 +569,44 @@ describe('createPerchConductor', () => {
 
         expect(compactionTelemetry.getRecords()).toHaveLength(1);
         expect(compactionTelemetry.getRecords()[0].thresholdAtStart).toBe(88);
+    });
+
+    // Q11: createPerchConductor also wires createCompactionThresholdTuner (see the identical
+    // createConversationConductor tests above for the reasoning).
+    it('constructs a compaction threshold tuner that adjusts the conductor\'s threshold once a band is configured', async () => {
+        const h = buildPerch({
+            config: {
+                ...DEFAULT_CONFIG,
+                compactThresholdMinPercent: 10,
+                compactThresholdMaxPercent: 90,
+                compactTargetIntervalMs:    100,
+            },
+        });
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore } = await createPerchConductor(h.params);
+        expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
+
+        for(let i = 0; i < 3; i += 1) {
+            ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
+            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 500) });
+        }
+
+        expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent - DEFAULT_STEP_PERCENT);
+    });
+
+    it('with all three tuner band fields unset, the guard threshold never leaves compactThresholdPercent across many observed compactions', async () => {
+        const h = buildPerch();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, ledgerStore } = await createPerchConductor(h.params);
+
+        for(let i = 0; i < 5; i += 1) {
+            ledgerStore.dispatch({ type: 'compaction_started', trigger: 'auto', at: new Date(i * 1000) });
+            ledgerStore.dispatch({ type: 'sdk_frame', frame: frames.compactBoundary(), at: new Date(i * 1000 + 1) });
+        }
+
+        expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
     });
 
     it('merges a SessionStart boot-bundle hook (perch variant) carrying the task list and perch context', async () => {

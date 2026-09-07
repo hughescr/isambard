@@ -32,6 +32,7 @@ import {
     createBootBundleHooks,
     createCompactionHooks,
     createCompactionTelemetry,
+    createCompactionThresholdTuner,
     createConductor,
     createContextPolicy,
     createLedgerStore,
@@ -248,6 +249,22 @@ export async function createConversationConductor(params: CreateConversationCond
         },
     };
 
+    // Q11: nudges the guard's live threshold toward config.compactTargetIntervalMs, clamped to
+    // [compactThresholdMinPercent, compactThresholdMaxPercent] — both default to
+    // compactThresholdPercent, so with none of the three set this is a permanent no-op (see
+    // compaction-tuner.ts's module doc). Fire-and-forget for process lifetime, matching
+    // src/index.ts's own health-registry/cost-ceiling subscribers — no disposal path exists for
+    // any conductor-scoped ledgerStore subscription today.
+    createCompactionThresholdTuner({
+        ledgerStore,
+        telemetry:           compactionTelemetry,
+        config,
+        getThresholdPercent: () => conductor.getCompactionThresholdPercent(),
+        setThresholdPercent: (percent) => { conductor.setCompactionThresholdPercent(percent); },
+        clock,
+        logger,
+    });
+
     return {
         conductor, ledgerStore, contextPolicy, compactionTelemetry,
     };
@@ -422,6 +439,17 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         logger,
     });
     conductorRef = conductor;
+
+    // Q11: see createConversationConductor's identical wiring/comment above.
+    createCompactionThresholdTuner({
+        ledgerStore,
+        telemetry:           compactionTelemetry,
+        config,
+        getThresholdPercent: () => conductor.getCompactionThresholdPercent(),
+        setThresholdPercent: (percent) => { conductor.setCompactionThresholdPercent(percent); },
+        clock,
+        logger,
+    });
 
     return {
         conductor, ledgerStore, compactionTelemetry,

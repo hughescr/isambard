@@ -279,22 +279,28 @@ export type VectorIndexConfig = z.infer<typeof vectorIndexConfigSchema>;
 // Session configuration for long-lived conversations
 /* Stryker disable BooleanLiteral,ArithmeticOperator,StringLiteral: Default values are configuration - validated by schema tests */
 export const sessionConfigSchema = z.object({
-    mode:                    z.enum(['oneshot', 'conductor']).default('conductor'),
-    compactThresholdPercent: z.number().int().positive().default(60),
-    humanWaitTargetMs:       z.number().int().positive().default(10_000),
-    humanWaitCeilingMs:      z.number().int().positive().default(30_000),
-    perchWrapUpLeadMs:       z.number().int().positive().default(300_000),
-    perchInterruptGraceMs:   z.number().int().positive().default(120_000),
-    userMemoryWindowMs:      z.number().int().positive().default(6 * 60 * 60 * 1000),
-    bootEventsWindowMs:      z.number().int().positive().default(24 * 60 * 60 * 1000),
-    shutdownTurnWaitMs:      z.number().int().positive().default(60_000),
-    shutdownDeadlineMs:      z.number().int().positive().default(120_000),
-    transcriptRetentionMs:   z.number().int().positive().default(7 * 24 * 60 * 60 * 1000),
-    debounceMs:              z.number().int().positive().default(250),
+    mode:                       z.enum(['oneshot', 'conductor']).default('conductor'),
+    compactThresholdPercent:    z.number().int().positive().default(60),
+    humanWaitTargetMs:          z.number().int().positive().default(10_000),
+    humanWaitCeilingMs:         z.number().int().positive().default(30_000),
+    perchWrapUpLeadMs:          z.number().int().positive().default(300_000),
+    perchInterruptGraceMs:      z.number().int().positive().default(120_000),
+    userMemoryWindowMs:         z.number().int().positive().default(6 * 60 * 60 * 1000),
+    bootEventsWindowMs:         z.number().int().positive().default(24 * 60 * 60 * 1000),
+    shutdownTurnWaitMs:         z.number().int().positive().default(60_000),
+    shutdownDeadlineMs:         z.number().int().positive().default(120_000),
+    transcriptRetentionMs:      z.number().int().positive().default(7 * 24 * 60 * 60 * 1000),
+    debounceMs:                 z.number().int().positive().default(250),
     /** Daily USD spend ceiling that pauses perch (never Discord) once crossed (Q3 / plan amendment B4). Undefined disables the ceiling entirely. */
-    dailyCostCeilingUsd:     z.number().positive().optional(),
+    dailyCostCeilingUsd:        z.number().positive().optional(),
     /** IANA timezone the daily cost ceiling's local-calendar-day bucket is computed in (default: system timezone), independent of whether perch is configured. */
-    timezone:                z.string().default(resolveTimezone()),
+    timezone:                   z.string().default(resolveTimezone()),
+    /** Lower bound of the compaction threshold tuner's band (Q11, `compaction-tuner.ts`). Undefined collapses the band's minimum to `compactThresholdPercent` — no cross-field default here, resolved in the tuner. */
+    compactThresholdMinPercent: z.number().int().positive().max(100).optional(),
+    /** Upper bound of the compaction threshold tuner's band (Q11). Undefined collapses the band's maximum to `compactThresholdPercent`. */
+    compactThresholdMaxPercent: z.number().int().positive().max(100).optional(),
+    /** Desired interval, in ms, between compactions that the tuner steps the threshold toward (Q11). Undefined makes every tuner step a no-op (target = Infinity). */
+    compactTargetIntervalMs:    z.number().int().positive().optional(),
 });
 /* Stryker restore BooleanLiteral,ArithmeticOperator,StringLiteral */
 

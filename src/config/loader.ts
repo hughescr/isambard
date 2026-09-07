@@ -92,12 +92,15 @@ export function loadConfig(resources: ResourceProvider = Resource): Config {
             }
             : undefined,
         session: {
-            mode:                    env.get('SESSION_MODE').default('conductor').asString(),
-            compactThresholdPercent: env.get('SESSION_COMPACT_THRESHOLD_PERCENT').asIntPositive(),
-            shutdownDeadlineMs:      env.get('SESSION_SHUTDOWN_DEADLINE_MS').asIntPositive(),
-            shutdownTurnWaitMs:      env.get('SESSION_TURN_WAIT_MS').asIntPositive(),
-            dailyCostCeilingUsd:     env.get('SESSION_DAILY_COST_CEILING_USD').asFloatPositive(),
-            timezone:                resolveTimezone(),
+            mode:                       env.get('SESSION_MODE').default('conductor').asString(),
+            compactThresholdPercent:    env.get('SESSION_COMPACT_THRESHOLD_PERCENT').asIntPositive(),
+            shutdownDeadlineMs:         env.get('SESSION_SHUTDOWN_DEADLINE_MS').asIntPositive(),
+            shutdownTurnWaitMs:         env.get('SESSION_TURN_WAIT_MS').asIntPositive(),
+            dailyCostCeilingUsd:        env.get('SESSION_DAILY_COST_CEILING_USD').asFloatPositive(),
+            timezone:                   resolveTimezone(),
+            compactThresholdMinPercent: env.get('SESSION_COMPACT_THRESHOLD_MIN_PERCENT').asIntPositive(),
+            compactThresholdMaxPercent: env.get('SESSION_COMPACT_THRESHOLD_MAX_PERCENT').asIntPositive(),
+            compactTargetIntervalMs:    env.get('SESSION_COMPACT_TARGET_INTERVAL_MS').asIntPositive(),
         },
         adminDiscordUserId: resources.AdminDiscordUserId.value,
         email:              resources.EmailUser.value

@@ -122,6 +122,15 @@ export {
 export { createContextPolicy, type ContextPolicy, type CreateContextPolicyParams, type EventsDeltaSource, type StateTopSetSource, type StateTopSetDelta } from './context-policy';
 
 export {
+    computeTunedThreshold,
+    createCompactionThresholdTuner,
+    DEFAULT_STEP_PERCENT,
+    INTERVAL_HISTORY_WINDOW,
+    type CompactionThresholdBand,
+    type CreateCompactionThresholdTunerParams
+} from './compaction-tuner';
+
+export {
     createConductor,
     type Conductor,
     type ConductorStatus,

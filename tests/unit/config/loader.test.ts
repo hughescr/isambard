@@ -629,12 +629,24 @@ describe('loadDynamoDBConfig', () => {
     });
 });
 
+/** Restores `process.env[name]` to `original` (deleting the key when `original` is `undefined`), keeping each session-config env-var restore in `afterEach` below a single call. */
+function restoreEnv(name: string, original: string | undefined): void {
+    if(original === undefined) {
+        delete process.env[name];
+    } else {
+        process.env[name] = original;
+    }
+}
+
 describe('loadConfig - Session Config', () => {
     let originalSessionMode: string | undefined;
     let originalCompactThresholdPercent: string | undefined;
     let originalShutdownDeadlineMs: string | undefined;
     let originalTurnWaitMs: string | undefined;
     let originalDailyCostCeilingUsd: string | undefined;
+    let originalCompactThresholdMinPercent: string | undefined;
+    let originalCompactThresholdMaxPercent: string | undefined;
+    let originalCompactTargetIntervalMs: string | undefined;
 
     beforeEach(() => {
         originalSessionMode = process.env.SESSION_MODE;
@@ -642,34 +654,20 @@ describe('loadConfig - Session Config', () => {
         originalShutdownDeadlineMs = process.env.SESSION_SHUTDOWN_DEADLINE_MS;
         originalTurnWaitMs = process.env.SESSION_TURN_WAIT_MS;
         originalDailyCostCeilingUsd = process.env.SESSION_DAILY_COST_CEILING_USD;
+        originalCompactThresholdMinPercent = process.env.SESSION_COMPACT_THRESHOLD_MIN_PERCENT;
+        originalCompactThresholdMaxPercent = process.env.SESSION_COMPACT_THRESHOLD_MAX_PERCENT;
+        originalCompactTargetIntervalMs = process.env.SESSION_COMPACT_TARGET_INTERVAL_MS;
     });
 
     afterEach(() => {
-        if(originalSessionMode === undefined) {
-            delete process.env.SESSION_MODE;
-        } else {
-            process.env.SESSION_MODE = originalSessionMode;
-        }
-        if(originalCompactThresholdPercent === undefined) {
-            delete process.env.SESSION_COMPACT_THRESHOLD_PERCENT;
-        } else {
-            process.env.SESSION_COMPACT_THRESHOLD_PERCENT = originalCompactThresholdPercent;
-        }
-        if(originalShutdownDeadlineMs === undefined) {
-            delete process.env.SESSION_SHUTDOWN_DEADLINE_MS;
-        } else {
-            process.env.SESSION_SHUTDOWN_DEADLINE_MS = originalShutdownDeadlineMs;
-        }
-        if(originalTurnWaitMs === undefined) {
-            delete process.env.SESSION_TURN_WAIT_MS;
-        } else {
-            process.env.SESSION_TURN_WAIT_MS = originalTurnWaitMs;
-        }
-        if(originalDailyCostCeilingUsd === undefined) {
-            delete process.env.SESSION_DAILY_COST_CEILING_USD;
-        } else {
-            process.env.SESSION_DAILY_COST_CEILING_USD = originalDailyCostCeilingUsd;
-        }
+        restoreEnv('SESSION_MODE', originalSessionMode);
+        restoreEnv('SESSION_COMPACT_THRESHOLD_PERCENT', originalCompactThresholdPercent);
+        restoreEnv('SESSION_SHUTDOWN_DEADLINE_MS', originalShutdownDeadlineMs);
+        restoreEnv('SESSION_TURN_WAIT_MS', originalTurnWaitMs);
+        restoreEnv('SESSION_DAILY_COST_CEILING_USD', originalDailyCostCeilingUsd);
+        restoreEnv('SESSION_COMPACT_THRESHOLD_MIN_PERCENT', originalCompactThresholdMinPercent);
+        restoreEnv('SESSION_COMPACT_THRESHOLD_MAX_PERCENT', originalCompactThresholdMaxPercent);
+        restoreEnv('SESSION_COMPACT_TARGET_INTERVAL_MS', originalCompactTargetIntervalMs);
     });
 
     test('parses SESSION_MODE=conductor', () => {
@@ -724,5 +722,36 @@ describe('loadConfig - Session Config', () => {
 
     test('defaults session.timezone to the resolved system timezone', () => {
         expect(loadConfig(createMockResources()).session.timezone).toBe(resolveTimezone());
+    });
+
+    // Q11: compaction threshold tuner band inputs, all independently optional (see schemas.test.ts).
+    test('overrides compactThresholdMinPercent from SESSION_COMPACT_THRESHOLD_MIN_PERCENT', () => {
+        process.env.SESSION_COMPACT_THRESHOLD_MIN_PERCENT = '40';
+        expect(loadConfig(createMockResources()).session.compactThresholdMinPercent).toBe(40);
+    });
+
+    test('leaves compactThresholdMinPercent undefined when SESSION_COMPACT_THRESHOLD_MIN_PERCENT is unset', () => {
+        delete process.env.SESSION_COMPACT_THRESHOLD_MIN_PERCENT;
+        expect(loadConfig(createMockResources()).session.compactThresholdMinPercent).toBeUndefined();
+    });
+
+    test('overrides compactThresholdMaxPercent from SESSION_COMPACT_THRESHOLD_MAX_PERCENT', () => {
+        process.env.SESSION_COMPACT_THRESHOLD_MAX_PERCENT = '80';
+        expect(loadConfig(createMockResources()).session.compactThresholdMaxPercent).toBe(80);
+    });
+
+    test('leaves compactThresholdMaxPercent undefined when SESSION_COMPACT_THRESHOLD_MAX_PERCENT is unset', () => {
+        delete process.env.SESSION_COMPACT_THRESHOLD_MAX_PERCENT;
+        expect(loadConfig(createMockResources()).session.compactThresholdMaxPercent).toBeUndefined();
+    });
+
+    test('overrides compactTargetIntervalMs from SESSION_COMPACT_TARGET_INTERVAL_MS', () => {
+        process.env.SESSION_COMPACT_TARGET_INTERVAL_MS = '900000';
+        expect(loadConfig(createMockResources()).session.compactTargetIntervalMs).toBe(900_000);
+    });
+
+    test('leaves compactTargetIntervalMs undefined when SESSION_COMPACT_TARGET_INTERVAL_MS is unset', () => {
+        delete process.env.SESSION_COMPACT_TARGET_INTERVAL_MS;
+        expect(loadConfig(createMockResources()).session.compactTargetIntervalMs).toBeUndefined();
     });
 });

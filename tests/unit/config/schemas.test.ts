@@ -1239,4 +1239,60 @@ describe('sessionConfigSchema', () => {
     test('accepts an explicit timezone override', () => {
         expect(sessionConfigSchema.parse({ timezone: 'America/New_York' }).timezone).toBe('America/New_York');
     });
+
+    // Q11: compactThresholdMinPercent/compactThresholdMaxPercent/compactTargetIntervalMs are
+    // independently-optional band inputs for the compaction threshold tuner (compaction-tuner.ts)
+    // — no default, no cross-field validation here (band collapse is resolved in the tuner).
+    test('compactThresholdMinPercent, compactThresholdMaxPercent, and compactTargetIntervalMs are undefined by default', () => {
+        const parsed = sessionConfigSchema.parse({});
+        expect(parsed.compactThresholdMinPercent).toBeUndefined();
+        expect(parsed.compactThresholdMaxPercent).toBeUndefined();
+        expect(parsed.compactTargetIntervalMs).toBeUndefined();
+    });
+
+    test('accepts valid values for compactThresholdMinPercent, compactThresholdMaxPercent, and compactTargetIntervalMs', () => {
+        const parsed = sessionConfigSchema.parse({
+            compactThresholdMinPercent: 40,
+            compactThresholdMaxPercent: 80,
+            compactTargetIntervalMs:    900_000,
+        });
+        expect(parsed.compactThresholdMinPercent).toBe(40);
+        expect(parsed.compactThresholdMaxPercent).toBe(80);
+        expect(parsed.compactTargetIntervalMs).toBe(900_000);
+    });
+
+    test('rejects a non-integer compactThresholdMinPercent', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMinPercent: 40.5 }).success).toBe(false);
+    });
+
+    test('rejects a non-positive compactThresholdMinPercent', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMinPercent: 0 }).success).toBe(false);
+        expect(sessionConfigSchema.safeParse({ compactThresholdMinPercent: -5 }).success).toBe(false);
+    });
+
+    test('rejects a compactThresholdMinPercent above 100', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMinPercent: 101 }).success).toBe(false);
+    });
+
+    test('rejects a non-integer compactThresholdMaxPercent', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMaxPercent: 80.1 }).success).toBe(false);
+    });
+
+    test('rejects a non-positive compactThresholdMaxPercent', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMaxPercent: 0 }).success).toBe(false);
+        expect(sessionConfigSchema.safeParse({ compactThresholdMaxPercent: -5 }).success).toBe(false);
+    });
+
+    test('rejects a compactThresholdMaxPercent above 100', () => {
+        expect(sessionConfigSchema.safeParse({ compactThresholdMaxPercent: 101 }).success).toBe(false);
+    });
+
+    test('rejects a non-integer compactTargetIntervalMs', () => {
+        expect(sessionConfigSchema.safeParse({ compactTargetIntervalMs: 900_000.5 }).success).toBe(false);
+    });
+
+    test('rejects a non-positive compactTargetIntervalMs', () => {
+        expect(sessionConfigSchema.safeParse({ compactTargetIntervalMs: 0 }).success).toBe(false);
+        expect(sessionConfigSchema.safeParse({ compactTargetIntervalMs: -1 }).success).toBe(false);
+    });
 });
