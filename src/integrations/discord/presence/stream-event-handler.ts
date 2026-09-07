@@ -578,9 +578,10 @@ export async function buildLedgerThinkingSynopsis(
  * `sdk_frame` events), so this handler only ever dispatches `phase_synopsis { turnId, phaseType,
  * text }` — and only once a synopsis has actually resolved to a non-null string — never a
  * phase-type event of its own. A dispatch is dropped by two independent guards: `completed`
- * (checked here, before dispatching) and `turnId`/`phaseType` matching the still-open turn
- * (checked by the reducer, in case this turn already ended or moved on to a different phase by
- * the time an async synopsis resolves).
+ * (checked here, before dispatching) and `turnId` matching the still-open turn (checked by the
+ * reducer, in case this turn already ended by the time an async synopsis resolves). `phaseType`
+ * is informational only: the reducer deliberately applies a digest whose phase has since flipped
+ * within the same turn, and carries it across later flips until a fresher one lands.
  * @param deps See {@link CreateLedgerStreamEventHandlerDeps}.
  * @returns A handler with the same `onStreamEvent`/`complete` shape as {@link createStreamEventHandler}.
  */

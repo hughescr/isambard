@@ -419,13 +419,63 @@ describe('setupConductorPresence', () => {
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
         expect(view.phase).toMatchObject({ type: 'responding', generatedStatus: 'writing a reply' });
 
-        // A second, unrelated synopsis for the SAME phase must not bypass the throttle again —
-        // only the first completion (placeholder -> digest) is exempt.
+        // A later, DIFFERENT digest for the same phase also bypasses the throttle: digests are
+        // already rate-limited at generation time (the stream handler only starts one when the
+        // throttle window is open), and every one that resolves is the freshest description of
+        // what Izzy is doing — holding it back for a window that a placeholder already spent is
+        // exactly what left Discord stuck on "Thinking..." in the first conductor-mode soak.
         mockPresenceManager.applyView.mockClear();
         conversation.dispatch({
             type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'a later refinement', at: new Date(2),
         });
+        expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
+        const [refined] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
+        expect(refined.phase).toMatchObject({ type: 'responding', generatedStatus: 'a later refinement' });
+
+        // Re-dispatching the SAME digest text (the stream handler re-sends the pre-generated
+        // thinking synopsis on every thinking transition) is not a change and stays throttled.
+        mockPresenceManager.applyView.mockClear();
+        conversation.dispatch({
+            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'a later refinement', at: new Date(3),
+        });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+    });
+
+    test('a digest carried across a phase flip is not re-applied as "new" on the flip, but a fresher digest arriving after the flip is', () => {
+        const conversation = makeConversationLedger();
+        const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle,
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+        });
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+        });
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
+        const turnId = conversation.get().turn?.id;
+        conversation.dispatch({
+            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(1),
+        });
+        mockPresenceManager.applyView.mockClear();
+
+        // Phase flips to using_tool; the ledger carries 'writing a reply' along. Same digest text,
+        // new phase signature: an ordinary (throttled) event, not a digest arrival.
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: new Date(2) });
+        expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+
+        // A fresher digest resolves for the new phase: applied immediately.
+        conversation.dispatch({
+            type: 'phase_synopsis', turnId: turnId!, phaseType: 'using_tool', text: 'running the tests', at: new Date(3),
+        });
+        expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
+        const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
+        expect(view.phase).toMatchObject({ type: 'using_tool', generatedStatus: 'running the tests' });
     });
 
     test('records every applied update on the legacy BotStateManager throttle, without ever subscribing to it', () => {

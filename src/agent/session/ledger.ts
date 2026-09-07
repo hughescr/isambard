@@ -67,11 +67,16 @@ export type LedgerEvent
       | { type: 'session_opened', sessionId: string, at: Date }
       | { type: 'phase_changed', phase: ActivityPhase | null, at: Date }
       /**
-       * A synopsis generated for the currently-open turn's phase (`presence/stream-event-handler.ts`'s
-       * `createLedgerStreamEventHandler`). Applied as `turn.phase.generatedStatus` only when `turnId`
-       * matches `turn.id` and `phaseType` matches `turn.phase.type`; dropped otherwise (design doc
-       * section 8) — a synopsis resolving after its turn ended, or after the phase already moved on,
-       * must never overwrite an unrelated turn's or phase's status.
+       * A synopsis generated for the currently-open turn (`presence/stream-event-handler.ts`'s
+       * `createLedgerStreamEventHandler`). Applied as `turn.phase.generatedStatus` when `turnId`
+       * matches `turn.id`; dropped when it does not (design doc section 8) — a synopsis resolving
+       * after its turn ended must never overwrite an unrelated turn's status. `phaseType` records
+       * which phase it was generated FOR but is deliberately NOT a match condition: a digest
+       * describes the turn's recent activity as a whole, and tool calls flip
+       * thinking<->using_tool every few seconds while a Haiku generation takes about five, so
+       * matching on it dropped almost every digest in production (first conductor-mode soak,
+       * 2026-09-06). The digest then rides along every phase change within the turn (see
+       * `carryDigest`) until a fresher synopsis replaces it.
        */
       | { type: 'phase_synopsis', turnId: string, phaseType: ActivityPhase['type'], text: string, at: Date };
 
@@ -145,7 +150,7 @@ function reduceAssistantFrame(ledger: Ledger, frame: AssistantFrame, at: Date): 
     }
 
     const { turn } = ledger;
-    const phase = phaseFromFrame(frame, turn.phase, at);
+    const phase = carryDigest(turn.phase, phaseFromFrame(frame, turn.phase, at));
     const isFirstToken = turn.firstTokenAt === undefined;
     if(!isFirstToken && phase === turn.phase) {
         return ledger;
@@ -228,7 +233,7 @@ function applyPhaseToOpenTurn(ledger: Ledger, frame: SDKMessage, at: Date): Ledg
     if(ledger.turn === null) {
         return ledger;
     }
-    const phase = phaseFromFrame(frame, ledger.turn.phase, at);
+    const phase = carryDigest(ledger.turn.phase, phaseFromFrame(frame, ledger.turn.phase, at));
     if(phase === ledger.turn.phase) {
         return ledger;
     }
@@ -340,18 +345,43 @@ function reduceSessionOpened(ledger: Ledger, sessionId: string): Ledger {
     return { ...ledger, sessionId, tasks: [], cost: { ...ledger.cost, cumulativeUsd: 0 } };
 }
 
+/**
+ * Carries `prev`'s `generatedStatus` (the Haiku digest) onto a `next` phase that has none of its
+ * own, so a phase flip within a turn (thinking -> using_tool -> thinking, every few seconds)
+ * does not blank the presence text back to the static placeholder between digests. Returns
+ * `next` by reference when there is nothing to carry (no `prev` digest, `next` already carries
+ * one, `next` is `null` = turn over, or `next` is a phase kind that never carries one), so
+ * callers' identity checks (`phase === turn.phase`) keep working.
+ */
+function carryDigest(prev: ActivityPhase | null, next: ActivityPhase | null): ActivityPhase | null {
+    if(next === null || prev === null || next === prev) {
+        return next;
+    }
+    if(!('generatedStatus' in prev) || prev.generatedStatus === undefined) {
+        return next;
+    }
+    if(next.type !== 'thinking' && next.type !== 'using_tool' && next.type !== 'responding') {
+        return next;
+    }
+    if(next.generatedStatus !== undefined) {
+        return next;
+    }
+    return { ...next, generatedStatus: prev.generatedStatus };
+}
+
 function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger {
     if(ledger.turn === null) {
         return ledger;
     }
-    return { ...ledger, turn: { ...ledger.turn, phase } };
+    return { ...ledger, turn: { ...ledger.turn, phase: carryDigest(ledger.turn.phase, phase) } };
 }
 
 /**
- * Applies a `phase_synopsis` event's `text` as `turn.phase.generatedStatus`, but only when the
- * event's `turnId` matches the currently open turn's `id` AND `phaseType` matches that turn's
- * current `phase.type` — otherwise the event is a stale synopsis (its turn ended, or the phase
- * has since moved on) and is dropped, returning `ledger` unchanged by reference.
+ * Applies a `phase_synopsis` event's `text` as `turn.phase.generatedStatus` when the event's
+ * `turnId` matches the currently open turn's `id` and that turn has a phase — otherwise the event
+ * is a stale synopsis (its turn ended, or none is open yet) and is dropped, returning `ledger`
+ * unchanged by reference. The event's `phaseType` is deliberately not compared (see the
+ * `phase_synopsis` doc on {@link LedgerEvent}).
  */
 function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type: 'phase_synopsis' }>): Ledger {
     const { turn } = ledger;
@@ -361,7 +391,7 @@ function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type:
     if(turn.phase === null) {
         return ledger;
     }
-    if(turn.id !== event.turnId || turn.phase.type !== event.phaseType) {
+    if(turn.id !== event.turnId) {
         return ledger;
     }
     return { ...ledger, turn: { ...turn, phase: { ...turn.phase, generatedStatus: event.text } as ActivityPhase } };

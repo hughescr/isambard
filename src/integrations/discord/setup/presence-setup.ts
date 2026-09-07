@@ -197,8 +197,8 @@ function phaseSignature(view: PresenceView): string | null {
 }
 
 /** `true` when the view's phase carries a ledger-overlaid synopsis (`compacting` has none). */
-function hasDigest(view: PresenceView): boolean {
-    return 'generatedStatus' in view.phase && view.phase.generatedStatus !== undefined;
+function digestOf(view: PresenceView): string | undefined {
+    return 'generatedStatus' in view.phase ? view.phase.generatedStatus : undefined;
 }
 
 /** Result of {@link setupConductorPresence}. */
@@ -332,15 +332,18 @@ export function setupConductorPresence(params: {
     // phase still holding the window) consumes the whole 12s window, and the digest — once it
     // finally resolves — is then either a whole window late or dropped outright for a turn shorter
     // than the window (see the P11 review finding this fixes). `lastSeenSignature`/
-    // `lastSeenHadDigest` remember the (role, phaseType) and digest-presence of the most recently
+    // `lastSeenDigest` remember the (role, phaseType) and digest text of the most recently
     // COMPOSED non-idle view — whether or not it was actually applied — reset at every idle view
-    // (a turn boundary). The first tick where that exact phase's digest goes from absent to present
-    // is a REFINEMENT of whatever is already on screen for it (or would have been, throttle
-    // permitting), not a new presence-worthy event: apply it directly, bypassing the throttle, so
-    // the window a placeholder already spent (or is still holding) doesn't also swallow the one
-    // synopsis it was generated for.
+    // (a turn boundary). A tick where that exact phase's digest text CHANGES (absent -> present,
+    // or one digest -> a fresher one) is a REFINEMENT of whatever is already on screen for it (or
+    // would have been, throttle permitting), not a new presence-worthy event: apply it directly,
+    // bypassing the throttle, so the window a placeholder already spent (or is still holding)
+    // doesn't also swallow the synopsis it was generated for. Digests are already rate-limited at
+    // generation time (the stream handler starts one only while the throttle window is open), so
+    // this cannot flood Discord. A digest the ledger merely CARRIED across a phase flip (same text,
+    // new signature) is not a change and takes the ordinary throttled path.
     let lastSeenSignature: string | null = null;
-    let lastSeenHadDigest = false;
+    let lastSeenDigest: string | undefined;
 
     /** Applies `view` and, if a legacy `botStateManager` was provided, keeps its own throttle clock in sync (see the param's doc). */
     function apply(view: PresenceView): void {
@@ -352,10 +355,11 @@ export function setupConductorPresence(params: {
     function tick(): void {
         const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
         const signature = phaseSignature(view);
-        const digestJustArrived = signature !== null && signature === lastSeenSignature && !lastSeenHadDigest && hasDigest(view);
+        const digest = digestOf(view);
+        const digestJustArrived = signature !== null && signature === lastSeenSignature && digest !== undefined && digest !== lastSeenDigest;
 
         lastSeenSignature = signature;
-        lastSeenHadDigest = hasDigest(view);
+        lastSeenDigest = digest;
 
         if(digestJustArrived) {
             apply(view);

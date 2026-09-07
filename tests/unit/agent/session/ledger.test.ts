@@ -240,15 +240,51 @@ describe('reduceLedger: phase_synopsis', () => {
         expect(result).toBe(thinking);
     });
 
-    it('drops the event when phaseType does not match the current turn\'s phase type', () => {
-        const thinking = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 }));
-        expect(thinking.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2 });
+    it('still applies the synopsis when the phase type moved on within the same turn: a digest describes the turn\'s recent activity, and tool calls flip thinking<->using_tool faster than Haiku resolves', () => {
+        const usingTool = reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T2 }));
+        expect(usingTool.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2 });
 
-        const result = reduceLedger(thinking, frozenEvent({
-            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'irrelevant', at: T3,
+        const result = reduceLedger(usingTool, frozenEvent({
+            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'reading the diff', at: T3,
         }));
 
-        expect(result).toBe(thinking);
+        expect(result.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T2, generatedStatus: 'reading the diff' });
+    });
+
+    it('carries the digest across a phase change within the turn, until a fresh synopsis replaces it', () => {
+        const withDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
+        );
+        expect(withDigest.turn?.phase).toEqual({ type: 'responding', startedAt: T2, generatedStatus: 'writing a reply' });
+
+        const flipped = reduceLedger(withDigest, frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T3 }));
+        expect(flipped.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3, generatedStatus: 'writing a reply' });
+
+        const replaced = reduceLedger(flipped, frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'using_tool', text: 'running the tests', at: T3 }));
+        expect(replaced.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3, generatedStatus: 'running the tests' });
+    });
+
+    it('does not carry the digest past the end of the turn: a result frame clears the phase entirely', () => {
+        const withDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
+        );
+
+        const ended = reduceLedger(withDigest, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess(), at: T3 }));
+
+        expect(ended.turn).toBeNull();
+    });
+
+    it('carries the digest across an explicit phase_changed event too', () => {
+        const withDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
+        );
+
+        const changed = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
+
+        expect(changed.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'writing a reply' });
     });
 
     it('drops the event (returns the same reference) when no turn is open', () => {
