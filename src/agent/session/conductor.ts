@@ -769,7 +769,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     /** The opening handshake for {@link open}: the boot bundle when there is one, else a bare open marker. */
     function openHandshakeText(): string {
         return resolvedBootBundle === undefined || resolvedBootBundle === ''
-            ? `[BOOT] Session opened at ${now().toISOString()}. No boot context to report.`
+            ? `[BOOT] Session opened at ${now().toISOString()}. No boot context to report. Host handshake — nothing to do, no reply expected.`
             : resolvedBootBundle;
     }
 
@@ -864,7 +864,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         currentTurn = null;
         resolveTurnEndedWaiters();
         const lastSessionId = currentSessionId;
-        const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly.`;
+        const handshake = `[BOOT] Session reopened at ${now().toISOString()} after the previous session ended unexpectedly. Host handshake — nothing to do, no reply expected.`;
         try {
             try {
                 const { handle, sessionId } = await openWithHandle(lastSessionId, handshake);

@@ -379,6 +379,15 @@ describe.concurrent('system-prompt', () => {
             }
         });
 
+        test('SESSION_BASE_PROMPT catalogues every envelope kind a host can send, and tells Izzy a [BOOT] handshake needs no reply', () => {
+            // Regression: the first perch soak (2026-09-06) had Izzy treat its own `[BOOT]` handshake
+            // as a "data point" worth recording, because the prompt named no envelope kinds at all.
+            for(const kind of ['[DISCORD', '[PERCH', '[WRAP-UP', '[NOTIFICATION', '[CATCH-UP', '[BOOT', '[RESUME NOTE]']) {
+                expect(SESSION_BASE_PROMPT).toContain(kind);
+            }
+            expect(SESSION_BASE_PROMPT).toMatch(/\[BOOT[^\n]*(no reply|nothing to do|not a request)/i);
+        });
+
         test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {
             expect(SESSION_BASE_PROMPT.length).toBeGreaterThan(0);
             expect(CONVERSATION_ROLE_PROMPT.length).toBeGreaterThan(0);
