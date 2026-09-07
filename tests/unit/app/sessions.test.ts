@@ -486,7 +486,24 @@ describe('createPerchConductor', () => {
         expect(createInstancesSpy).toHaveBeenNthCalledWith(2, perch.params.mcpShared, { role: 'perch' });
     });
 
-    it('wires no browser and no email MCP server for perch (unlike a fully-populated conversation set), but does wire health', async () => {
+    it('passes the given emailServerFactory through to the perch instance set (unified tool set: perch triages the inbox too)', async () => {
+        const h = buildPerch();
+        const createInstancesSpy = jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FULL_MCP_SERVERS);
+        const emailServerFactory = jest.fn();
+
+        const { conductor } = await createPerchConductor({ ...h.params, emailServerFactory });
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        expect(createInstancesSpy).toHaveBeenCalledWith(h.params.mcpShared, { role: 'perch', emailServerFactory });
+        const mcpServersOption = h.instances[0].receivedParams?.options.mcpServers as Record<string, unknown>;
+        expect(mcpServersOption.email).toBe(FULL_MCP_SERVERS.emailMcpServer);
+        expect(h.instances[0].receivedParams?.options.allowedTools).toContain('mcp__email__*');
+    });
+
+    it('wires no browser MCP server for perch (the single WebView belongs to conversation), but does wire email and health', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FULL_MCP_SERVERS);
 
@@ -498,7 +515,7 @@ describe('createPerchConductor', () => {
 
         const mcpServersOption = h.instances[0].receivedParams?.options.mcpServers as Record<string, unknown>;
         expect(mcpServersOption.browser).toBeUndefined();
-        expect(mcpServersOption.email).toBeUndefined();
+        expect(mcpServersOption.email).toBe(FULL_MCP_SERVERS.emailMcpServer);
         expect(mcpServersOption.memory).toBe(FULL_MCP_SERVERS.memoryMcpServer);
         expect(mcpServersOption.wikipedia).toBe(FULL_MCP_SERVERS.wikipediaMcpServer);
         expect(mcpServersOption.health).toBe(FULL_MCP_SERVERS.healthMcpServer);

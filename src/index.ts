@@ -920,16 +920,17 @@ export async function createApp(): Promise<App> {
         };
 
         const builtPerchConductor = await createPerchConductor({
-            config:         config.session,
-            queryFn:        query,
-            mcpShared:      mcpSharedDeps,
+            config:             config.session,
+            queryFn:            query,
+            mcpShared:          mcpSharedDeps,
+            emailServerFactory: emailSetup?.createEmailMcpServerInstance,
             plugins,
-            contextBuilder: contextLayer.contextBuilder,
-            identityCache:  identityCacheSlot.cache,
-            taskListReader: perchTaskListReader,
-            journal:        perchJournal,
-            resumeStore:    perchResumeStore,
-            clock:          systemClock,
+            contextBuilder:     contextLayer.contextBuilder,
+            identityCache:      identityCacheSlot.cache,
+            taskListReader:     perchTaskListReader,
+            journal:            perchJournal,
+            resumeStore:        perchResumeStore,
+            clock:              systemClock,
             logger,
         });
         perchConductorForTaskReader = builtPerchConductor.conductor;

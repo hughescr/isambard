@@ -282,18 +282,20 @@ const PERCH_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Dependencies and configuration for {@link createPerchConductor}. */
 export interface CreatePerchConductorParams {
-    config:         SessionConfig
-    queryFn:        SessionQueryFn
+    config:              SessionConfig
+    queryFn:             SessionQueryFn
     /** Shared MCP dependencies (P2's `createMcpSharedDeps`); this module builds its OWN instance set from it — a second, distinct set from the conversation conductor's own (a shared instance cannot serve two concurrent sessions). */
-    mcpShared:      McpSharedDeps
-    plugins?:       SdkPluginConfig[]
-    contextBuilder: BootContextSource
-    identityCache:  IdentitySource
-    taskListReader: TaskListSource
-    journal:        SessionJournal
-    resumeStore:    ResumeStore
-    clock:          Clock
-    logger:         Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    mcpShared:           McpSharedDeps
+    /** Optional email MCP server factory (see `CreateMcpServerInstancesOptions`) — a fresh instance for this session, exactly as the conversation conductor gets. Perch turns triage the inbox, so they need the same email tools (unified tool set; first perch soak 2026-09-06 found them missing). */
+    emailServerFactory?: () => McpServerConfig
+    plugins?:            SdkPluginConfig[]
+    contextBuilder:      BootContextSource
+    identityCache:       IdentitySource
+    taskListReader:      TaskListSource
+    journal:             SessionJournal
+    resumeStore:         ResumeStore
+    clock:               Clock
+    logger:              Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
 }
 
 /** What {@link createPerchConductor} returns. */
@@ -304,8 +306,10 @@ export interface PerchConductorResult {
 }
 
 /**
- * Builds the perch conductor's OWN MCP server set (role `'perch'` — no browser, no email; see
- * `createMcpServerInstances`'s own role-gating doc), system prompt, hooks, and ledger, and
+ * Builds the perch conductor's OWN MCP server set (role `'perch'` — no browser, since the single
+ * Bun.WebView belongs to the conversation session; every other server, email included, is the
+ * unified set — see `createMcpServerInstances`'s own role-gating doc), system prompt, hooks, and
+ * ledger, and
  * returns a {@link Conductor} that has NOT been opened — mirrors
  * {@link createConversationConductor}'s own build-only contract exactly; the caller
  * (`src/index.ts`/`bot.ts`'s `clientReady`) decides when opening is safe and degrades to the
@@ -324,10 +328,10 @@ export interface PerchConductorResult {
  */
 export async function createPerchConductor(params: CreatePerchConductorParams): Promise<PerchConductorResult> {
     const {
-        config, queryFn, mcpShared, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger,
+        config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger,
     } = params;
 
-    const mcpInstances = createMcpServerInstances(mcpShared, { role: 'perch' });
+    const mcpInstances = createMcpServerInstances(mcpShared, { role: 'perch', emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
         memory:         mcpInstances.memoryMcpServer,
         discord:        mcpInstances.discordMcpServer,
@@ -339,7 +343,8 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         'user-context': mcpInstances.userContextMcpServer,
         media:          mcpInstances.mediaMcpServer,
         health:         mcpInstances.healthMcpServer,
-        // No browser (single Bun.WebView — conversation only) and no email server for perch.
+        email:          mcpInstances.emailMcpServer,
+        // No browser (single Bun.WebView — conversation only).
     };
 
     // Built once, here, from the injected IdentityCache — never rebuilt on a later reopen.
