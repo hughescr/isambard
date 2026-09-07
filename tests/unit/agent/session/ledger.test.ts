@@ -349,12 +349,27 @@ describe('reduceLedger: phase_synopsis', () => {
         expect(result).toBe(ledger);
     });
 
-    it('drops the event when the turn has no phase yet', () => {
+    it('a synopsis arriving before the first frame seeds a thinking placeholder carrying it, which the first frame then keeps', () => {
+        // Production ordering: the conductor notifies turn subscribers (the stream handler, which
+        // dispatches the pre-generated thinking synopsis) before folding the frame into the
+        // ledger, so the synopsis reaches a turn whose phase is still null.
         const ledger = openTurn();
         expect(ledger.turn?.phase).toBeNull();
 
+        const seeded = reduceLedger(ledger, frozenEvent({
+            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'reading the brief', at: T2,
+        }));
+        expect(seeded.turn?.phase).toEqual({ type: 'thinking', startedAt: T2, generatedStatus: 'reading the brief' });
+
+        const firstFrame = reduceLedger(seeded, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T3 }));
+        expect(firstFrame.turn?.phase).toEqual({ type: 'responding', startedAt: T3, generatedStatus: 'reading the brief' });
+    });
+
+    it('still drops a synopsis for a phase-less turn when the turnId does not match', () => {
+        const ledger = openTurn();
+
         const result = reduceLedger(ledger, frozenEvent({
-            type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'irrelevant', at: T2,
+            type: 'phase_synopsis', turnId: 'someone-else', phaseType: 'thinking', text: 'irrelevant', at: T2,
         }));
 
         expect(result).toBe(ledger);

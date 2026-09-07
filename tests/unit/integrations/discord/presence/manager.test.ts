@@ -1687,6 +1687,35 @@ describe('PresenceManager', () => {
             expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Fresh idle status', type: ActivityType.Custom });
         });
 
+        it('discards an idle status whose generation was still in flight when an active view arrived (interrupt-then-new-turn gap)', async () => {
+            const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
+            mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {
+                idleGeneratePromises.push({ resolve });
+            }));
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            void manager.applyView(idleView);
+            await Promise.resolve();
+            expect(idleGeneratePromises).toHaveLength(1);
+
+            await manager.applyView(activeView);
+            (mockClient.user.setActivity as ReturnType<typeof mock>).mockClear();
+
+            idleGeneratePromises[0].resolve({ name: 'Stale idle line', type: ActivityType.Custom });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockClient.user.setActivity).not.toHaveBeenCalled();
+            expect(mockLogger.debug).toHaveBeenCalledWith({ currentPhase: 'thinking' }, 'Discarding stale idle status (no longer idle)');
+        });
+
         it('two idle views arriving while the first idle generation is still in flight (both sessions going idle at boot) start exactly ONE refresh loop and ONE generation', async () => {
             const idleGeneratePromises: { resolve: (value: ActivitiesOptions) => void }[] = [];
             mockIdleGenerator.generate = mock(() => new Promise<ActivitiesOptions>((resolve) => {

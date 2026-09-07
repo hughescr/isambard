@@ -16,6 +16,15 @@ import { IdentityCache, type ContextBuilder, type LedgerStore, type Signal } fro
 import type { DiscordConfig } from '@/config';
 
 /**
+ * How long a freshly-idle composed view must persist before it is applied. A follow-up message
+ * that interrupts a running turn ends that turn a few hundred ms before the next one opens; an
+ * idle view applied in that gap paints "💤", consumes the presence throttle window the new turn's
+ * own placeholder then needs, and starts a Haiku idle generation that is stale on arrival (first
+ * conductor-mode soak, 2026-09-06). Going idle is never urgent enough to need the first 1.5 s.
+ */
+export const IDLE_SETTLE_MS = 1500;
+
+/**
  * Result of setting up presence management.
  */
 export interface PresenceSetupResult {
@@ -351,11 +360,37 @@ export function setupConductorPresence(params: {
         botStateManager?.recordPresenceUpdate();
     }
 
-    /** Composes the current view from every ledger and applies it, if `planPresenceUpdate` says to. */
-    function tick(): void {
+    let idleSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** Fires {@link IDLE_SETTLE_MS} after a view first composed idle: applies the CURRENT view only if it is still idle. */
+    function applyIdleIfStillIdle(): void {
+        idleSettleTimer = null;
+        const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
+        if(view.phase.type === 'idle' && planPresenceUpdate(view, throttle) !== null) {
+            apply(view);
+        }
+    }
+
+    /**
+     * Composes the current view from every ledger and applies it, if `planPresenceUpdate` says
+     * to. An idle view is held for {@link IDLE_SETTLE_MS} first (see that constant) unless
+     * `settleIdle` is false — the one synchronous setup tick applies its idle view at once.
+     */
+    function tick(settleIdle = true): void {
         const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
         const signature = phaseSignature(view);
         const digest = digestOf(view);
+
+        if(view.phase.type === 'idle' && settleIdle) {
+            lastSeenSignature = signature;
+            lastSeenDigest = digest;
+            idleSettleTimer ??= setTimeout(applyIdleIfStillIdle, IDLE_SETTLE_MS);
+            return;
+        }
+        if(idleSettleTimer !== null) {
+            clearTimeout(idleSettleTimer);
+            idleSettleTimer = null;
+        }
         // (An idle view has a null signature AND no digest, so the two-clause form below cannot
         // misfire on idle -> idle: both digests are undefined there.)
         const digestJustArrived = signature === lastSeenSignature && digest !== lastSeenDigest;
@@ -373,14 +408,18 @@ export function setupConductorPresence(params: {
         }
     }
 
-    const unsubscribes = ledgers.map(store => store.subscribe(tick));
-    tick();
+    const unsubscribes = ledgers.map(store => store.subscribe(() => tick()));
+    tick(false);
 
     return {
         presenceManager,
         unsubscribeLedgers: (): void => {
             for(const unsubscribe of unsubscribes) {
                 unsubscribe();
+            }
+            if(idleSettleTimer !== null) {
+                clearTimeout(idleSettleTimer);
+                idleSettleTimer = null;
             }
         },
     };

@@ -172,6 +172,14 @@ export class PresenceManager {
             ? await this.deps.idleStatusGenerator.generate()
             : await this.deps.idleStatusGenerator.generate({ prefix: prefixAtStart, compacting: this.composedCompacting });
 
+        // Either path: the session went busy while Haiku was writing an idle line (a follow-up
+        // message interrupting a turn goes idle for a few hundred ms before the next turn opens) —
+        // applying it now would paint "💤" over an active status.
+        if(this.currentPhase?.type !== 'idle') {
+            this.deps.logger.debug({ currentPhase: this.currentPhase?.type }, 'Discarding stale idle status (no longer idle)');
+            return;
+        }
+
         if(prefixAtStart === null) {
             // Legacy path: check if display mode changed while generating - if so, discard stale result
             if(this.presenceDisplayMode !== modeAtStart) {

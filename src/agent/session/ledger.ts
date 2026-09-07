@@ -396,9 +396,9 @@ function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger
 
 /**
  * Applies a `phase_synopsis` event's `text` as `turn.phase.generatedStatus` when the event's
- * `turnId` matches the currently open turn's `id` and that turn has a phase — otherwise the event
- * is a stale synopsis (its turn ended, or none is open yet) and is dropped, returning `ledger`
- * unchanged by reference. The event's `phaseType` is deliberately not compared (see the
+ * `turnId` matches the currently open turn's `id` — otherwise the event is a stale synopsis (its
+ * turn ended, or none is open yet) and is dropped, returning `ledger` unchanged by reference. A
+ * matching turn with no phase yet gets a `thinking` placeholder phase carrying the digest. The event's `phaseType` is deliberately not compared (see the
  * `phase_synopsis` doc on {@link LedgerEvent}).
  */
 function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type: 'phase_synopsis' }>): Ledger {
@@ -406,11 +406,16 @@ function reducePhaseSynopsis(ledger: Ledger, event: Extract<LedgerEvent, { type:
     if(turn === null) {
         return ledger;
     }
-    if(turn.phase === null) {
-        return ledger;
-    }
     if(turn.id !== event.turnId) {
         return ledger;
+    }
+    if(turn.phase === null) {
+        // The turn is open but no SDK frame has set a phase yet — this is where the pre-generated
+        // thinking synopsis lands, because the conductor notifies turn subscribers (the stream
+        // handler that dispatches it) BEFORE it folds the same frame into this ledger. Seed the
+        // same 'thinking' placeholder the presence composer would synthesize for a phase-less
+        // turn, carrying the digest, so the first frame's phase (via carryDigest) keeps it.
+        return { ...ledger, turn: { ...turn, phase: { type: 'thinking', startedAt: event.at, generatedStatus: event.text } } };
     }
     return { ...ledger, turn: { ...turn, phase: { ...turn.phase, generatedStatus: event.text } as ActivityPhase } };
 }
