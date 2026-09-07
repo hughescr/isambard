@@ -276,6 +276,58 @@ describe('reduceLedger: phase_synopsis', () => {
         expect(ended.turn).toBeNull();
     });
 
+    it('carries the digest onto a responding phase and from a thinking phase (every carrying kind, both directions)', () => {
+        const thinkingWithDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T2 }, at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'thinking', text: 'mulling it over', at: T2 })
+        );
+        expect(thinkingWithDigest.turn?.phase).toEqual({ type: 'thinking', startedAt: T2, generatedStatus: 'mulling it over' });
+
+        const responding = reduceLedger(thinkingWithDigest, frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T3 }));
+        expect(responding.turn?.phase).toEqual({ type: 'responding', startedAt: T3, generatedStatus: 'mulling it over' });
+
+        const usingTool = reduceLedger(responding, frozenEvent({ type: 'sdk_frame', frame: frames.assistantToolUse('Bash', {}, 'toolu_1'), at: T3 }));
+        expect(usingTool.turn?.phase).toEqual({ type: 'using_tool', toolName: 'Bash', startedAt: T3, generatedStatus: 'mulling it over' });
+
+        const backToThinking = reduceLedger(usingTool, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
+        expect(backToThinking.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'mulling it over' });
+    });
+
+    it('does not carry the digest onto a compacting phase, and a compacting phase carries none onward', () => {
+        const withDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
+        );
+
+        const compacting = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: { type: 'compacting', startedAt: T3, trigger: 'manual' }, at: T3 }));
+        expect(compacting.turn?.phase).toEqual({ type: 'compacting', startedAt: T3, trigger: 'manual' });
+
+        const afterwards = reduceLedger(compacting, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3 }, at: T3 }));
+        expect(afterwards.turn?.phase).toEqual({ type: 'thinking', startedAt: T3 });
+    });
+
+    it('keeps a new phase\'s OWN digest rather than overwriting it with the carried one', () => {
+        const withDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
+        );
+
+        const own = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: { type: 'thinking', startedAt: T3, generatedStatus: 'its own words' }, at: T3 }));
+
+        expect(own.turn?.phase).toEqual({ type: 'thinking', startedAt: T3, generatedStatus: 'its own words' });
+    });
+
+    it('a phase_changed to null clears the phase, digest included', () => {
+        const withDigest = reduceLedger(
+            reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),
+            frozenEvent({ type: 'phase_synopsis', turnId: 'env-1', phaseType: 'responding', text: 'writing a reply', at: T2 })
+        );
+
+        const cleared = reduceLedger(withDigest, frozenEvent({ type: 'phase_changed', phase: null, at: T3 }));
+
+        expect(cleared.turn?.phase).toBeNull();
+    });
+
     it('carries the digest across an explicit phase_changed event too', () => {
         const withDigest = reduceLedger(
             reduceLedger(openTurn(), frozenEvent({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: T2 })),

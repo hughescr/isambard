@@ -478,6 +478,35 @@ describe('setupConductorPresence', () => {
         expect(view.phase).toMatchObject({ type: 'using_tool', generatedStatus: 'running the tests' });
     });
 
+    test('a fresher digest that arrives on the SAME tick as a phase flip is an ordinary throttled event, not a bypass', () => {
+        const conversation = makeConversationLedger();
+        const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
+
+        setupConductorPresence({
+            identityContext:        'Test identity',
+            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
+            readyClient:            makeMockClient(),
+            ledgers:                [conversation],
+            throttle,
+            dynamicStatusGenerator: undefined,
+            getRecentContext:       () => Promise.resolve(undefined),
+        });
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
+        });
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(0) });
+        const turnId = conversation.get().turn?.id;
+        conversation.dispatch({
+            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(1),
+        });
+        mockPresenceManager.applyView.mockClear();
+
+        // New phase AND new digest in one event: the signature changed, so this is a new
+        // presence-worthy event that the throttle is entitled to hold.
+        conversation.dispatch({ type: 'phase_changed', phase: { type: 'thinking', startedAt: new Date(2), generatedStatus: 'now thinking' }, at: new Date(2) });
+        expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+    });
+
     test('records every applied update on the legacy BotStateManager throttle, without ever subscribing to it', () => {
         // Regression test for the P11 review finding: `setupPresence`'s oneshot bridge (the only
         // caller of `botStateManager.recordPresenceUpdate()`) does not run in conductor mode, so

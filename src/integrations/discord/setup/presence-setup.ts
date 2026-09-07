@@ -356,7 +356,9 @@ export function setupConductorPresence(params: {
         const view = composePresence(ledgers.map(store => store.get()), isCostPaused?.() ?? false);
         const signature = phaseSignature(view);
         const digest = digestOf(view);
-        const digestJustArrived = signature !== null && signature === lastSeenSignature && digest !== undefined && digest !== lastSeenDigest;
+        // (An idle view has a null signature AND no digest, so the two-clause form below cannot
+        // misfire on idle -> idle: both digests are undefined there.)
+        const digestJustArrived = signature === lastSeenSignature && digest !== lastSeenDigest;
 
         lastSeenSignature = signature;
         lastSeenDigest = digest;

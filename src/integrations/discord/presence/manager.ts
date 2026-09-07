@@ -218,6 +218,7 @@ export class PresenceManager {
      * Returns a promise that resolves after the first refresh completes.
      */
     private async startIdleRefresh(): Promise<void> {
+        // Stryker disable next-line ConditionalExpression,BlockStatement: belt-and-braces guard — every caller (applyView, updatePhase, transitionPresenceDisplayMode) already branches on idleRefreshInterval before calling in, so no test can reach this with the interval set
         if(this.idleRefreshInterval) {
             return; // Already running
         }

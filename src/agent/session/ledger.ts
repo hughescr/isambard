@@ -354,10 +354,11 @@ function reduceSessionOpened(ledger: Ledger, sessionId: string): Ledger {
  * callers' identity checks (`phase === turn.phase`) keep working.
  */
 function carryDigest(prev: ActivityPhase | null, next: ActivityPhase | null): ActivityPhase | null {
-    if(next === null || prev === null || next === prev) {
+    if(next === null) {
         return next;
     }
-    if(!('generatedStatus' in prev) || prev.generatedStatus === undefined) {
+    const digest = digestOf(prev);
+    if(digest === undefined) {
         return next;
     }
     if(next.type !== 'thinking' && next.type !== 'using_tool' && next.type !== 'responding') {
@@ -366,7 +367,24 @@ function carryDigest(prev: ActivityPhase | null, next: ActivityPhase | null): Ac
     if(next.generatedStatus !== undefined) {
         return next;
     }
-    return { ...next, generatedStatus: prev.generatedStatus };
+    return { ...next, generatedStatus: digest };
+}
+
+/** The Haiku digest a phase carries, if it is a phase kind that can carry one. */
+function digestOf(phase: ActivityPhase | null): string | undefined {
+    if(phase === null) {
+        return undefined;
+    }
+    switch(phase.type) {
+        case 'thinking':
+        case 'using_tool':
+        case 'responding': {
+            return phase.generatedStatus;
+        }
+        case 'compacting': {
+            return undefined;
+        }
+    }
 }
 
 function reducePhaseChanged(ledger: Ledger, phase: ActivityPhase | null): Ledger {
