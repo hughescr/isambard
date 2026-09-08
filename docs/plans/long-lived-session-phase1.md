@@ -467,7 +467,7 @@ Acceptance:
 - Production runs conductor mode with no env var; soak checklist recorded in the PR: perch cycle, forced /compact (SessionStart compact in logs), restart-with-resume (same session id, no fallback:true), SIGTERM under 2 min, latency per source within the 10s target for humans, RSS trend logged
 - Rollback: SESSION_MODE=oneshot + restart
 
-> **Status (2026-09-08):** every package in this plan has landed on develop. The soak checklist passed on 2026-09-06; P13b landed at `2d83895` and P14 at `061f8f1`. Compaction summaries are deliberately not persisted (Craig, 2026-09-06). Two follow-ups are queued outside this plan: deliver the post-compaction boot bundle as a no-turn message rather than SessionStart hook output (hook output past ~45KB is spilled to a file pointer), and the Phase 2-4 plan's deferred B7 injection-window tuning.
+> **Status (2026-09-08):** every package in this plan has landed on develop. The soak checklist passed on 2026-09-06; P13b landed at `2d83895` and P14 at `061f8f1`. Compaction summaries are deliberately not persisted (Craig, 2026-09-06). One follow-up is queued outside this plan: the Phase 2-4 plan's deferred B7 injection-window tuning. (The boot bundle arriving as SessionStart hook output that spills past ~45KB to a file pointer is intended behaviour, per Craig on 2026-09-08: identity lands in context and the rest is a lazy Read, so a compaction never re-inflates the fresh context up front.)
 
 ### P13b · Delete the flag and the one-shot agent path (13 pts, deployable after)
 
