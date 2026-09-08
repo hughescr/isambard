@@ -9,7 +9,6 @@ import type { Logger } from '@hughescr/logger';
 import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
 import { getSlotForHour } from './schedule';
-import { type PerchSessionRunner } from './session-runner';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
 import type { AgentStateManager, AgentStateChange } from '@/agent/types';
 import { InvariantViolationError } from '@/errors';
@@ -34,8 +33,6 @@ export interface PerchSchedulerDeps {
     getCurrentLocalHour?: () => number
     /** Callback when perch should start */
     onPerchTrigger:       (slot: PerchSlot) => void
-    /** Optional perch session runner for suspension check */
-    perchSessionRunner?:  PerchSessionRunner
     /**
      * Optional Q3/B4 daily cost ceiling predicate: when it returns true, a scheduled trigger
      * skips `onPerchTrigger` without stopping the reschedule loop, so the pause self-clears at
@@ -116,18 +113,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         // Clear pending state
         // Stryker disable next-line BooleanLiteral: State cleared regardless of previous value
         state = { perchPending: false };
-
-        // Don't start new perch while one is suspended
-        if(deps.perchSessionRunner?.isSuspended()) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.debug({ slot }, 'Perch trigger skipped - session is suspended');
-            state = {
-                perchPending:       true,
-                pendingSlot:        slot,
-                pendingTriggerTime: new Date(),
-            };
-            return;
-        }
 
         // Check if still idle (could have changed during jitter delay)
         if(stateManager.getMode() !== 'idle') {

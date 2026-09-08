@@ -37,9 +37,6 @@ export {
 // Inbox (no conflicts — safe for export *)
 export * from './inbox';
 
-// Catchup (no conflicts — safe for export *)
-export * from './catchup';
-
 // Attachments (no conflicts — safe for export *)
 export * from './attachments';
 

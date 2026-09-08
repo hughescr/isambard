@@ -38,17 +38,10 @@ export type { OperationalMode } from '@/agent/types';
  *   to process an interrupting message and resumed afterwards.
  * - processing_message: Actively responding to a single user message. Entered
  *   via `startProcessingMessage()`, exited to idle via `goIdle()`.
- * - perching: Autonomous scheduled activity (perch session). Entered via
- *   `startPerching()` from `PerchSessionRunner.startPerch()` and
- *   `resumeAfterSuspension()` in `src/agent/perch/session-runner.ts`. Exited
- *   to idle via `goIdle()` on normal completion, timeout wrap-up, error, or
- *   suspension. Downstream effects when mode is `'perching'`:
- *   - `agent.ts` passes `specialMode: 'perching'` to `handleInput`, which
- *     selects the perch prompt instead of a normal user message.
- *   - `response-sender.ts` / `response-router.ts` route agent output to the
- *     `'perch-time'` well-known Discord channel.
- *   - `handlers.ts` interrupts the perch session when a user message arrives.
- *   - `presence/status-generator-active.ts` prefixes status with 🦉.
+ * - perching: Autonomous scheduled activity (perch session). This `perching` mode is the
+ *   legacy `BotStateManager` value the P14 removal has not yet retired; the conductor-mode perch
+ *   path (`src/agent/perch/perch-driver.ts` + `scheduler.ts`) runs perch as its own long-lived
+ *   conductor session and does not read or write this mode at all — see that module's own docs.
  *
  * @example
  * ```typescript

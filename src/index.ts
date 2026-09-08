@@ -7,13 +7,13 @@ import type { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
-import { createClaudeAgent, createBotStateCompactionSink, loadPlugins, QuestionRegistry, cleanupAllStaleSessions, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createDeliveryGuard, createCostCeiling, createCostCeilingStore, createNotificationBridge, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createMcpServerInstances, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
+import { loadPlugins, QuestionRegistry, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, createCatchUpSignalAdapter, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, resolveChannelId, splitMessage, withDiscordRetry, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type EmbedderLike } from '@/storage';
@@ -117,29 +117,25 @@ export async function createApp(): Promise<App> {
         onIdentityWrite
     );
 
-    // Clean up stale session files (P8: below loadConfig/storage creation so config.session.mode
-    // can be consulted). The one-shot path keeps its unconditional wipe; the conductor path
-    // instead ages entries out, sparing whichever of the two role-keyed sessions are still live.
+    // Clean up stale session files (P8: below loadConfig/storage creation so the role-keyed
+    // resume stores can be consulted). P13b: the conductor is the only path now — retention
+    // always ages entries out via pruneStaleSessions, sparing whichever of the two role-keyed
+    // sessions are still live. The one-shot path's unconditional wipe-everything helper is gone.
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Cleaning up stale sessions...');
-    if(config.session.mode === 'conductor') {
-        // The role-id lookup and the prune itself can each reject (a DynamoDB blip/throttle at
-        // startup, or a hand-edited/legacy row that fails session-id validation) — a rejection
-        // here must not abort createApp() the way the one-shot branch's cleanupAllStaleSessions()
-        // never could. Skip pruning entirely on failure rather than falling back to an empty
-        // keepSessionIds, which would delete the live role transcripts.
-        try {
-            const [conversationSessionId, perchSessionId] = await Promise.all([
-                storage.createResumeStore('conversation').load(),
-                storage.createResumeStore('perch').load(),
-            ]);
-            const keepSessionIds = new Set([conversationSessionId, perchSessionId].filter((id): id is string => id !== undefined));
-            await pruneStaleSessions({ keepSessionIds, maxAgeMs: config.session.transcriptRetentionMs });
-        } catch (error) {
-            logger.warn({ error }, 'Conductor session-id lookup or transcript pruning failed; skipping retention this run');
-        }
-    } else {
-        await cleanupAllStaleSessions();
+    // The role-id lookup and the prune itself can each reject (a DynamoDB blip/throttle at
+    // startup, or a hand-edited/legacy row that fails session-id validation) — a rejection here
+    // must not abort createApp(). Skip pruning entirely on failure rather than falling back to
+    // an empty keepSessionIds, which would delete the live role transcripts.
+    try {
+        const [conversationSessionId, perchSessionId] = await Promise.all([
+            storage.createResumeStore('conversation').load(),
+            storage.createResumeStore('perch').load(),
+        ]);
+        const keepSessionIds = new Set([conversationSessionId, perchSessionId].filter((id): id is string => id !== undefined));
+        await pruneStaleSessions({ keepSessionIds, maxAgeMs: config.session.transcriptRetentionMs });
+    } catch (error) {
+        logger.warn({ error }, 'Conductor session-id lookup or transcript pruning failed; skipping retention this run');
     }
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Stale sessions cleaned up');
@@ -775,46 +771,17 @@ export async function createApp(): Promise<App> {
         embedder,
         discordAllowlist:          personAllowlist,
     });
-    // Identical to the old createMCPServers(options) wrapper (createMcpSharedDeps +
-    // createMcpServerInstances(shared, {role: 'conversation'})) — the one-shot path's behaviour
-    // is unchanged.
-    const mcpServers = createMcpServerInstances(mcpSharedDeps, { role: 'conversation' });
     // Stryker restore ObjectLiteral,OptionalChaining
 
-    // Load plugins and create agent
+    // Load plugins for the conductor build below (P13b: the one-shot agent that used to consume
+    // this — and the createMCPServers()/createMcpServerInstances() per-session set it built — is
+    // gone; the conductor builds its own MCP instance set from mcpSharedDeps).
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Loading plugins...');
     // Stryker disable next-line StringLiteral: Filesystem path is configuration
     const plugins = await loadPlugins(path.join(path.resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Plugins loaded');
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Creating Claude agent...');
-    const agent = createClaudeAgent({
-        contextBuilder:             contextLayer.contextBuilder,
-        memoryMcpServer:            mcpServers.memoryMcpServer,
-        discordMcpServer:           mcpServers.discordMcpServer,
-        inboxMcpServer:             mcpServers.inboxMcpServer,
-        emailMcpServer:             emailSetup?.emailMcpServer,
-        bskyMcpServer:              mcpServers.bskyMcpServer,
-        caldavMcpServer:            mcpServers.caldavMcpServer,
-        wikipediaMcpServer:         mcpServers.wikipediaMcpServer,
-        mediaMcpServer:             mcpServers.mediaMcpServer,
-        contactsMcpServer:          mcpServers.contactsMcpServer,
-        userContextMcpServer:       mcpServers.userContextMcpServer,
-        browserMcpServer:           mcpServers.browserMcpServer,
-        plugins,
-        taskPersistenceCoordinator: storage.taskPersistenceCoordinator,
-        mainModel:                  config.agent.mainModel,
-        fallbackModel:              config.agent.fallbackModel,
-        // Stryker disable ObjectLiteral: Composition root — the ONE place createBotStateCompactionSink
-        // adapts BotStateManagerImpl's narrow view onto the sink-style CompactionSink interface
-        // (no unsafe cast needed — getCompactionStateManager() returns CompactionStateManager directly).
-        compactionSink:             createBotStateCompactionSink(discordInfra.botStateManager.getCompactionStateManager()),
-        // Stryker restore ObjectLiteral
-    });
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Claude agent created');
 
     // Load identity
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
@@ -834,19 +801,16 @@ export async function createApp(): Promise<App> {
     }
     // Stryker restore all
 
-    // P9: build (never open) the long-lived conversation conductor when conductor mode is
-    // selected — after the OAuth env write (top of this function) and mcpSharedDeps (above), and
-    // before createDiscordBot so the bot can open it itself once the guild cache and channel
-    // registry exist (P9/P10). The legacy agent above is still created unconditionally: it is
-    // the fallback createDiscordBot degrades to if open() ever rejects. Oneshot mode: none of
-    // this runs, matching the byte-for-byte-unchanged requirement for SESSION_MODE=oneshot.
+    // P9: build (never open) the long-lived conversation conductor — after the OAuth env write
+    // (top of this function) and mcpSharedDeps (above), and before createDiscordBot so the bot
+    // can open it itself once the guild cache and channel registry exist (P9/P10). P13b: the
+    // conductor is the only path now — the one-shot legacy agent it used to sit beside is gone.
     // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
     let conversationConductor: Conductor | undefined;
     let conversationLedgerStore: LedgerStore | undefined;
     let conversationContextPolicy: ContextPolicy | undefined;
     let conversationJournal: SessionJournal | undefined;
-    const conversationDeliveryGuard = createDeliveryGuard([]);
-    if(config.session.mode === 'conductor') {
+    {
         // eslint-disable-next-line prefer-const -- assigned once, immediately after createConversationConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
         let conductorForTaskReader: Conductor | undefined;
         const conversationTaskListReader = createTaskListReader({
@@ -901,12 +865,12 @@ export async function createApp(): Promise<App> {
     // P12: build (never open) the perch conductor, AFTER the conversation conductor above and
     // only when perch is actually configured/enabled — an unused conductor would still spend a
     // whole CLI child session for nothing. bot.ts's clientReady opens it (after the conversation
-    // conductor) and degrades to the legacy perch scheduler/runner if open() rejects.
+    // conductor); a rejected or omitted open() just leaves perch disabled, without a restart.
     // Stryker disable all: Composition root — conductor wiring is not unit-testable here (see tests/unit/app/sessions.test.ts for the conductor's own behaviour)
     let perchConductor: Conductor | undefined;
     let perchLedgerStore: LedgerStore | undefined;
     let perchJournal: SessionJournal | undefined;
-    if(config.session.mode === 'conductor' && config.perch?.enabled) {
+    if(config.perch?.enabled) {
         // eslint-disable-next-line prefer-const -- assigned once, immediately after createPerchConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
         let perchConductorForTaskReader: Conductor | undefined;
         const perchTaskListReader = createTaskListReader({
@@ -942,12 +906,10 @@ export async function createApp(): Promise<App> {
 
     // Q3 / plan amendment B4: a day-bucketed spend ceiling that pauses perch (never Discord) once
     // config.session.dailyCostCeilingUsd is crossed, fed by both session ledgers' cumulativeUsd
-    // deltas and surviving a process restart via the conversation journal (whichever role's
-    // journal the composition root has in hand — cost-ceiling-store.ts's own doc). Undefined in
-    // oneshot mode (no journal), in which case the ceiling still constructs but is never
-    // persisted/restored and is simply never read (isCostPaused only reaches conductor-mode perch
-    // setup — see bot.ts).
-    const costCeilingPersistence: CostCeilingPersistence | undefined = conversationJournal && createCostCeilingStore({ journal: conversationJournal, clock: systemClock });
+    // deltas and surviving a process restart via the conversation journal (cost-ceiling-store.ts's
+    // own doc). P13b: the conductor (and its journal) is unconditional now, so the persistence
+    // store is always constructed.
+    const costCeilingPersistence: CostCeilingPersistence = createCostCeilingStore({ journal: conversationJournal, clock: systemClock });
     const costCeiling = createCostCeiling({
         clock:       systemClock,
         timezone:    config.session.timezone,
@@ -957,12 +919,12 @@ export async function createApp(): Promise<App> {
     });
     // A boot-time journal read failure must not block startup — the ceiling simply starts fresh,
     // as if today's spend had not yet been recorded (mirrors the P8 role-id lookup failure below).
-    const costCeilingSnapshot = await costCeilingPersistence?.load().catch((error: unknown) => {
+    const costCeilingSnapshot = await costCeilingPersistence.load().catch((error: unknown) => {
         logger.warn({ error }, 'Failed to restore daily cost ceiling snapshot at boot');
         return undefined;
     });
     costCeilingSnapshot && costCeiling.restore(costCeilingSnapshot);
-    conversationLedgerStore?.subscribe((ledger, event) => costCeiling.record(conversationLedgerStore, ledger, event));
+    conversationLedgerStore.subscribe((ledger, event) => costCeiling.record(conversationLedgerStore, ledger, event));
     perchLedgerStore?.subscribe((ledger, event) => costCeiling.record(perchLedgerStore, ledger, event));
 
     // Construct allowlist command handler using the unified PersonAllowlist
@@ -984,15 +946,12 @@ export async function createApp(): Promise<App> {
         perchConfig:        config.perch,
         identityContext,
         identityCache:      identityCacheSlot.cache,
-        agent,
         client:             discordInfra.discordClient,
         questionRegistry,
         inboxManager:       discordInfra.inboxManager,
         botStateManager:    discordInfra.botStateManager,
         channelRegistry:    discordInfra.channelRegistry,
-        eventDeltaTracker:  contextLayer.eventDeltaTracker,
         contextBuilder:     contextLayer.contextBuilder,
-        memoryBackend:      createCatchUpSignalAdapter(storage.memoryBackend),
         emailSetup,
         bskySetup,
         allowlistHandler,
@@ -1001,7 +960,6 @@ export async function createApp(): Promise<App> {
         contactHandler:     contactCommandHandler,
         contactApprovalHandler,
         activityLogger,
-        historyCoordinator,
         healthRegistry,
         discordCapability,
         // Q3 / B4: daily cost ceiling predicate — reaches only the conductor-mode perch scheduler
@@ -1011,17 +969,16 @@ export async function createApp(): Promise<App> {
         // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
         // notification sources; this package only threads the seam through.
         notify:             notificationBridge.notify,
-        // P9: conductor-mode dependencies, undefined in oneshot mode. bot.ts's clientReady opens
-        // conversationConductor once the guild cache and channel registry exist and degrades to
-        // the legacy agent above if open() rejects (implementer B's slice of this package).
+        // P9/P13b: conductor-mode dependencies. bot.ts's clientReady opens conversationConductor
+        // once the guild cache and channel registry exist; a rejected/timed-out open() leaves
+        // message processing disabled for this process (there is no fallback agent to degrade to).
         conversationConductor,
         ledgerStore:        conversationLedgerStore,
         contextPolicy:      conversationContextPolicy,
-        deliveryGuard:      conversationDeliveryGuard,
         journal:            conversationJournal,
         // P12: the perch conductor's own build-only-then-open trio, undefined unless conductor
         // mode AND perch are both enabled. bot.ts's clientReady opens it after the conversation
-        // conductor and degrades to the legacy perch scheduler/runner if open() rejects.
+        // conductor; a rejected/omitted open() just leaves perch disabled, without a restart.
         perchConductor,
         perchLedgerStore,
         perchJournal,
@@ -1145,15 +1102,14 @@ export async function createApp(): Promise<App> {
             // Stryker restore BlockStatement,ObjectLiteral
 
             // Register recovery subscriber now — after initial bot.start() — so it only fires on reconnects.
-            // Catch-up on first connection is handled by setupInboxAndCatchUp inside bot.ts clientReady
-            // (runConductorInboxInit in conductor mode). P10: extracted to src/app/lifecycle.ts's
-            // createDiscordRecoveryHandler, tested in isolation there — this is thin wiring only.
+            // Catch-up on first connection is handled by runConductorInboxInit inside bot.ts
+            // clientReady. P10: extracted to src/app/lifecycle.ts's createDiscordRecoveryHandler,
+            // tested in isolation there — this is thin wiring only. P13b: the one-shot branch
+            // (botStateManager/bot) is gone from CreateDiscordRecoveryHandlerParams — the
+            // conductor's submitCatchUp is the only recovery path now.
             unsubscribeDiscordRecovery = healthRegistry.subscribe(createDiscordRecoveryHandler({
-                mode:            config.session.mode,
-                warmCache:       () => discordInfra.channelRegistry.warmCache(),
-                botStateManager: discordInfra.botStateManager,
-                bot,
-                submitCatchUp:   () => bot.triggerCatchUp(),
+                warmCache:     () => discordInfra.channelRegistry.warmCache(),
+                submitCatchUp: () => bot.triggerCatchUp(),
                 logger,
             }));
 

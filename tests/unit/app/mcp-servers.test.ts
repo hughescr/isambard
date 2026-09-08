@@ -29,7 +29,19 @@ import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
 
-describe('createMCPServers', () => {
+/**
+ * P13b: the old `createMCPServers` one-shot-path convenience wrapper is gone — every caller
+ * now goes through `createMcpSharedDeps` + `createMcpServerInstances({ role: 'conversation' })`
+ * directly (see `mcp-servers.ts`'s own doc comment). This test helper reproduces the wrapper's
+ * exact former behaviour so the (still-valuable) per-server wiring assertions below don't need
+ * rewriting.
+ */
+function buildConversationServers(options: MCPServersOptions): ReturnType<typeof mcpServersModule.createMcpServerInstances> {
+    const shared = mcpServersModule.createMcpSharedDeps(options);
+    return mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+}
+
+describe('createMcpSharedDeps + createMcpServerInstances (conversation role) — per-server wiring', () => {
     let spies: ReturnType<typeof spyOn>[];
     let mockOptions: MCPServersOptions;
 
@@ -82,7 +94,7 @@ describe('createMCPServers', () => {
 
         spies.push(createMemoryMcpServerSpy, createDiscordMcpServerSpy, createInboxMcpServerSpy, createWikipediaMcpServerSpy, createMediaMcpServerSpy);
 
-        const result = mcpServersModule.createMCPServers(mockOptions);
+        const result = buildConversationServers(mockOptions);
 
         // Verify all servers are returned
         expect(result).toBeDefined();
@@ -104,7 +116,7 @@ describe('createMCPServers', () => {
             createWikipediaMcpServerSpy
         );
 
-        const result = mcpServersModule.createMCPServers(mockOptions);
+        const result = buildConversationServers(mockOptions);
 
         expect(result.wikipediaMcpServer).toBe(mockWikipediaMcpServer);
         expect(createWikipediaMcpServerSpy).toHaveBeenCalledTimes(1);
@@ -122,7 +134,7 @@ describe('createMCPServers', () => {
             createMediaMcpServerSpy
         );
 
-        const result = mcpServersModule.createMCPServers(mockOptions);
+        const result = buildConversationServers(mockOptions);
 
         expect(result.mediaMcpServer).toBe(mockMediaMcpServer);
         expect(createMediaMcpServerSpy).toHaveBeenCalledTimes(1);
@@ -139,7 +151,7 @@ describe('createMCPServers', () => {
             spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
-        mcpServersModule.createMCPServers(mockOptions);
+        buildConversationServers(mockOptions);
 
         // Verify createMemoryMCPServer was called with correct args
         expect(createMemoryMcpServerSpy).toHaveBeenCalledTimes(1);
@@ -161,7 +173,7 @@ describe('createMCPServers', () => {
             spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
-        mcpServersModule.createMCPServers(optionsWithRecordAccess);
+        buildConversationServers(optionsWithRecordAccess);
 
         expect(createMemoryMcpServerSpy).toHaveBeenCalledWith(mockOptions.memoryBackend, {
             recordAccess: mockRecordAccess,
@@ -178,7 +190,7 @@ describe('createMCPServers', () => {
             spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
-        mcpServersModule.createMCPServers(mockOptions);
+        buildConversationServers(mockOptions);
 
         // Verify createDiscordMCPServer was called with single options object
         expect(createDiscordMcpServerSpy).toHaveBeenCalledTimes(1);
@@ -203,7 +215,7 @@ describe('createMCPServers', () => {
 
         const mockPersonAllowlist = {} as unknown as PersonAllowlist;
 
-        mcpServersModule.createMCPServers({ ...mockOptions, discordAllowlist: mockPersonAllowlist });
+        buildConversationServers({ ...mockOptions, discordAllowlist: mockPersonAllowlist });
 
         expect(createDiscordMcpServerSpy).toHaveBeenCalledWith(
             expect.objectContaining({ personAllowlist: mockPersonAllowlist })
@@ -220,7 +232,7 @@ describe('createMCPServers', () => {
             createInboxMcpServerSpy
         );
 
-        mcpServersModule.createMCPServers(mockOptions);
+        buildConversationServers(mockOptions);
 
         // Verify createInboxMCPServer was called with correct args
         expect(createInboxMcpServerSpy).toHaveBeenCalledTimes(1);
@@ -251,7 +263,7 @@ describe('createMCPServers', () => {
             spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
-        expect(() => mcpServersModule.createMCPServers(mockOptions)).toThrow('Memory MCP server creation failed');
+        expect(() => buildConversationServers(mockOptions)).toThrow('Memory MCP server creation failed');
     });
 
     test('should throw when createDiscordMCPServer throws', () => {
@@ -267,7 +279,7 @@ describe('createMCPServers', () => {
             spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
-        expect(() => mcpServersModule.createMCPServers(mockOptions)).toThrow('Discord MCP server creation failed');
+        expect(() => buildConversationServers(mockOptions)).toThrow('Discord MCP server creation failed');
     });
 
     test('should throw when createInboxMCPServer throws', () => {
@@ -282,7 +294,7 @@ describe('createMCPServers', () => {
             createInboxMcpServerSpy
         );
 
-        expect(() => mcpServersModule.createMCPServers(mockOptions)).toThrow('Inbox MCP server creation failed');
+        expect(() => buildConversationServers(mockOptions)).toThrow('Inbox MCP server creation failed');
     });
 
     test('should not create bskyMcpServer when bskyClient is not provided', () => {
@@ -295,7 +307,7 @@ describe('createMCPServers', () => {
             createBskyMcpServerSpy
         );
 
-        const result = mcpServersModule.createMCPServers(mockOptions);
+        const result = buildConversationServers(mockOptions);
 
         expect(result.bskyMcpServer).toBeUndefined();
         expect(createBskyMcpServerSpy).not.toHaveBeenCalled();
@@ -313,7 +325,7 @@ describe('createMCPServers', () => {
         );
 
         const mockBskyClient = {} as unknown as BlueskyClient;
-        const result = mcpServersModule.createMCPServers({ ...mockOptions, bskyClient: mockBskyClient });
+        const result = buildConversationServers({ ...mockOptions, bskyClient: mockBskyClient });
 
         expect(result.bskyMcpServer).toBe(mockBskyMcpServer);
         expect(createBskyMcpServerSpy).toHaveBeenCalledTimes(1);
@@ -342,7 +354,7 @@ describe('createMCPServers', () => {
         const mockBskyRateLimiter  = {} as unknown as TokenBucketRateLimiter;
         const mockSendApproval     = mock(async () => { /* no-op */ });
 
-        mcpServersModule.createMCPServers({
+        buildConversationServers({
             ...mockOptions,
             bskyClient:              mockBskyClient,
             bskyAllowlist:           mockPersonAllowlist,
@@ -377,7 +389,7 @@ describe('createMCPServers', () => {
 
         const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
         const fakeBrowserPolicy = { allowlist: ['example.com'] };
-        const result = mcpServersModule.createMCPServers({
+        const result = buildConversationServers({
             ...mockOptions,
             browserAdapter:            fakeBrowserAdapter,
             browserPolicy:             fakeBrowserPolicy,
@@ -406,7 +418,7 @@ describe('createMCPServers', () => {
         );
 
         const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
-        const result = mcpServersModule.createMCPServers({
+        const result = buildConversationServers({
             ...mockOptions,
             browserAdapter: fakeBrowserAdapter,
             // browserMaxScreenshotBytes and browserMaxTextBytes intentionally omitted
@@ -428,7 +440,7 @@ describe('createMCPServers', () => {
         );
 
         const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
-        const result = mcpServersModule.createMCPServers({
+        const result = buildConversationServers({
             ...mockOptions,
             browserAdapter:            fakeBrowserAdapter,
             browserMaxScreenshotBytes: 2_000_000,
@@ -452,7 +464,7 @@ describe('createMCPServers', () => {
         );
 
         const fakeBrowserAdapter = {} as unknown as BrowserAdapter;
-        mcpServersModule.createMCPServers({
+        buildConversationServers({
             ...mockOptions,
             browserAdapter:            fakeBrowserAdapter,
             browserPolicy:             { allowlist: ['example.com'] },
@@ -475,7 +487,7 @@ describe('createMCPServers', () => {
         );
 
         // No browser-related options passed
-        const result = mcpServersModule.createMCPServers(mockOptions);
+        const result = buildConversationServers(mockOptions);
 
         expect(result.browserMcpServer).toBeUndefined();
         expect(createBrowserMcpServerSpy).not.toHaveBeenCalled();
@@ -651,5 +663,11 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
         const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
 
         expect(result.healthMcpServer).toBeUndefined();
+    });
+});
+
+describe('createMCPServers (P13b: the one-shot-path wrapper is deleted)', () => {
+    test('the module no longer exports createMCPServers', () => {
+        expect(mcpServersModule).not.toHaveProperty('createMCPServers');
     });
 });

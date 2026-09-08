@@ -1,4 +1,4 @@
-import { createContextBuilder, EventDeltaTracker, summarizeEventBatches, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from '@/agent';
+import { createContextBuilder, summarizeEventBatches, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from '@/agent';
 import type { BskyRejectionBackend } from '@/integrations/bsky';
 import type { ServiceHealthRegistry } from '@/services';
 import type { MemoryToolBackend } from '@/storage';
@@ -7,12 +7,14 @@ import type { MemoryToolBackend } from '@/storage';
  * Context layer components for memory-aware agent operation.
  */
 interface ContextLayer {
-    contextBuilder:    ContextBuilder
-    eventDeltaTracker: EventDeltaTracker
+    contextBuilder: ContextBuilder
 }
 
 /**
- * Creates the context layer with context builder and event delta tracker.
+ * Creates the context layer with a context builder.
+ *
+ * P13b: no longer constructs a shared EventDeltaTracker here — that was the one-shot
+ * path's own delta-tracking seam; the conductor's ledger owns event deltas now.
  *
  * @param memoryBackend        - Memory tool backend for context loading
  * @param emailService         - Optional email service for perch inbox section
@@ -24,7 +26,6 @@ interface ContextLayer {
  */
 export function createContextLayer(memoryBackend: MemoryToolBackend, emailService?: EmailService, bskyDMService?: BskyDMService, calendarService?: CalendarService, bskyRejectionBackend?: BskyRejectionBackend, healthRegistry?: ServiceHealthRegistry): ContextLayer {
     const contextBuilder = createContextBuilder({ backend: memoryBackend, summarizeEventBatches, emailService, bskyDMService, calendarService, bskyRejectionBackend, healthRegistry });
-    const eventDeltaTracker = new EventDeltaTracker(contextBuilder);
 
-    return { contextBuilder, eventDeltaTracker };
+    return { contextBuilder };
 }

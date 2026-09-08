@@ -30,7 +30,7 @@ function makeTurnResult(overrides: Partial<TurnResult> = {}): TurnResult {
         envelopeId:          'env-1',
         response:            null,
         wasInterrupted:      false,
-        partialWork:         { thinking: '', text: '', pendingToolUse: null, sessionId: undefined, uncollectedBackgroundTasks: 0 },
+        partialWork:         { thinking: '', text: '', pendingToolUse: null, sessionId: undefined },
         sessionId:           'session-id',
         isError:             false,
         contextUsagePercent: 0,

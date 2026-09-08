@@ -1203,7 +1203,6 @@ describe.concurrent('idleSignalsConfigSchema', () => {
 describe('sessionConfigSchema', () => {
     test('applies all session defaults', () => {
         expect(sessionConfigSchema.parse({})).toStrictEqual({
-            mode:                    'conductor',
             compactThresholdPercent: 60,
             humanWaitTargetMs:       10_000,
             humanWaitCeilingMs:      30_000,
@@ -1219,8 +1218,12 @@ describe('sessionConfigSchema', () => {
         });
     });
 
-    test('rejects an unknown session mode', () => {
-        expect(sessionConfigSchema.safeParse({ mode: 'unknown' }).success).toBe(false);
+    test('has no mode field — an unrecognized mode input is silently stripped, not rejected', () => {
+        const result = sessionConfigSchema.safeParse({ mode: 'oneshot' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data).not.toHaveProperty('mode');
+        }
     });
 
     test('dailyCostCeilingUsd is undefined by default (the ceiling is disabled)', () => {

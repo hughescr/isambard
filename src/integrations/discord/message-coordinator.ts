@@ -22,7 +22,7 @@
 import { logger } from '@hughescr/logger';
 import type { Message } from 'discord.js';
 import type { DiscordMessageContext, ChannelId } from './types';
-import type { StreamTracker, StreamProgress, ResumeContext, EventDeltaTracker } from '@/agent';
+import type { StreamTracker, StreamProgress, ResumeContext } from '@/agent';
 import { InvariantViolationError } from '@/errors';
 
 const MAX_PENDING_MESSAGES = 50;
@@ -34,11 +34,10 @@ export interface ProcessResult {
     wasInterrupted: boolean
     streamTracker:  StreamTracker
     /**
-     * The submitted envelope's own id (P9's conductor-mode processor only — see
-     * `setup/conductor-processor.ts`), passed through to `onResponse` verbatim so the caller can
-     * deliver idempotently keyed on the actual submitted envelope rather than on some other id
-     * (e.g. a triggering Discord message id, which does not identify a merged multi-message
-     * batch). Undefined on the legacy (`agent.handleInput`) path.
+     * The submitted envelope's own id (see `setup/conductor-processor.ts`), passed through to
+     * `onResponse` verbatim so the caller can deliver idempotently keyed on the actual submitted
+     * envelope rather than on some other id (e.g. a triggering Discord message id, which does not
+     * identify a merged multi-message batch).
      */
     envelopeId?:    string
 }
@@ -52,24 +51,22 @@ export type MessageProcessor = (
 
 /** Configuration for the coordinator */
 export interface MessageCoordinatorConfig {
-    debounceMs?:        number  // Default: 2000ms
+    debounceMs?:      number  // Default: 2000ms
     /**
      * Optional callback invoked when processing completes (not on interruption). `batch` is the
      * non-null Discord `Message` of every context in the completed batch (originals + resumed),
      * in arrival order — a re-queued original message's `Message` reference is null (only its
      * context survives interruption) and is therefore excluded.
      */
-    onResponse?:        (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>
-    /** Optional event delta tracker for capturing new events during processing */
-    eventDeltaTracker?: EventDeltaTracker
+    onResponse?:      (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>
     /** Optional callback invoked when processing ends, with info about whether it was interrupted and whether it will resume */
-    onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void
+    onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void
     /**
      * Optional synchronous callback that returns true when the channel registry is ready.
      * When provided and returns false, incoming messages are dropped with a warn log.
      * If not provided, messages are always processed (backward-compatible).
      */
-    registryReady?:     () => boolean
+    registryReady?:   () => boolean
 }
 
 /** Discord channel interface for typing indicator */
@@ -127,18 +124,16 @@ interface ChannelState {
  * ```
  */
 export class MessageCoordinator {
-    private readonly debounceMs:         number;
-    private readonly onResponse?:        (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>;
-    private readonly eventDeltaTracker?: EventDeltaTracker;
-    private readonly onProcessingEnd?:   (info: { wasInterrupted: boolean, willResume: boolean }) => void;
-    private readonly registryReady?:     () => boolean;
+    private readonly debounceMs:       number;
+    private readonly onResponse?:      (result: ProcessResult, discordMessage: Message | null, batch: Message[]) => Promise<void>;
+    private readonly onProcessingEnd?: (info: { wasInterrupted: boolean, willResume: boolean }) => void;
+    private readonly registryReady?:   () => boolean;
     private readonly channelStates = new Map<ChannelId, ChannelState>();
-    private processor:                   MessageProcessor | null = null;
+    private processor:                 MessageProcessor | null = null;
 
     constructor(config?: MessageCoordinatorConfig) {
         this.debounceMs = config?.debounceMs ?? 2000;
         this.onResponse = config?.onResponse;
-        this.eventDeltaTracker = config?.eventDeltaTracker;
         this.onProcessingEnd = config?.onProcessingEnd;
         this.registryReady = config?.registryReady;
     }
@@ -262,9 +257,6 @@ export class MessageCoordinator {
         const processingPromise = (async () => {
             let wasInterrupted = true; // Default: treat errors/aborts as interruptions
             try {
-                // Mark event delta start point before processing begins (pure in-memory, no I/O)
-                this.eventDeltaTracker?.markStart();
-
                 // Call processor
                 const result = await this.processor!(
                     contexts,
@@ -343,8 +335,8 @@ export class MessageCoordinator {
             .map(msg => msg.discordMessage)
             .filter((message): message is Message => message !== null);
 
-        // Build partial resume context (newEvents resolved async in processing block)
-        const partialResumeContext = state.partialWork
+        // Build the resume context up front — nothing below needs to resolve anything async.
+        const resumeContext: ResumeContext | null = state.partialWork
             ? {
                 partialWork: state.partialWork,
                 newMessages: newMessages.map(msg => msg.context),
@@ -366,16 +358,6 @@ export class MessageCoordinator {
         const processingPromise = (async () => {
             let wasInterrupted = true; // Default: treat errors/aborts as interruptions
             try {
-                // Resolve newEvents asynchronously
-                const resumeContext: ResumeContext | null = partialResumeContext
-                    ? {
-                        ...partialResumeContext,
-                        newEvents: this.eventDeltaTracker
-                            ? await this.eventDeltaTracker.getNewEvents()
-                            : [],
-                    }
-                    : null;
-
                 // Call processor with resume context
                 const result = await this.processor!(
                     allContexts,

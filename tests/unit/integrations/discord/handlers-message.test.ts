@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import type { Message, User, Guild, TextChannel, DMChannel, Client } from 'discord.js';
-import { mockLogger, mockWithDiscordRetry, createMockBotStateManager } from '../../../setup';
+import { mockLogger, mockWithDiscordRetry } from '../../../setup';
 import type { AnswerClassifier } from '@/agent/answer-classifier/classifier';
 import type { ClassificationResult, MessageToClassify } from '@/agent/answer-classifier/types';
-import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import type { PendingQuestion } from '@/agent/question-registry/types';
 import type { ChannelRegistryManager, DMTracker, ResponseRouter } from '@/integrations/discord/channel-registry';
@@ -13,11 +12,10 @@ import type { IngressGate, IngressGateAdmitResult } from '@/integrations/discord
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
-import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createChannelId, type UserId, type ChannelId  } from '@/integrations/discord/types';
 // Note: We don't need to mock the rate limiter module because:
 // 1. The rate limiter internally calls message.reply() which we mock in tests
-// 2. The sendResponse function uses the rate limiter transparently
+// 2. sendEnvelopeResponse uses the rate limiter transparently
 // 3. Tests verify the end result (message.reply was called) rather than internal implementation
 
 // Helper to create a mock coordinator for tests
@@ -38,6 +36,11 @@ function createMockIngressGate(admitResult: () => IngressGateAdmitResult) {
         stop:  mock(() => undefined),
         state: mock(() => 'open' as const),
     } as unknown as IngressGate<Message> & { admit: ReturnType<typeof mock> };
+}
+
+// Helper for tests that don't care about gate behaviour at all — always admits ('pass').
+function createPassingIngressGate() {
+    return createMockIngressGate(() => 'pass');
 }
 
 describe('Discord Event Handlers', () => {
@@ -116,10 +119,10 @@ describe('Discord Event Handlers', () => {
         it('should ignore messages from bots', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             mockMessage.author.bot = true;
@@ -132,10 +135,10 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       botId as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             mockMessage.author.id = botId;
@@ -148,10 +151,10 @@ describe('Discord Event Handlers', () => {
         it('should process DM messages', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const dmMessage = {
@@ -176,10 +179,10 @@ describe('Discord Event Handlers', () => {
 
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 dmTracker:       mockDmTracker as unknown as DMTracker,
             });
 
@@ -216,10 +219,10 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       botId as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             mockMessage.content = `<@${botId}> hello there`;
@@ -233,10 +236,10 @@ describe('Discord Event Handlers', () => {
         it('should process messages in monitored channels', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             await handler(mockMessage);
@@ -247,10 +250,10 @@ describe('Discord Event Handlers', () => {
         it('should ignore messages in non-monitored channels without mention', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => false), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             await handler(mockMessage);
@@ -261,10 +264,10 @@ describe('Discord Event Handlers', () => {
         it('should pass correct context to onMessage callback', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             await handler(mockMessage);
@@ -283,10 +286,10 @@ describe('Discord Event Handlers', () => {
         it('should handle DM messages with null guild', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const dmMessage = {
@@ -307,10 +310,10 @@ describe('Discord Event Handlers', () => {
         it('should format timestamp as ISO datetime', async () => {
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       '999999999999999999' as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             const timestampMessage = {
@@ -330,10 +333,10 @@ describe('Discord Event Handlers', () => {
             const botId = '999999999999999999';
             const mockCoordinator = createMockCoordinator();
             const handler = createMessageHandler({
+                ingressGate:     createPassingIngressGate(),
                 channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                 botUserId:       botId as UserId,
                 coordinator:     mockCoordinator,
-                botStateManager: createMockBotStateManager() as unknown as BotStateManager,
             });
 
             // Some clients use <@!userId> format
@@ -355,10 +358,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(dmMessage);
@@ -378,10 +381,10 @@ describe('Discord Event Handlers', () => {
             it('should log isDM as false when guild exists', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -412,10 +415,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(guildMessage);
@@ -453,10 +456,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(dmMessage);
@@ -486,10 +489,10 @@ describe('Discord Event Handlers', () => {
             it('should not create context or attempt reply when message is from a bot', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 mockMessage.author.bot = true;
@@ -504,10 +507,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 mockMessage.author.id = botId;
@@ -521,10 +524,10 @@ describe('Discord Event Handlers', () => {
             it('should process non-bot user messages normally in monitored channel', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Ensure message is from a non-bot, non-self user
@@ -541,10 +544,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Test 1: Bot message (author.bot = true) - should be ignored
@@ -583,10 +586,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message is from a bot, in monitored channel, with mention
@@ -606,10 +609,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message is from the bot itself (not marked as bot but same ID)
@@ -629,10 +632,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message is NOT from a bot (author.bot = false) and NOT from self
@@ -650,10 +653,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Message from a different bot (not our bot)
@@ -671,10 +674,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Test: non-bot user with bot's ID (edge case - shouldn't happen but tests the check)
@@ -729,12 +732,12 @@ describe('Discord Event Handlers', () => {
             it('should resolve pending question when message is classified as answer', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -775,12 +778,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -802,12 +805,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -839,12 +842,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -897,12 +900,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Wait for handler to complete (retry will happen automatically)
@@ -919,12 +922,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -939,11 +942,11 @@ describe('Discord Event Handlers', () => {
             it('should proceed normally when question registry is not configured', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
                     // No questionRegistry or answerClassifier
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -970,12 +973,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -998,12 +1001,12 @@ describe('Discord Event Handlers', () => {
             it('should use channel ID directly for regular channels (not threads)', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(mockMessage);
@@ -1032,12 +1035,12 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:      createPassingIngressGate(),
                     channelRegistry:  { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:        '999999999999999999' as UserId,
                     coordinator:      mockCoordinator,
                     questionRegistry: mockQuestionRegistry,
                     answerClassifier: mockAnswerClassifier,
-                    botStateManager:  createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(replyMessage);
@@ -1094,10 +1097,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1137,10 +1140,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1191,10 +1194,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1256,10 +1259,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       botId as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
@@ -1297,40 +1300,16 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: mockChannelRegistry as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 await handler(threadMessage);
 
                 // Should still process (no parent to check)
                 expect(mockCoordinator.handleMessage).toHaveBeenCalled();
-            });
-        });
-
-        describe('mode suspension handling', () => {
-            it('should always call suspend when in perching mode', async () => {
-                const mockPerchRunner = {
-                    suspend: mock(() => undefined),
-                };
-
-                const mockBotState = createMockBotStateManager();
-                // Override to return 'perching' mode
-                Object.assign(mockBotState, { getMode: mock(() => 'perching' as const) });
-
-                const handler = createMessageHandler({
-                    botUserId:          '999999999999999999' as UserId,
-                    channelRegistry:    { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                    coordinator:        createMockCoordinator(),
-                    botStateManager:    mockBotState as unknown as BotStateManager,
-                    perchSessionRunner: mockPerchRunner as unknown as PerchSessionRunner,
-                });
-
-                await handler(mockMessage);
-
-                expect(mockPerchRunner.suspend).toHaveBeenCalled();
             });
         });
 
@@ -1344,10 +1323,10 @@ describe('Discord Event Handlers', () => {
 
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                     inboxManager:    mockInboxManager,
                 });
 
@@ -1371,10 +1350,10 @@ describe('Discord Event Handlers', () => {
                 // and coordinator.handleMessage should receive undefined as the channel argument
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // Channel has id (needed for createChannelId) but no sendTyping method
@@ -1400,10 +1379,10 @@ describe('Discord Event Handlers', () => {
             it('should pass channel when message.channel has sendTyping (type guard — object with method)', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const handler = createMessageHandler({
+                    ingressGate:     createPassingIngressGate(),
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                 });
 
                 // mockTextChannel has sendTyping, so isTypingChannel returns true
@@ -1434,9 +1413,7 @@ describe('Discord Event Handlers', () => {
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                     inboxManager:    mockInboxManager,
-                    conductorMode:   true,
                     ingressGate,
                 });
 
@@ -1459,9 +1436,7 @@ describe('Discord Event Handlers', () => {
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                     inboxManager:    mockInboxManager,
-                    conductorMode:   true,
                     ingressGate,
                 });
 
@@ -1481,9 +1456,7 @@ describe('Discord Event Handlers', () => {
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                     inboxManager:    mockInboxManager,
-                    conductorMode:   true,
                     ingressGate,
                 });
 
@@ -1502,9 +1475,7 @@ describe('Discord Event Handlers', () => {
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                     inboxManager:    mockInboxManager,
-                    conductorMode:   true,
                     ingressGate,
                 });
 
@@ -1530,41 +1501,13 @@ describe('Discord Event Handlers', () => {
                     channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
                     botUserId:       '999999999999999999' as UserId,
                     coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
                     inboxManager:    mockInboxManager,
-                    conductorMode:   true,
                     ingressGate,
                 });
 
                 await handler(mockMessage);
 
                 expect(callOrder).toEqual(['checkpoint', 'admit']);
-            });
-
-            it('without a gate (oneshot), behaviour is unchanged: dispatch happens, then checkpoint', async () => {
-                const mockCoordinator = createMockCoordinator();
-                const mockInboxManager = createMockInboxManager();
-                const callOrder: string[] = [];
-                mockCoordinator.handleMessage = mock(() => {
-                    callOrder.push('dispatch');
-                });
-                mockInboxManager.recordActivity = mock(async () => {
-                    callOrder.push('checkpoint');
-                });
-
-                const handler = createMessageHandler({
-                    channelRegistry: { shouldProcess: mock(() => true), getChannel: mock(() => null), warmCache: mock(() => Promise.resolve()) } as unknown as ChannelRegistryManager,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
-                });
-
-                await handler(mockMessage);
-
-                expect(mockCoordinator.handleMessage).toHaveBeenCalledTimes(1);
-                expect(mockInboxManager.recordActivity).toHaveBeenCalledTimes(1);
-                expect(callOrder).toEqual(['dispatch', 'checkpoint']);
             });
         });
 
@@ -1603,7 +1546,7 @@ describe('Discord Event Handlers', () => {
             function createFakePerchConductor(turnResult: { response: string | null }) {
                 return {
                     submit: mock(async (_envelope: { kind: string, authorId?: string }, _options: { priority: string, requestingChannelId?: string }) => ({
-                        envelopeId: 'env-perch-1', response: turnResult.response, wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined, uncollectedBackgroundTasks: 0 }, sessionId: 'perch-sess-1', isError: false, contextUsagePercent: 0,
+                        envelopeId: 'env-perch-1', response: turnResult.response, wasInterrupted: false, partialWork: { thinking: '', text: '', pendingToolUse: null, sessionId: undefined }, sessionId: 'perch-sess-1', isError: false, contextUsagePercent: 0,
                     })),
                     deliver: mock(async (_envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => {
                         await send();
@@ -1612,24 +1555,21 @@ describe('Discord Event Handlers', () => {
                 };
             }
 
-            it('submits an admitted perch-channel message to the perch conductor with priority \'other\', never touching the coordinator or the mode machine', async () => {
+            it('submits an admitted perch-channel message to the perch conductor with priority \'other\', never touching the coordinator', async () => {
                 const mockCoordinator = createMockCoordinator();
                 const mockInboxManager = createMockInboxManager();
                 const channelRegistry = createMockChannelRegistry(PERCH_CHANNEL_ID);
                 const perchConductor = createFakePerchConductor({ response: 'Nothing much to report.' });
-                const startProcessingMessage = mock(() => undefined);
                 const ingressGate = createMockIngressGate(() => 'pass');
                 const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true });
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: { getMode: mock(() => 'idle' as const), startProcessingMessage } as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
-                    conductorMode:   true,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1646,7 +1586,6 @@ describe('Discord Event Handlers', () => {
                 expect(submitOptions.priority).toBe('other');
 
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
-                expect(startProcessingMessage).not.toHaveBeenCalled();
 
                 expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                     kind: 'discord', channelId: PERCH_CHANNEL_ID, text: 'Nothing much to report.',
@@ -1663,14 +1602,12 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     createMockCoordinator(),
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  createMockCoordinator(),
+                    inboxManager: mockInboxManager,
                     addRecentMessage,
-                    conductorMode:   true,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1695,13 +1632,11 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     createMockCoordinator(),
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
-                    conductorMode:   true,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  createMockCoordinator(),
+                    inboxManager: mockInboxManager,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1727,12 +1662,10 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    conductorMode:   true,
+                    botUserId:   '999999999999999999' as UserId,
+                    coordinator: mockCoordinator,
                     ingressGate,
-                    perch:           {
+                    perch:       {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1759,12 +1692,10 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    conductorMode:   true,
+                    botUserId:   '999999999999999999' as UserId,
+                    coordinator: mockCoordinator,
                     ingressGate,
-                    perch:           {
+                    perch:       {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1788,14 +1719,12 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
                     addRecentMessage,
-                    conductorMode:   true,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1844,12 +1773,10 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    conductorMode:   true,
+                    botUserId:   '999999999999999999' as UserId,
+                    coordinator: mockCoordinator,
                     ingressGate,
-                    perch:           {
+                    perch:       {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1877,13 +1804,11 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
-                    conductorMode:   true,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1907,13 +1832,11 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
-                    conductorMode:   true,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,
@@ -1936,13 +1859,11 @@ describe('Discord Event Handlers', () => {
 
                 const handler = createMessageHandler({
                     channelRegistry,
-                    botUserId:       '999999999999999999' as UserId,
-                    coordinator:     mockCoordinator,
-                    botStateManager: createMockBotStateManager() as unknown as BotStateManager,
-                    inboxManager:    mockInboxManager,
-                    conductorMode:   true,
+                    botUserId:    '999999999999999999' as UserId,
+                    coordinator:  mockCoordinator,
+                    inboxManager: mockInboxManager,
                     ingressGate,
-                    perch:           {
+                    perch:        {
                         conductor:      perchConductor,
                         responseRouter: {} as unknown as ResponseRouter,
                         client:         {} as unknown as Client,

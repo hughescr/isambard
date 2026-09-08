@@ -10,7 +10,7 @@ const SEQ_PAD_WIDTH = 6;
 
 /**
  * Write-through backend for the session journal (SESSION_JOURNAL#<role> partition). Items carry
- * no `GSI1PK`/`GSI1SK`, so `LAYER#events` queries (context-builder.ts, event-delta-tracker.ts)
+ * no `GSI1PK`/`GSI1SK`, so `LAYER#events` queries (context-builder.ts, `ContextPolicy.eventsDelta`)
  * never see a journal row — the deliberate deviation from design 3.2/7.3 documented on
  * {@link SessionJournalItem}.
  */

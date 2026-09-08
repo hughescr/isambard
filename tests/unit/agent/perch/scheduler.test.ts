@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
-import type { PerchSessionRunner } from '@/agent/perch/session-runner';
 import type { PerchConfig } from '@/agent/perch/types';
 import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state/types';
 
@@ -1401,59 +1400,6 @@ describe('PerchScheduler', () => {
             expect(mockOnPerchTrigger).toHaveBeenCalled();
 
             scheduler.stop();
-        });
-    });
-
-    describe('suspension guard in doTrigger', () => {
-        test('should defer trigger when perch session is suspended', () => {
-            const mockPerchRunner = {
-                isSuspended: mock(() => true),
-            };
-
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-                perchSessionRunner:  mockPerchRunner as unknown as PerchSessionRunner,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.triggerNow();
-
-            // Should NOT have triggered (suspended)
-            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-
-            // Should have set pending state
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-            expect(state.pendingSlot).toBe('mid-morning');
-        });
-
-        test('should proceed with trigger when perch session is not suspended', () => {
-            const mockPerchRunner = {
-                isSuspended: mock(() => false),
-            };
-
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-                perchSessionRunner:  mockPerchRunner as unknown as PerchSessionRunner,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.triggerNow();
-
-            // Should have triggered (not suspended)
-            expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
         });
     });
 

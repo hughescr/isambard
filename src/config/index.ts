@@ -16,7 +16,6 @@ export {
     type ContactReconciliationConfig,
     type VectorIndexConfig,
     type SessionConfig,
-    type SessionMode,
     type Config,
     idleSignalsConfigSchema,
     type IdleSignalsConfig

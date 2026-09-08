@@ -670,19 +670,14 @@ describe('loadConfig - Session Config', () => {
         restoreEnv('SESSION_COMPACT_TARGET_INTERVAL_MS', originalCompactTargetIntervalMs);
     });
 
-    test('parses SESSION_MODE=conductor', () => {
-        process.env.SESSION_MODE = 'conductor';
-        expect(loadConfig(createMockResources()).session.mode).toBe('conductor');
-    });
-
-    test('defaults SESSION_MODE to conductor when unset', () => {
+    test('session config has no mode field regardless of SESSION_MODE', () => {
         delete process.env.SESSION_MODE;
-        expect(loadConfig(createMockResources()).session.mode).toBe('conductor');
+        expect(loadConfig(createMockResources()).session).not.toHaveProperty('mode');
     });
 
-    test('parses SESSION_MODE=oneshot (kill switch still works)', () => {
+    test('SESSION_MODE is ignored — the flag has been removed', () => {
         process.env.SESSION_MODE = 'oneshot';
-        expect(loadConfig(createMockResources()).session.mode).toBe('oneshot');
+        expect(loadConfig(createMockResources()).session).not.toHaveProperty('mode');
     });
 
     test('overrides compact threshold from SESSION_COMPACT_THRESHOLD_PERCENT', () => {

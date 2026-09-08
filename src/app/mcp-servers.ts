@@ -239,8 +239,7 @@ interface MCPServers {
 
     /**
      * Email MCP server for sending and managing email, when the caller passes an
-     * `emailServerFactory` to {@link createMcpServerInstances}. Not created by the
-     * `createMCPServers` old-path wrapper — the old path wires email separately.
+     * `emailServerFactory` to {@link createMcpServerInstances}.
      */
     emailMcpServer?: McpServerConfig
 
@@ -470,19 +469,4 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         emailMcpServer,
         healthMcpServer,
     };
-}
-
-/**
- * Creates all MCP servers for the Claude agent — the old, pre-per-session-factory path.
- *
- * A thin wrapper over {@link createMcpSharedDeps} + {@link createMcpServerInstances}
- * with `role: 'conversation'`, for callers that only ever need a single instance set
- * and have no need to hold onto the shared deps themselves.
- *
- * @param options - Options containing all required dependencies
- * @returns Object containing all MCP server configurations
- */
-export function createMCPServers(options: MCPServersOptions): MCPServers {
-    const shared = createMcpSharedDeps(options);
-    return createMcpServerInstances(shared, { role: 'conversation' });
 }

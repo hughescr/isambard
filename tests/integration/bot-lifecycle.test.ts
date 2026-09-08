@@ -4,13 +4,10 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import '../setup'; // SST mock is applied via side effects
 import type { CompactionTelemetry, Conductor, ContextPolicy, LedgerStore } from '@/agent';
 import * as agentIndexModule from '@/agent';
-import * as agentAgent from '@/agent/agent';
-import type { ClaudeAgent } from '@/agent/agent';
 import * as contextBuilder from '@/agent/context-builder';
 import type { ContextBuilder } from '@/agent/context-builder';
 import * as memoryMcpServer from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
-import type { StreamTracker } from '@/agent/stream-tracker';
 import * as mcpServersModule from '@/app/mcp-servers';
 import * as sessionsModule from '@/app/sessions';
 import * as configLoader from '@/config/loader';
@@ -42,7 +39,6 @@ describe('Bot Lifecycle Integration', () => {
     let mockSessionConfig: SessionConfig;
     let mockDynamoDBConfig: DynamoDBConfig;
     let mockDiscordBot: DiscordBot;
-    let mockClaudeAgent: ClaudeAgent;
     let originalEnv: string | undefined;
 
     beforeEach(() => {
@@ -64,14 +60,9 @@ describe('Bot Lifecycle Integration', () => {
             fallbackModel: 'sonnet',
         };
 
-        // Mock Session configuration (P8: config.session.mode is read early in createApp, right
-        // after storage creation, to decide the stale-session cleanup strategy). Pinned to
-        // 'oneshot' explicitly (P13a flipped the schema default to 'conductor') so every test in
-        // this file that doesn't care about session mode keeps exercising the oneshot
-        // composition it was written against; tests that DO care override `mode` explicitly
-        // (see the 'Conductor mode component wiring (P9)' and 'Perch conductor component wiring
-        // (P12)' describe blocks below).
-        mockSessionConfig = { ...sessionConfigSchema.parse({}), mode: 'oneshot' };
+        // Mock Session configuration. P13b: the `mode` flag is gone — the conductor is the only
+        // path, built unconditionally in createApp() for every test in this file.
+        mockSessionConfig = { ...sessionConfigSchema.parse({}) };
 
         // Mock DynamoDB configuration
         mockDynamoDBConfig = {
@@ -83,16 +74,6 @@ describe('Bot Lifecycle Integration', () => {
             start:          mock(async () => undefined),
             stop:           mock(async () => undefined),
             triggerCatchUp: mock(async () => undefined),
-        };
-
-        // Mock Claude Agent
-        mockClaudeAgent = {
-            handleInput: mock(async () => ({
-                response:       'Test response',
-                sessionId:      undefined,
-                wasInterrupted: false,
-                streamTracker:  {} as StreamTracker,
-            })),
         };
 
         // Mock DynamoDB client creation
@@ -161,7 +142,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -181,7 +161,6 @@ describe('Bot Lifecycle Integration', () => {
             spies.push(
                 loadConfigSpy,
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -199,7 +178,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -217,7 +195,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot),
                 createMcpSharedDepsSpy
             );
@@ -227,7 +204,7 @@ describe('Bot Lifecycle Integration', () => {
             expect(createMcpSharedDepsSpy).toHaveBeenCalledTimes(1);
         });
 
-        it('should create Claude agent with DynamoDB configured', async () => {
+        it('should build the conversation conductor with DynamoDB configured (P13b: no more one-shot createClaudeAgent)', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
@@ -236,23 +213,22 @@ describe('Bot Lifecycle Integration', () => {
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
             );
-            const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
-            spies.push(createClaudeAgentSpy, spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
+            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor');
+            spies.push(createConversationConductorSpy, spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot));
 
             await createApp();
 
-            expect(createClaudeAgentSpy).toHaveBeenCalled();
+            expect(createConversationConductorSpy).toHaveBeenCalled();
         });
 
-        it('should create Discord bot with config and agent', async () => {
+        it('should create Discord bot with config (no more agent field on DiscordBotOptions)', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
                     session: mockSessionConfig,
                 } as unknown as Config),
-                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent)
+                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
             );
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
             spies.push(createDiscordBotSpy);
@@ -260,10 +236,11 @@ describe('Bot Lifecycle Integration', () => {
             await createApp();
 
             expect(createDiscordBotSpy).toHaveBeenCalled();
+            const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+            expect(botOptions).not.toHaveProperty('agent');
             expect(createDiscordBotSpy).toHaveBeenCalledWith(expect.objectContaining({
                 config:           mockDiscordConfig,
                 identityContext:  expect.any(String),
-                agent:            mockClaudeAgent,
                 questionRegistry: expect.objectContaining({
                     register:            expect.any(Function),
                     resolveWithAnswer:   expect.any(Function),
@@ -300,7 +277,6 @@ describe('Bot Lifecycle Integration', () => {
             });
             const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder);
             const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
-            const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
             // @ts-expect-error - Mocking constructor
             const PersonAllowlistSpy = spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({
                 load: mock(async () => {}),
@@ -309,7 +285,6 @@ describe('Bot Lifecycle Integration', () => {
                 createDynamoDBClientSpy,
                 createContextBuilderSpy,
                 createMemoryMCPServerSpy,
-                createClaudeAgentSpy,
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot),
                 PersonAllowlistSpy
             );
@@ -319,25 +294,6 @@ describe('Bot Lifecycle Integration', () => {
             expect(createDynamoDBClientSpy).toHaveBeenCalledWith(mockDynamoDBConfig);
             expect(createContextBuilderSpy).toHaveBeenCalled();
             expect(createMemoryMCPServerSpy).toHaveBeenCalled();
-            expect(createClaudeAgentSpy).toHaveBeenCalledWith({
-                contextBuilder:             mockContextBuilder,
-                memoryMcpServer:            mockMemoryMcp,
-                discordMcpServer:           expect.any(Object),
-                inboxMcpServer:             expect.any(Object),
-                emailMcpServer:             undefined,
-                bskyMcpServer:              undefined,
-                caldavMcpServer:            expect.any(Object),
-                wikipediaMcpServer:         expect.any(Object),
-                mediaMcpServer:             expect.any(Object),
-                contactsMcpServer:          expect.any(Object),
-                userContextMcpServer:       expect.any(Object),
-                browserMcpServer:           undefined,
-                plugins:                    expect.any(Array),
-                taskPersistenceCoordinator: expect.any(Object),
-                compactionSink:             expect.any(Object),
-                mainModel:                  'sonnet',
-                fallbackModel:              'sonnet',
-            });
         }, { timeout: process.env.CI ? 1000 : 100 });
 
         it('should fail to create app when DynamoDB client creation fails', async () => {
@@ -351,7 +307,6 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(dynamoClient, 'createDynamoDBClient').mockImplementation(() => {
                     throw new Error('Failed to connect to DynamoDB');
                 }),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -360,7 +315,7 @@ describe('Bot Lifecycle Integration', () => {
         });
     });
 
-    describe('Conductor mode component wiring (P9)', () => {
+    describe('Conductor mode component wiring (P9, P13b: the only path)', () => {
         it('builds (but never opens) the conversation conductor and hands it to createDiscordBot, unopened', async () => {
             const mockClient = {} as DynamoDBClient;
             const mockDocClient = {} as DynamoDBDocumentClient;
@@ -373,7 +328,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'conductor' },
+                    session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
                 spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
@@ -381,7 +336,6 @@ describe('Bot Lifecycle Integration', () => {
                 }),
                 spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
                 spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 // @ts-expect-error - Mocking constructor
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
@@ -398,28 +352,9 @@ describe('Bot Lifecycle Integration', () => {
             const botOptions = createDiscordBotSpy.mock.calls[0]?.[0] as unknown as { conversationConductor?: unknown };
             expect(botOptions.conversationConductor).toBe(fakeConductor);
         });
-
-        it('oneshot mode (kill switch): never calls createConversationConductor', async () => {
-            spies.push(
-                spyOn(configLoader, 'loadConfig').mockReturnValue({
-                    discord: mockDiscordConfig,
-                    agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'oneshot' },
-                } as unknown as Config),
-                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
-                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
-            );
-            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor');
-            spies.push(createConversationConductorSpy);
-
-            await createApp();
-
-            expect(createConversationConductorSpy).not.toHaveBeenCalled();
-        });
     });
 
-    describe('Perch conductor component wiring (P12)', () => {
+    describe('Perch conductor component wiring (P12, P13b: the only path)', () => {
         const mockPerchConfig = {
             enabled: true, timezone: 'UTC', intervalMinutes: 60, jitterMinutes: 15, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2,
         };
@@ -428,7 +363,7 @@ describe('Bot Lifecycle Integration', () => {
             return { open: mock(async () => ({ sessionId, resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
         }
 
-        it('conductor mode + perch enabled: builds both conductors (after MCP servers and identity) and hands both to createDiscordBot, both unopened', async () => {
+        it('perch enabled: builds both conductors (after identity loading) and hands both to createDiscordBot, both unopened', async () => {
             const mockClient = {} as DynamoDBClient;
             const mockDocClient = {} as DynamoDBDocumentClient;
             const mockContextBuilder = {} as ContextBuilder;
@@ -442,7 +377,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'conductor' },
+                    session: mockSessionConfig,
                     perch:   mockPerchConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
@@ -451,7 +386,6 @@ describe('Bot Lifecycle Integration', () => {
                 }),
                 spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
                 spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 // @ts-expect-error - Mocking constructor
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
@@ -461,9 +395,8 @@ describe('Bot Lifecycle Integration', () => {
             const createPerchConductorSpy = spyOn(sessionsModule, 'createPerchConductor').mockResolvedValue({
                 conductor: fakePerchConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry,
             });
-            const createMcpServerInstancesSpy = spyOn(mcpServersModule, 'createMcpServerInstances');
             const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
-            spies.push(createConversationConductorSpy, createPerchConductorSpy, createMcpServerInstancesSpy, createDiscordBotSpy);
+            spies.push(createConversationConductorSpy, createPerchConductorSpy, createDiscordBotSpy);
 
             await createApp();
 
@@ -476,13 +409,9 @@ describe('Bot Lifecycle Integration', () => {
             expect(botOptions.conversationConductor).toBe(fakeConversationConductor);
             expect(botOptions.perchConductor).toBe(fakePerchConductor);
 
-            // Both conductors are built after MCP server instances and identity loading —
-            // createMcpServerInstances is called (at least once, for the legacy agent's own
-            // 'conversation' set) strictly before either conductor factory runs.
-            const mcpOrder = createMcpServerInstancesSpy.mock.invocationCallOrder[0];
+            // The perch conductor is built strictly after the conversation conductor.
             const conversationOrder = createConversationConductorSpy.mock.invocationCallOrder[0];
             const perchOrder = createPerchConductorSpy.mock.invocationCallOrder[0];
-            expect(mcpOrder).toBeLessThan(conversationOrder);
             expect(conversationOrder).toBeLessThan(perchOrder);
         });
 
@@ -498,7 +427,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'conductor' },
+                    session: mockSessionConfig,
                     perch:   mockPerchConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
@@ -507,7 +436,6 @@ describe('Bot Lifecycle Integration', () => {
                 }),
                 spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
                 spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 // @ts-expect-error - Mocking constructor
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
@@ -566,7 +494,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'conductor', dailyCostCeilingUsd: 1 },
+                    session: { ...mockSessionConfig, dailyCostCeilingUsd: 1 },
                     perch:   mockPerchConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
@@ -575,7 +503,6 @@ describe('Bot Lifecycle Integration', () => {
                 }),
                 spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
                 spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 // @ts-expect-error - Mocking constructor
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
@@ -606,7 +533,7 @@ describe('Bot Lifecycle Integration', () => {
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'conductor' },
+                    session: mockSessionConfig,
                     perch:   mockPerchConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
@@ -615,7 +542,6 @@ describe('Bot Lifecycle Integration', () => {
                 }),
                 spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder),
                 spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 // @ts-expect-error - Mocking constructor
                 spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({ load: mock(async () => {}) }))
             );
@@ -638,20 +564,22 @@ describe('Bot Lifecycle Integration', () => {
             expect(conductor.submit.mock.calls[0]?.[1]).toEqual({ priority: 'other' });
         });
 
-        it('oneshot mode (kill switch): opens no perch conductor', async () => {
+        it('config.perch.enabled: false — opens no perch conductor', async () => {
             spies.push(
                 spyOn(configLoader, 'loadConfig').mockReturnValue({
                     discord: mockDiscordConfig,
                     agent:   mockAgentConfig,
-                    session: { ...mockSessionConfig, mode: 'oneshot' },
-                    perch:   mockPerchConfig,
+                    session: mockSessionConfig,
+                    perch:   { ...mockPerchConfig, enabled: false },
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
+            const createConversationConductorSpy = spyOn(sessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+            });
             const createPerchConductorSpy = spyOn(sessionsModule, 'createPerchConductor');
-            spies.push(createPerchConductorSpy);
+            spies.push(createConversationConductorSpy, createPerchConductorSpy);
 
             await createApp();
 
@@ -668,7 +596,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -695,7 +622,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockErrorBot)
             );
 
@@ -719,7 +645,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -738,7 +663,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
 
@@ -763,7 +687,6 @@ describe('Bot Lifecycle Integration', () => {
                     session: mockSessionConfig,
                 } as unknown as Config),
                 spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
                 spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
             );
             // Deliberately no mockImplementation: this calls through to the real factory, so the
@@ -785,74 +708,5 @@ describe('Bot Lifecycle Integration', () => {
             // without throwing.
             expect(mockDiscordBot.stop).toHaveBeenCalledTimes(1);
         });
-    });
-
-    describe('Catch-Up Mode Integration', () => {
-        it('should not start catch-up when memoryBackend is not provided', async () => {
-            spies.push(
-                spyOn(configLoader, 'loadConfig').mockReturnValue({
-                    discord: mockDiscordConfig,
-                    agent:   mockAgentConfig,
-                    session: mockSessionConfig,
-                } as unknown as Config),
-                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig),
-                spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent),
-                spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot)
-            );
-
-            await createApp();
-
-            // Agent should not be called with specialMode: 'catchup' when no memoryBackend
-            expect(mockClaudeAgent.handleInput).not.toHaveBeenCalled();
-        });
-
-        it('should pass memoryBackend to bot when DynamoDB is configured', async () => {
-            const mockClient = {} as DynamoDBClient;
-            const mockDocClient = {} as DynamoDBDocumentClient;
-            const mockContextBuilder = {} as ContextBuilder;
-            const mockMemoryMcp = {};
-
-            spies.push(
-                spyOn(configLoader, 'loadConfig').mockReturnValue({
-                    discord: mockDiscordConfig,
-                    agent:   mockAgentConfig,
-                    session: mockSessionConfig,
-                } as unknown as Config),
-                spyOn(configLoader, 'loadDynamoDBConfig').mockReturnValue(mockDynamoDBConfig)
-            );
-            const createDynamoDBClientSpy = spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
-                client:    mockClient,
-                docClient: mockDocClient,
-                tableName: 'IsambardMemory',
-            });
-            const createContextBuilderSpy = spyOn(contextBuilder, 'createContextBuilder').mockReturnValue(mockContextBuilder);
-            const createMemoryMCPServerSpy = spyOn(memoryMcpServer, 'createMemoryMCPServer').mockReturnValue(mockMemoryMcp as unknown as ReturnType<typeof createMemoryMCPServer>);
-            const createClaudeAgentSpy = spyOn(agentAgent, 'createClaudeAgent').mockReturnValue(mockClaudeAgent);
-            const createDiscordBotSpy = spyOn(discordBot, 'createDiscordBot').mockReturnValue(mockDiscordBot);
-            // @ts-expect-error - Mocking constructor
-            const PersonAllowlistSpy = spyOn(storageModule, 'PersonAllowlist').mockImplementation(() => ({
-                load: mock(async () => {}),
-            }));
-            spies.push(
-                createDynamoDBClientSpy,
-                createContextBuilderSpy,
-                createMemoryMCPServerSpy,
-                createClaudeAgentSpy,
-                createDiscordBotSpy,
-                PersonAllowlistSpy
-            );
-
-            // Create app (which will trigger memoryBackend creation)
-            await createApp();
-
-            // Verify memoryBackend was passed to bot
-            const botOptions = createDiscordBotSpy.mock.calls[0][0];
-            expect(botOptions.memoryBackend).toBeDefined();
-            expect(botOptions.memoryBackend).toHaveProperty('storeCompletionSignal');
-            expect(botOptions.memoryBackend).toHaveProperty('loadCompletionSignal');
-            expect(botOptions.memoryBackend).toHaveProperty('storeInProgressSignal');
-            expect(botOptions.memoryBackend).toHaveProperty('loadInProgressSignal');
-            expect(botOptions.memoryBackend).toHaveProperty('deleteInProgressSignal');
-        }, { timeout: process.env.CI ? 1000 : 100 });
     });
 });

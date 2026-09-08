@@ -6,8 +6,26 @@
  */
 import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { Dirent } from 'node:fs';
+import { homedir } from 'node:os';
+import nodePath from 'node:path';
 import { mockLogger } from '../../setup';
-import { createTaskListReader } from '@/agent/task-list-reader';
+import { createTaskListReader, getTaskDirectoryPath } from '@/agent/task-list-reader';
+
+describe('getTaskDirectoryPath', () => {
+    test('should use session ID directly without project path prefix', () => {
+        const result = getTaskDirectoryPath('test-session');
+
+        // SDK stores tasks at ~/.claude/tasks/{sessionId}/ without project path
+        expect(result).toBe(nodePath.join(homedir(), '.claude', 'tasks', 'test-session'));
+    });
+
+    test('should match expected path format for a UUID-style session ID', () => {
+        const testSessionId = '550e8400-e29b-41d4-a716-446655440000';
+        const result = getTaskDirectoryPath(testSessionId);
+
+        expect(result).toBe(nodePath.join(homedir(), '.claude', 'tasks', testSessionId));
+    });
+});
 
 describe('createTaskListReader', () => {
     let mockReaddir: ReturnType<typeof mock>;

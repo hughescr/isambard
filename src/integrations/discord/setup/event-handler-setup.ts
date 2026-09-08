@@ -1,7 +1,6 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message, TextChannel } from 'discord.js';
 import { chain } from 'lodash-es';
-import type { CatchUpSessionRunner } from '../catchup';
 import {
     type ChannelRegistryManager,
     discoverAllChannels,
@@ -14,9 +13,8 @@ import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import type { BotStateManager } from '../state';
 import { createUserId, createChannelId, createGuildId } from '../types';
-import { type AnswerClassifier, type QuestionRegistry, type PerchSessionRunner  } from '@/agent';
+import { type AnswerClassifier, type QuestionRegistry } from '@/agent';
 import { createReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import { safeAsyncHandler } from '@/utils';
 
@@ -185,24 +183,19 @@ export function initializeChannelRegistry(
  * Parameters for setting up message processing.
  */
 interface SetupMessageProcessingParams {
-    client:               Client
-    readyClient:          Client
-    channelRegistry:      ChannelRegistryManager
-    addRecentMessage:     (content: string, author: 'user' | 'izzy') => void
-    coordinator:          MessageCoordinator
-    questionRegistry:     QuestionRegistry
-    answerClassifier:     AnswerClassifier
-    inboxManager:         InboxManager | undefined
-    catchUpSessionRunner: CatchUpSessionRunner | undefined
-    botStateManager:      BotStateManager
-    perchSessionRunner:   PerchSessionRunner | undefined
-    dmTracker:            DMTracker
-    /** P9: forwarded to `createMessageHandler` — when true, `handleStateAndInbox` skips `startProcessingMessage` (the ledger shim owns that transition in conductor mode). */
-    conductorMode?:       boolean
-    /** P10: forwarded to `createMessageHandler` — gates live messages during boot in conductor mode. Omitted on the oneshot path. */
-    ingressGate?:         IngressGate<Message>
-    /** P12: forwarded to `createMessageHandler` — routes a well-known `perch-time` channel message to the perch conductor instead of `coordinator`. Omitted whenever no perch conductor exists (oneshot, or a rejected/omitted perch `open()`). */
-    perch?:               PerchRoutingDeps
+    client:           Client
+    readyClient:      Client
+    channelRegistry:  ChannelRegistryManager
+    addRecentMessage: (content: string, author: 'user' | 'izzy') => void
+    coordinator:      MessageCoordinator
+    questionRegistry: QuestionRegistry
+    answerClassifier: AnswerClassifier
+    inboxManager:     InboxManager | undefined
+    dmTracker:        DMTracker
+    /** Forwarded to `createMessageHandler` — gates live messages during boot. */
+    ingressGate:      IngressGate<Message>
+    /** Forwarded to `createMessageHandler` — routes a well-known `perch-time` channel message to the perch conductor instead of `coordinator`. Omitted whenever no perch conductor exists (or a rejected/omitted perch `open()`). */
+    perch?:           PerchRoutingDeps
 }
 
 /**
@@ -220,11 +213,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         questionRegistry,
         answerClassifier,
         inboxManager,
-        catchUpSessionRunner,
-        botStateManager,
-        perchSessionRunner,
         dmTracker,
-        conductorMode,
         ingressGate,
         perch,
     } = params;
@@ -240,11 +229,7 @@ export function setupMessageProcessing(params: SetupMessageProcessingParams): vo
         questionRegistry,
         answerClassifier,
         inboxManager,
-        catchUpSessionRunner,
-        botStateManager,
-        perchSessionRunner,
         dmTracker,
-        conductorMode,
         ingressGate,
         perch,
     }), logger, 'messageCreate handler'));

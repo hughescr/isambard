@@ -8,7 +8,6 @@
  */
 import type { Logger } from '@hughescr/logger';
 import type { Clock, TimerHandle } from '@/agent';
-import type { BotStateManager, DiscordBot } from '@/integrations/discord';
 import type { ServiceHealthChange } from '@/services';
 
 /** How much longer than `deadlineMs` the hard-exit timer waits before forcing `exit(1)` — headroom for `stop()`'s own bounded shutdown sequence to finish reporting `{ forced: true }` and unwind. */
@@ -96,32 +95,26 @@ export function registerSignalHandlers(params: RegisterSignalHandlersParams): ()
 
 /** Dependencies for {@link createDiscordRecoveryHandler}. */
 export interface CreateDiscordRecoveryHandlerParams {
-    /** `config.session.mode` — selects which recovery behaviour below runs. */
-    mode:            'oneshot' | 'conductor'
-    /** Re-warms the channel-registry cache after a reconnect (both modes). */
-    warmCache:       () => Promise<void>
-    /** Read/reset only in oneshot mode — conductor mode never touches this (the ledger shim owns its transitions). */
-    botStateManager: BotStateManager
-    /** Only `triggerCatchUp` is used, and only in oneshot mode. */
-    bot:             Pick<DiscordBot, 'triggerCatchUp'>
-    /** Submits a catch-up envelope through the conductor — only called in conductor mode. */
-    submitCatchUp:   () => Promise<void>
-    logger:          Pick<Logger, 'warn'>
+    /** Re-warms the channel-registry cache after a reconnect. */
+    warmCache:     () => Promise<void>
+    /** Submits a catch-up envelope through the conductor. */
+    submitCatchUp: () => Promise<void>
+    logger:        Pick<Logger, 'warn'>
 }
 
 /**
  * Builds the health-registry subscriber that runs Isambard's Discord-reconnect recovery phase:
- * re-warm the channel cache, then either the oneshot branch (recover a stuck `processing_message`
- * mode, then `bot.triggerCatchUp()`) or the conductor branch (`submitCatchUp()` alone — `goIdle`
- * is never called in conductor mode, since the ledger shim is the sole writer of that
- * transition). Catch-up on the FIRST connection is handled elsewhere (`setupInboxAndCatchUp` /
- * `runConductorInboxInit`, run from `bot.ts`'s own `clientReady`); this handler only fires on a
+ * re-warm the channel cache, then submit a catch-up envelope through the conductor. P13b: the
+ * one-shot branch (recovering a stuck `processing_message` bot-state mode, then
+ * `bot.triggerCatchUp()`) is gone — the conductor is the only path, and its ledger is the sole
+ * writer of processing-state transitions. Catch-up on the FIRST connection is handled elsewhere
+ * (`runConductorInboxInit`, run from `bot.ts`'s own `clientReady`); this handler only fires on a
  * later reconnect.
  * @param params See {@link CreateDiscordRecoveryHandlerParams}.
  * @returns A `ServiceHealthChange` listener, ready to pass to `healthRegistry.subscribe`.
  */
 export function createDiscordRecoveryHandler(params: CreateDiscordRecoveryHandlerParams): (change: ServiceHealthChange) => void {
-    const { mode, warmCache, botStateManager, bot, submitCatchUp, logger } = params;
+    const { warmCache, submitCatchUp, logger } = params;
 
     return (change: ServiceHealthChange): void => {
         if(change.service !== 'discord' || change.newState !== 'online') {
@@ -131,14 +124,7 @@ export function createDiscordRecoveryHandler(params: CreateDiscordRecoveryHandle
         void (async () => {
             try {
                 await warmCache();
-                if(mode === 'conductor') {
-                    await submitCatchUp();
-                    return;
-                }
-                if(botStateManager.getMode() === 'processing_message') {
-                    botStateManager.goIdle();
-                }
-                await bot.triggerCatchUp();
+                await submitCatchUp();
             } catch (error) {
                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Discord recovery phase failed' });
             }

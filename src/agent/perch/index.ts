@@ -18,12 +18,6 @@ export {
     createPerchScheduler
 } from './scheduler';
 
-// Session Runner
-export {
-    type PerchSessionRunner,
-    createPerchSessionRunner
-} from './session-runner';
-
 // Perch driver (conductor mode): owns slot-turn lifecycle, wrap-up/interrupt timers, overlap deferral
 export {
     type PerchDriver,

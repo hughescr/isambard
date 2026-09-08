@@ -562,34 +562,25 @@ describe('setupInboxAndCatchUp', () => {
         jest.restoreAllMocks();
     });
 
-    function oneshotParams(overrides: Record<string, unknown> = {}) {
+    function conductorInboxParams(overrides: Record<string, unknown> = {}) {
         return {
-            inboxManager:         makeFakeInboxManager(),
-            readyClient:          makeFakeClient(),
-            botStateManager:      makeFakeBotStateManager(),
-            catchUpSessionRunner: undefined,
-            presenceManager:      undefined,
-            memoryBackend:        { loadCompletionSignal: mock(async () => null) },
-            perchConfig:          undefined,
+            inboxManager:          makeFakeInboxManager(),
+            readyClient:           makeFakeClient(),
+            botStateManager:       makeFakeBotStateManager(),
+            perchConfig:           undefined,
+            conversationConductor: makeFakeConductor(),
+            journal:               makeFakeJournal(),
+            responseRouter:        {},
+            rateLimiter:           {},
+            ingressGate:           makeFakeIngressGate(),
             ...overrides,
         };
     }
 
     test('resolves immediately (Discord already available / no health registry given)', async () => {
-        const result = setupInboxAndCatchUp(oneshotParams() as never);
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+        const result = setupInboxAndCatchUp(conductorInboxParams() as never);
         await expect(result).resolves.toBeUndefined();
-    });
-
-    test('oneshot branch still calls runner.shouldStartCatchUp/startCatchUp when catch-up is due', async () => {
-        const runner = {
-            shouldStartCatchUp: mock(async () => true),
-            startCatchUp:       mock(async () => undefined),
-        };
-
-        await setupInboxAndCatchUp(oneshotParams({ catchUpSessionRunner: runner }) as never);
-
-        expect(runner.shouldStartCatchUp).toHaveBeenCalled();
-        expect(runner.startCatchUp).toHaveBeenCalled();
     });
 
     test('the returned promise settles only after a deferred discord-online change fires, not merely when the subscription is registered', async () => {
@@ -604,7 +595,7 @@ describe('setupInboxAndCatchUp', () => {
         const inboxManager = makeFakeInboxManager();
 
         let resolved = false;
-        const promise = setupInboxAndCatchUp(oneshotParams({ inboxManager, healthRegistry }) as never);
+        const promise = setupInboxAndCatchUp(conductorInboxParams({ inboxManager, healthRegistry }) as never);
         void promise.then(() => {
             resolved = true;
             return undefined;
@@ -622,7 +613,7 @@ describe('setupInboxAndCatchUp', () => {
         expect(inboxManager.loadUnread).toHaveBeenCalled();
     });
 
-    test('conductor branch: loadUnread happens before replayUnhandled (runBootSequence)', async () => {
+    test('loadUnread happens before replayUnhandled (runBootSequence)', async () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const callOrder: string[] = [];
         const inboxManager = makeFakeInboxManager({
@@ -635,52 +626,31 @@ describe('setupInboxAndCatchUp', () => {
             }),
         });
 
-        await setupInboxAndCatchUp(oneshotParams({
-            inboxManager,
-            conversationConductor: makeFakeConductor(),
-            journal:               makeFakeJournal(),
-            responseRouter:        {},
-            rateLimiter:           {},
-            ingressGate:           makeFakeIngressGate(),
-        }) as never);
+        await setupInboxAndCatchUp(conductorInboxParams({ inboxManager }) as never);
 
         expect(callOrder).toEqual(['loadUnread', 'replayUnhandled']);
     });
 
-    test('conductor branch: the boot sequence (and hence the ingress gate) runs exactly once', async () => {
+    test('the boot sequence (and hence the ingress gate) runs exactly once', async () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const ingressGate = makeFakeIngressGate();
 
-        await setupInboxAndCatchUp(oneshotParams({
-            inboxManager:          makeFakeInboxManager(),
-            conversationConductor: makeFakeConductor(),
-            journal:               makeFakeJournal(),
-            responseRouter:        {},
-            rateLimiter:           {},
-            ingressGate,
-        }) as never);
+        await setupInboxAndCatchUp(conductorInboxParams({ ingressGate }) as never);
 
         expect(ingressGate.open).toHaveBeenCalledTimes(1);
     });
 
-    test('a conductor-branch failure is caught and logged, never rejecting the returned promise', async () => {
+    test('a failure is caught and logged, never rejecting the returned promise', async () => {
         const inboxManager = makeFakeInboxManager({
             loadUnread: mock(async () => {
                 throw new Error('boom');
             }),
         });
 
-        await expect(setupInboxAndCatchUp(oneshotParams({
-            inboxManager,
-            conversationConductor: makeFakeConductor(),
-            journal:               makeFakeJournal(),
-            responseRouter:        {},
-            rateLimiter:           {},
-            ingressGate:           makeFakeIngressGate(),
-        }) as never)).resolves.toBeUndefined();
+        await expect(setupInboxAndCatchUp(conductorInboxParams({ inboxManager }) as never)).resolves.toBeUndefined();
     });
 
-    test('a conductor-branch failure that happens BEFORE the boot sequence (loadUnread rejects) still opens the ingress gate, so live messages are not buffered forever', async () => {
+    test('a failure that happens BEFORE the boot sequence (loadUnread rejects) still opens the ingress gate, so live messages are not buffered forever', async () => {
         const ingressGate = makeFakeIngressGate();
         const inboxManager = makeFakeInboxManager({
             loadUnread: mock(async () => {
@@ -688,14 +658,7 @@ describe('setupInboxAndCatchUp', () => {
             }),
         });
 
-        await setupInboxAndCatchUp(oneshotParams({
-            inboxManager,
-            conversationConductor: makeFakeConductor(),
-            journal:               makeFakeJournal(),
-            responseRouter:        {},
-            rateLimiter:           {},
-            ingressGate,
-        }) as never);
+        await setupInboxAndCatchUp(conductorInboxParams({ inboxManager, ingressGate }) as never);
 
         expect(ingressGate.open).toHaveBeenCalledWith(new Set());
     });

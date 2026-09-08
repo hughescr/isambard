@@ -1,6 +1,5 @@
 import { logger } from '@hughescr/logger';
 import {
-    createTaskPersistenceCoordinator, createTaskCleanupProcessor, createTaskDirectoryCopier, type TaskPersistenceCoordinator,
     createSessionJournal, createResumeStore, type RoleResumeStore, type SessionJournal,
     type Clock, type SessionRole
 } from '@/agent';
@@ -48,7 +47,6 @@ export interface StorageLayer {
     tableName:                       string
     memoryBackend:                   MemoryToolBackend
     contactBackend:                  ContactBackend
-    taskPersistenceCoordinator:      TaskPersistenceCoordinator
     /** Write-through backend for the SESSION_JOURNAL#<role> partition (P8). Prefer {@link createJournal} over constructing a {@link SessionJournal} against this directly. */
     sessionJournalBackend:           SessionJournalBackend
     /** Builds a {@link SessionJournal} bound to `role`, backed by {@link sessionJournalBackend}. */
@@ -188,7 +186,7 @@ export async function createStorageLayer(
         logger.info('Contact reconciliation scheduler configured');
     }
 
-    // Create task persistence system
+    // Task session backend: role-keyed resume-store rows (SESSION journal/resume, P8/P13b).
     const taskSessionBackend = new TaskSessionBackend(holder, tableName);
     // P8: write-through session journal (SESSION_JOURNAL#<role> partition) and its role-bound convenience factories
     const sessionJournalBackend = new SessionJournalBackend(holder, tableName);
@@ -196,26 +194,12 @@ export async function createStorageLayer(
         backend: sessionJournalBackend, role, clock, logger,
     });
     const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(taskSessionBackend, role);
-    const taskCleanupProcessor = createTaskCleanupProcessor({ logger });
-    const taskDirectoryCopier = createTaskDirectoryCopier({
-        logger,
-        cleanupProcessor: taskCleanupProcessor,
-    });
-    const taskPersistenceCoordinator = createTaskPersistenceCoordinator({
-        backend: taskSessionBackend,
-        copier:  taskDirectoryCopier,
-        logger,
-    });
-
-    // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
-    logger.info('Task persistence system initialized');
 
     return {
         holder,
         tableName,
         memoryBackend,
         contactBackend,
-        taskPersistenceCoordinator,
         sessionJournalBackend,
         createJournal,
         createResumeStore: createResumeStoreForRole,

@@ -219,8 +219,8 @@ export interface ConductorPresenceSetupResult {
 }
 
 /**
- * Sets up Discord presence for conductor mode (P9 `config.session.mode === 'conductor'`):
- * composes presence from the session ledgers (design doc section 8) instead of bridging
+ * Sets up Discord presence for the long-lived conversation conductor: composes presence from
+ * the session ledgers (design doc section 8) instead of bridging
  * `BotStateManager`. Deliberately does none of what `setupPresence`'s bridge (:110-181, untouched
  * — see this file's module-level doc discipline) does: no `botStateManager.subscribe`, no
  * `transitionPresenceDisplayMode` call, and no explicit idle bootstrap — the very first
@@ -258,13 +258,10 @@ export function setupConductorPresence(params: {
     setPreviousStatus?:      (text: string) => void
     /**
      * The still-legacy `BotStateManager` — used ONLY to call `recordPresenceUpdate()` on every
-     * applied update, never `subscribe`d to. P12 gives perch its own real conductor, but a
-     * rejected (or omitted) `perchConductor.open()` still falls back to the legacy
-     * `PerchSessionRunner`/scheduler (`perch-setup.ts`'s `setupPerchSessionRunnerAndScheduler`),
-     * whose own stream handler (`createPresenceStreamHandler`) still gates its Haiku calls on
-     * `botStateManager.shouldUpdatePresence()` — a throttle whose clock the removed oneshot
-     * bridge used to advance on every activity update. Omitted, that fallback runner's synopsis
-     * generation goes unthrottled (P11 review finding).
+     * applied update, never `subscribe`d to. Perch gets its own real conductor, but a rejected
+     * (or omitted) `perchConductor.open()` leaves perch without any fallback runner in conductor
+     * mode; this field is kept so a caller can still forward the shared `botStateManager` for its
+     * own bookkeeping without a wiring change.
      */
     botStateManager?:        Pick<BotStateManager, 'recordPresenceUpdate'>
     /**

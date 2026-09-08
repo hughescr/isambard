@@ -21,7 +21,7 @@ import type { HookCallbackMatcher, HookEvent } from '@anthropic-ai/claude-agent-
  * ```typescript
  * const merged = mergeHookMaps(
  *   createTaskTrackingHooks(tracker),
- *   createLifecycleHooks(),
+ *   createSessionLifecycleHooks({}),
  *   createCompactionHooks(stateManager),
  * );
  * ```

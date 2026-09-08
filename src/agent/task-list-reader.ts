@@ -6,8 +6,19 @@
  */
 
 import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
-import { getTaskDirectoryPath } from './task-directory-copier';
+
+/**
+ * Gets the full path to a session's task directory.
+ * Note: SDK stores tasks at ~/.claude/tasks/{sessionId}/ (no project path prefix, unlike
+ * session transcripts).
+ * @param sessionId The UUID of the session
+ * @returns Full path to the session's task directory
+ */
+export const getTaskDirectoryPath = (sessionId: string): string => {
+    return path.join(homedir(), '.claude', 'tasks', sessionId);
+};
 
 /**
  * Interface for reading and summarizing task lists.

@@ -123,8 +123,7 @@ function calendarChangedOrUndefined(delta: CalendarDelta, agendaText: string, ti
 }
 
 /**
- * Creates the conductor-backed `MessageProcessor` conductor-mode coordinator-setup.ts installs
- * in place of the legacy `agent.handleInput` processor.
+ * Creates the conductor-backed `MessageProcessor` that `coordinator-setup.ts` installs.
  * @param params See {@link CreateConductorProcessorParams}.
  * @returns A `MessageProcessor` — see `message-coordinator.ts`.
  */

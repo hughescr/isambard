@@ -4,7 +4,6 @@ import * as loggerModule from '@hughescr/logger';
 import { MessageFlags, type Client } from 'discord.js';
 import * as agentModule from '@/agent';
 import type { Conductor, LedgerStore } from '@/agent';
-import type { ClaudeAgent } from '@/agent/agent';
 import type { DiscordConfig } from '@/config/schemas';
 import type { AllowlistCommandHandler } from '@/integrations/discord/allowlist-commands';
 import { createDiscordBot, type DiscordBotOptions } from '@/integrations/discord/bot';
@@ -15,7 +14,7 @@ import * as handlersModule from '@/integrations/discord/handlers';
 import type { InboxManager } from '@/integrations/discord/inbox';
 import * as ingressGateModule from '@/integrations/discord/ingress-gate';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
-import type { MessageProcessor, MessageCoordinator } from '@/integrations/discord/message-coordinator';
+import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
 import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
 import * as catchupSetupModule from '@/integrations/discord/setup/catchup-setup';
@@ -25,7 +24,7 @@ import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-han
 import * as perchSetupModule from '@/integrations/discord/setup/perch-setup';
 import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
 import { BotStateManagerImpl } from '@/integrations/discord/state/manager';
-import { createChannelId, createGuildId, createUserId, type DiscordMessageContext  } from '@/integrations/discord/types';
+import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
 /** Flushes enough microtask ticks for a chained promise sequence to settle. */
 async function flushMicrotasks(): Promise<void> {
@@ -83,6 +82,97 @@ describe('createDiscordBot', () => {
         // Clear global Discord client state to prevent test pollution
         globalThis.__discordClient = undefined;
     });
+
+    function makeMockClientForConductor(): Client {
+        const client = {
+            on:                 mock(() => client),
+            once:               mock(() => client),
+            login:              mock(async () => 'mock-token'),
+            destroy:            mock(async () => undefined),
+            removeAllListeners: mock(() => undefined),
+            user:               { id: '999999999999999999', tag: 'TestBot#1234' },
+            rest:               null,
+            guilds:             { cache: { get: mock(() => undefined) } },
+        } as unknown as Client;
+        return client;
+    }
+
+    /** Returns a plain object satisfying the shape tests need to observe — cast to `Conductor` at each call site, since only `open`/`shutdown`/`subscribeTurn` are ever exercised here. */
+    function makeFakeConductor(overrides: Record<string, unknown> = {}) {
+        return {
+            open:                    mock(async () => ({ sessionId: 'sess-1', resumed: false })),
+            submit:                  mock(async () => ({})),
+            deliver:                 mock(async () => ({ delivered: true })),
+            recordCompactionSummary: mock(async () => undefined),
+            interruptCurrent:        mock(async () => undefined),
+            subscribeTurn:           mock(() => mock(() => undefined)),
+            status:                  mock(() => ({})),
+            shutdown:                mock(async () => undefined),
+            ...overrides,
+        } as unknown as Conductor & { open: ReturnType<typeof mock>, shutdown: ReturnType<typeof mock>, subscribeTurn: ReturnType<typeof mock> };
+    }
+
+    /**
+     * `emit` is test-only (not part of `LedgerStore`): it invokes every listener `subscribe()`
+     * was ever called with (mirroring the real store's multi-subscriber `Set`, since
+     * production wires more than one subscriber — e.g. `installLedgerShim` AND bot.ts's own
+     * ring-buffer mirror — onto the same store), letting a test simulate a ledger change
+     * without a real `createLedgerStore` reducer.
+     *
+     * `unsubscribe` is returned specifically to whichever `subscribe()` call registers a
+     * 2-argument `(ledger, event) => …` listener — `installLedgerShim`'s own signature (see
+     * `state/ledger-shim.ts`) — since that is the one existing tests (e.g. the shutdown-order
+     * suite) name and assert on; the ring-buffer listener declares only `(ledger) => …`
+     * (1 argument) and gets its own independent, unasserted unsubscribe instead. Distinguishing
+     * by arity rather than call order keeps this fake correct regardless of which subscriber
+     * bot.ts happens to wire up first.
+     */
+    function makeFakeLedgerStore(sessionId: string | undefined = 'ledger-sess-1', unsubscribe: ReturnType<typeof mock> = mock(() => undefined)) {
+        const listeners = new Set<(ledger: unknown, event?: unknown) => void>();
+        return {
+            get:       mock(() => ({ sessionId, tasks: [] })),
+            dispatch:  mock(() => undefined),
+            subscribe: mock((l: (ledger: unknown, event?: unknown) => void) => {
+                listeners.add(l);
+                return l.length >= 2 ? unsubscribe : mock(() => undefined);
+            }),
+            emit: (ledger: unknown, event?: unknown): void => {
+                for(const listener of listeners) {
+                    listener(ledger, event);
+                }
+            },
+        } as unknown as LedgerStore & { get: ReturnType<typeof mock>, emit: (ledger: unknown, event?: unknown) => void };
+    }
+
+    function conductorDeps(overrides: Record<string, unknown> = {}): Partial<DiscordBotOptions> {
+        return {
+            conversationConductor: makeFakeConductor(),
+            ledgerStore:           makeFakeLedgerStore(),
+            contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined), calendarDelta: mock(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })), markCalendarSeen: mock(() => undefined), healthNote: mock(() => undefined), markHealthSeen: mock(() => undefined) },
+            journal:               { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+            // A no-op stand-in for the real process.exit — the conductor-open-failure path calls
+            // this with code 1, and without a mock here that would kill the whole test runner.
+            exit:                  mock(() => undefined),
+            ...overrides,
+        };
+    }
+
+    /** Fires the registered clientReady handler and waits for its async body to settle. */
+    async function triggerReady(client: Client): Promise<void> {
+        const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void | Promise<void>][];
+        const handler = calls.find(([event]) => event === 'clientReady')?.[1];
+        if(handler) {
+            await handler(client);
+        }
+    }
+
+    function stubCoordinator() {
+        // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
+        spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
+            setProcessor: mock(() => undefined),
+            stop:         mock(() => undefined),
+        } as unknown as messageCoordinatorModule.MessageCoordinator)));
+    }
 
     test('should return an object with start and stop methods', () => {
         const bot = createDiscordBot({
@@ -796,16 +886,16 @@ describe('createDiscordBot', () => {
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Create a fake agent to enable coordinator creation (required for messageCreate handler)
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
+            // A fully-opened conductor is required to enable coordinator creation (required for
+            // the messageCreate handler).
+            stubCoordinator();
+            const deps = conductorDeps();
 
             createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistry,
-                agent:           mockAgent,
+                ...deps,
             });
 
             // interactionCreate is registered at bot creation time (before clientReady fires)
@@ -873,16 +963,16 @@ describe('createDiscordBot', () => {
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Create a fake agent to enable coordinator creation (required for messageCreate handler)
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
+            // A fully-opened conductor is required to enable coordinator creation (required for
+            // the messageCreate handler).
+            stubCoordinator();
+            const deps = conductorDeps();
 
             createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistry,
-                agent:           mockAgent,
+                ...deps,
             });
 
             // interactionCreate is registered at bot creation time (before clientReady fires)
@@ -1620,95 +1710,6 @@ describe('createDiscordBot', () => {
     });
 
     describe('Conductor mode (P9)', () => {
-        function makeMockClientForConductor(): Client {
-            const client = {
-                on:                 mock(() => client),
-                once:               mock(() => client),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-                guilds:             { cache: { get: mock(() => undefined) } },
-            } as unknown as Client;
-            return client;
-        }
-
-        /** Returns a plain object satisfying the shape tests need to observe — cast to `Conductor` at each call site, since only `open`/`shutdown`/`subscribeTurn` are ever exercised here. */
-        function makeFakeConductor(overrides: Record<string, unknown> = {}) {
-            return {
-                open:                    mock(async () => ({ sessionId: 'sess-1', resumed: false })),
-                submit:                  mock(async () => ({})),
-                deliver:                 mock(async () => ({ delivered: true })),
-                recordCompactionSummary: mock(async () => undefined),
-                interruptCurrent:        mock(async () => undefined),
-                subscribeTurn:           mock(() => mock(() => undefined)),
-                status:                  mock(() => ({})),
-                shutdown:                mock(async () => undefined),
-                ...overrides,
-            } as unknown as Conductor & { open: ReturnType<typeof mock>, shutdown: ReturnType<typeof mock>, subscribeTurn: ReturnType<typeof mock> };
-        }
-
-        /**
-         * `emit` is test-only (not part of `LedgerStore`): it invokes every listener `subscribe()`
-         * was ever called with (mirroring the real store's multi-subscriber `Set`, since
-         * production wires more than one subscriber — e.g. `installLedgerShim` AND (P11) bot.ts's
-         * own ring-buffer mirror — onto the same store), letting a test simulate a ledger change
-         * without a real `createLedgerStore` reducer.
-         *
-         * `unsubscribe` is returned specifically to whichever `subscribe()` call registers a
-         * 2-argument `(ledger, event) => …` listener — `installLedgerShim`'s own signature (see
-         * `state/ledger-shim.ts`) — since that is the one existing tests (e.g. the shutdown-order
-         * suite) name and assert on; P11's own ring-buffer listener declares only `(ledger) => …`
-         * (1 argument) and gets its own independent, unasserted unsubscribe instead. Distinguishing
-         * by arity rather than call order keeps this fake correct regardless of which subscriber
-         * bot.ts happens to wire up first.
-         */
-        function makeFakeLedgerStore(sessionId: string | undefined = 'ledger-sess-1', unsubscribe: ReturnType<typeof mock> = mock(() => undefined)) {
-            const listeners = new Set<(ledger: unknown, event?: unknown) => void>();
-            return {
-                get:       mock(() => ({ sessionId, tasks: [] })),
-                dispatch:  mock(() => undefined),
-                subscribe: mock((l: (ledger: unknown, event?: unknown) => void) => {
-                    listeners.add(l);
-                    return l.length >= 2 ? unsubscribe : mock(() => undefined);
-                }),
-                emit: (ledger: unknown, event?: unknown): void => {
-                    for(const listener of listeners) {
-                        listener(ledger, event);
-                    }
-                },
-            } as unknown as LedgerStore & { get: ReturnType<typeof mock>, emit: (ledger: unknown, event?: unknown) => void };
-        }
-
-        function conductorDeps(overrides: Record<string, unknown> = {}): Partial<DiscordBotOptions> {
-            return {
-                conversationConductor: makeFakeConductor(),
-                ledgerStore:           makeFakeLedgerStore(),
-                contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined), calendarDelta: mock(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })), markCalendarSeen: mock(() => undefined), healthNote: mock(() => undefined), markHealthSeen: mock(() => undefined) },
-                deliveryGuard:         { alreadyDelivered: mock(() => false), markDelivered: mock(() => undefined) },
-                journal:               { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
-                ...overrides,
-            };
-        }
-
-        /** Fires the registered clientReady handler and waits for its async body to settle. */
-        async function triggerReady(client: Client): Promise<void> {
-            const calls = (client.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (c: Client) => void | Promise<void>][];
-            const handler = calls.find(([event]) => event === 'clientReady')?.[1];
-            if(handler) {
-                await handler(client);
-            }
-        }
-
-        function stubCoordinator() {
-            // @ts-expect-error - Mocking class constructor; mockImplementation typed as never for constructors
-            spies.push(spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): messageCoordinatorModule.MessageCoordinator => ({
-                setProcessor: mock(() => undefined),
-                stop:         mock(() => undefined),
-            } as unknown as messageCoordinatorModule.MessageCoordinator)));
-        }
-
         test('opens the conductor after initializeChannelRegistry and before setupCoordinatorIntegration', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
@@ -1736,24 +1737,21 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
             await triggerReady(client);
 
             expect(callOrder).toEqual(['initializeChannelRegistry', 'conductor.open', 'setupCoordinatorIntegration']);
+            expect(deps.exit).not.toHaveBeenCalled();
         });
 
-        test('degrades to the legacy processor without a shim when open() rejects', async () => {
+        test('never wires the coordinator when open() rejects — message processing stays disabled', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
 
-            let capturedParams: { conversationConductor?: unknown, envelopeProvider?: unknown } | undefined;
-            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: typeof capturedParams) => {
-                capturedParams = params;
-                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
-            }));
+            const setupCoordinatorIntegrationSpy = spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration');
+            spies.push(setupCoordinatorIntegrationSpy);
 
             const conductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('boom'))) });
             const deps = conductorDeps({ conversationConductor: conductor });
@@ -1761,31 +1759,65 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
             await triggerReady(client);
 
-            // setupCoordinatorIntegration ran (the legacy branch is always reachable — agent was
-            // provided), but never received conductor deps: rejection degrades to the legacy
-            // processor without ever switching setupCoordinatorIntegration to the conductor branch.
-            expect(capturedParams?.conversationConductor).toBeUndefined();
-            expect(capturedParams?.envelopeProvider).toBeUndefined();
+            // A rejected open() never switches conductorOpened to true, so the coordinator is
+            // never constructed and no messageCreate handler is registered.
+            expect(setupCoordinatorIntegrationSpy).not.toHaveBeenCalled();
             expect(conductor.subscribeTurn).not.toHaveBeenCalled();
         });
 
-        test('degrades to the legacy processor without hanging forever when open() never settles', async () => {
+        test('exits the process when open() rejects — there is no fallback agent to degrade to', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+
+            const conductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('boom'))) });
+            const deps = conductorDeps({ conversationConductor: conductor });
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            expect(deps.exit).toHaveBeenCalledTimes(1);
+            expect(deps.exit).toHaveBeenCalledWith(1);
+        });
+
+        test('falls back to process.exit when no exit override is given and open() rejects', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            const processExitSpy = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+            spies.push(processExitSpy);
+
+            const conductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('boom'))) });
+            const deps = conductorDeps({ conversationConductor: conductor, exit: undefined });
+
+            createDiscordBot({
+                config:          mockConfig,
+                channelRegistry: mockChannelRegistry,
+                ...deps,
+            });
+
+            await triggerReady(client);
+
+            expect(processExitSpy).toHaveBeenCalledTimes(1);
+            expect(processExitSpy).toHaveBeenCalledWith(1);
+        });
+
+        test('never wires the coordinator without hanging forever when open() never settles', async () => {
             jest.useFakeTimers();
 
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
 
-            let capturedParams: { conversationConductor?: unknown } | undefined;
-            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { conversationConductor?: unknown }) => {
-                capturedParams = params;
-                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
-            }));
+            const setupCoordinatorIntegrationSpy = spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration');
+            spies.push(setupCoordinatorIntegrationSpy);
 
             // Never resolves and never rejects — a wedged CLI child.
             const conductor = makeFakeConductor({
@@ -1798,7 +1830,6 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -1813,8 +1844,9 @@ describe('createDiscordBot', () => {
             }
             await readyPromise;
 
-            expect(capturedParams?.conversationConductor).toBeUndefined();
+            expect(setupCoordinatorIntegrationSpy).not.toHaveBeenCalled();
             expect(conductor.subscribeTurn).not.toHaveBeenCalled();
+            expect(deps.exit).toHaveBeenCalledWith(1);
         });
 
         test('wires envelopeProvider (resolveNames/toEnvelopeInput/channelList) into setupCoordinatorIntegration once the conductor opens', async () => {
@@ -1832,7 +1864,6 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -1853,7 +1884,6 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -1879,7 +1909,6 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -1925,7 +1954,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 botStateManager: mockBotStateManager,
                 ...deps,
             });
@@ -1954,7 +1982,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -1993,7 +2020,6 @@ describe('createDiscordBot', () => {
             createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -2032,7 +2058,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 ...deps,
             });
 
@@ -2052,7 +2077,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
             });
 
             await triggerReady(client);
@@ -2080,7 +2104,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 inboxManager,
                 ...deps,
             });
@@ -2111,7 +2134,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 inboxManager,
                 ...deps,
             });
@@ -2144,7 +2166,6 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
                 inboxManager,
                 ...deps,
             });
@@ -2153,58 +2174,6 @@ describe('createDiscordBot', () => {
             await expect(bot.triggerCatchUp()).resolves.toBeUndefined();
 
             expect(submitConductorCatchUpSpy).not.toHaveBeenCalled();
-        });
-
-        test('triggerCatchUp does not touch catchUpSessionRunner in conductor mode', async () => {
-            const client = makeMockClientForConductor();
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-            stubCoordinator();
-            spies.push(spyOn(catchupSetupModule, 'submitConductorCatchUp').mockResolvedValue(undefined));
-
-            // A real catchUpSessionRunner is constructed by bot.ts's clientReady handler whenever
-            // inboxManager+agent+memoryBackend are all present — regardless of mode — so this test
-            // supplies memoryBackend and spies on the underlying runner's own shouldStartCatchUp/
-            // startCatchUp to prove the conductor branch genuinely never calls them, rather than
-            // merely asserting a resolved promise (which passes even with the whole branch deleted).
-            const shouldStartCatchUp = mock(async () => true);
-            const startCatchUp = mock(async () => undefined);
-            spies.push(spyOn(catchupSetupModule, 'setupCatchUpSessionRunner').mockReturnValue({
-                shouldStartCatchUp,
-                startCatchUp,
-                getAbortController: mock(() => new AbortController()),
-            } as unknown as ReturnType<typeof catchupSetupModule.setupCatchUpSessionRunner>));
-
-            const inboxManager = {
-                loadUnread:        mock(async () => undefined),
-                getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })),
-                replayUnhandled:   mock(async () => []),
-                recordHandled:     mock(async () => undefined),
-                setBotUserId:      mock(() => undefined),
-            } as unknown as InboxManager;
-
-            const memoryBackend = {
-                storeCompletionSignal:  mock(async () => undefined),
-                loadCompletionSignal:   mock(async () => null),
-                storeInProgressSignal:  mock(async () => undefined),
-                loadInProgressSignal:   mock(async () => null),
-                deleteInProgressSignal: mock(async () => undefined),
-            };
-
-            const deps = conductorDeps();
-            const bot = createDiscordBot({
-                config:          mockConfig,
-                channelRegistry: mockChannelRegistry,
-                agent:           {} as ClaudeAgent,
-                inboxManager,
-                memoryBackend,
-                ...deps,
-            });
-
-            await triggerReady(client);
-            await expect(bot.triggerCatchUp()).resolves.toBeUndefined();
-
-            expect(shouldStartCatchUp).not.toHaveBeenCalled();
-            expect(startCatchUp).not.toHaveBeenCalled();
         });
 
         describe('P11: ledger-driven ring buffers', () => {
@@ -2237,7 +2206,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2266,7 +2234,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2293,7 +2260,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     botStateManager: customBotStateManager,
                     ...deps,
                 });
@@ -2327,7 +2293,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     identityContext: 'Test identity',
                     ...deps,
                 });
@@ -2357,7 +2322,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     identityContext: 'Test identity',
                     ...deps,
                 });
@@ -2386,7 +2350,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     identityContext: 'Test identity',
                     botStateManager: customBotStateManager,
                     ...deps,
@@ -2416,7 +2379,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     identityContext: 'Test identity',
                     perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 },
                     isCostPaused,
@@ -2447,7 +2409,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     identityContext: 'Test identity',
                     perchConfig:     { enabled: false, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 },
                     isCostPaused,
@@ -2477,7 +2438,6 @@ describe('createDiscordBot', () => {
                 const bot = createDiscordBot({
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     identityContext: 'Test identity',
                     ...deps,
                 });
@@ -2522,7 +2482,6 @@ describe('createDiscordBot', () => {
                     createDiscordBot({
                         config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                         channelRegistry: mockChannelRegistry,
-                        agent:           {} as ClaudeAgent,
                         identityContext: 'Test identity',
                         ...deps,
                     });
@@ -2569,12 +2528,8 @@ describe('createDiscordBot', () => {
             function stubPerchSetup(driver: ReturnType<typeof fakePerchDriver> = fakePerchDriver()) {
                 const scheduler = { start: mock(() => undefined), stop: mock(() => undefined), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
                 const setupPerchDriverAndSchedulerSpy = spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({ driver, scheduler });
-                const setupPerchSessionRunnerAndSchedulerSpy = spyOn(perchSetupModule, 'setupPerchSessionRunnerAndScheduler').mockReturnValue({
-                    runner: { startPerch: mock(async () => undefined), suspend: mock(() => undefined), resumeAfterSuspension: mock(async () => undefined), isSuspended: mock(() => false), clearSuspension: mock(() => undefined) } as unknown as ReturnType<typeof perchSetupModule.setupPerchSessionRunnerAndScheduler>['runner'],
-                    scheduler,
-                });
-                spies.push(setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy);
-                return { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy, driver, scheduler };
+                spies.push(setupPerchDriverAndSchedulerSpy);
+                return { setupPerchDriverAndSchedulerSpy, driver, scheduler };
             }
 
             test('opens the perch conductor AFTER the conversation conductor, within clientReady', async () => {
@@ -2601,7 +2556,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2611,11 +2565,11 @@ describe('createDiscordBot', () => {
                 expect(callOrder).toEqual(['conversation.open', 'perch.open']);
             });
 
-            test('a successfully-opened perch conductor uses setupPerchDriverAndScheduler, never the legacy runner', async () => {
+            test('a successfully-opened perch conductor uses setupPerchDriverAndScheduler', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
-                const { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy } = stubPerchSetup();
+                const { setupPerchDriverAndSchedulerSpy } = stubPerchSetup();
 
                 const perchConductor = makeFakeConductor();
                 const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
@@ -2623,7 +2577,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2631,7 +2584,6 @@ describe('createDiscordBot', () => {
                 await triggerReady(client);
 
                 expect(setupPerchDriverAndSchedulerSpy).toHaveBeenCalledTimes(1);
-                expect(setupPerchSessionRunnerAndSchedulerSpy).not.toHaveBeenCalled();
                 const driverArgs = setupPerchDriverAndSchedulerSpy.mock.calls[0]?.[0] as { conductor?: unknown } | undefined;
                 expect(driverArgs?.conductor).toBe(perchConductor);
             });
@@ -2649,7 +2601,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     isCostPaused,
                     ...deps,
@@ -2673,7 +2624,6 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2709,10 +2659,8 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: channelRegistryWithPerch,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     inboxManager:    { getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
-                    memoryBackend:   { loadCompletionSignal: mock(async () => null) } as unknown as DiscordBotOptions['memoryBackend'],
                     ...deps,
                 });
 
@@ -2745,10 +2693,8 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: channelRegistryRejecting,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     inboxManager:    { getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
-                    memoryBackend:   { loadCompletionSignal: mock(async () => null) } as unknown as DiscordBotOptions['memoryBackend'],
                     ...deps,
                 });
 
@@ -2762,11 +2708,11 @@ describe('createDiscordBot', () => {
                 expect(call?.excludeChannelIds).toBeUndefined();
             });
 
-            test('a rejected perch conductor open() degrades to the legacy perch scheduler/runner, without throwing', async () => {
+            test('a rejected perch conductor open() leaves perch disabled, without throwing', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
-                const { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy } = stubPerchSetup();
+                const { setupPerchDriverAndSchedulerSpy } = stubPerchSetup();
 
                 const perchConductor = makeFakeConductor({ open: mock(() => Promise.reject(new Error('perch boom'))) });
                 const deps = conductorDeps({ perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) } });
@@ -2774,36 +2720,32 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
 
                 await expect(triggerReady(client)).resolves.toBeUndefined();
 
-                expect(setupPerchSessionRunnerAndSchedulerSpy).toHaveBeenCalledTimes(1);
                 expect(setupPerchDriverAndSchedulerSpy).not.toHaveBeenCalled();
             });
 
-            test('omitting the perch conductor entirely (oneshot-equivalent) still uses the legacy perch runner, unaffected', async () => {
+            test('omitting the perch conductor entirely leaves perch disabled', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
-                const { setupPerchDriverAndSchedulerSpy, setupPerchSessionRunnerAndSchedulerSpy } = stubPerchSetup();
+                const { setupPerchDriverAndSchedulerSpy } = stubPerchSetup();
 
                 const deps = conductorDeps();
 
                 createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
 
                 await triggerReady(client);
 
-                expect(setupPerchSessionRunnerAndSchedulerSpy).toHaveBeenCalledTimes(1);
                 expect(setupPerchDriverAndSchedulerSpy).not.toHaveBeenCalled();
             });
 
@@ -2823,7 +2765,6 @@ describe('createDiscordBot', () => {
                 const bot = createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2865,7 +2806,6 @@ describe('createDiscordBot', () => {
                 const bot = createDiscordBot({
                     config:          mockConfig,
                     channelRegistry: mockChannelRegistry,
-                    agent:           {} as ClaudeAgent,
                     perchConfig:     minimalPerchConfig,
                     ...deps,
                 });
@@ -2922,16 +2862,13 @@ describe('createDiscordBot', () => {
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Create a fake agent to enable coordinator creation
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
+            const deps = conductorDeps();
 
             createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistry,
-                agent:           mockAgent,
+                ...deps,
             });
 
             // Trigger clientReady to set up coordinator
@@ -3065,16 +3002,13 @@ describe('createDiscordBot', () => {
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Create a fake agent to enable coordinator creation
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
+            const deps = conductorDeps();
 
             createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistryWithGuild,
-                agent:           mockAgent,
+                ...deps,
             });
 
             // Trigger clientReady to set up coordinator
@@ -3148,16 +3082,13 @@ describe('createDiscordBot', () => {
                 spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
             );
 
-            // Create a fake agent to enable coordinator creation
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
+            const deps = conductorDeps();
 
             createDiscordBot({
                 config: mockConfig,
 
                 channelRegistry: mockChannelRegistryWithGuild,
-                agent:           mockAgent,
+                ...deps,
             });
 
             // Trigger clientReady to set up coordinator
@@ -3242,296 +3173,6 @@ describe('createDiscordBot', () => {
             // Coordinator was genuinely never created, so removeGuildChannels() had no
             // instance to be called on.
             expect(coordinatorConstructorSpy).not.toHaveBeenCalled();
-        });
-    });
-
-    describe('Processor updatePresenceForMessageStart Behavior', () => {
-        test('should call startProcessingMessage when mode is idle (resume flow fix)', async () => {
-            let processorFn: MessageProcessor | undefined;
-
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock coordinator factory to capture processor function
-            const mockCoordinator = {
-                handleMessage: mock(() => undefined),
-                setProcessor:  mock((fn: MessageProcessor) => {
-                    processorFn = fn;
-                }),
-                removeChannel:       mock(() => undefined),
-                removeGuildChannels: mock(() => undefined),
-                stop:                mock(() => undefined),
-            };
-            // Mock channel registry functions
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            // Create bot state manager in idle mode
-            const realBotStateManager = new BotStateManagerImpl({
-                logger: mockLogger,
-            });
-
-            // Spy on startProcessingMessage
-            const startProcessingMessageSpy = mock(realBotStateManager.startProcessingMessage.bind(realBotStateManager));
-            realBotStateManager.startProcessingMessage = startProcessingMessageSpy;
-
-            // Create a fake agent to enable coordinator creation
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
-
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-                agent:           mockAgent,
-                botStateManager: realBotStateManager,
-            });
-
-            // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            // Verify processor was set
-            expect(processorFn).toBeDefined();
-
-            // Verify bot is in idle mode
-            expect(realBotStateManager.getMode()).toBe('idle');
-
-            // Call processor with a context
-            const testContext: DiscordMessageContext = {
-                guildId:   createGuildId('test-guild'),
-                channelId: createChannelId('test-channel'),
-                userId:    createUserId('123'),
-                messageId: '456',
-                content:   'test message',
-                timestamp: new Date().toISOString(),
-                botUserId: createUserId('999999999999999999'),
-            };
-
-            // Create AbortController for the processor call
-            const abortController = new AbortController();
-
-            // Processor will throw because agent.handleInput isn't properly set up,
-            // but we only care about the startProcessingMessage call which happens first
-            try {
-                await processorFn!([testContext], null, abortController.signal);
-            } catch{
-                // Expected to fail - we're only testing the updatePresenceForMessageStart part
-            }
-
-            // Verify startProcessingMessage was called with correct args (this is the bug fix)
-            expect(startProcessingMessageSpy).toHaveBeenCalledWith(
-                testContext.channelId,
-                testContext.content
-            );
-        });
-
-        test('should NOT call startProcessingMessage when already processing (no double-transition)', async () => {
-            let processorFn: MessageProcessor | undefined;
-
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock coordinator factory to capture processor function
-            const mockCoordinator = {
-                handleMessage: mock(() => undefined),
-                setProcessor:  mock((fn: MessageProcessor) => {
-                    processorFn = fn;
-                }),
-                removeChannel:       mock(() => undefined),
-                removeGuildChannels: mock(() => undefined),
-                stop:                mock(() => undefined),
-            };
-            // Mock channel registry functions
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            // Create bot state manager already in processing_message mode
-            const realBotStateManager = new BotStateManagerImpl({
-                logger: mockLogger,
-            });
-
-            // Put it in processing_message mode
-            realBotStateManager.startProcessingMessage(createChannelId('existing-channel'), 'existing message');
-
-            // Spy on startProcessingMessage
-            const startProcessingMessageSpy = mock(realBotStateManager.startProcessingMessage.bind(realBotStateManager));
-            realBotStateManager.startProcessingMessage = startProcessingMessageSpy;
-
-            // Create a fake agent to enable coordinator creation
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
-
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-                agent:           mockAgent,
-                botStateManager: realBotStateManager,
-            });
-
-            // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            // Verify processor was set
-            expect(processorFn).toBeDefined();
-
-            // Verify bot is in processing_message mode
-            expect(realBotStateManager.getMode()).toBe('processing_message');
-
-            // Call processor with a context
-            const testContext: DiscordMessageContext = {
-                guildId:   createGuildId('test-guild'),
-                channelId: createChannelId('test-channel'),
-                userId:    createUserId('123'),
-                messageId: '456',
-                content:   'test message',
-                timestamp: new Date().toISOString(),
-                botUserId: createUserId('999999999999999999'),
-            };
-
-            // Create AbortController for the processor call
-            const abortController = new AbortController();
-
-            // Processor will throw because agent.handleInput isn't properly set up,
-            // but we only care about the startProcessingMessage call which happens first
-            try {
-                await processorFn!([testContext], null, abortController.signal);
-            } catch{
-                // Expected to fail - we're only testing the updatePresenceForMessageStart part
-            }
-
-            // Verify startProcessingMessage was NOT called (mode was already processing_message)
-            expect(startProcessingMessageSpy).not.toHaveBeenCalled();
-        });
-
-        test('should handle empty contexts array without error', async () => {
-            let processorFn: MessageProcessor | undefined;
-
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock coordinator factory to capture processor function
-            const mockCoordinator = {
-                handleMessage: mock(() => undefined),
-                setProcessor:  mock((fn: MessageProcessor) => {
-                    processorFn = fn;
-                }),
-                removeChannel:       mock(() => undefined),
-                removeGuildChannels: mock(() => undefined),
-                stop:                mock(() => undefined),
-            };
-            // Mock channel registry functions
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(messageCoordinatorModule, 'MessageCoordinator').mockImplementation((): MessageCoordinator => mockCoordinator as unknown as MessageCoordinator),
-                spyOn(channelRegistryModule, 'discoverAllChannels').mockResolvedValue({
-                    discovered: 0,
-                    updated:    0,
-                    errors:     [],
-                }),
-                spyOn(channelRegistryModule, 'setupChannelEventHandlers').mockReturnValue(undefined)
-            );
-
-            // Create bot state manager in idle mode
-            const realBotStateManager = new BotStateManagerImpl({
-                logger: mockLogger,
-            });
-
-            // Spy on startProcessingMessage
-            const startProcessingMessageSpy = mock(realBotStateManager.startProcessingMessage.bind(realBotStateManager));
-            realBotStateManager.startProcessingMessage = startProcessingMessageSpy;
-
-            // Create a fake agent to enable coordinator creation
-            const mockAgent = {
-                handleInput: mock(async () => ({ response: null, wasInterrupted: false, streamTracker: {} })),
-            } as unknown as ClaudeAgent;
-
-            createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-                agent:           mockAgent,
-                botStateManager: realBotStateManager,
-            });
-
-            // Trigger clientReady to set up coordinator
-            const onceCalls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void | Promise<void>][];
-            const clientReadyHandler = onceCalls.find(([event]) => event === 'clientReady')?.[1];
-            if(clientReadyHandler) {
-                await Promise.resolve(clientReadyHandler(mockClient));
-            }
-
-            // Verify processor was set
-            expect(processorFn).toBeDefined();
-
-            // Verify bot is in idle mode
-            expect(realBotStateManager.getMode()).toBe('idle');
-
-            // Create AbortController for the processor call
-            const abortController = new AbortController();
-
-            // Call processor with empty contexts array - should not throw from updatePresenceForMessageStart
-            try {
-                await processorFn!([], null, abortController.signal);
-            } catch{
-                // Expected to fail in later processing, but not from updatePresenceForMessageStart
-            }
-
-            // Verify startProcessingMessage was NOT called (no contexts)
-            expect(startProcessingMessageSpy).not.toHaveBeenCalled();
         });
     });
 

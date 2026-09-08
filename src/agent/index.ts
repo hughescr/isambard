@@ -4,7 +4,6 @@
  * Provides Claude agent creation, memory MCP server, context building, and plugin loading.
  */
 
-export { createClaudeAgent, type ClaudeAgent } from './agent';
 export { extractToolUses, redactSensitiveArgs } from './stream-extractors';
 export { createStreamEventLogger, createRoleLogger, type StreamEventLogger, type FieldLogger } from './stream-event-logger';
 export { createCompactionHooks, createBotStateCompactionSink, type CompactionSink, type CompactionStateManager } from './hooks/compaction';
@@ -13,7 +12,6 @@ export { createSessionLifecycleHooks, type SessionLifecycleHooksDeps } from './h
 export { createTaskTrackingHooks } from './hooks/task-tracking';
 export { mergeHookMaps } from './hooks/index';
 export { createContextBuilder, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from './context-builder';
-export { EventDeltaTracker } from './event-delta-tracker';
 export { summarizeEventBatches } from './event-summarizer';
 export { createMemoryMCPServer } from './memory-mcp-server';
 export { createDiscordMCPServer } from './discord-mcp-server';
@@ -21,10 +19,7 @@ export { loadPlugins } from './plugin-loader';
 export { buildSessionSystemPrompt, type BuildSessionSystemPromptOptions } from './prompts/index.js';
 export type { MessageContext, PlatformImage, AgentStreamEvent, MCPMessageSearchService, MCPChannelRegistry, MCPDMTracker, MCPChannelInfo, ChannelId } from './types';
 
-export { createTaskDirectoryCopier } from './task-directory-copier';
-export { createTaskPersistenceCoordinator, type TaskPersistenceCoordinator } from './task-persistence-coordinator';
-export { createTaskCleanupProcessor } from './task-cleanup-processor';
-export { createTaskListReader } from './task-list-reader';
+export { createTaskListReader, getTaskDirectoryPath } from './task-list-reader';
 
 // Question Registry
 export { QuestionRegistry, type QuestionOption, type QuestionAnswer } from './question-registry';
@@ -39,7 +34,7 @@ export * from './perch';
 export * from './session';
 
 // Session Cleanup
-export { cleanupAllStaleSessions, pruneStaleSessions, type PruneStaleSessionsParams } from './session-cleanup';
+export { pruneStaleSessions, type PruneStaleSessionsParams } from './session-cleanup';
 
 // Skill/Agent Loader
 export { syncAgentsAndSkills } from './skill-agent-loader';

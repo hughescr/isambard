@@ -1,10 +1,4 @@
-import { type query, type Query } from '@anthropic-ai/claude-agent-sdk';
-import { retryAsyncGenerator, classifyNetworkError, classifyHttpStatus, type ErrorClassification, type ErrorClassifier, type RetryDeps, type RetryPolicy  } from '@/utils';
-
-interface ClaudeRetryOptions {
-    policy?: Partial<RetryPolicy>
-    deps?:   Partial<RetryDeps>
-}
+import { classifyNetworkError, classifyHttpStatus, type ErrorClassification } from '@/utils';
 
 /**
  * Check if error is a network error by message content (Claude-specific)
@@ -78,42 +72,4 @@ export function classifyClaudeError(error: unknown): ErrorClassification {
 
     // Default to permanent for unknown errors
     return { category: 'permanent', message: getErrorMessage(error) };
-}
-
-/**
- * Creates a retryable version of the Claude SDK query function.
- * Wraps the query generator with retry logic that:
- * - Restarts the entire stream from the beginning on transient errors
- * - Uses classifyClaudeError for error classification
- * - Defaults to 2 max attempts (1 retry) for Claude calls
- *
- * @param queryFn - The Claude SDK query function to wrap
- * @param options - Retry policy and dependencies
- * @returns A retryable query function with the same signature as the original
- */
-export function createRetryableQuery(
-    queryFn: typeof query,
-    options: ClaudeRetryOptions = {}
-): typeof query {
-    const { policy: policyInput = {}, deps = {} } = options;
-
-    // Default to 2 max attempts (1 retry) for Claude calls
-    const policy: Partial<RetryPolicy> = {
-        maxAttempts: 2,
-        ...policyInput,
-    };
-
-    const classifier: ErrorClassifier = classifyClaudeError;
-
-    return (params: Parameters<typeof queryFn>[0]): Query => {
-        // Create a generator factory that calls the original query function
-        const generatorFactory = () => queryFn(params);
-
-        // Wrap with retry logic
-        return retryAsyncGenerator(generatorFactory, {
-            policy,
-            classifier,
-            deps,
-        }) as Query;
-    };
 }

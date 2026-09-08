@@ -206,7 +206,7 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 src/
 ├── index.ts                         # Application entry point with lifecycle management
 ├── agent/                           # Claude Agent SDK integration
-│   ├── agent.ts                        # Main agent with handleInput() method
+│   ├── session/                         # Long-lived conductor session core (conversation + perch)
 │   ├── types.ts                        # Platform-agnostic message types (MessageContext, PlatformImage)
 │   ├── context-builder.ts              # Memory context loading and user message prefix assembly
 │   ├── activity-logger.ts              # Cross-platform activity auto-logging
@@ -216,7 +216,6 @@ src/
 │   ├── contacts-mcp-server.ts          # MCP server: contacts/address book operations
 │   ├── discord-mcp-server.ts           # MCP server: Discord message history
 │   ├── email-mcp-server.ts             # MCP server: email operations
-│   ├── event-delta-tracker.ts          # EventDeltaTracker: new events between agent interactions
 │   ├── event-summarizer.ts             # LLM-based event summarization for context compression
 │   ├── inbox-mcp-server.ts             # MCP server: Discord inbox operations
 │   ├── mcp-helpers.ts                  # Shared MCP server utilities
@@ -227,11 +226,8 @@ src/
 │   ├── resume-prompt-builder.ts        # Resume prompts for background task auto-resume
 │   ├── session-cleanup.ts              # Session lifecycle management
 │   ├── skill-agent-loader.ts           # Syncs agents/skills to scratch/.claude/ at startup
-│   ├── stream-tracker.ts               # StreamTracker: streaming progress + background task state
-│   ├── task-cleanup-processor.ts       # Cleanup processor for stale task list entries
-│   ├── task-directory-copier.ts        # Utility for copying task directories
+│   ├── stream-tracker.ts               # StreamTracker: streaming progress capture
 │   ├── task-list-reader.ts             # TaskListReader: reads Claude task list state
-│   ├── task-persistence-coordinator.ts # Coordinator for task list persistence across sessions
 │   ├── text-generator.ts               # Lightweight LLM text generation (Haiku)
 │   ├── user-context-mcp-server.ts      # MCP server: user context for cross-platform awareness
 │   ├── wikipedia-mcp-server.ts         # MCP server: Wikipedia article retrieval
@@ -253,9 +249,10 @@ src/
 │   └── perch/                          # Time-based autonomous activity scheduling
 │       ├── types.ts                 # PerchSlot, SuggestionLevel, PerchConfig types
 │       ├── schedule.ts              # SLOT_CONFIGS and time-based slot lookup
-│       ├── prompts.ts               # Perch session prompt builders (initial/test/resume/wrap-up)
-│       ├── session-runner.ts        # Perch lifecycle: start/suspend/resume + timeout enforcement
-│       ├── scheduler.ts             # PerchScheduler: cron-based trigger with jitter + deferred support
+│       ├── prompts.ts               # Slot name/suggestion-level text for perch turn envelopes
+│       ├── envelope.ts              # Perch slot/wrap-up envelope builders
+│       ├── perch-driver.ts          # Slot turn lifecycle: submit + wrap-up/interrupt timers
+│       ├── scheduler.ts             # PerchScheduler: cron-based hourly trigger with jitter
 │       └── README.md                # Perch time scheduling design documentation
 ├── integrations/                    # External service integrations
 │   ├── discord/                     # Discord bot integration
@@ -277,19 +274,18 @@ src/
 │   │   ├── history-provider.ts      # Discord history provider for cross-platform context
 │   │   ├── setup/                   # Bot initialization setup modules
 │   │   │   ├── presence-setup.ts          # Presence manager, status generators, BotStateManager subscriptions
-│   │   │   ├── perch-setup.ts             # Perch session runner and scheduler configuration
-│   │   │   ├── catchup-setup.ts           # Catch-up runner, inbox init, and catch-up context building
-│   │   │   ├── coordinator-setup.ts       # MessageCoordinator wiring with agent + Discord→agent boundary mapping
+│   │   │   ├── perch-setup.ts             # Perch conductor driver + scheduler configuration
+│   │   │   ├── catchup-setup.ts           # Inbox init and conductor catch-up envelope submission
+│   │   │   ├── coordinator-setup.ts       # MessageCoordinator wiring to the conversation conductor
+│   │   │   ├── conductor-processor.ts     # Bridges the conversation conductor onto MessageProcessor
 │   │   │   ├── event-handler-setup.ts     # Channel registry init, message processing, cleanup handlers
 │   │   │   ├── email-setup.ts             # Email MCP server init and WildDuck SSE listener lifecycle
-│   │   │   ├── bsky-setup.ts                # Bluesky integration setup and approval callbacks
-│   │   │   └── presence-stream-handler.ts # Shared stream event handler for presence updates
-│   │   ├── state/                   # Bot operational state machine
+│   │   │   └── bsky-setup.ts                # Bluesky integration setup and approval callbacks
+│   │   ├── state/                   # Legacy BotStateManager (P14 retires this whole directory)
 │   │   │   ├── types.ts                  # OperationalMode, ActivityPhase, BotState, BotStateManager interface
 │   │   │   ├── manager.ts                # BotStateManagerImpl: state machine with transitions + subscriber notifications
-│   │   │   ├── transitions.ts            # Valid state transition table, isValidTransition, getModeEmoji
-│   │   │   ├── agent-context-builder.ts  # Mode-dependent agent config (MCP servers, system prompt)
-│   │   │   └── status-context-builder.ts # StatusContext for presence status generation
+│   │   │   ├── transitions.ts            # Valid state transition table, isValidTransition
+│   │   │   └── ledger-shim.ts            # Mirrors the conductor's ledger onto BotStateManager (conductor mode)
 │   │   ├── presence/                # Dynamic status updates reflecting agent activity
 │   │   │   ├── types.ts                    # PresencePhase types (idle, thinking, responding, tool-use)
 │   │   │   ├── manager.ts                  # PresenceManager: debouncing and rate limiting
@@ -317,9 +313,6 @@ src/
 │   │   │   ├── config.ts             # InboxConfig schema with defaults
 │   │   │   ├── checkpoint-manager.ts # CheckpointManager: last-seen timestamps per channel
 │   │   │   └── inbox-manager.ts      # InboxManager: unread queue + startup catch-up loading
-│   │   ├── catchup/                 # Catch-up session runner for unread backlogs
-│   │   │   ├── session-runner.ts    # createCatchUpSessionRunner: start/suspend/resume/complete lifecycle
-│   │   │   └── prompts.ts           # buildCatchUpPrompt and buildCatchUpResumedPrompt
 │   │   └── attachments/             # Image fetching, conversion, and formatting
 │   │       ├── types.ts             # AttachmentMetadata, FetchedImage, StoredAttachment types
 │   │       ├── converter.ts         # HEIC/HEIF to PNG conversion

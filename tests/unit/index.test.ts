@@ -27,24 +27,17 @@ import {
     type NotifyFn
 } from '@/agent';
 import * as staticAgentIndexModule from '@/agent';
-import * as staticAgentModule from '@/agent/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
 import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
-import * as staticCompactionModule from '@/agent/hooks/compaction';
 import * as staticInboxMcpModule from '@/agent/inbox-mcp-server';
 import * as staticMemoryMcpModule from '@/agent/memory-mcp-server';
 import * as staticPluginLoaderModule from '@/agent/plugin-loader';
 import * as staticQuestionRegistryModule from '@/agent/question-registry';
 import * as staticSessionCleanupModule from '@/agent/session-cleanup';
-import type { StreamTracker } from '@/agent/stream-tracker';
-import * as staticTaskCleanupModule from '@/agent/task-cleanup-processor';
-import * as staticTaskCopierModule from '@/agent/task-directory-copier';
-import * as staticTaskCoordinatorModule from '@/agent/task-persistence-coordinator';
 import * as staticAppLifecycleModule from '@/app/lifecycle';
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
-import { sessionConfigSchema } from '@/config/schemas';
 import * as staticIndexModule from '@/index';
 import * as staticBskyModule from '@/integrations/bsky';
 import * as staticDiscordModule from '@/integrations/discord/bot';
@@ -77,7 +70,6 @@ const realCreateHealthOutageCoalescer = importedCreateHealthOutageCoalescer;
 const realCreateHealthNotificationListener = importedCreateHealthNotificationListener;
 
 const sessionConfig: SessionConfig = {
-    mode:                    'oneshot',
     compactThresholdPercent: 60,
     humanWaitTargetMs:       10_000,
     humanWaitCeilingMs:      30_000,
@@ -116,18 +108,18 @@ const defaultPerchConfig = {
  * `dmPollerStart`/`dmPollerStop` mocks) so the bsky composition-root block actually runs.
  */
 function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false): {
-    cleanupAllStaleSessionsSpy: ReturnType<typeof spyOn>
-    pruneStaleSessionsSpy:      ReturnType<typeof spyOn>
-    getSessionIdForRole:        ReturnType<typeof mock>
-    createBotSpy:               ReturnType<typeof spyOn>
-    emailSetupSpy:              ReturnType<typeof spyOn>
-    bskySetupSpy?:              ReturnType<typeof spyOn>
-    dmPollerStart:              ReturnType<typeof mock>
-    dmPollerStop:               ReturnType<typeof mock>
+    pruneStaleSessionsSpy: ReturnType<typeof spyOn>
+    getSessionIdForRole:   ReturnType<typeof mock>
+    createBotSpy:          ReturnType<typeof spyOn>
+    emailSetupSpy:         ReturnType<typeof spyOn>
+    bskySetupSpy?:         ReturnType<typeof spyOn>
+    dmPollerStart:         ReturnType<typeof mock>
+    dmPollerStop:          ReturnType<typeof mock>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const getSessionIdForRole = mock(async (_role: 'conversation' | 'perch') => undefined as string | undefined);
-    const cleanupAllStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'cleanupAllStaleSessions').mockResolvedValue(undefined);
+    // P13b: retention is always pruneStaleSessions now — cleanupAllStaleSessions (the one-shot
+    // path's unconditional wipe) is deleted along with the mode flag.
     const pruneStaleSessionsSpy = spyOn(staticSessionCleanupModule, 'pruneStaleSessions').mockResolvedValue(undefined);
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
         start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -174,10 +166,6 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
             client: {} as unknown as DynamoDBClient, docClient: mockDocClient, tableName: 'IsambardMemory',
         }),
         spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]),
-        spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-            handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
-        }),
-        spyOn(staticCompactionModule, 'createBotStateCompactionSink'),
         createBotSpy,
         spyOn(staticMemoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticMemoryMcpModule.createMemoryMCPServer>),
         spyOn(staticDiscordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordMcpModule.createDiscordMCPServer>),
@@ -205,9 +193,6 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({
             getSessionIdForRole, setSessionIdForRole: mock(async () => undefined), clearSessionIdForRole: mock(async () => undefined),
         } as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>)),
-        spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>),
-        spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>),
-        spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>),
         // @ts-expect-error - Mocking constructor
         spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>)),
         // @ts-expect-error - Mocking constructor
@@ -259,12 +244,11 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
             tableName: 'IsambardMemory',
         }),
-        cleanupAllStaleSessionsSpy,
         pruneStaleSessionsSpy
     );
 
     return {
-        cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy, emailSetupSpy, bskySetupSpy, dmPollerStart, dmPollerStop,
+        pruneStaleSessionsSpy, getSessionIdForRole, createBotSpy, emailSetupSpy, bskySetupSpy, dmPollerStart, dmPollerStop,
     };
 }
 
@@ -437,16 +421,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
-
-            // P5: compactionSink is built (via createBotStateCompactionSink) from
-            // botStateManager.getCompactionStateManager() at the composition root, not passed
-            // through as the old compactionStateManager option.
-            const createBotStateCompactionSinkSpy = spyOn(staticCompactionModule, 'createBotStateCompactionSink');
-            spies.push(createBotStateCompactionSinkSpy);
+            spies.push(createConversationConductorSpy);
 
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
@@ -508,15 +489,6 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
             spies.push(TaskSessionBackendSpy);
-
-            const createTaskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>);
-            spies.push(createTaskCleanupSpy);
-
-            const createTaskCopierSpy = spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>);
-            spies.push(createTaskCopierSpy);
-
-            const createTaskCoordinatorSpy = spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>);
-            spies.push(createTaskCoordinatorSpy);
 
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
@@ -597,30 +569,17 @@ describe('createApp', () => {
             expect(loadPluginsSpy).toHaveBeenCalledWith(expect.stringMatching(/\/agents-skills-plugins\/plugins$/));
             expect(loadPluginsSpy).toHaveBeenCalledTimes(1);
 
-            // P5: createClaudeAgent receives compactionSink (not compactionStateManager), built
-            // from botStateManager.getCompactionStateManager() via createBotStateCompactionSink.
-            expect(createBotStateCompactionSinkSpy).toHaveBeenCalledTimes(1);
-            const agentCallOptions: unknown = createAgentSpy.mock.calls[0]?.[0];
-            expect(agentCallOptions).not.toHaveProperty('compactionStateManager');
-            expect(agentCallOptions).toHaveProperty('compactionSink');
-            const builtSink: unknown = createBotStateCompactionSinkSpy.mock.results[0]?.value;
-            expect((agentCallOptions as { compactionSink?: unknown }).compactionSink).toBe(builtSink);
+            // P13b: loadPlugins' result is threaded into the conductor build (the one-shot
+            // agent it used to feed is gone) — plugins load happens before the conductor is built.
+            expect(createConversationConductorSpy).toHaveBeenCalledTimes(1);
+            const conductorCallOptions = createConversationConductorSpy.mock.calls[0]?.[0];
+            expect(conductorCallOptions.plugins).toEqual([]);
         });
     });
 
-    describe('Stale session cleanup ordering (P8)', () => {
-        test('oneshot mode: cleanupAllStaleSessions runs (after loadConfig and storage creation); pruneStaleSessions does not', async () => {
-            const { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy } = wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(cleanupAllStaleSessionsSpy).toHaveBeenCalledTimes(1);
-            expect(pruneStaleSessionsSpy).not.toHaveBeenCalled();
-        });
-
-        test('conductor mode: pruneStaleSessions runs with the two stored role ids and the configured retention; cleanupAllStaleSessions does not run', async () => {
-            const { cleanupAllStaleSessionsSpy, pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+    describe('Stale session cleanup ordering (P8, P13b)', () => {
+        test('pruneStaleSessions runs with the two stored role ids and the configured retention (the one-shot cleanupAllStaleSessions path is gone)', async () => {
+            const { pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies);
             getSessionIdForRole.mockImplementation(async (role: 'conversation' | 'perch') => (role === 'conversation' ? 'conv-id' : 'perch-id'));
 
             const { createApp } = staticIndexModule;
@@ -630,11 +589,10 @@ describe('createApp', () => {
                 keepSessionIds: new Set(['conv-id', 'perch-id']),
                 maxAgeMs:       7 * 24 * 60 * 60 * 1000,
             });
-            expect(cleanupAllStaleSessionsSpy).not.toHaveBeenCalled();
         });
 
-        test('conductor mode: a role-id lookup failure is logged and pruning is skipped, not run with an empty keep set', async () => {
-            const { pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+        test('a role-id lookup failure is logged and pruning is skipped, not run with an empty keep set', async () => {
+            const { pruneStaleSessionsSpy, getSessionIdForRole } = wireHappyPathForCleanupTests(spies);
             const lookupFailure = new Error('DynamoDB throttled');
             getSessionIdForRole.mockImplementation(() => Promise.reject(lookupFailure));
 
@@ -663,9 +621,9 @@ describe('createApp', () => {
         });
     });
 
-    describe('Conversation conductor build (P9)', () => {
-        test('conductor mode: createConversationConductor is called once, after the OAuth env write, and its (unopened) conductor is handed to createDiscordBot before it is created', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+    describe('Conversation conductor build (P9, P13b: the only path)', () => {
+        test('createConversationConductor is called once, after the OAuth env write, and its (unopened) conductor is handed to createDiscordBot before it is created', async () => {
+            wireHappyPathForCleanupTests(spies);
 
             let oauthTokenAtCallTime: string | undefined;
             const fakeOpen = mock(async () => ({ sessionId: 'sess-1', resumed: false }));
@@ -695,26 +653,15 @@ describe('createApp', () => {
             expect(botOrder).toBeDefined();
             expect(conductorOrder).toBeLessThan(botOrder);
         });
-
-        test('oneshot mode: createConversationConductor is never called', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
-            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor');
-            spies.push(createConversationConductorSpy);
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(createConversationConductorSpy).not.toHaveBeenCalled();
-        });
     });
 
-    describe('Perch conductor build (P12)', () => {
+    describe('Perch conductor build (P12, P13b: the only path)', () => {
         function fakeConductor(sessionId: string): Conductor {
             return { open: mock(async () => ({ sessionId, resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
         }
 
-        test('conductor mode with perch enabled: createPerchConductor is called once, AFTER createConversationConductor, and its (unopened) conductor is handed to createDiscordBot as perchConductor', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+        test('perch enabled: createPerchConductor is called once, AFTER createConversationConductor, and its (unopened) conductor is handed to createDiscordBot as perchConductor', async () => {
+            wireHappyPathForCleanupTests(spies);
 
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
@@ -742,8 +689,8 @@ describe('createApp', () => {
             expect(botOptions.perchConductor).toBe(fakePerch);
         });
 
-        test('conductor mode with perch DISABLED (config.perch.enabled: false): createPerchConductor is never called', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, { enabled: false });
+        test('perch DISABLED (config.perch.enabled: false): createPerchConductor is never called', async () => {
+            wireHappyPathForCleanupTests(spies, {}, { enabled: false });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
             });
@@ -756,19 +703,8 @@ describe('createApp', () => {
             expect(createPerchConductorSpy).not.toHaveBeenCalled();
         });
 
-        test('oneshot mode: createPerchConductor is never called', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
-            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor');
-            spies.push(createPerchConductorSpy);
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(createPerchConductorSpy).not.toHaveBeenCalled();
-        });
-
         test('passes a role-keyed journal/resume store distinct from the conversation conductor\'s own', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            wireHappyPathForCleanupTests(spies);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
             });
@@ -785,27 +721,6 @@ describe('createApp', () => {
             expect(conversationJournalArg).toBeDefined();
             expect(perchJournalArg).toBeDefined();
             expect(perchJournalArg).not.toBe(conversationJournalArg);
-        });
-
-        // P13a: 'conductor' is now the schema/env default (SESSION_MODE=oneshot is the kill
-        // switch) — this exercises that default value specifically, rather than a
-        // hardcoded 'conductor' literal, so it tracks the schema default if it ever moves.
-        test('default config path (session.mode left at its schema default): builds both conductors (unopened)', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: sessionConfigSchema.parse({}).mode });
-
-            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
-            });
-            const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
-                conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry,
-            });
-            spies.push(createConversationConductorSpy, createPerchConductorSpy);
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(createConversationConductorSpy).toHaveBeenCalledTimes(1);
-            expect(createPerchConductorSpy).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -837,7 +752,7 @@ describe('createApp', () => {
         }
 
         test('passes a working isCostPaused function into createDiscordBot, initially false', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
             });
@@ -855,7 +770,7 @@ describe('createApp', () => {
         });
 
         test('a conversation ledger event crossing dailyCostCeilingUsd pauses isCostPaused()', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
@@ -880,7 +795,7 @@ describe('createApp', () => {
         });
 
         test('a perch ledger event crossing dailyCostCeilingUsd also pauses isCostPaused() — the shared ceiling folds both stores', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const perchLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
@@ -904,7 +819,7 @@ describe('createApp', () => {
         });
 
         test('dailyCostCeilingUsd left undefined: isCostPaused() stays false regardless of ledger spend', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            wireHappyPathForCleanupTests(spies);
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
@@ -924,7 +839,7 @@ describe('createApp', () => {
         });
 
         test('restores a previously-persisted paused snapshot from the conversation journal at boot, before any ledger event', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const snapshotRow = {
                 PK: 'SESSION_JOURNAL#conversation', SK: '2026-09-05T00:00:00.000Z#000000', TTL: 0, at: '2026-09-05T00:00:00.000Z', type: 'cost_ceiling_snapshot', dateKey: '2026-09-05', totalUsd: 5, paused: true,
             };
@@ -955,7 +870,7 @@ describe('createApp', () => {
         });
 
         test('a boot-time journal read failure is logged and tolerated, never blocking startup', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor', dailyCostCeilingUsd: 1, timezone: 'UTC' });
+            wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: { send: mock(async () => { throw new Error('DynamoDB throttled'); }) } as unknown as DynamoDBDocumentClient,
@@ -987,7 +902,7 @@ describe('createApp', () => {
         }
 
         test('is constructed before setupEmail and before createConversationConductor', async () => {
-            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies);
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => realCreateNotificationBridge(bridgeParams)
             );
@@ -1018,7 +933,7 @@ describe('createApp', () => {
                     return bridge;
                 }
             );
-            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            const { emailSetupSpy } = wireHappyPathForCleanupTests(spies);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
             });
@@ -1041,7 +956,7 @@ describe('createApp', () => {
                     return bridge;
                 }
             );
-            const { bskySetupSpy } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, {}, true);
+            const { bskySetupSpy } = wireHappyPathForCleanupTests(spies, {}, {}, true);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
             });
@@ -1059,7 +974,7 @@ describe('createApp', () => {
         });
 
         test('starts the dmPoller during app.start() and stops it during app.stop() (Q8)', async () => {
-            const { dmPollerStart, dmPollerStop } = wireHappyPathForCleanupTests(spies, { mode: 'conductor' }, {}, true);
+            const { dmPollerStart, dmPollerStop } = wireHappyPathForCleanupTests(spies, {}, {}, true);
             // app.start() fires real healthRegistry.sendEvent transitions, which independently wake
             // the outbox drainer's health subscription — it needs a docClient.send that resolves
             // (see the identically-named helper in the "Lifecycle seams (P10)" describe block below).
@@ -1086,7 +1001,7 @@ describe('createApp', () => {
         });
 
         test('notify() called while createConversationConductor is still resolving is a safe no-op; once attached (after resolution) it reaches the real conductor via the createDiscordBot options', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            wireHappyPathForCleanupTests(spies);
             let capturedBridge: NotificationBridge | undefined;
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
@@ -1124,7 +1039,7 @@ describe('createApp', () => {
         });
 
         test('app.stop() detaches the notification bridge from the conductor', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            wireHappyPathForCleanupTests(spies);
             // app.stop() reaches storage.holder.destroy() -> client.destroy(); the shared happy-path
             // mock's bare `{}` client has no such method (only tests that actually call stop()
             // need this override — see the equivalent stub near the double-stop test below).
@@ -1158,30 +1073,11 @@ describe('createApp', () => {
 
             expect(detachSpy).toHaveBeenCalledTimes(1);
         });
-
-        test('oneshot mode: the bridge is still constructed but never attached (no conductor exists)', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
-            let attachSpy: ReturnType<typeof spyOn>;
-            const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
-                (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
-                    const bridge = realCreateNotificationBridge(bridgeParams);
-                    attachSpy = spyOn(bridge, 'attachConductor');
-                    return bridge;
-                }
-            );
-            spies.push(createBridgeSpy);
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(createBridgeSpy).toHaveBeenCalledTimes(1);
-            expect(attachSpy).not.toHaveBeenCalled();
-        });
     });
 
     describe('Health-outage notification source (Q6)', () => {
         test('subscribes exactly once to healthRegistry with a listener built from the real predicate, coalescer, and bridge notify; unsubscribes on stop()', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            wireHappyPathForCleanupTests(spies);
             // app.stop() reaches storage.holder.destroy() -> client.destroy(); the shared
             // happy-path mock's bare `{}` client has no such method (see the equivalent stub on
             // the Q5 "app.stop() detaches the notification bridge" test above).
@@ -1261,45 +1157,17 @@ describe('createApp', () => {
 
             expect(unsubscribeHealthNotifications).toHaveBeenCalledTimes(1);
         });
-
-        test('wires the subscription unconditionally: still subscribed once in oneshot mode with no conductor', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
-
-            const listenerReturns: HealthChangeListener[] = [];
-            const createListenerSpy = spyOn(staticAgentIndexModule, 'createHealthNotificationListener').mockImplementation(
-                (listenerParams: Parameters<typeof realCreateHealthNotificationListener>[0]) => {
-                    const listener = realCreateHealthNotificationListener(listenerParams);
-                    listenerReturns.push(listener);
-                    return listener;
-                }
-            );
-
-            const subscribedListeners: HealthChangeListener[] = [];
-            const subscribeSpy = spyOn(staticServicesModule.ServiceHealthRegistryImpl.prototype, 'subscribe').mockImplementation(
-                (listener: HealthChangeListener) => {
-                    subscribedListeners.push(listener);
-                    return mock(() => undefined);
-                }
-            );
-
-            spies.push(createListenerSpy, subscribeSpy);
-
-            const { createApp } = staticIndexModule;
-            await createApp();
-
-            expect(createListenerSpy).toHaveBeenCalledTimes(1);
-            expect(subscribedListeners).toContain(listenerReturns[0]);
-        });
     });
 
-    describe('Lifecycle seams (P10)', () => {
+    describe('Lifecycle seams (P10, P13b: no more mode)', () => {
         test('app.config exposes the resolved config createApp() was built from', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+            wireHappyPathForCleanupTests(spies);
 
             const { createApp } = staticIndexModule;
             const app = await createApp();
 
-            expect(app.config.session.mode).toBe('conductor');
+            expect(app.config).not.toHaveProperty('session.mode');
+            expect(app.config.session).not.toHaveProperty('mode');
         });
 
         /**
@@ -1315,8 +1183,8 @@ describe('createApp', () => {
             }));
         }
 
-        test('app.start() wires createDiscordRecoveryHandler with the resolved session mode as the health registry\'s discord subscriber', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'conductor' });
+        test('app.start() wires createDiscordRecoveryHandler as the health registry\'s discord subscriber, with no mode field (P13b removed it from CreateDiscordRecoveryHandlerParams)', async () => {
+            wireHappyPathForCleanupTests(spies);
             stubDocClientSend();
             const fakeHandler = mock(() => undefined);
             const createDiscordRecoveryHandlerSpy = spyOn(staticAppLifecycleModule, 'createDiscordRecoveryHandler').mockReturnValue(fakeHandler);
@@ -1326,21 +1194,13 @@ describe('createApp', () => {
             const app = await createApp();
             await app.start();
 
-            expect(createDiscordRecoveryHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'conductor' }));
-        });
-
-        test('app.start() wires createDiscordRecoveryHandler with mode "oneshot" in oneshot mode', async () => {
-            wireHappyPathForCleanupTests(spies, { mode: 'oneshot' });
-            stubDocClientSend();
-            const fakeHandler = mock(() => undefined);
-            const createDiscordRecoveryHandlerSpy = spyOn(staticAppLifecycleModule, 'createDiscordRecoveryHandler').mockReturnValue(fakeHandler);
-            spies.push(createDiscordRecoveryHandlerSpy);
-
-            const { createApp } = staticIndexModule;
-            const app = await createApp();
-            await app.start();
-
-            expect(createDiscordRecoveryHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'oneshot' }));
+            expect(createDiscordRecoveryHandlerSpy).toHaveBeenCalledTimes(1);
+            const handlerParams = createDiscordRecoveryHandlerSpy.mock.calls[0]?.[0];
+            expect(handlerParams).not.toHaveProperty('mode');
+            expect(handlerParams).not.toHaveProperty('botStateManager');
+            expect(handlerParams).not.toHaveProperty('bot');
+            expect(typeof handlerParams.warmCache).toBe('function');
+            expect(typeof handlerParams.submitCatchUp).toBe('function');
         });
     });
 
@@ -1358,10 +1218,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
+            spies.push(createConversationConductorSpy);
 
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
@@ -1423,15 +1286,6 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
             spies.push(TaskSessionBackendSpy);
-
-            const createTaskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>);
-            spies.push(createTaskCleanupSpy);
-
-            const createTaskCopierSpy = spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>);
-            spies.push(createTaskCopierSpy);
-
-            const createTaskCoordinatorSpy = spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>);
-            spies.push(createTaskCoordinatorSpy);
 
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));
@@ -1535,10 +1389,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
+            spies.push(createConversationConductorSpy);
 
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
@@ -1677,10 +1534,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
+            spies.push(createConversationConductorSpy);
 
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
@@ -1802,8 +1662,11 @@ describe('createApp', () => {
         test('should catch error from loadCoreIdentity, log it, and use fallback', async () => {
             mockLogger.warn.mockClear();
 
-            // Mock storage client to succeed
-            const mockDocClient = {} as unknown as DynamoDBDocumentClient;
+            // Mock storage client to succeed. `send` must resolve (not be absent) so the
+            // conductor path's stale-session retention lookup (storage.createResumeStore(...).load())
+            // does not itself reject and log an unrelated warning that would confuse the
+            // 'Failed to load identity context' assertion below.
+            const mockDocClient = { send: mock(async () => ({ Item: undefined, Items: [] })) } as unknown as DynamoDBDocumentClient;
             const createClientSpy = spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
                 client:    {} as unknown as DynamoDBClient,
                 docClient: mockDocClient,
@@ -1823,10 +1686,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
+            spies.push(createConversationConductorSpy);
 
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
@@ -1939,7 +1805,7 @@ describe('createApp', () => {
             // Kills mutant on lines 136-140: Verify error was caught and logged
             expect(mockLogger.warn).toHaveBeenCalled();
             const warnCalls = mockLogger.warn.mock.calls;
-            const identityWarning = warnCalls.find((call: unknown[]) => (call[0] as string).includes('Failed to load identity context'));
+            const identityWarning = warnCalls.find((call: unknown[]) => typeof call[0] === 'string' && call[0].includes('Failed to load identity context'));
             expect(identityWarning).toBeDefined();
             expect(identityWarning![0]).toContain('Failed to load identity from DynamoDB');
 
@@ -1977,10 +1843,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
+            spies.push(createConversationConductorSpy);
 
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start:          mock(async () => undefined),
@@ -2257,10 +2126,13 @@ describe('createApp', () => {
             const loadPluginsSpy = spyOn(staticPluginLoaderModule, 'loadPlugins').mockResolvedValue([]);
             spies.push(loadPluginsSpy);
 
-            const createAgentSpy = spyOn(staticAgentModule, 'createClaudeAgent').mockReturnValue({
-                handleInput: mock(async () => ({ response: 'response', wasInterrupted: false, sessionId: undefined, streamTracker: {} as unknown as StreamTracker })),
+            const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor:           { open: mock(async () => ({ sessionId: 'sess-1', resumed: false })), submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor,
+                ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
+                contextPolicy:       {} as ContextPolicy,
+                compactionTelemetry: {} as CompactionTelemetry,
             });
-            spies.push(createAgentSpy);
+            spies.push(createConversationConductorSpy);
 
             // Mock bot with trackable stop method
             const mockBotStop = mock(async () => undefined);
@@ -2324,15 +2196,6 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
             spies.push(TaskSessionBackendSpy);
-
-            const createTaskCleanupSpy = spyOn(staticTaskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCleanupModule.createTaskCleanupProcessor>);
-            spies.push(createTaskCleanupSpy);
-
-            const createTaskCopierSpy = spyOn(staticTaskCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCopierModule.createTaskDirectoryCopier>);
-            spies.push(createTaskCopierSpy);
-
-            const createTaskCoordinatorSpy = spyOn(staticTaskCoordinatorModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as unknown as ReturnType<typeof staticTaskCoordinatorModule.createTaskPersistenceCoordinator>);
-            spies.push(createTaskCoordinatorSpy);
 
             // @ts-expect-error - Mocking constructor
             const ChannelRegistryBackendSpy = spyOn(staticChannelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticChannelRegistryModule.ChannelRegistryBackend>));

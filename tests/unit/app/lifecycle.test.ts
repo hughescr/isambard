@@ -1,7 +1,8 @@
 /**
  * Tests for src/app/lifecycle.ts (P10): `registerSignalHandlers` (SIGINT/SIGTERM registered
  * once, idempotent on a repeated signal, bounded by a deadline+grace hard-exit timer) and
- * `createDiscordRecoveryHandler` (the Discord-reconnect recovery subscriber, mode-branched).
+ * `createDiscordRecoveryHandler` (the Discord-reconnect recovery subscriber — P13b: the conductor
+ * is the only path, so the one-shot `mode`/`botStateManager`/`bot` branch is gone).
  */
 import { describe, test, expect, mock, jest, afterEach } from 'bun:test';
 import { FakeClock } from '../../helpers/fake-clock';
@@ -196,17 +197,23 @@ describe('createDiscordRecoveryHandler', () => {
         jest.restoreAllMocks();
     });
 
-    function makeBotStateManager(mode: 'idle' | 'processing_message' = 'idle') {
-        return { getMode: mock(() => mode), goIdle: mock(() => undefined) };
-    }
+    test('the params carry no mode, botStateManager, or bot field (P13b: the one-shot branch is gone)', () => {
+        const warmCache = mock(async () => undefined);
+        const submitCatchUp = mock(async () => undefined);
+        const params = { warmCache, submitCatchUp, logger: makeFakeLogger() };
+
+        expect(params).not.toHaveProperty('mode');
+        expect(params).not.toHaveProperty('botStateManager');
+        expect(params).not.toHaveProperty('bot');
+
+        // Type-level check: createDiscordRecoveryHandler accepts exactly this shape.
+        createDiscordRecoveryHandler(params);
+    });
 
     test('ignores a change for a service other than discord', async () => {
         const warmCache = mock(async () => undefined);
         const submitCatchUp = mock(async () => undefined);
-        const bot = { triggerCatchUp: mock(async () => undefined) };
-        const handler = createDiscordRecoveryHandler({
-            mode: 'conductor', warmCache, botStateManager: makeBotStateManager() as never, bot, submitCatchUp, logger: makeFakeLogger(),
-        });
+        const handler = createDiscordRecoveryHandler({ warmCache, submitCatchUp, logger: makeFakeLogger() });
 
         handler({ service: 'email', newState: 'online' } as never);
         await Promise.resolve();
@@ -217,10 +224,7 @@ describe('createDiscordRecoveryHandler', () => {
     test('ignores a discord change that is not "online"', async () => {
         const warmCache = mock(async () => undefined);
         const submitCatchUp = mock(async () => undefined);
-        const bot = { triggerCatchUp: mock(async () => undefined) };
-        const handler = createDiscordRecoveryHandler({
-            mode: 'conductor', warmCache, botStateManager: makeBotStateManager() as never, bot, submitCatchUp, logger: makeFakeLogger(),
-        });
+        const handler = createDiscordRecoveryHandler({ warmCache, submitCatchUp, logger: makeFakeLogger() });
 
         handler({ service: 'discord', newState: 'degraded' } as never);
         await Promise.resolve();
@@ -228,62 +232,21 @@ describe('createDiscordRecoveryHandler', () => {
         expect(warmCache).not.toHaveBeenCalled();
     });
 
-    test('conductor mode: warms cache then submits a catch-up envelope, never touching botStateManager or bot.triggerCatchUp', async () => {
+    test('warms the cache then submits a catch-up envelope through the conductor', async () => {
         const warmCache = mock(async () => undefined);
         const submitCatchUp = mock(async () => undefined);
-        const botStateManager = makeBotStateManager('processing_message');
-        const bot = { triggerCatchUp: mock(async () => undefined) };
-        const handler = createDiscordRecoveryHandler({
-            mode: 'conductor', warmCache, botStateManager: botStateManager as never, bot, submitCatchUp, logger: makeFakeLogger(),
-        });
+        const handler = createDiscordRecoveryHandler({ warmCache, submitCatchUp, logger: makeFakeLogger() });
 
         handler({ service: 'discord', newState: 'online' } as never);
         await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(warmCache).toHaveBeenCalled();
-        expect(submitCatchUp).toHaveBeenCalled();
-        expect(botStateManager.goIdle).not.toHaveBeenCalled();
-        expect(bot.triggerCatchUp).not.toHaveBeenCalled();
-    });
-
-    test('oneshot mode: warms cache, recovers a stuck processing_message mode, then triggers the legacy catch-up runner', async () => {
-        const warmCache = mock(async () => undefined);
-        const submitCatchUp = mock(async () => undefined);
-        const botStateManager = makeBotStateManager('processing_message');
-        const bot = { triggerCatchUp: mock(async () => undefined) };
-        const handler = createDiscordRecoveryHandler({
-            mode: 'oneshot', warmCache, botStateManager: botStateManager as never, bot, submitCatchUp, logger: makeFakeLogger(),
-        });
-
-        handler({ service: 'discord', newState: 'online' } as never);
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(warmCache).toHaveBeenCalled();
-        expect(botStateManager.goIdle).toHaveBeenCalled();
-        expect(bot.triggerCatchUp).toHaveBeenCalled();
-        expect(submitCatchUp).not.toHaveBeenCalled();
-    });
-
-    test('oneshot mode: does not call goIdle when the mode is already idle', async () => {
-        const warmCache = mock(async () => undefined);
-        const submitCatchUp = mock(async () => undefined);
-        const botStateManager = makeBotStateManager('idle');
-        const bot = { triggerCatchUp: mock(async () => undefined) };
-        const handler = createDiscordRecoveryHandler({
-            mode: 'oneshot', warmCache, botStateManager: botStateManager as never, bot, submitCatchUp, logger: makeFakeLogger(),
-        });
-
-        handler({ service: 'discord', newState: 'online' } as never);
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(botStateManager.goIdle).not.toHaveBeenCalled();
-        expect(bot.triggerCatchUp).toHaveBeenCalled();
+        expect(warmCache).toHaveBeenCalledTimes(1);
+        expect(submitCatchUp).toHaveBeenCalledTimes(1);
+        const warmOrder = warmCache.mock.invocationCallOrder[0];
+        const submitOrder = submitCatchUp.mock.invocationCallOrder[0];
+        expect(warmOrder).toBeLessThan(submitOrder);
     });
 
     test('a failure during recovery is caught and logged, never thrown', async () => {
@@ -291,11 +254,8 @@ describe('createDiscordRecoveryHandler', () => {
             throw new Error('cache warm failed');
         });
         const submitCatchUp = mock(async () => undefined);
-        const bot = { triggerCatchUp: mock(async () => undefined) };
         const logger = makeFakeLogger();
-        const handler = createDiscordRecoveryHandler({
-            mode: 'conductor', warmCache, botStateManager: makeBotStateManager() as never, bot, submitCatchUp, logger,
-        });
+        const handler = createDiscordRecoveryHandler({ warmCache, submitCatchUp, logger });
 
         expect(() => {
             handler({ service: 'discord', newState: 'online' } as never);
@@ -304,5 +264,6 @@ describe('createDiscordRecoveryHandler', () => {
         await Promise.resolve();
 
         expect(logger.warn).toHaveBeenCalled();
+        expect(submitCatchUp).not.toHaveBeenCalled();
     });
 });

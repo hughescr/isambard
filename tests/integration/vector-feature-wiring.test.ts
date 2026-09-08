@@ -24,9 +24,6 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import * as memoryMcpServerModule from '@/agent/memory-mcp-server';
-import * as taskCleanupModule from '@/agent/task-cleanup-processor';
-import * as taskDirectoryCopierModule from '@/agent/task-directory-copier';
-import * as taskPersistenceModule from '@/agent/task-persistence-coordinator';
 import * as storageLayerModule from '@/app/storage-layer';
 import type { SessionConfig } from '@/config';
 import * as configLoaderModule from '@/config/loader';
@@ -45,7 +42,6 @@ import type { IndexerJob } from '@/storage/memory-vec-store/types';
 import * as taskSessionModule from '@/storage/task-session';
 
 const sessionConfig: SessionConfig = {
-    mode:                    'oneshot',
     compactThresholdPercent: 60,
     humanWaitTargetMs:       10_000,
     humanWaitCeilingMs:      30_000,
@@ -246,9 +242,6 @@ describe('Vector feature wiring', () => {
                 })),
                 // @ts-expect-error -- mocking constructor
                 spyOn(taskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({})),
-                spyOn(taskCleanupModule, 'createTaskCleanupProcessor').mockReturnValue({} as ReturnType<typeof taskCleanupModule.createTaskCleanupProcessor>),
-                spyOn(taskDirectoryCopierModule, 'createTaskDirectoryCopier').mockReturnValue({} as ReturnType<typeof taskDirectoryCopierModule.createTaskDirectoryCopier>),
-                spyOn(taskPersistenceModule, 'createTaskPersistenceCoordinator').mockReturnValue({} as ReturnType<typeof taskPersistenceModule.createTaskPersistenceCoordinator>),
                 spyOn(vecStoreModule.VectorIndex, 'open').mockResolvedValue(
                     mockVectorIndex as unknown as Awaited<ReturnType<typeof vecStoreModule.VectorIndex.open>>
                 )

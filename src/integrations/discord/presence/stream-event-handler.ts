@@ -140,8 +140,8 @@ export interface StreamEventHandler {
  *   thinkingSynopsis: 'Thinking about weather...'
  * });
  *
- * // Pass onStreamEvent to agent.handleInput
- * await agent.handleInput([context], { onStreamEvent });
+ * // Feed each SDK stream event to onStreamEvent as it arrives
+ * onStreamEvent(event);
  *
  * // Call complete when done
  * complete();

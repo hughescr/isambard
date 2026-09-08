@@ -283,31 +283,29 @@ sst secret set PerchEnabled true
 
 ## Integration Points
 
+Perch runs as its own long-lived conductor session (design doc section 6/9) — there is no
+separate one-shot "session runner": a perch slot is a turn submitted to that conductor, just like
+a Discord turn is a turn submitted to the conversation conductor.
+
 ### setup/perch-setup.ts (via bot.ts)
-- `setupPerchSessionRunnerAndScheduler()` initializes `PerchScheduler` with dependencies
-- Wires `onPerchTrigger` callback to `PerchSessionRunner.startPerch()`
-- `bot.ts` calls this setup function and manages lifecycle (start/stop)
+- `setupPerchDriverAndScheduler()` builds `createPerchDriver()` (owns a slot's submit/wrap-up/
+  interrupt-timer lifecycle against the perch conductor) and `createPerchScheduler()` (cron-based
+  hourly trigger), and wires the scheduler's `onPerchTrigger` to the driver's `runSlot()`
+- `bot.ts` calls this setup function once `perchConductor.open()` has succeeded, and manages
+  lifecycle (start/stop)
 
 ### handlers.ts
-- On `messageCreate`, checks if bot is in perching mode
-- Calls `PerchSessionRunner.suspend()` with message details
-- Triggers bot state transition to `idle`
+- On `messageCreate` in the perch-time channel, submits a `discord`-kind turn straight to the
+  perch conductor (`submitPerchChannelMessage`) — a live perch-channel message is answered by the
+  same conductor a scheduled slot runs on, not by suspending/resuming a separate session
 
-### state/manager.ts
-- Tracks `perching` mode with `PerchingModeContext`
-- Uses `goIdle()` for suspension (transitions to idle state)
-- Provides `startPerching()` for resumption
-- **Single source of truth** for bot state transitions
+### presence/manager.ts (composed from the perch ledger, P11)
+- Shows 🦉 emoji while a perch/wrapup turn is active on the perch ledger
+- Idle presence otherwise
 
-### presence/manager.ts
-- Shows 🦉 emoji when in `perching` mode
-- Updates status text based on perch activity
-- Transitions to idle presence when perch suspended
-
-### coordinator-setup.ts
-- Checks `isSuspended()` after message response completes
-- Triggers `resumeAfterSuspension()` to restore perch session
-- Passes `contextNote` to message handling during suspension
+### coordinator-setup.ts / conductor-processor.ts
+- Conversation turns and perch turns are two independent conductors with their own ledgers and
+  journals; neither suspends or resumes the other
 
 ## Files
 
@@ -325,44 +323,49 @@ sst secret set PerchEnabled true
   - Special handling for late-night (spans midnight: 23-1)
 
 - **`prompts.ts`**: Prompt generation
-  - `BASE_PROMPT`: Core perch philosophy
-  - `buildPerchPrompt(slot)`: Combines base + slot hint
-  - `buildPerchResumedPrompt()`: Lightweight resume context after suspension
-  - `buildPerchTimeoutPrompt()`: Timeout prompt with partialWork
-  - `buildTestPerchPrompt()`: Test mode prompt with forced slot
-  - `getSuggestionLevelDescription()`: Human-readable levels
+  - `formatSlotName()` / `getSuggestionLevelDescription()`: Human-readable slot/level text used
+    when building a perch turn's envelope (see `envelope.ts`); the perch philosophy itself now
+    lives in `PERCH_ROLE_PROMPT` (`src/agent/prompts/system-prompt.ts`), part of the perch
+    session's system prompt rather than a per-turn user message
 
 - **`scheduler.ts`**: Cron-based scheduling
-  - `createPerchScheduler()`: Factory for scheduler (accepts optional `perchSessionRunner` for suspension guard, optional `getCurrentLocalHour` for testing)
-  - `triggerNow()`: Immediately trigger a perch session
-  - `triggerTestPerch()`: Trigger a test perch session, cycling through `TEST_SLOTS` (all slots except `wikipedia`)
+  - `createPerchScheduler()`: Factory for scheduler (optional `getCurrentLocalHour` for testing,
+    optional `isCostPaused` predicate)
+  - `triggerNow()`: Immediately trigger a perch check
+  - `triggerTestPerch()`: Trigger a test perch, cycling through `TEST_SLOTS` (all slots except `wikipedia`)
   - Uses `cron-parser` with `H * * * *` pattern
-  - Handles deferral when bot busy
-  - Suspension guard: checks `isSuspended()` before starting new perch
-  - Subscribes to `BotStateManager` for idle transitions
+  - Overlap/deferral against a running slot turn is the driver's job (see `perch-driver.ts`), not
+    the scheduler's — the scheduler only gates on the legacy `stateManager` when one is supplied
 
-- **`session-runner.ts`**: Session lifecycle
-  - `createPerchSessionRunner()`: Factory for runner (deps include optional `contextBuilder` and `activityLogger`)
-  - `startPerch(slot)`: Begins session with slot-specific prompt
-  - `suspend(message)`: Saves state (`sessionId`, `slot`, `elapsedMs`, `suspendedAt`), aborts session, transitions to idle
-  - `resumeAfterSuspension()`: Restores state, resumes with paused clock and lightweight prompt
-  - `isSuspended()`: Checks if perch is currently suspended
-  - `clearSuspension()`: Error recovery to clear suspended state
-  - `getAbortController()`: Returns the current session's AbortController (if active)
-  - Timeout tracking: elapsed perch time (not wall-clock)
-  - Error handling and state cleanup
+- **`perch-driver.ts`**: Slot turn lifecycle
+  - `createPerchDriver()`: Submits a slot's envelope to the perch conductor, arms the wrap-up and
+    interrupt timers relative to the slot's `endsAt`, and defers (single pending flag, no queueing)
+    when a slot turn is already running
+  - `runSlot(slot)`: Synchronous decide-to-submit-or-defer; the actual submission happens in a
+    fire-and-forget continuation
 
 - **`index.ts`**: Public API exports
 
 ## Example Usage
 
-### Starting the Scheduler
+### Starting the Scheduler + Driver
 
 ```typescript
-import { createPerchScheduler } from '@/agent/perch/scheduler';
+import { createPerchDriver, createPerchScheduler } from '@/agent/perch';
+
+const driver = createPerchDriver({
+  conductor: perchConductor, // Pick<Conductor, 'submit' | 'interruptCurrent' | 'deliver' | 'status'>
+  perchConfig: config.perch,
+  clock,
+  contextBuilder,
+  activityLogger,
+  channelRegistry,
+  responseRouter,
+  client,
+  rateLimiter,
+});
 
 const scheduler = createPerchScheduler({
-  stateManager,
   logger,
   config: {
     enabled: true,
@@ -372,56 +375,10 @@ const scheduler = createPerchScheduler({
     maxSessionMinutes: 45,
     wrapUpTimeoutMinutes: 5,
   },
-  onPerchTrigger: async (slot) => {
-    await sessionRunner.startPerch(slot);
-  },
-  perchSessionRunner: sessionRunner, // Optional: enables suspension guard
+  onPerchTrigger: slot => driver.runSlot(slot),
 });
 
 scheduler.start();
-```
-
-### Running a Session
-
-```typescript
-import { createPerchSessionRunner } from '@/agent/perch/session-runner';
-
-const runner = createPerchSessionRunner({
-  stateManager,
-  logger,
-  runAgentSession: async ({ prompt, sessionId, abortSignal }) => {
-    // Your agent execution logic
-    const abortController = new AbortController();
-    abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
-    const result = await agent.handleInput([], {
-      specialMode: 'perching',
-      perchPrompt: prompt,
-      sessionId,
-      abortController,
-    });
-    return { completed: result.completed, sessionId: result.sessionId };
-  },
-});
-
-// Start perch for current slot
-await runner.startPerch('pre-dawn');
-
-// Handle suspension (when user message arrives)
-runner.suspend({
-  channelId: '...',
-  author: 'Craig',
-  channelName: 'general',
-  content: 'Quick question...',
-});
-
-// Check if suspended
-const suspended = runner.isSuspended(); // true
-
-// Resume after responding to the message
-await runner.resumeAfterSuspension();
-
-// Clear suspension (error recovery)
-runner.clearSuspension();
 ```
 
 ### Manual Testing
