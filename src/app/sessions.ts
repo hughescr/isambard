@@ -3,7 +3,7 @@
  * MCP server instance set (role `'conversation'`), its once-per-process system prompt (identity
  * loaded from `IdentityCache`), and the merged hook map a session's Agent SDK `Options` need
  * (SessionStart boot bundle for `startup`/`compact`, PreCompact/PostCompact -> ledger +
- * `ContextPolicy.resetAll()` + `Conductor.recordCompactionSummary`, Stop/StopFailure lifecycle
+ * `ContextPolicy.resetAll()`, Stop/StopFailure lifecycle
  * logging, task-tracking logging).
  *
  * `createConversationConductor` BUILDS but never OPENS the conductor — the caller (`src/index.ts`)
@@ -167,11 +167,10 @@ export async function createConversationConductor(params: CreateConversationCond
         });
     }
 
-    // Late-bound: the compaction sink (built before the conductor exists, since it feeds into
-    // buildOptions -> createConductor) needs Conductor.recordCompactionSummary, the one public
-    // entry point conductor.ts exposes for PostCompact hook wiring (see conductor.ts's module
-    // doc). Assigned once, right after createConductor returns, below — eslint's prefer-const
-    // cannot see that the assignment below must happen after this closure is already captured.
+    // Late-bound: the compaction telemetry (built before the conductor exists, since it feeds into
+    // buildOptions -> createConductor) reads the live threshold from the conductor. Assigned once,
+    // right after createConductor returns, below — eslint's prefer-const cannot see that the
+    // assignment below must happen after this closure is already captured.
     // eslint-disable-next-line prefer-const -- assigned exactly once, but necessarily after compactionSink/hooks/buildOptions close over it (circular build order: buildOptions -> createConductor needs hooks -> compactionSink needs the Conductor this call produces)
     let conductorRef: Conductor | undefined;
 
@@ -188,12 +187,12 @@ export async function createConversationConductor(params: CreateConversationCond
         onCompactionStart: (trigger) => {
             ledgerStore.dispatch({ type: 'compaction_started', trigger, at: new Date(clock.now()) });
         },
-        onCompactionEnd: (summary) => {
+        onCompactionEnd: () => {
             // Gap: re-arm both context-policy gates (per-user memory, events delta) as if this
             // were a cold start, so the next turn re-injects rather than assuming the compacted
-            // transcript still remembers what was already shown.
+            // transcript still remembers what was already shown. The summary itself is not
+            // persisted (see conductor.ts's module doc).
             contextPolicy.resetAll();
-            void conductorRef?.recordCompactionSummary(summary);
         },
     };
 
@@ -411,10 +410,9 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         onCompactionStart: (trigger) => {
             ledgerStore.dispatch({ type: 'compaction_started', trigger, at: new Date(clock.now()) });
         },
-        onCompactionEnd: (summary) => {
-            // No ContextPolicy to reset (perch injects no per-user memory block) — just report
-            // the summary, mirroring conversation's own PostCompact wiring otherwise.
-            void conductorRef?.recordCompactionSummary(summary);
+        onCompactionEnd: () => {
+            // No ContextPolicy to reset (perch injects no per-user memory block), and the summary
+            // is not persisted (see conductor.ts's module doc): nothing to do here.
         },
     };
 

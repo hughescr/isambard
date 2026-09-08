@@ -100,14 +100,13 @@ describe('createDiscordBot', () => {
     /** Returns a plain object satisfying the shape tests need to observe — cast to `Conductor` at each call site, since only `open`/`shutdown`/`subscribeTurn` are ever exercised here. */
     function makeFakeConductor(overrides: Record<string, unknown> = {}) {
         return {
-            open:                    mock(async () => ({ sessionId: 'sess-1', resumed: false })),
-            submit:                  mock(async () => ({})),
-            deliver:                 mock(async () => ({ delivered: true })),
-            recordCompactionSummary: mock(async () => undefined),
-            interruptCurrent:        mock(async () => undefined),
-            subscribeTurn:           mock(() => mock(() => undefined)),
-            status:                  mock(() => ({})),
-            shutdown:                mock(async () => undefined),
+            open:             mock(async () => ({ sessionId: 'sess-1', resumed: false })),
+            submit:           mock(async () => ({})),
+            deliver:          mock(async () => ({ delivered: true })),
+            interruptCurrent: mock(async () => undefined),
+            subscribeTurn:    mock(() => mock(() => undefined)),
+            status:           mock(() => ({})),
+            shutdown:         mock(async () => undefined),
             ...overrides,
         } as unknown as Conductor & { open: ReturnType<typeof mock>, shutdown: ReturnType<typeof mock>, subscribeTurn: ReturnType<typeof mock> };
     }

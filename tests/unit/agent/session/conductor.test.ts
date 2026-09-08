@@ -16,7 +16,6 @@ import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import type { Envelope } from '@/agent/session/types';
 import { DEFAULT_RETRY_CONFIG } from '@/config/retry-config';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
-import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { ErrorClassification, RetryPolicy } from '@/utils';
 
 /** Flushes enough microtask ticks for the conductor's promise chains (reader loop, guard.onTurnEnd, retry scheduling) to settle. */
@@ -1092,44 +1091,6 @@ describe('createConductor', () => {
 
             h.instances[0].emit(frames.resultSuccess());
             await flush();
-        });
-    });
-
-    describe('recordCompactionSummary()', () => {
-        it('logs the summary via the memoryBackend and threads the returned path onto the next compaction_completed', async () => {
-            const create = jest.fn(async (input: { path: string }) => ({ path: input.path }));
-            const memoryBackend = { create } as unknown as MemoryToolBackend;
-            const h = build({ memoryBackend });
-            await openWith(h);
-            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 60 }));
-            const firstResult = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
-            await flush();
-            h.instances[0].emit(frames.resultSuccess());
-            await firstResult;
-            await flush();
-            expect(h.journal.byKind('compaction_started')).toHaveLength(1);
-
-            await h.conductor.recordCompactionSummary('compacted the last 40 turns');
-
-            expect(create).toHaveBeenCalledTimes(1);
-            const loggedPath = create.mock.calls[0][0].path;
-            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 10 }));
-            h.instances[0].emit(frames.compactBoundary());
-            await flush();
-            h.instances[0].emit(frames.resultSuccess());
-            await flush();
-
-            const [entry] = h.journal.byKind('compaction_completed');
-            expect(entry.summaryPath).toBe(loggedPath);
-        });
-
-        it('is a no-op (logged) when no memoryBackend was configured', async () => {
-            const h = build();
-            await openWith(h);
-
-            await expect(h.conductor.recordCompactionSummary('a summary')).resolves.toBeUndefined();
-
-            expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ role: 'conversation' }), expect.any(String));
         });
     });
 

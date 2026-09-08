@@ -81,12 +81,6 @@ export type { DiscordEnvelopeInput } from './discord-envelope-input';
 
 export { createSessionJournal, type CreateSessionJournalParams } from './journal';
 
-export {
-    logCompactionSummary,
-    type LogCompactionSummaryDeps,
-    type LogCompactionSummaryInput
-} from './compaction-log';
-
 export { createResumeStore, type RoleResumeStore } from './resume-store';
 
 export {

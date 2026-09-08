@@ -165,7 +165,7 @@ describe('SessionJournalBackend', () => {
             { ...BASE, SK: 'f', type: 'task_completed', taskId: 't1', description: 'do the thing' },
             { ...BASE, SK: 'g', type: 'task_lost', taskId: 't1', description: 'do the thing' },
             { ...BASE, SK: 'h', type: 'compaction_started', trigger: 'manual' },
-            { ...BASE, SK: 'i', type: 'compaction_completed', summaryPath: '/events/compaction/x' },
+            { ...BASE, SK: 'i', type: 'compaction_completed' },
             { ...BASE, SK: 'j', type: 'compaction_failed', error: 'timeout' },
             {
                 ...BASE, SK: 'k', type: 'session_opened', role: 'perch', sessionId: 'sess-1', resumed: true, fallback: true,

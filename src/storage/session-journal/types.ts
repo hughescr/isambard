@@ -46,7 +46,7 @@ export const journalEntrySchema = z.discriminatedUnion('type', [
     z.object({ ...journalEntryBase, type: z.literal('task_completed'), taskId: z.string(), description: z.string().optional() }),
     z.object({ ...journalEntryBase, type: z.literal('task_lost'), taskId: z.string(), description: z.string().optional() }),
     z.object({ ...journalEntryBase, type: z.literal('compaction_started'), trigger: z.enum(['manual', 'auto']).optional() }),
-    z.object({ ...journalEntryBase, type: z.literal('compaction_completed'), summaryPath: z.string().optional() }),
+    z.object({ ...journalEntryBase, type: z.literal('compaction_completed') }),
     z.object({ ...journalEntryBase, type: z.literal('compaction_failed'), error: z.string() }),
     z.object({
         ...journalEntryBase, type: z.literal('session_opened'), role: sessionRoleSchema, sessionId: z.string(), resumed: z.boolean(), fallback: z.boolean().optional(),

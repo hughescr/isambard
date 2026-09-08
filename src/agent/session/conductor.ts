@@ -12,10 +12,9 @@
  * handshake of {@link Conductor.open} (the SDK emits no frame until it has read one), and drives the guard from every raw frame it observes,
  * which already covers every frame-observable release path (`compact_boundary`, the `/compact`
  * turn's own result, the `error-compacting-conversation` notification, and the clock ceiling).
- * {@link Conductor.recordCompactionSummary} is the one exception: it is a public entry point this
- * module exposes so P9's PostCompact hook wiring has somewhere to hand the SDK's raw
- * `compact_summary` text, since the summary itself never arrives on a stream frame this module
- * can observe.
+ * Compaction summaries are deliberately NOT persisted anywhere (Craig, 2026-09-06): the summary
+ * already lives in the transcript and the SDK transcript file, and a memory copy would be
+ * embedded and pollute search. The journal keeps only the compaction's metadata.
  *
  * @module agent/session/conductor
  */
@@ -27,7 +26,6 @@ import { StreamTracker, type StreamProgress  } from '../stream-tracker';
 import type { AgentStreamEvent } from '../types';
 import type { BuildBootBundleInput } from './boot-bundle';
 import { createCompactionGuard, type CompactionGuard } from './compaction-guard';
-import { logCompactionSummary, type LogCompactionSummaryDeps } from './compaction-log';
 import { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 import {
     buildBootEnvelope,
@@ -177,15 +175,6 @@ export interface CreateConductorParams {
      * {@link bootBundle} string.
      */
     buildBootBundle?: (input: Pick<BuildBootBundleInput, 'lostTasks' | 'undelivered'>) => string | Promise<string>
-    /**
-     * Backs {@link Conductor.recordCompactionSummary} (P8, design 3.3): when provided, a PostCompact
-     * summary reported through that method is logged to `/events/compaction/<ts>` via
-     * {@link import('./compaction-log').logCompactionSummary}, and the returned path rides the next
-     * `compaction_completed` journal entry. Wiring an actual PostCompact hook to call
-     * `recordCompactionSummary` is P9's job (see the module doc); omitted, `compaction_completed`
-     * carries no `summaryPath`.
-     */
-    memoryBackend?:   LogCompactionSummaryDeps['memoryBackend']
     logger:           Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
     /** Observes every raw frame alongside {@link Conductor.subscribeTurn} subscribers. */
     onTurnFrame?:     (turnId: string, frame: SDKMessage) => void
@@ -226,15 +215,6 @@ export interface Conductor {
      * did land is never re-sent even if this call never got to return.
      */
     deliver:                       (envelopeId: string, send: () => Promise<{ channelId: string, messageIds: string[] }>) => Promise<DeliverResult>
-    /**
-     * Reports a just-finished compaction's PostCompact summary (design 3.3, P8): logs it via
-     * {@link import('./compaction-log').logCompactionSummary} when {@link CreateConductorParams.memoryBackend}
-     * was provided, and stashes the returned path so the next `compaction_completed` journal
-     * entry carries it. A no-op (logged) when `memoryBackend` was not provided. The caller
-     * (P9's hook wiring — see the module doc) is responsible for calling this from an actual
-     * PostCompact hook with the SDK's `compact_summary`.
-     */
-    recordCompactionSummary:       (summary: string) => Promise<void>
     interruptCurrent:              (options?: InterruptCurrentOptions) => Promise<void>
     subscribeTurn:                 (handler: (turnId: string, frame: SDKMessage) => void) => () => void
     status:                        () => ConductorStatus
@@ -316,7 +296,7 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
 export function createConductor(params: CreateConductorParams): Conductor {
     const {
         role, queryFn, buildOptions, clock, readRss, ledgerStore, config, retryPolicy,
-        journal, resumeStore, bootBundle, buildBootBundle, memoryBackend, logger, onTurnFrame,
+        journal, resumeStore, bootBundle, buildBootBundle, logger, onTurnFrame,
     } = params;
     const classifyError = params.classifyError ?? classifyClaudeError;
 
@@ -324,8 +304,6 @@ export function createConductor(params: CreateConductorParams): Conductor {
     let shuttingDown = false;
     /** Populated once by {@link runBootRecovery} at the start of {@link open}; guards {@link deliver} against re-sending an envelope a prior process already delivered. */
     let deliveryGuard: DeliveryGuard | undefined;
-    /** Set by {@link recordCompactionSummary} when it successfully logs a summary; consumed (and cleared) the next time {@link journalCompactionOutcome} journals a successful `compaction_completed`. */
-    let pendingCompactionSummaryPath: string | undefined;
     /** The text {@link openHandshakeText} returns — the static {@link bootBundle} until {@link runBootRecovery} replaces it with {@link buildBootBundle}'s output, when provided. */
     let resolvedBootBundle = bootBundle;
     /** True from the moment a mid-life close is observed until a replacement session (resumed or fresh) has opened — or reopening has been given up on entirely. Gates {@link processQueue} and {@link submitCompact} so no envelope is ever pushed into the dead handle's orphaned {@link InputQueue} while a reopen is in flight. */
@@ -420,10 +398,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             }
             return;
         }
-        journal.append({
-            type: 'compaction_completed', at: now(), ...(pendingCompactionSummaryPath === undefined ? {} : { summaryPath: pendingCompactionSummaryPath }),
-        });
-        pendingCompactionSummaryPath = undefined;
+        journal.append({ type: 'compaction_completed', at: now() });
     }
 
     /**
@@ -1026,15 +1001,6 @@ export function createConductor(params: CreateConductorParams): Conductor {
         return { delivered: true };
     }
 
-    async function recordCompactionSummary(summary: string): Promise<void> {
-        if(memoryBackend === undefined) {
-            logger.warn({ role }, 'Conductor.recordCompactionSummary: no memoryBackend configured; summary dropped');
-            return;
-        }
-        const path = await logCompactionSummary({ memoryBackend, clock }, { role, summary });
-        pendingCompactionSummaryPath = path;
-    }
-
     async function interruptCurrent(options: InterruptCurrentOptions = {}): Promise<void> {
         if(currentTurn === null) {
             return;
@@ -1121,7 +1087,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, appendWithoutTurn, deliver, recordCompactionSummary, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, appendWithoutTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
         getCompactionThresholdPercent: () => guard.getThresholdPercent(),
         setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };

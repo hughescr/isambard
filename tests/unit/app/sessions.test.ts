@@ -776,7 +776,7 @@ describe('createPerchConductor', () => {
         await preCompact?.({ trigger: 'auto', session_id: 'sess-1', hook_event_name: 'PreCompact' } as never, undefined, undefined as never);
         expect(ledgerStore.get().compaction).toBe('compacting');
 
-        // PostCompact's own hook only reports the summary (recordCompactionSummary) — the ledger's
+        // PostCompact's own hook does nothing beyond the ledger dispatch — the ledger's
         // `compaction` field returns to 'none' only on an actual `compact_boundary` SDK frame
         // (ledger.ts's own reducer), which this test never emits; asserting the hook resolves
         // without throwing is the meaningful behaviour to pin here (no ContextPolicy to reset).

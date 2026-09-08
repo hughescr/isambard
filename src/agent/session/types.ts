@@ -131,8 +131,8 @@ export type JournalEntry
       | { type: 'task_completed', at: Date, taskId: string, description?: string }
       | { type: 'task_lost', at: Date, taskId: string, description?: string }
       | { type: 'compaction_started', at: Date, trigger?: 'manual' | 'auto' }
-      /** summaryPath is the memory-tool path {@link import('./compaction-log').logCompactionSummary} wrote the PostCompact summary to (P8), when one was logged. */
-      | { type: 'compaction_completed', at: Date, summaryPath?: string }
+      /** Metadata only: the summary itself is never persisted (see conductor.ts's module doc). */
+      | { type: 'compaction_completed', at: Date }
       | { type: 'compaction_failed', at: Date, error: string }
       | { type: 'session_opened', at: Date, role: SessionRole, sessionId: string, resumed: boolean, fallback?: boolean }
       /** The counterpart to session_opened, journaled by the P7 shutdown sequence. */

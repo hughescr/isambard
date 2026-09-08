@@ -75,10 +75,10 @@ describe('JournalEntry', () => {
         expect(entry.messageIds).toEqual(['m1', 'm2']);
     });
 
-    it('lets compaction_completed carry an optional summaryPath', () => {
-        const entry: JournalEntry = { type: 'compaction_completed', at: new Date('2026-09-05T00:00:00Z'), summaryPath: '/events/compaction/2026-09-05' };
+    it('compaction_completed carries only its timestamp: summaries are never persisted', () => {
+        const entry: JournalEntry = { type: 'compaction_completed', at: new Date('2026-09-05T00:00:00Z') };
 
-        expect(entry.summaryPath).toBe('/events/compaction/2026-09-05');
+        expect(Object.keys(entry)).toEqual(['type', 'at']);
     });
 });
 
