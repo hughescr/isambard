@@ -80,6 +80,7 @@ const RECENT_AUTHORS_LIMIT = 10;
  * (perch's boot-bundle hook still calls this directly — perch has no merged Discord catch-up
  * envelope to defer to).
  */
+// Stryker disable next-line ArithmeticOperator: module-level constant — evaluated at load, before the mutant switch is set, so the runner cannot observe the mutation; the 24h value is pinned by tests/unit/app/sessions.test.ts
 const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -91,6 +92,7 @@ const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * `sessionConfigSchema`'s own `bootEventsWindowMs` default and `catchup-setup.ts`'s identically-named
  * constant.
  */
+// Stryker disable next-line ArithmeticOperator: module-level constant — evaluated at load, before the mutant switch is set, so the runner cannot observe the mutation; the 24h value is pinned by tests/unit/app/sessions.test.ts
 const DEFAULT_BOOT_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** The Agent SDK's SessionStart sources a boot bundle is actually built for — mirrors `hooks/boot-bundle.ts`'s own (unexported) `BootBundleSource`. */
