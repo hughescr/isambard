@@ -7,7 +7,6 @@ import { serviceNameSchema, type ServiceHealthEntry, type ServiceName } from '@/
 import { createMemoryPath, type MemoryToolItemData } from '@/storage';
 
 const T0 = 1_700_000_000_000;
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const TZ = 'America/Los_Angeles';
 
@@ -41,54 +40,87 @@ afterEach(() => {
     jest.restoreAllMocks();
 });
 
-describe('createContextPolicy — shouldInjectUserMemory / markInjected', () => {
-    test('first contact injects (no mark yet)', () => {
+describe('createContextPolicy — shouldInjectUserMemory / markInjected (fingerprint-based, R1)', () => {
+    test('first contact injects (no fingerprint recorded yet)', () => {
         const t = T0;
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
-        expect(policy.shouldInjectUserMemory('u1')).toBe(true);
+        expect(policy.shouldInjectUserMemory('u1', 'about u1')).toBe(true);
     });
 
-    test('a second call within the window does not re-inject', () => {
+    test('the same block content does not re-inject, no matter how much time passes', () => {
         let t = T0;
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
-        policy.markInjected('u1');
-        t += SIX_HOURS_MS - 1;
+        policy.markInjected('u1', 'about u1');
+        t += 365 * 24 * 60 * 60 * 1000;
 
-        expect(policy.shouldInjectUserMemory('u1')).toBe(false);
+        expect(policy.shouldInjectUserMemory('u1', 'about u1')).toBe(false);
     });
 
-    test('re-injects once the window has fully elapsed (>=)', () => {
-        let t = T0;
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+    test('a changed block re-injects immediately, with no elapsed time', () => {
+        const t = T0;
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
-        policy.markInjected('u1');
-        t += SIX_HOURS_MS;
+        policy.markInjected('u1', 'about u1 v1');
 
-        expect(policy.shouldInjectUserMemory('u1')).toBe(true);
+        expect(policy.shouldInjectUserMemory('u1', 'about u1 v2')).toBe(true);
     });
 
     test('marks are tracked independently per user', () => {
         const t = T0;
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
-        policy.markInjected('u1');
+        policy.markInjected('u1', 'about u1');
 
-        expect(policy.shouldInjectUserMemory('u1')).toBe(false);
-        expect(policy.shouldInjectUserMemory('u2')).toBe(true);
+        expect(policy.shouldInjectUserMemory('u1', 'about u1')).toBe(false);
+        expect(policy.shouldInjectUserMemory('u2', 'about u1')).toBe(true);
     });
 
-    test('resetAll re-arms every user', () => {
+    test('resetAll re-arms every user, even for an unchanged block', () => {
         const t = T0;
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
-        policy.markInjected('u1');
-        policy.markInjected('u2');
+        policy.markInjected('u1', 'about u1');
+        policy.markInjected('u2', 'about u2');
         policy.resetAll();
 
-        expect(policy.shouldInjectUserMemory('u1')).toBe(true);
-        expect(policy.shouldInjectUserMemory('u2')).toBe(true);
+        expect(policy.shouldInjectUserMemory('u1', 'about u1')).toBe(true);
+        expect(policy.shouldInjectUserMemory('u2', 'about u2')).toBe(true);
+    });
+});
+
+describe('createContextPolicy — eventsSinceMs / markEventsSeenAt (R1)', () => {
+    test('eventsSinceMs is undefined before any mark', () => {
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+
+        expect(policy.eventsSinceMs()).toBeUndefined();
+    });
+
+    test('markEventsSeen sets eventsSinceMs to the current clock time', () => {
+        const t = T0;
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+
+        policy.markEventsSeen();
+
+        expect(policy.eventsSinceMs()).toBe(t);
+    });
+
+    test('markEventsSeenAt seeds an arbitrary mark, independent of the current clock time', () => {
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+
+        policy.markEventsSeenAt(T0 - 5000);
+
+        expect(policy.eventsSinceMs()).toBe(T0 - 5000);
+    });
+
+    test('resetAll does NOT clear the events mark', () => {
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+
+        policy.markEventsSeenAt(T0 - 1000);
+        policy.resetAll();
+
+        expect(policy.eventsSinceMs()).toBe(T0 - 1000);
     });
 });
 
@@ -96,7 +128,7 @@ describe('createContextPolicy — eventsDelta / markEventsSeen', () => {
     test('eventsDelta returns [] before markEventsSeen has ever been called', async () => {
         const t = T0;
         const loadRecentEventsSince = jest.fn<EventsDeltaSource['loadRecentEventsSince']>();
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
         const result = await policy.eventsDelta();
 
@@ -108,7 +140,7 @@ describe('createContextPolicy — eventsDelta / markEventsSeen', () => {
         let t = T0;
         const item = makeItem({ path: createMemoryPath('/events/2'), content: 'a deployed thing' });
         const loadRecentEventsSince = jest.fn<EventsDeltaSource['loadRecentEventsSince']>().mockResolvedValue([item]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
         policy.markEventsSeen();
         const advanceMs = 90_000;
@@ -128,7 +160,7 @@ describe('createContextPolicy — eventsDelta / markEventsSeen', () => {
         const itemA = makeItem({ path: createMemoryPath('/events/a'), content: 'first' });
         const itemB = makeItem({ path: createMemoryPath('/events/b'), content: 'second' });
         const loadRecentEventsSince = jest.fn<EventsDeltaSource['loadRecentEventsSince']>().mockResolvedValue([itemA, itemB]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
         policy.markEventsSeen();
         t += 1000;
@@ -145,7 +177,7 @@ describe('createContextPolicy — eventsDelta / markEventsSeen', () => {
     test('respects a custom eventLimit', async () => {
         let t = T0;
         const loadRecentEventsSince = jest.fn<EventsDeltaSource['loadRecentEventsSince']>().mockResolvedValue([]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() }, eventLimit: 10 });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() }, eventLimit: 10 });
 
         policy.markEventsSeen();
         t += 1000;
@@ -154,10 +186,10 @@ describe('createContextPolicy — eventsDelta / markEventsSeen', () => {
         expect(loadRecentEventsSince).toHaveBeenCalledWith(1000, 10, new Date(t));
     });
 
-    test('resetAll clears the events mark, so the next eventsDelta returns [] again', async () => {
+    test('resetAll does NOT clear the events mark (R1: the events mark survives compaction/reset), so eventsDelta still queries against it', async () => {
         let t = T0;
         const loadRecentEventsSince = jest.fn<EventsDeltaSource['loadRecentEventsSince']>().mockResolvedValue([makeItem()]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince, loadStateTopSet: jest.fn(), loadCalendarAgenda: jest.fn() } });
 
         policy.markEventsSeen();
         policy.resetAll();
@@ -165,8 +197,8 @@ describe('createContextPolicy — eventsDelta / markEventsSeen', () => {
 
         const result = await policy.eventsDelta();
 
-        expect(result).toEqual([]);
-        expect(loadRecentEventsSince).not.toHaveBeenCalled();
+        expect(result).toHaveLength(1);
+        expect(loadRecentEventsSince).toHaveBeenCalledWith(1000, 50, new Date(t));
     });
 });
 
@@ -174,7 +206,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
     test('stateTopSetDelta returns {added:[],removed:[],changed:[]} before markStateTopSetSeen has ever been called', async () => {
         const t = T0;
         const loadStateTopSet = jest.fn<StateTopSetSource['loadStateTopSet']>();
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         const result = await policy.stateTopSetDelta();
 
@@ -185,7 +217,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
     test('markStateTopSetSeen fetches the current top set via loadStateTopSet', async () => {
         const t = T0;
         const loadStateTopSet = jest.fn<StateTopSetSource['loadStateTopSet']>().mockResolvedValue([]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         await policy.markStateTopSetSeen();
 
@@ -201,7 +233,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
                 { path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a' },
                 { path: createMemoryPath('/state/b'), contentFingerprint: 'fp-b' },
             ]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         await policy.markStateTopSetSeen();
         t += 1000;
@@ -222,7 +254,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
                 { path: createMemoryPath('/state/b'), contentFingerprint: 'fp-b' },
             ])
             .mockResolvedValueOnce([{ path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a' }]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         await policy.markStateTopSetSeen();
         t += 1000;
@@ -239,7 +271,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
         const loadStateTopSet = jest.fn<StateTopSetSource['loadStateTopSet']>()
             .mockResolvedValueOnce([{ path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a-v1' }])
             .mockResolvedValueOnce([{ path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a-v2' }]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         await policy.markStateTopSetSeen();
         t += 1000;
@@ -256,7 +288,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
         const loadStateTopSet = jest.fn<StateTopSetSource['loadStateTopSet']>()
             .mockResolvedValueOnce([{ path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a' }])
             .mockResolvedValueOnce([{ path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a' }]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         await policy.markStateTopSetSeen();
         t += 1000;
@@ -271,7 +303,7 @@ describe('createContextPolicy — stateTopSetDelta / markStateTopSetSeen', () =>
         const loadStateTopSet = jest.fn<StateTopSetSource['loadStateTopSet']>()
             .mockResolvedValueOnce([{ path: createMemoryPath('/state/a'), contentFingerprint: 'fp-a' }])
             .mockResolvedValueOnce([]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet, loadCalendarAgenda: jest.fn() } });
 
         await policy.markStateTopSetSeen();
         policy.resetAll();
@@ -289,7 +321,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
         const t = T0;
         const events = [makeEvent(t)];
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue(events);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         const result = await policy.calendarDelta('u1', TZ);
 
@@ -308,7 +340,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
     test('a second call inside the poll interval reuses the cache instead of polling again', async () => {
         let t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         t += HOUR_MS - 1;
@@ -322,7 +354,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
     test('a call at/after the poll interval re-polls', async () => {
         let t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         t += HOUR_MS;
@@ -337,7 +369,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
         let t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
         const policy = createContextPolicy({
-            now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda }, calendarPollIntervalMs: 5 * 60_000,
+            now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda }, calendarPollIntervalMs: 5 * 60_000,
         });
 
         await policy.calendarDelta('u1', TZ);
@@ -353,7 +385,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
         // trigger from the elapsed-time trigger (both are near-simultaneously true near T0 itself).
         let t = dayWindow(T0, TZ).endMs - 60_000;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockImplementation((_userId, now) => Promise.resolve([makeEvent(now.getTime())]));
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         t += 2 * 60_000; // crosses local midnight, well under calendarPollIntervalMs (1 hour)
@@ -367,7 +399,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
     test('markCalendarSeen before any calendarDelta call for that user is a no-op', async () => {
         const t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         expect(() => policy.markCalendarSeen('u1')).not.toThrow();
 
@@ -378,7 +410,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
     test('markCalendarSeen commits the last polled agenda as the baseline, so a later unchanged poll reports no diff', async () => {
         let t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         policy.markCalendarSeen('u1');
@@ -397,7 +429,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>()
             .mockResolvedValueOnce([makeEvent(t, { uid: 'uid-1' })])
             .mockResolvedValueOnce([makeEvent(t, { uid: 'uid-1' }), makeEvent(t, { uid: 'uid-2', start: new Date(dayWindow(t, TZ).startMs + 3 * HOUR_MS), end: new Date(dayWindow(t, TZ).startMs + 4 * HOUR_MS) })]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         policy.markCalendarSeen('u1');
@@ -413,7 +445,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
     test('calendar poll cache and baseline are tracked independently per user', async () => {
         const t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         policy.markCalendarSeen('u1');
@@ -427,7 +459,7 @@ describe('createContextPolicy — calendarDelta / markCalendarSeen', () => {
     test('resetAll clears the calendar poll cache and baselines, so the next calendarDelta polls and reports isFirst again', async () => {
         let t = T0;
         const loadCalendarAgenda = jest.fn<CalendarAgendaSource['loadCalendarAgenda']>().mockResolvedValue([makeEvent(t)]);
-        const policy = createContextPolicy({ now: () => t, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
+        const policy = createContextPolicy({ now: () => t, contextBuilder: { loadRecentEventsSince: jest.fn(), loadStateTopSet: jest.fn(), loadCalendarAgenda } });
 
         await policy.calendarDelta('u1', TZ);
         policy.markCalendarSeen('u1');
@@ -461,7 +493,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
     }
 
     test('returns undefined when no healthRegistry was supplied', () => {
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder() });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder() });
 
         expect(policy.healthNote()).toBeUndefined();
         expect(() => policy.markHealthSeen()).not.toThrow();
@@ -469,14 +501,14 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
 
     test('surfaces a pre-existing outage the first time healthNote is called (unmarked baseline is treated as all-online)', () => {
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ email: { state: 'offline' } }), summary: 'email: offline' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         expect(policy.healthNote()).toBe('email: offline');
     });
 
     test('a disabled service produces no note, exactly like an online one', () => {
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ bluesky: { state: 'disabled' } }), summary: undefined });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         expect(policy.healthNote()).toBeUndefined();
     });
@@ -486,7 +518,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         // a whole-second retry countdown, so it differs on nearly every call during an ongoing
         // outage even though the underlying service state (getAll()) hasn't moved at all.
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ caldav: { state: 'offline' } }), summary: 'caldav: offline (offline 3m) retry in ~45s' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
@@ -497,14 +529,14 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
 
     test('returns undefined at construction/first mark when everything is already online', () => {
         const healthRegistry = makeHealthRegistry({ entries: makeEntries(), summary: undefined });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         expect(policy.healthNote()).toBeUndefined();
     });
 
     test('renders "All services are back online." on the transition from an outage back to nominal', () => {
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ email: { state: 'offline' } }), summary: 'email: offline' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
@@ -516,7 +548,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
 
     test('renders the new summary again when the set of failing services changes without ever going fully online', () => {
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ email: { state: 'offline' } }), summary: 'email: offline' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
@@ -530,7 +562,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         const healthRegistry = makeHealthRegistry({
             entries: makeEntries({ caldav: { state: 'offline', lastError: { code: 'ECONNRESET', message: 'reset' } } }), summary: 'caldav: offline [ECONNRESET]',
         });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
@@ -541,7 +573,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
     });
 
     test('markHealthSeen without a healthRegistry never throws', () => {
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder() });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder() });
 
         expect(() => policy.markHealthSeen()).not.toThrow();
     });
@@ -553,7 +585,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         // finally called -- otherwise a transition that landed mid-turn is marked seen without
         // ever having been rendered to the user.
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ email: { state: 'offline' } }), summary: 'email: offline' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote(); // observes the outage
         // Email recovers while the turn is still in flight, before markHealthSeen() is called.
@@ -569,7 +601,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
 
     test('resetAll re-arms the health mark, so an unchanged ongoing outage is surfaced again', () => {
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ email: { state: 'offline' } }), summary: 'email: offline' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
@@ -588,7 +620,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
             entries: makeEntries({ bluesky: { state: 'offline' }, caldav: { state: 'offline', lastError: { code: 'A', message: 'x' } } }),
             summary: 'two offline',
         });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();
@@ -606,7 +638,7 @@ describe('createContextPolicy — healthNote / markHealthSeen', () => {
         // non-empty placeholder, an entry with no lastError would produce the exact same key as
         // a *different* entry whose real lastError.code happens to equal that placeholder text.
         const healthRegistry = makeHealthRegistry({ entries: makeEntries({ bluesky: { state: 'offline' } }), summary: 'bluesky offline, no code' });
-        const policy = createContextPolicy({ now: () => T0, userMemoryWindowMs: SIX_HOURS_MS, contextBuilder: makeContextBuilder(), healthRegistry });
+        const policy = createContextPolicy({ now: () => T0, contextBuilder: makeContextBuilder(), healthRegistry });
 
         policy.healthNote();
         policy.markHealthSeen();

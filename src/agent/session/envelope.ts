@@ -261,31 +261,59 @@ export function buildNotificationEnvelope(params: BuildNotificationEnvelopeParam
 
 /** Inputs to {@link buildCatchupEnvelope}. */
 export interface BuildCatchupEnvelopeParams {
-    unreadCount:  number
+    /** `0`/`undefined` renders no unread summary line at all (R1) — the whole {@link buildCatchupText} block is omitted, not just its count. */
+    unreadCount?: number
     channelCount: number
     now:          Date
     timezone:     string
     timeHeader:   string
+    /** Memory-preview-formatted events recorded while offline (e.g. `ContextPolicy.eventsDelta()`). Rendered as `## Events while you were away`; omitted when empty/undefined (R1). */
+    eventsDelta?: string[]
+    /** Background task descriptions lost at restart. Rendered as `## Background tasks lost at restart`; also the sole non-unread trigger for `shouldQuery` (R1). */
+    lostTasks?:   string[]
+    /** Descriptions of undelivered replies the boot sequence redelivered on Izzy's behalf. Rendered as `## Replies redelivered for you`, last. */
+    redelivered?: string[]
+}
+
+/** Renders a `## Heading` section from a list, or `undefined` when the list is empty/undefined. */
+function renderCatchupListSection(heading: string, items: string[] | undefined): string | undefined {
+    return items && items.length > 0 ? `## ${heading}\n${items.join('\n')}` : undefined;
 }
 
 /**
- * Builds a catch-up envelope: `[CATCH-UP · stamp]`, the time header, then
- * {@link buildCatchupText}'s body.
+ * Builds a catch-up envelope: `[CATCH-UP · stamp]`, the time header, the unread/channel summary
+ * ({@link buildCatchupText}) only when `unreadCount` is positive, then `## Events while you were
+ * away` / `## Background tasks lost at restart` / `## Replies redelivered for you`, each only
+ * when non-empty (R1: the boot sequence's catch-up and the recovery re-seed merge into this one
+ * envelope). `shouldQuery`/`hostPriority` escalate to a turn ('wake') only when there is unread
+ * mail or a lost task to surface; an events/redelivered-only catch-up stays 'accumulate' so the
+ * host appends it without interrupting via `Conductor.appendWithoutTurn`.
  * @param params Catch-up envelope inputs
  * @returns A `catchup`-kind {@link Envelope}
  */
 export function buildCatchupEnvelope(params: BuildCatchupEnvelopeParams): Envelope {
-    const { unreadCount, channelCount, now, timezone, timeHeader } = params;
+    const { unreadCount, channelCount, now, timezone, timeHeader, eventsDelta, lostTasks, redelivered } = params;
 
     const stamp = formatEnvelopeStamp(now, timezone);
     const header = `[CATCH-UP · ${stamp}]`;
+    const hasUnread = (unreadCount ?? 0) > 0;
+    const shouldQuery = hasUnread || (lostTasks?.length ?? 0) > 0;
+
+    const text = joinSections([
+        header,
+        timeHeader,
+        hasUnread ? buildCatchupText({ unreadCount: unreadCount ?? 0, channelCount }) : undefined,
+        renderCatchupListSection('Events while you were away', eventsDelta),
+        renderCatchupListSection('Background tasks lost at restart', lostTasks),
+        renderCatchupListSection('Replies redelivered for you', redelivered),
+    ]);
 
     return {
         id:           crypto.randomUUID(),
         kind:         'catchup',
-        text:         joinSections([header, timeHeader, buildCatchupText({ unreadCount, channelCount })]),
-        hostPriority: 'wake',
-        shouldQuery:  true,
+        text,
+        hostPriority: shouldQuery ? 'wake' : 'accumulate',
+        shouldQuery,
         createdAt:    now,
     };
 }

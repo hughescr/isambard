@@ -1208,7 +1208,6 @@ describe('sessionConfigSchema', () => {
             humanWaitCeilingMs:      30_000,
             perchWrapUpLeadMs:       300_000,
             perchInterruptGraceMs:   120_000,
-            userMemoryWindowMs:      6 * 60 * 60 * 1000,
             bootEventsWindowMs:      24 * 60 * 60 * 1000,
             shutdownTurnWaitMs:      60_000,
             shutdownDeadlineMs:      120_000,

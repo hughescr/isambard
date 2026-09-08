@@ -39,6 +39,7 @@ import {
     createSessionLifecycleHooks,
     createTaskTrackingHooks,
     mergeHookMaps,
+    type BootKind,
     type Clock,
     type CompactionSink,
     type CompactionTelemetry,
@@ -69,6 +70,64 @@ type TaskListSource = CreateBootBundleBuilderParams['taskListReader'];
 /** How many distinct recently-submitted Discord authors the boot bundle's `recentUsers` section reports, most recent first. */
 const RECENT_AUTHORS_LIMIT = 10;
 
+/**
+ * How far back a boot-bundle hook re-derives crash recovery from its own role's journal (P8) —
+ * a second, independent read of the SAME journal `Conductor.open()` already scanned internally
+ * on this process's boot, matching `conductor.ts`'s own (private) `RECOVERY_WINDOW_MS` and
+ * `catchup-setup.ts`'s copy. Shared by both {@link createConversationConductor} (its own
+ * pre-open `bootLostTasks` snapshot — see {@link ConversationConductorResult}'s doc for why the
+ * conversation SessionStart hook itself no longer calls this) and {@link createPerchConductor}
+ * (perch's boot-bundle hook still calls this directly — perch has no merged Discord catch-up
+ * envelope to defer to).
+ */
+const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Fallback lookback window for a `compact` boot bundle's events section when
+ * `contextPolicy.eventsSinceMs()` has no mark yet (R1: e.g. a compaction firing before any
+ * Discord turn or boot envelope has ever called `markEventsSeenAt`/`markEventsSeen`). Without
+ * this fallback, such a compaction would render NO events section at all — strictly less context
+ * than the pre-R1 bundle, which always injected a 24h window. Matches
+ * `sessionConfigSchema`'s own `bootEventsWindowMs` default and `catchup-setup.ts`'s identically-named
+ * constant.
+ */
+const DEFAULT_BOOT_EVENTS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** The Agent SDK's SessionStart sources a boot bundle is actually built for — mirrors `hooks/boot-bundle.ts`'s own (unexported) `BootBundleSource`. */
+type BootStartSource = 'startup' | 'resume' | 'compact';
+
+/**
+ * Maps the Agent SDK's SessionStart `source` onto this module's {@link BootKind} (R1): `'startup'`
+ * (a cold process start) becomes `'fresh'`; `'resume'`/`'compact'` map onto themselves.
+ */
+function bootKindFromSource(source: BootStartSource): BootKind {
+    return source === 'startup' ? 'fresh' : source;
+}
+
+/**
+ * Re-derives crash recovery from `journal` over {@link RECOVERY_WINDOW_MS} and formats it for a
+ * boot-bundle build (lost-task/undelivered description lists). Never rejects: a `readSince`
+ * failure degrades to an empty recovery section rather than blocking the boot-bundle hook, logged
+ * as `'${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery section'`.
+ * Shared by both session roles so the recovery-read/format/degrade behaviour cannot drift between
+ * them.
+ */
+async function loadBootRecovery(
+    journal: SessionJournal, clock: Clock, logger: Pick<Logger, 'warn'>, roleLabel: 'Conversation' | 'Perch'
+): Promise<{ lostTasks: string[], undelivered: string[] }> {
+    try {
+        const entries = await journal.readSince(clock.now() - RECOVERY_WINDOW_MS);
+        const recovery = computeRecovery(entries);
+        return {
+            lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
+            undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+        };
+    } catch (err) {
+        logger.warn({ err }, `${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery section`);
+        return { lostTasks: [], undelivered: [] };
+    }
+}
+
 /** Dependencies and configuration for {@link createConversationConductor}. */
 export interface CreateConversationConductorParams {
     config:              SessionConfig
@@ -98,6 +157,24 @@ export interface ConversationConductorResult {
     ledgerStore:         LedgerStore
     contextPolicy:       ContextPolicy
     compactionTelemetry: CompactionTelemetry
+    /**
+     * R1: background-task descriptions lost at restart, captured by reading `journal` HERE —
+     * before this function returns, and therefore necessarily before the caller ever calls the
+     * returned `conductor.open()` — for the merged Discord boot envelope
+     * (`catchup-setup.ts`'s `runConductorInboxInit`/`submitMergedBootEnvelope`) to render.
+     *
+     * This timing is load-bearing, not incidental: `Conductor.open()`'s own boot recovery
+     * (`runBootRecovery`) journals a `task_lost` entry for each of these same tasks via a
+     * fire-and-forget `journal.append` (write-through, not awaited — see `journal.ts`'s module
+     * doc). A read of the journal AFTER `open()` has run — as `runConductorInboxInit` used to do,
+     * recomputing recovery on its own — races that write; in production, with the channel
+     * registry hydration and other boot work that runs between `open()` and
+     * `runConductorInboxInit` in `bot.ts`'s `clientReady`, that write reliably lands first, and
+     * `computeRecovery` treats a task with its own `task_lost` entry as already resolved — so the
+     * post-open read would see NO lost tasks at all, even when this boot genuinely lost one.
+     * Reading here, before `open()` is even called, cannot race that write.
+     */
+    bootLostTasks:       string[]
 }
 
 /**
@@ -105,13 +182,19 @@ export interface ConversationConductorResult {
  * policy, and returns a {@link Conductor} that has NOT been opened. The caller is responsible for
  * calling `conductor.open()` when it decides opening is safe.
  * @param params See {@link CreateConversationConductorParams}.
- * @returns `{ conductor, ledgerStore, contextPolicy, compactionTelemetry }` — see {@link ConversationConductorResult}.
+ * @returns `{ conductor, ledgerStore, contextPolicy, compactionTelemetry, bootLostTasks }` — see {@link ConversationConductorResult}.
  */
 export async function createConversationConductor(params: CreateConversationConductorParams): Promise<ConversationConductorResult> {
     const {
         config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, healthRegistry,
         identityCache, taskListReader, journal, resumeStore, channelListProvider, clock, logger,
     } = params;
+
+    // R1: see ConversationConductorResult.bootLostTasks's own doc for why this MUST be read here
+    // — before conductor.open() is ever called by this function's caller — rather than lazily
+    // inside the SessionStart hook below (which no longer renders lost tasks at all; see
+    // buildBootBundleText's own doc) or from `catchup-setup.ts` after open() has run.
+    const { lostTasks: bootLostTasks } = await loadBootRecovery(journal, clock, logger, 'Conversation');
 
     const mcpInstances = createMcpServerInstances(mcpShared, { role: 'conversation', emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
@@ -136,8 +219,7 @@ export async function createConversationConductor(params: CreateConversationCond
 
     const ledgerStore = createLedgerStore('conversation', { logger });
     const contextPolicy = createContextPolicy({
-        now:                () => clock.now(),
-        userMemoryWindowMs: config.userMemoryWindowMs,
+        now: () => clock.now(),
         contextBuilder,
         healthRegistry,
     });
@@ -157,14 +239,50 @@ export async function createConversationConductor(params: CreateConversationCond
         recentAuthors = [authorId, ...recentAuthors.filter(id => id !== authorId)].slice(0, RECENT_AUTHORS_LIMIT);
     }
 
-    async function buildBootBundleText(): Promise<string> {
-        return bootBundleBuilder.build({
+    /**
+     * Maps the SessionStart `source` onto a {@link BootKind} (R1). Deliberately renders NEITHER
+     * lost tasks NOR undelivered envelopes for `fresh`/`resume` (always `[]`, so `boot-bundle.ts`
+     * omits those sections entirely — its own `renderListSection` renders nothing for an empty
+     * list): that content is the exclusive responsibility of the merged Discord boot envelope
+     * (`catchup-setup.ts`'s `runConductorInboxInit`/`submitMergedBootEnvelope`), which fires in
+     * the SAME boot sequence moments after this hook's `fresh`/`resume` SessionStart — see design
+     * decision 2, "the boot bundle and the Discord catch-up merge into ONE boot envelope". Feeding
+     * the same journal-derived recovery into both would inject the same "lost tasks"/"undelivered
+     * replies" content twice on every restart (a `resume` boot — the common case — otherwise
+     * duplicated it on every single restart). Perch has no such merged envelope, so its own
+     * boot-bundle hook (below) keeps calling {@link loadBootRecovery} directly for every kind.
+     *
+     * `compact` renders "events since the mark" via `contextPolicy.eventsSinceMs()` (the mark
+     * survives `resetAll()` — see context-policy.ts's own module doc), falling back to
+     * {@link DEFAULT_BOOT_EVENTS_WINDOW_MS} when no mark has been seeded yet (e.g. perch's
+     * `testMode.triggerOnStartup` suppresses the boot envelope that would normally seed it, and a
+     * compaction fires before any Discord turn seeds it either) so a compaction re-seed never
+     * renders zero events purely because nothing has called `markEventsSeenAt`/`markEventsSeen`
+     * yet — strictly less context than the pre-R1 bundle would be a regression, not an
+     * improvement. The mark advances via `markEventsSeen()` once the bundle has actually been
+     * built, so a later compaction's window starts from here rather than replaying the same
+     * events again.
+     */
+    async function buildBootBundleText(source: BootStartSource): Promise<string> {
+        const kind = bootKindFromSource(source);
+        const eventsSinceMs = kind === 'compact'
+            ? contextPolicy.eventsSinceMs() ?? (clock.now() - DEFAULT_BOOT_EVENTS_WINDOW_MS)
+            : undefined;
+
+        const text = await bootBundleBuilder.build({
+            kind,
+            eventsSinceMs,
             lostTasks:   [],
             undelivered: [],
             recentUsers: recentAuthors,
             activeTasks: ledgerStore.get().tasks.map(task => task.description),
-            resetNotice: true,
         });
+
+        if(kind === 'compact') {
+            contextPolicy.markEventsSeen();
+        }
+
+        return text;
     }
 
     // Late-bound: the compaction telemetry (built before the conductor exists, since it feeds into
@@ -197,7 +315,7 @@ export async function createConversationConductor(params: CreateConversationCond
     };
 
     const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
-        createBootBundleHooks(async () => buildBootBundleText()),
+        createBootBundleHooks(async source => buildBootBundleText(source)),
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
         createTaskTrackingHooks()
@@ -270,19 +388,9 @@ export async function createConversationConductor(params: CreateConversationCond
     });
 
     return {
-        conductor, ledgerStore, contextPolicy, compactionTelemetry,
+        conductor, ledgerStore, contextPolicy, compactionTelemetry, bootLostTasks,
     };
 }
-
-/**
- * How far back {@link createPerchConductor}'s own boot-bundle hook re-derives crash recovery
- * from the perch journal — matches `conductor.ts`'s own (private) `RECOVERY_WINDOW_MS` and
- * `catchup-setup.ts`'s copy: a deliberate, documented duplication of one read-only computation
- * (see this module's own doc and `catchup-setup.ts`'s `runConductorInboxInit` for the same
- * pattern), not of the journal-write/delivery-guard-seeding work `Conductor.open()` itself
- * already does unconditionally on every open (P8).
- */
-const PERCH_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Dependencies and configuration for {@link createPerchConductor}. */
 export interface CreatePerchConductorParams {
@@ -321,7 +429,7 @@ export interface PerchConductorResult {
  *
  * Unlike the conversation conductor, perch's boot-bundle SessionStart hook re-derives crash
  * recovery itself (a second, independent read of the SAME journal `Conductor.open()` already
- * scanned internally on this process's boot — see {@link PERCH_RECOVERY_WINDOW_MS}'s doc) so a
+ * scanned internally on this process's boot — see {@link RECOVERY_WINDOW_MS}'s doc) so a
  * background task a prior process started but never finished, or a perch-channel Discord turn
  * that finished but was never confirmed delivered, is actually reported in the next boot-bundle
  * text — the folded "perch conductor boot" gap this package closes. Also unlike conversation,
@@ -369,29 +477,22 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
 
     /**
-     * Re-derives crash recovery from the perch journal (see {@link PERCH_RECOVERY_WINDOW_MS}'s
-     * doc) and feeds it, alongside the ledger's own live task descriptions, into the perch
-     * boot-bundle variant. Never rejects: a `readSince` failure degrades to an empty recovery
-     * section rather than blocking the boot-bundle hook.
+     * Maps the SessionStart `source` onto a {@link BootKind} (R1) and re-derives crash recovery
+     * from the perch journal (see {@link loadBootRecovery}), feeding it, alongside the ledger's
+     * own live task descriptions, into the perch boot-bundle variant. Never rejects: a
+     * `readSince` failure degrades to an empty recovery section rather than blocking the
+     * boot-bundle hook.
      */
-    async function buildBootBundleText(): Promise<string> {
-        let lostTasks: string[] = [];
-        let undelivered: string[] = [];
-        try {
-            const entries = await journal.readSince(clock.now() - PERCH_RECOVERY_WINDOW_MS);
-            const recovery = computeRecovery(entries);
-            lostTasks = recovery.lostTasks.map(task => task.description ?? task.taskId);
-            undelivered = recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`);
-        } catch (err) {
-            logger.warn({ err }, 'Perch boot-bundle recovery read failed; continuing with an empty recovery section');
-        }
+    async function buildBootBundleText(source: BootStartSource): Promise<string> {
+        const kind = bootKindFromSource(source);
+        const { lostTasks, undelivered } = await loadBootRecovery(journal, clock, logger, 'Perch');
 
         return bootBundleBuilder.build({
+            kind,
             lostTasks,
             undelivered,
             recentUsers: [],
             activeTasks: ledgerStore.get().tasks.map(task => task.description),
-            resetNotice: true,
         });
     }
 
@@ -417,7 +518,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     };
 
     const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
-        createBootBundleHooks(async () => buildBootBundleText()),
+        createBootBundleHooks(async source => buildBootBundleText(source)),
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
         createTaskTrackingHooks()

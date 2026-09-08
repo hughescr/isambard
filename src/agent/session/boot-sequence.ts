@@ -60,9 +60,26 @@ export interface RunBootSequenceParams<TReplayedMessage extends { id: string }> 
     replayUnhandled: () => Promise<readonly TReplayedMessage[]>
     /** Submits one envelope carrying every replayed message. Called only when `replayUnhandled()` returned at least one message. */
     submitReplay:    (messages: readonly TReplayedMessage[]) => Promise<void>
-    /** Submits the catch-up envelope. Called only when `unreadCount() > 0`. */
+    /**
+     * Submits the catch-up envelope. Called only when `unreadCount() > 0`.
+     *
+     * R1: `catchup-setup.ts`'s `runConductorInboxInit` (this module's only production caller)
+     * now passes `() => Promise.resolve()` here unconditionally — the boot bundle and the
+     * Discord catch-up merge into ONE envelope built AFTER this whole sequence resolves
+     * (`submitMergedBootEnvelope`), so this seam is deliberately a no-op in production. It (and
+     * `unreadCount` below) is retained rather than removed because it is still real,
+     * independently-testable behaviour this module owns and exercises in its own test suite —
+     * a future second caller (or a return to a narrower per-source catch-up) can use it again
+     * without a signature change. The actual "does this boot have anything to report" gate lives
+     * in `catchup-setup.ts`'s `submitMergedBootEnvelope`, not here.
+     */
     submitCatchUp:   () => Promise<void>
-    /** Current unread-message count, read after replay has been submitted. */
+    /**
+     * Current unread-message count, read after replay has been submitted — gates `submitCatchUp`
+     * above. See that field's doc: `runConductorInboxInit` feeds this a value but the callback it
+     * gates is a no-op, so in production this only affects the returned `catchUpSubmitted` flag,
+     * which that caller does not read either.
+     */
     unreadCount:     () => number
     ingressGate:     BootIngressGate
     journal:         BootJournal

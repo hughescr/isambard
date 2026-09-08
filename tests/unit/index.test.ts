@@ -74,7 +74,6 @@ const sessionConfig: SessionConfig = {
     humanWaitCeilingMs:      30_000,
     perchWrapUpLeadMs:       300_000,
     perchInterruptGraceMs:   120_000,
-    userMemoryWindowMs:      6 * 60 * 60 * 1000,
     bootEventsWindowMs:      24 * 60 * 60 * 1000,
     shutdownTurnWaitMs:      60_000,
     shutdownDeadlineMs:      120_000,
@@ -423,6 +422,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -623,7 +623,7 @@ describe('createApp', () => {
             const fakeConductor = { open: fakeOpen, submit: mock(), status: mock(() => ({ sessionId: undefined })) } as unknown as Conductor;
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockImplementation(async () => {
                 oauthTokenAtCallTime = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-                return { conductor: fakeConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry };
+                return { conductor: fakeConductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [] };
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -657,7 +657,7 @@ describe('createApp', () => {
             wireHappyPathForCleanupTests(spies);
 
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const fakePerch = fakeConductor('perch-sess');
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
@@ -685,7 +685,7 @@ describe('createApp', () => {
         test('perch DISABLED (config.perch.enabled: false): createPerchConductor is never called', async () => {
             wireHappyPathForCleanupTests(spies, {}, { enabled: false });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor');
             spies.push(createConversationConductorSpy, createPerchConductorSpy);
@@ -699,7 +699,7 @@ describe('createApp', () => {
         test('passes a role-keyed journal/resume store distinct from the conversation conductor\'s own', async () => {
             wireHappyPathForCleanupTests(spies);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
                 conductor: fakeConductor('perch-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, compactionTelemetry: {} as CompactionTelemetry,
@@ -747,7 +747,7 @@ describe('createApp', () => {
         test('passes a working isCostPaused function into createDiscordBot, initially false', async () => {
             wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -766,7 +766,7 @@ describe('createApp', () => {
             wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -791,7 +791,7 @@ describe('createApp', () => {
             wireHappyPathForCleanupTests(spies, { dailyCostCeilingUsd: 1, timezone: 'UTC' });
             const perchLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createPerchConductorSpy = spyOn(staticSessionsModule, 'createPerchConductor').mockResolvedValue({
                 conductor: fakeConductor('perch-sess'), ledgerStore: perchLedgerStore, compactionTelemetry: {} as CompactionTelemetry,
@@ -815,7 +815,7 @@ describe('createApp', () => {
             wireHappyPathForCleanupTests(spies);
             const conversationLedgerStore = fakeLedgerStoreWithEmit();
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: conversationLedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -842,7 +842,7 @@ describe('createApp', () => {
                 tableName: 'IsambardMemory',
             }));
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -870,7 +870,7 @@ describe('createApp', () => {
                 tableName: 'IsambardMemory',
             }));
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: fakeLedgerStoreWithEmit(), contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -900,7 +900,7 @@ describe('createApp', () => {
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => realCreateNotificationBridge(bridgeParams)
             );
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             spies.push(createBridgeSpy, createConversationConductorSpy);
 
@@ -928,7 +928,7 @@ describe('createApp', () => {
             );
             const { emailSetupSpy } = wireHappyPathForCleanupTests(spies);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             spies.push(createBridgeSpy, createConversationConductorSpy);
 
@@ -951,7 +951,7 @@ describe('createApp', () => {
             );
             const { bskySetupSpy } = wireHappyPathForCleanupTests(spies, {}, {}, true);
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             spies.push(createBridgeSpy, createConversationConductorSpy);
 
@@ -977,7 +977,7 @@ describe('createApp', () => {
                 tableName: 'IsambardMemory',
             }));
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -1008,7 +1008,7 @@ describe('createApp', () => {
                 // The bridge is constructed before this call (per B1) but attachConductor only
                 // runs after this promise resolves — a notify() here must be a safe no-op.
                 capturedBridge?.notify({ source: 'mid-boot', text: 'mid-boot text', wake: true, dedupeKey: 'mid-boot-key' });
-                return { conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry };
+                return { conductor, ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [] };
             });
             const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
                 start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined),
@@ -1052,7 +1052,7 @@ describe('createApp', () => {
                 }
             );
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
-                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry,
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [],
             });
             spies.push(createBridgeSpy, createConversationConductorSpy);
 
@@ -1226,6 +1226,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -1393,6 +1394,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -1538,6 +1540,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -1690,6 +1693,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -1847,6 +1851,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 
@@ -2130,6 +2135,7 @@ describe('createApp', () => {
                 ledgerStore:         { subscribe: mock(() => () => undefined) } as unknown as LedgerStore,
                 contextPolicy:       {} as ContextPolicy,
                 compactionTelemetry: {} as CompactionTelemetry,
+                bootLostTasks:       [],
             });
             spies.push(createConversationConductorSpy);
 

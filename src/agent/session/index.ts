@@ -93,7 +93,7 @@ export {
 
 export { createCostCeilingStore, type CreateCostCeilingStoreParams } from './cost-ceiling-store';
 
-export { computeRecovery, type LostTask, type UndeliveredEnvelope, type RecoveryResult } from './recovery';
+export { computeRecovery, lastKnownAt, type LostTask, type UndeliveredEnvelope, type RecoveryResult } from './recovery';
 
 export { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 
@@ -149,6 +149,7 @@ export {
 export {
     createBootBundleBuilder,
     formatBootBundle,
+    type BootKind,
     type BootBundleBuilder,
     type BootBundleParts,
     type BuildBootBundleInput,

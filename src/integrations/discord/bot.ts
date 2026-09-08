@@ -243,6 +243,25 @@ export interface DiscordBotOptions {
     clock?:                 Clock
 
     /**
+     * R1: forwarded verbatim to `setupInboxAndCatchUp`/`runConductorInboxInit` — see
+     * `RunConductorInboxInitParams.bootEventsWindowMs`'s own doc. Omitted here, catchup-setup.ts
+     * falls back to its own 24h default (matching `config.session.bootEventsWindowMs`'s own
+     * schema default), the same "own default, config not required" contract
+     * `shutdownTurnWaitMs`/`shutdownDeadlineMs` already follow above.
+     */
+    bootEventsWindowMs?: number
+
+    /**
+     * R1: forwarded verbatim to `setupInboxAndCatchUp`/`runConductorInboxInit` — see
+     * `RunConductorInboxInitParams.bootLostTasks`'s own doc. Sourced from
+     * `createConversationConductor`'s `ConversationConductorResult.bootLostTasks` — a snapshot
+     * read before `conversationConductor.open()` was ever called, so it must be threaded through
+     * from the composition root rather than recomputed here (by the time this option is read,
+     * `open()` has already run — see this file's own `conversationConductor.open()` call below).
+     */
+    bootLostTasks?: string[]
+
+    /**
      * Injected process-exit function, called with code `1` when
      * `conversationConductor.open()` rejects or times out. There is no fallback agent to degrade
      * to (P13b removed the one-shot path), so a process that cannot open its conductor would
@@ -332,7 +351,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, clock: providedClock } = options;
+    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, bootEventsWindowMs, bootLostTasks, clock: providedClock } = options;
     // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process actually terminates on a failed conductor open; see the option's own doc
     const exit: (code: number) => void = options.exit ?? (code => process.exit(code));
     const clock: Clock = providedClock ?? systemClock;
@@ -1022,6 +1041,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     ingressGate:           ingressGate!,
                     discordCapability,
                     excludeChannelIds:     perchTimeChannelId ? new Set([perchTimeChannelId]) : undefined,
+                    contextPolicy,
+                    bootEventsWindowMs,
+                    bootLostTasks,
                 });
             }
             // Stryker restore BlockStatement

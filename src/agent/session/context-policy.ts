@@ -6,15 +6,23 @@
  *
  * - Per-user memory: {@link ContextPolicy.shouldInjectUserMemory} answers whether the
  *   `[About this user]` block should be rendered again for a given user, and
- *   {@link ContextPolicy.markInjected} records that it just was. A user's memory block is
- *   re-injected on first contact and again once `userMemoryWindowMs` has elapsed since the
- *   last injection.
+ *   {@link ContextPolicy.markInjected} records that it just was. Both take the block's
+ *   current text (R1): a user's memory block is re-injected on first contact, or whenever its
+ *   content fingerprint (`contentFingerprint`, a cheap stable hash — see below) differs from
+ *   the fingerprint recorded at the last `markInjected` call. There is no time window; an
+ *   unchanged block is never re-injected no matter how long it has been, and a changed block
+ *   is re-injected immediately regardless of how little time has passed.
  * - Events delta: {@link ContextPolicy.eventsDelta} returns the memory-preview-formatted
  *   events recorded since the last {@link ContextPolicy.markEventsSeen} call (or `[]` before
- *   the first mark). Deliberately does NOT construct or wrap `EventDeltaTracker`
- *   (event-delta-tracker.ts) — that class reads `Date.now()` directly and cannot be driven by
- *   an injected clock, which this policy needs for deterministic tests and for the
- *   compaction-time reset. `event-delta-tracker.ts` is untouched by this module.
+ *   the first mark). {@link ContextPolicy.eventsSinceMs} exposes that same mark (an absolute
+ *   epoch ms) so a caller building its own windowed query (the boot bundle, after a
+ *   compaction) can render "events since the mark" without going through `eventsDelta`'s own
+ *   memory-preview formatting, and {@link ContextPolicy.markEventsSeenAt} seeds the mark
+ *   directly from a journal-derived boundary (e.g. after a restart) rather than "now".
+ *   Deliberately does NOT construct or wrap `EventDeltaTracker` (event-delta-tracker.ts) —
+ *   that class reads `Date.now()` directly and cannot be driven by an injected clock, which
+ *   this policy needs for deterministic tests and for the compaction-time reset.
+ *   `event-delta-tracker.ts` is untouched by this module.
  * - State top-set delta: {@link ContextPolicy.stateTopSetDelta} diffs the CURRENT state top set
  *   (`loadStateTopSet(now)` — the same top-8-full-plus-30-preview set `loadHotState` renders)
  *   against the set captured at the last {@link ContextPolicy.markStateTopSetSeen} call,
@@ -29,9 +37,12 @@
  *   "since" query equivalent — the mark must capture the actual baseline set to compare
  *   against next time. This is a deliberate asymmetry with `markEventsSeen`, not an oversight.
  *
- * {@link ContextPolicy.resetAll} clears every user mark, the events mark, the state
- * top-set mark, the calendar poll cache and baselines, and the health mark; the compaction sink
- * (P9) calls it after a compaction completes so every gate re-arms as if this were a cold start.
+ * {@link ContextPolicy.resetAll} clears every user fingerprint mark, the state top-set mark,
+ * the calendar poll cache and baselines, and the health mark — but deliberately NOT the events
+ * mark (R1): a compaction can run for minutes with perch active in parallel, and events written
+ * during that window must still be captured by the next `eventsDelta`/`eventsSinceMs` read
+ * rather than falling through a reset boundary. The compaction sink (P9) calls `resetAll` after
+ * a compaction completes so every OTHER gate re-arms as if this were a cold start.
  *
  * - Calendar delta (Q12): {@link ContextPolicy.calendarDelta} answers, per user, whether the
  *   day's agenda has changed since it was last injected. It is a per-user hourly HOST POLL, not
@@ -91,8 +102,6 @@ export const DEFAULT_CALENDAR_POLL_INTERVAL_MS = 60 * 60 * 1000;
 export interface CreateContextPolicyParams {
     /** Millisecond clock, e.g. `() => clock.now()`. Plain function so this module stays independent of any particular Clock type. */
     now:                     () => number
-    /** How long a user's injected memory block stays "fresh" before it is re-injected. */
-    userMemoryWindowMs:      number
     contextBuilder:          EventsDeltaSource & StateTopSetSource & CalendarAgendaSource
     /** Max events fetched per `eventsDelta()` call. Defaults to 50. */
     eventLimit?:             number
@@ -141,16 +150,20 @@ export interface StateTopSetDelta {
 
 /** Per-user memory gate plus self-owned events-delta and state-top-set-delta tracking. */
 export interface ContextPolicy {
-    /** True when `userId`'s memory block has never been injected, or was injected `>= userMemoryWindowMs` ago. */
-    shouldInjectUserMemory: (userId: string) => boolean
-    /** Records that `userId`'s memory block was just injected, at the current clock time. */
-    markInjected:           (userId: string) => void
-    /** Clears every user's injection mark, the events mark, the state-top-set mark, the calendar poll cache/baselines, and the health mark, re-arming every gate. */
+    /** True when no fingerprint is recorded for `userId` (since construction or the last `resetAll`), or the recorded fingerprint differs from `block`'s current content fingerprint. No time window (R1). */
+    shouldInjectUserMemory: (userId: string, block: string) => boolean
+    /** Records `block`'s content fingerprint as `userId`'s just-injected mark. */
+    markInjected:           (userId: string, block: string) => void
+    /** Clears every user's fingerprint mark, the state-top-set mark, the calendar poll cache/baselines, and the health mark, re-arming every gate EXCEPT the events mark (see the module doc). */
     resetAll:               () => void
-    /** Memory-preview-formatted events recorded since the last `markEventsSeen()`; `[]` before the first mark. */
+    /** Memory-preview-formatted events recorded since the last `markEventsSeen()`/`markEventsSeenAt()`; `[]` before the first mark. */
     eventsDelta:            () => Promise<string[]>
     /** Records the current clock time as the events high-water mark. */
     markEventsSeen:         () => void
+    /** The current events high-water mark (absolute epoch ms), or `undefined` before the first `markEventsSeen`/`markEventsSeenAt` call. Lets a caller (the boot bundle, after a compaction) render its own "events since the mark" window without going through `eventsDelta`'s formatting. */
+    eventsSinceMs:          () => number | undefined
+    /** Seeds the events high-water mark directly from a journal-derived boundary (e.g. after a restart) rather than "now". */
+    markEventsSeenAt:       (ms: number) => void
     /** Added/removed/changed paths in the state top set since the last `markStateTopSetSeen()`; all empty before the first mark. */
     stateTopSetDelta:       () => Promise<StateTopSetDelta>
     /** Fetches the current state top set and records it as the next comparison baseline. */
@@ -163,6 +176,16 @@ export interface ContextPolicy {
     healthNote:             () => string | undefined
     /** Records the current `healthRegistry.buildStatusSummary()` as the next comparison baseline. A no-op without a `healthRegistry`. */
     markHealthSeen:         () => void
+}
+
+/**
+ * A cheap, deterministic fingerprint of a text block (`Bun.hash(text).toString()`). Mirrors the
+ * technique `loadStateTopSet`'s `StateTopSetItem.contentFingerprint` uses (context-builder.ts),
+ * but that value is computed inline there and is not an exported helper, so this module defines
+ * its own rather than importing one that doesn't exist.
+ */
+function contentFingerprint(text: string): string {
+    return Bun.hash(text).toString();
 }
 
 /**
@@ -193,9 +216,9 @@ function healthStateKey(entries: Readonly<Record<ServiceName, ServiceHealthEntry
  * @returns A fresh policy with no user marks and no events mark
  */
 export function createContextPolicy(params: CreateContextPolicyParams): ContextPolicy {
-    const { now, userMemoryWindowMs, contextBuilder, eventLimit = 50, healthRegistry, calendarPollIntervalMs = DEFAULT_CALENDAR_POLL_INTERVAL_MS } = params;
+    const { now, contextBuilder, eventLimit = 50, healthRegistry, calendarPollIntervalMs = DEFAULT_CALENDAR_POLL_INTERVAL_MS } = params;
 
-    const userMarks = new Map<string, number>();
+    const userMarks = new Map<string, string>();
     let lastEventsSeenMs: number | undefined;
     let stateTopSetBaseline: Map<string, string> | undefined;
 
@@ -216,18 +239,22 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
     let pendingHealthStateKey: string | undefined;
 
     return {
-        shouldInjectUserMemory(userId: string): boolean {
+        shouldInjectUserMemory(userId: string, block: string): boolean {
             const mark = userMarks.get(userId);
-            return mark === undefined || now() - mark >= userMemoryWindowMs;
+            // Stryker disable next-line ConditionalExpression: `mark === undefined` is subsumed by
+            // `mark !== contentFingerprint(block)` — contentFingerprint always returns a defined
+            // string (Bun.hash(...).toString()), so `undefined !== <string>` is already true;
+            // forcing this sub-expression to `false` cannot change the result. Kept for readability
+            // (states the "no mark yet" case explicitly) rather than removed.
+            return mark === undefined || mark !== contentFingerprint(block);
         },
 
-        markInjected(userId: string): void {
-            userMarks.set(userId, now());
+        markInjected(userId: string, block: string): void {
+            userMarks.set(userId, contentFingerprint(block));
         },
 
         resetAll(): void {
             userMarks.clear();
-            lastEventsSeenMs = undefined;
             stateTopSetBaseline = undefined;
             calendarPollCache.clear();
             calendarBaselines.clear();
@@ -247,6 +274,14 @@ export function createContextPolicy(params: CreateContextPolicyParams): ContextP
 
         markEventsSeen(): void {
             lastEventsSeenMs = now();
+        },
+
+        eventsSinceMs(): number | undefined {
+            return lastEventsSeenMs;
+        },
+
+        markEventsSeenAt(ms: number): void {
+            lastEventsSeenMs = ms;
         },
 
         async stateTopSetDelta(): Promise<StateTopSetDelta> {

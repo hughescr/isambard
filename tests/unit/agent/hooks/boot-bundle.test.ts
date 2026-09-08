@@ -67,6 +67,18 @@ describe('createBootBundleHooks', () => {
         expect(build).not.toHaveBeenCalled();
     });
 
+    test('adds NO additionalContext when the builder resolves to an empty string (R1: an empty resume bundle)', async () => {
+        const build = mock(async () => '');
+        const hooks = createBootBundleHooks(build);
+        const fn = getSessionStartHook(hooks);
+
+        const result = await fn(sessionStartInput('resume'), undefined, { signal: makeSignal() });
+
+        expect(build).toHaveBeenCalledWith('resume');
+        expect(result).toEqual({ 'continue': true });
+        expect(result).not.toHaveProperty('hookSpecificOutput');
+    });
+
     test('returns { continue: true } and logs a warning when the builder rejects', async () => {
         const failure = new Error('boot bundle assembly failed');
         const build = mock(async (): Promise<string> => {

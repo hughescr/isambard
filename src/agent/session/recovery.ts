@@ -130,3 +130,27 @@ export function computeRecovery(entries: readonly JournalEntry[]): RecoveryResul
         lastOpenWasFallback:  acc.lastSessionOpened?.fallback ?? false,
     };
 }
+
+/**
+ * The most recent `at` timestamp across every `turn_completed`/`turn_failed` entry in
+ * `entries` — the last point at which a turn actually finished (successfully or not), so
+ * Izzy's context genuinely reflects the world up to then. Used to seed "how long was I
+ * offline" for a `resume` boot bundle (R1). `undefined` when neither entry type appears in the
+ * window; the caller then falls back to a fixed lookback window.
+ *
+ * Deviates from the plan's literal wording, which also names a `turn_submitted` entry type: no
+ * such {@link JournalEntry} variant exists (only `envelope_submitted`, `turn_completed`,
+ * `turn_failed`) — a submission alone doesn't establish that Izzy actually saw or processed
+ * anything, so only the two terminal turn outcomes anchor "last known".
+ * @param entries Journal entries, in any order
+ * @returns The latest qualifying `at`, or `undefined`
+ */
+export function lastKnownAt(entries: readonly JournalEntry[]): Date | undefined {
+    let latest: Date | undefined;
+    for(const entry of entries) {
+        if((entry.type === 'turn_completed' || entry.type === 'turn_failed') && (latest === undefined || entry.at.getTime() > latest.getTime())) {
+            latest = entry.at;
+        }
+    }
+    return latest;
+}

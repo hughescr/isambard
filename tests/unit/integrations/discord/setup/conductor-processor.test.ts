@@ -99,6 +99,8 @@ function makeContextPolicy(overrides: Partial<ContextPolicy> = {}): ContextPolic
         resetAll:               jest.fn(),
         eventsDelta:            jest.fn(() => Promise.resolve([])),
         markEventsSeen:         jest.fn(),
+        eventsSinceMs:          jest.fn(() => undefined),
+        markEventsSeenAt:       jest.fn(),
         stateTopSetDelta:       jest.fn(() => Promise.resolve({ added: [], removed: [], changed: [] })),
         markStateTopSetSeen:    jest.fn(() => Promise.resolve()),
         calendarDelta:          jest.fn(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })),
@@ -217,7 +219,7 @@ describe('createConductorProcessor', () => {
         expect(envelope.authorId).toBe('user-1');
         expect(envelope.text).toContain('general');
         expect(options).toMatchObject({ priority: 'human', requestingChannelId: 'chan-1' });
-        expect(contextPolicy.shouldInjectUserMemory).toHaveBeenCalledWith('user-1');
+        expect(contextPolicy.shouldInjectUserMemory).toHaveBeenCalledWith('user-1', '');
         expect(contextBuilder.loadUserMemories).toHaveBeenCalledWith('user-1');
     });
 
@@ -337,7 +339,7 @@ describe('createConductorProcessor', () => {
         expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ contextUsagePercent: 3, outcome: 'withdrawn' }), 'Conductor turn settled');
     });
 
-    it('marks the memory block injected only when it was actually shown, but still marks events seen for a completed turn', async () => {
+    it('marks the memory block injected (with the loaded block, R1 fingerprint contract), and still marks events seen for a completed turn', async () => {
         coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
         await flush();
         expect(contextBuilder.loadUserMemories).toHaveBeenCalledWith('user-1');
@@ -345,11 +347,11 @@ describe('createConductorProcessor', () => {
         conductor.settleOldest();
         await flush();
         expect(contextPolicy.markInjected).toHaveBeenCalledTimes(1);
-        expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1');
+        expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1', '');
         expect(contextPolicy.markEventsSeen).toHaveBeenCalledTimes(1);
     });
 
-    it('does not mark the memory injected when shouldInjectUserMemory returned false, even though the turn completed (a user active within the window must not have their re-injection deferred)', async () => {
+    it('still loads the memory block and marks it injected (with the loaded block) even when shouldInjectUserMemory returned false — R1 loads the block on every message regardless of the injection decision', async () => {
         contextPolicy = makeContextPolicy({ shouldInjectUserMemory: jest.fn(() => false) });
         const noInjectProcessor = createConductorProcessor({
             conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
@@ -358,12 +360,49 @@ describe('createConductorProcessor', () => {
 
         coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
         await flush();
-        expect(contextBuilder.loadUserMemories).not.toHaveBeenCalled();
+        expect(contextBuilder.loadUserMemories).toHaveBeenCalledWith('user-1');
 
         conductor.settleOldest();
         await flush();
-        expect(contextPolicy.markInjected).not.toHaveBeenCalled();
+        expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1', '');
         expect(contextPolicy.markEventsSeen).toHaveBeenCalledTimes(1);
+    });
+
+    it('injects on first contact, skips re-injection while the block is unchanged, and re-injects once the block changes (R1 fingerprint lifecycle)', async () => {
+        const injectedBlocks = new Map<string, string>();
+        const shouldInjectUserMemory = jest.fn((userId: string, block: string) => injectedBlocks.get(userId) !== block);
+        const markInjectedStateful = jest.fn((userId: string, block: string) => {
+            injectedBlocks.set(userId, block);
+        });
+        contextPolicy = makeContextPolicy({ shouldInjectUserMemory, markInjected: markInjectedStateful });
+        const firstBlock = 'Craig likes TypeScript.';
+        const changedBlock = 'Craig also likes Rust.';
+        const loadUserMemories = jest.fn(() => Promise.resolve(firstBlock));
+        contextBuilder = makeContextBuilder({ loadUserMemories });
+        const buildDiscordEnvelopeSpy = jest.spyOn(agentModule, 'buildDiscordEnvelope');
+        const statefulProcessor = createConductorProcessor({
+            conductor, contextPolicy, envelopeProvider, contextBuilder, resolveTimezone, logger,
+        });
+        coordinator.setProcessor(statefulProcessor);
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-1' }), makeDiscordMessage('chan-1', 'msg-1', 'hello'));
+        await flush();
+        conductor.settleOldest();
+        await flush();
+        expect(buildDiscordEnvelopeSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({ userMemoryBlock: firstBlock }));
+
+        coordinator.handleMessage(makeContext({ messageId: 'msg-2' }), makeDiscordMessage('chan-1', 'msg-2', 'hello again'));
+        await flush();
+        conductor.settleOldest();
+        await flush();
+        expect(buildDiscordEnvelopeSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({ userMemoryBlock: undefined }));
+
+        loadUserMemories.mockImplementation(() => Promise.resolve(changedBlock));
+        coordinator.handleMessage(makeContext({ messageId: 'msg-3' }), makeDiscordMessage('chan-1', 'msg-3', 'hello once more'));
+        await flush();
+        conductor.settleOldest();
+        await flush();
+        expect(buildDiscordEnvelopeSpy).toHaveBeenNthCalledWith(3, expect.objectContaining({ userMemoryBlock: changedBlock }));
     });
 
     it('skips both context-policy marks for a withdrawn turn', async () => {
@@ -529,7 +568,7 @@ describe('createConductorProcessor', () => {
         const result = await resultPromise;
 
         expect(result.response).toBe('the answer');
-        expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1');
+        expect(contextPolicy.markInjected).toHaveBeenCalledWith('user-1', '');
         expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: markStateTopSetSeenError }), 'markStateTopSetSeen failed; state top-set baseline not updated this turn');
     });
 

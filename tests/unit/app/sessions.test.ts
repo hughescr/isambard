@@ -157,7 +157,7 @@ describe('createConversationConductor', () => {
         expect(h.channelListProvider).not.toHaveBeenCalled();
     });
 
-    it('merges a SessionStart boot-bundle hook that fires for both \'startup\' and \'compact\' sources, carrying activeTasks and recentUsers', async () => {
+    it('merges a SessionStart boot-bundle hook that fires for both \'startup\' (mapped to \'fresh\') and \'compact\' sources — only \'fresh\' carries recentUsers, per R1\'s per-kind section set', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
@@ -187,11 +187,15 @@ describe('createConversationConductor', () => {
 
         const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
         const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+        expect(startupContext).toContain('[BOOT BUNDLE · conversation · fresh]');
         expect(startupContext).toContain('user-42');
 
+        // 'compact' renders no recentUsers section at all (R1's per-kind contract) — nothing was
+        // lost across a compaction, so who Izzy was recently talking to is not re-seeded here.
         const compactResult = await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
         const compactContext = (compactResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
-        expect(compactContext).toContain('user-42');
+        expect(compactContext).toContain('[BOOT BUNDLE · conversation · compact]');
+        expect(compactContext).not.toContain('user-42');
     });
 
     it('PreCompact dispatches compaction_started onto the ledger; PostCompact resets the context policy and records the compaction summary', async () => {
@@ -204,8 +208,8 @@ describe('createConversationConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        contextPolicy.markInjected('user-1');
-        expect(contextPolicy.shouldInjectUserMemory('user-1')).toBe(false);
+        contextPolicy.markInjected('user-1', 'block text');
+        expect(contextPolicy.shouldInjectUserMemory('user-1', 'block text')).toBe(false);
 
         const options = h.instances[0].receivedParams?.options;
         const preCompact = options?.hooks?.PreCompact?.[0]?.hooks[0];
@@ -218,7 +222,157 @@ describe('createConversationConductor', () => {
 
         await postCompact?.({ compact_summary: 'summary text', session_id: 'sess-1', hook_event_name: 'PostCompact' } as never, undefined, undefined as never);
 
-        expect(contextPolicy.shouldInjectUserMemory('user-1')).toBe(true);
+        expect(contextPolicy.shouldInjectUserMemory('user-1', 'block text')).toBe(true);
+    });
+
+    it('R1: a \'resume\' SessionStart source maps to the \'resume\' BootKind and renders NO lost-task/undelivered content — that content is the merged Discord boot envelope\'s exclusive responsibility (sourced instead from the returned bootLostTasks)', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSince([
+            { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
+        ]);
+
+        const { conductor, bootLostTasks } = await createConversationConductor(h.params);
+        expect(bootLostTasks).toEqual(['Summarize last week']);
+
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const resumeResult = await hookFn?.({ source: 'resume' } as never, undefined, undefined as never);
+        const resumeContext = (resumeResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        // Every resume section is empty (fresh/resume always pass lostTasks/undelivered as `[]`
+        // to the boot-bundle builder — see buildBootBundleText's own doc), so the bundle text is
+        // `''` and the hook adds no additionalContext at all.
+        expect(resumeContext).toBe('');
+    });
+
+    it('R1: degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.journal.scriptReadSinceRejection(new Error('DynamoDB unavailable'));
+
+        const { conductor, bootLostTasks } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(startupContext).toContain('[BOOT BUNDLE · conversation · fresh]');
+        expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Conversation boot-bundle recovery read failed; continuing with an empty recovery section');
+        // Pins the catch branch's degrade-to-empty return value exactly — not some other
+        // "falsy-looking" placeholder a mutant could substitute.
+        expect(bootLostTasks).toEqual([]);
+    });
+
+    it('R1: loadBootRecovery reads the journal from exactly 24h (RECOVERY_WINDOW_MS) before the clock\'s current time', async () => {
+        const h = build();
+        h.clock.advance(100_000);
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const readSinceSpy = jest.spyOn(h.journal, 'readSince');
+
+        await createConversationConductor(h.params);
+
+        expect(readSinceSpy).toHaveBeenCalledWith(100_000 - 24 * 60 * 60 * 1000);
+    });
+
+    it('R1: a "compact" boot bundle falls back to the 24h default window (DEFAULT_BOOT_EVENTS_WINDOW_MS) when no events mark has ever been seeded', async () => {
+        const h = build();
+        h.clock.advance(5000);
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
+
+        expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(24 * 60 * 60 * 1000, expect.any(Number), new Date(5000));
+    });
+
+    it('R1: markEventsSeen is never called for a non-compact boot kind', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, contextPolicy } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        const markEventsSeenSpy = jest.spyOn(contextPolicy, 'markEventsSeen');
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+
+        await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        await hookFn?.({ source: 'resume' } as never, undefined, undefined as never);
+
+        expect(markEventsSeenSpy).not.toHaveBeenCalled();
+    });
+
+    it('R1: a \'compact\' boot bundle renders events since the context policy\'s current mark, then advances the mark once the bundle is built', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        h.clock.advance(10_000);
+        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockResolvedValue([
+            { path: 'state/foo.md', content: 'Foo happened', contentPreview: 'Foo happened', updatedAt: new Date(9000) },
+        ]);
+
+        const { conductor, contextPolicy } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        contextPolicy.markEventsSeenAt(5000);
+        expect(contextPolicy.eventsSinceMs()).toBe(5000);
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        const compactResult = await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
+        const compactContext = (compactResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
+
+        expect(h.contextBuilder.loadRecentEventsSince).toHaveBeenCalledWith(10_000 - 5000, expect.any(Number), new Date(10_000));
+        expect(compactContext).toContain('Foo happened');
+        // The mark has advanced to the clock's current time (10_000), not the pre-build 5_000 —
+        // a later compaction's window starts from here rather than replaying this same event.
+        expect(contextPolicy.eventsSinceMs()).toBe(10_000);
+    });
+
+    it('R1: mutation guard — a \'resume\' boot bundle never queries events, even when the context policy already carries an events mark (only \'compact\' reads the mark)', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor, contextPolicy } = await createConversationConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        // A mark left over from an earlier compaction — if the `kind === 'compact'` guard were
+        // ever weakened (e.g. mutated to `true`), a 'resume' bundle would start reading events
+        // against this mark instead of rendering none at all.
+        contextPolicy.markEventsSeenAt(5000);
+        (h.contextBuilder.loadRecentEventsSince as ReturnType<typeof jest.fn>).mockClear();
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        await hookFn?.({ source: 'resume' } as never, undefined, undefined as never);
+
+        expect(h.contextBuilder.loadRecentEventsSince).not.toHaveBeenCalled();
     });
 
     it('returns a Conductor, a LedgerStore for role \'conversation\', and a ContextPolicy', async () => {
@@ -665,7 +819,7 @@ describe('createPerchConductor', () => {
         const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
         const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
 
-        expect(startupContext).toContain('[BOOT BUNDLE · perch]');
+        expect(startupContext).toContain('[BOOT BUNDLE · perch · fresh]');
         expect(startupContext).toContain('Quiet night.');
     });
 
@@ -737,6 +891,30 @@ describe('createPerchConductor', () => {
         expect(startupContext).toContain('discord envelope env-no-text');
     });
 
+    it('R1: loadBootRecovery reads the perch journal from exactly 24h (RECOVERY_WINDOW_MS) before the clock\'s current time', async () => {
+        const h = buildPerch();
+        h.clock.advance(100_000);
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const readSinceSpy = jest.spyOn(h.journal, 'readSince');
+
+        const { conductor } = await createPerchConductor(h.params);
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+
+        // `conductor.open()` itself independently reads the journal over its own (unrelated)
+        // recovery window — clear that call so the assertion below isolates the SessionStart
+        // hook's own `loadBootRecovery` read.
+        readSinceSpy.mockClear();
+
+        const options = h.instances[0].receivedParams?.options;
+        const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
+        await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+
+        expect(readSinceSpy).toHaveBeenCalledWith(100_000 - 24 * 60 * 60 * 1000);
+    });
+
     it('degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
@@ -753,8 +931,13 @@ describe('createPerchConductor', () => {
         const startupResult = await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
         const startupContext = (startupResult as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? '';
 
-        expect(startupContext).toContain('[BOOT BUNDLE · perch]');
+        expect(startupContext).toContain('[BOOT BUNDLE · perch · fresh]');
         expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'Perch boot-bundle recovery read failed; continuing with an empty recovery section');
+        // Pins the catch branch's degrade-to-empty return value exactly (both `lostTasks` and
+        // `undelivered`) — not just that the log fired: neither section header renders when both
+        // lists are actually `[]`, catching an ArrayDeclaration mutant on either literal.
+        expect(startupContext).not.toContain('Background tasks lost at restart');
+        expect(startupContext).not.toContain('Envelopes without a delivered response');
     });
 
     it('PreCompact dispatches compaction_started onto the ledger; PostCompact records the compaction summary', async () => {

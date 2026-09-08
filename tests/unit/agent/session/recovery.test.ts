@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { computeRecovery } from '@/agent/session/recovery';
+import { computeRecovery, lastKnownAt } from '@/agent/session/recovery';
 import type { JournalEntry } from '@/agent/session/types';
 
 const AT = new Date(0);
@@ -151,5 +151,67 @@ describe('computeRecovery', () => {
         ];
 
         expect(computeRecovery(entries).lastOpenWasFallback).toBe(false);
+    });
+});
+
+describe('lastKnownAt', () => {
+    test('undefined over an empty journal', () => {
+        expect(lastKnownAt([])).toBeUndefined();
+    });
+
+    test('undefined when the journal has neither turn_completed nor turn_failed entries', () => {
+        const entries: JournalEntry[] = [
+            { type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind: 'discord' },
+            { type: 'task_started', at: AT, taskId: 'task-1', description: 'do a thing' },
+        ];
+
+        expect(lastKnownAt(entries)).toBeUndefined();
+    });
+
+    test('the at of a single turn_completed entry', () => {
+        const at = new Date(1000);
+        const entries: JournalEntry[] = [
+            { type: 'turn_completed', at, envelopeId: 'env-1', kind: 'discord', responseText: 'hi' },
+        ];
+
+        expect(lastKnownAt(entries)).toEqual(at);
+    });
+
+    test('the max at across turn_completed and turn_failed entries, regardless of journal order', () => {
+        const earlier = new Date(1000);
+        const middle = new Date(2000);
+        const latest = new Date(3000);
+        const entries: JournalEntry[] = [
+            { type: 'turn_completed', at: middle, envelopeId: 'env-2', kind: 'discord', responseText: 'mid' },
+            { type: 'turn_failed', at: latest, envelopeId: 'env-3', kind: 'discord', error: 'boom' },
+            { type: 'turn_completed', at: earlier, envelopeId: 'env-1', kind: 'discord', responseText: 'early' },
+        ];
+
+        expect(lastKnownAt(entries)).toEqual(latest);
+    });
+
+    test('envelope_submitted and session_opened entries do not count toward the max, even when later than every turn entry', () => {
+        const turnAt = new Date(1000);
+        const laterSubmission = new Date(5000);
+        const entries: JournalEntry[] = [
+            { type: 'turn_completed', at: turnAt, envelopeId: 'env-1', kind: 'discord', responseText: 'hi' },
+            { type: 'envelope_submitted', at: laterSubmission, envelopeId: 'env-2', kind: 'discord' },
+            {
+                type: 'session_opened', at: laterSubmission, role: 'conversation', sessionId: 'session-1', resumed: false,
+            },
+        ];
+
+        expect(lastKnownAt(entries)).toEqual(turnAt);
+    });
+
+    test('a tie on the exact same at keeps the first qualifying entry, not the last', () => {
+        const firstAt = new Date(1000);
+        const secondAt = new Date(1000);
+        const entries: JournalEntry[] = [
+            { type: 'turn_completed', at: firstAt, envelopeId: 'env-1', kind: 'discord', responseText: 'first' },
+            { type: 'turn_failed', at: secondAt, envelopeId: 'env-2', kind: 'discord', error: 'boom' },
+        ];
+
+        expect(lastKnownAt(entries)).toBe(firstAt);
     });
 });

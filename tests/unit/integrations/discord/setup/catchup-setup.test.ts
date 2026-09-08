@@ -59,6 +59,19 @@ function makeFakeConductor(overrides: Record<string, unknown> = {}) {
             await send();
             return { delivered: true };
         }),
+        // R1: the merged boot envelope appends via this seam whenever it carries nothing worth
+        // opening a turn for (`shouldQuery: false`) — see `submitMergedBootEnvelope`.
+        appendWithoutTurn: mock(() => undefined),
+        ...overrides,
+    };
+}
+
+/** A fake `ContextPolicy`, narrowed to the events-mark methods `runConductorInboxInit`'s merged boot envelope actually reads/writes (R1). */
+function makeFakeContextPolicy(overrides: Record<string, unknown> = {}) {
+    return {
+        markEventsSeenAt: mock(() => undefined),
+        eventsDelta:      mock(async () => [] as string[]),
+        markEventsSeen:   mock(() => undefined),
         ...overrides,
     };
 }
@@ -538,6 +551,206 @@ describe('runConductorInboxInit', () => {
         await runConductorInboxInit(conductorParams({ inboxManager: inboxManager as never, excludeChannelIds }));
 
         expect(inboxManager.replayUnhandled).toHaveBeenCalledWith({ excludeChannelIds });
+    });
+
+    // R1: the boot bundle and the Discord catch-up merge into ONE boot envelope, built after the
+    // boot sequence — the four cases below (nothing / events only / unread / lost tasks).
+    describe('R1: the merged boot envelope', () => {
+        test('nothing to report: submits no envelope at all — neither appendWithoutTurn nor a catchup turn (R1 acceptance criterion)', async () => {
+            const conductor = makeFakeConductor();
+            const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) });
+            const contextPolicy = makeFakeContextPolicy();
+
+            await runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never, inboxManager: inboxManager as never, contextPolicy: contextPolicy as never,
+            }));
+
+            expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
+            const catchupSubmissions = conductor.submit.mock.calls.filter(([envelope]: [{ kind: string }]) => envelope.kind === 'catchup');
+            expect(catchupSubmissions).toHaveLength(0);
+        });
+
+        test('events only: a non-empty eventsDelta renders the "Events while you were away" section and still appends without a turn', async () => {
+            const conductor = makeFakeConductor();
+            const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) });
+            const contextPolicy = makeFakeContextPolicy({ eventsDelta: mock(async () => ['[2026-09-07 10:00] state/foo.md: Foo happened']) });
+
+            await runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never, inboxManager: inboxManager as never, contextPolicy: contextPolicy as never,
+            }));
+
+            expect(conductor.appendWithoutTurn).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'catchup', shouldQuery: false, text: expect.stringContaining('Foo happened') as unknown,
+            }));
+            const [envelope] = conductor.appendWithoutTurn.mock.calls[0] as unknown as [{ text: string }];
+            expect(envelope.text).not.toContain('Replies redelivered');
+        });
+
+        test('unread mail: submits with a turn (priority \'other\'), not appendWithoutTurn', async () => {
+            const conductor = makeFakeConductor();
+            const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 3, channels: [{ channelId: 'c1' }] })) });
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, inboxManager: inboxManager as never }));
+
+            expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({ kind: 'catchup', shouldQuery: true }), { priority: 'other' });
+            expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
+        });
+
+        test('lost tasks: a lost background task from recovery escalates the merged envelope to a turn, and its description is rendered', async () => {
+            const conductor = makeFakeConductor();
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+            const journal = makeFakeJournal({
+                readSince: mock(async () => [
+                    { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
+                ]),
+            });
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+
+            expect(conductor.submit).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'catchup', shouldQuery: true, text: expect.stringContaining('Summarize last week') as unknown,
+            }), { priority: 'other' });
+        });
+
+        test('redelivers an undelivered reply and reports it in the merged envelope\'s "Replies redelivered for you" section', async () => {
+            const conductor = makeFakeConductor();
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+            const journal = makeFakeJournal({
+                readSince: mock(async () => [
+                    { type: 'envelope_submitted', at: 0, envelopeId: 'env-undelivered', kind: 'discord', channelId: 'chan-1' },
+                    { type: 'turn_completed', at: 1, envelopeId: 'env-undelivered', responseText: 'a stale reply' },
+                ]),
+            });
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+
+            // shouldQuery is false here (no unread mail, no lost tasks) -- a redelivered reply
+            // alone does not escalate to a turn -- so this goes through appendWithoutTurn.
+            expect(conductor.appendWithoutTurn).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'catchup', text: expect.stringContaining('a stale reply') as unknown,
+            }));
+        });
+
+        test('seeds the events mark from the journal-derived lastKnownAt before reading eventsDelta, then advances it via markEventsSeen after submitting', async () => {
+            const conductor = makeFakeConductor();
+            const contextPolicy = makeFakeContextPolicy();
+            const callOrder: string[] = [];
+            contextPolicy.markEventsSeenAt.mockImplementation(() => {
+                callOrder.push('markEventsSeenAt');
+            });
+            contextPolicy.eventsDelta.mockImplementation(async () => {
+                callOrder.push('eventsDelta');
+                return [];
+            });
+            contextPolicy.markEventsSeen.mockImplementation(() => {
+                callOrder.push('markEventsSeen');
+            });
+            const journal = makeFakeJournal({
+                readSince: mock(async () => [
+                    { type: 'turn_completed', at: new Date(12_345), envelopeId: 'env-1' },
+                ]),
+            });
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal, contextPolicy: contextPolicy as never }));
+
+            expect(contextPolicy.markEventsSeenAt).toHaveBeenCalledWith(12_345);
+            expect(callOrder).toEqual(['markEventsSeenAt', 'eventsDelta', 'markEventsSeen']);
+        });
+
+        test('falls back to now - bootEventsWindowMs seeding the mark when the journal carries no lastKnownAt boundary', async () => {
+            const conductor = makeFakeConductor();
+            const contextPolicy = makeFakeContextPolicy();
+            const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000_000);
+            spies.push(nowSpy);
+
+            await runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never, contextPolicy: contextPolicy as never, bootEventsWindowMs: 60_000,
+            }));
+
+            expect(contextPolicy.markEventsSeenAt).toHaveBeenCalledWith(1_000_000 - 60_000);
+        });
+
+        test('falls back to the 24h DEFAULT_BOOT_EVENTS_WINDOW_MS when neither lastKnownAt nor bootEventsWindowMs is available', async () => {
+            const conductor = makeFakeConductor();
+            const contextPolicy = makeFakeContextPolicy();
+            const nowSpy = spyOn(Date, 'now').mockReturnValue(1_000_000);
+            spies.push(nowSpy);
+
+            await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, contextPolicy: contextPolicy as never }));
+
+            expect(contextPolicy.markEventsSeenAt).toHaveBeenCalledWith(1_000_000 - 24 * 60 * 60 * 1000);
+        });
+
+        test('seeds the events mark BEFORE the ingress gate opens, so a live turn released concurrently cannot race the seed against a stale mark', async () => {
+            const conductor = makeFakeConductor();
+            const contextPolicy = makeFakeContextPolicy();
+            const ingressGate = makeFakeIngressGate();
+            const callOrder: string[] = [];
+            contextPolicy.markEventsSeenAt.mockImplementation(() => {
+                callOrder.push('markEventsSeenAt');
+            });
+            ingressGate.open.mockImplementation(() => {
+                callOrder.push('ingressGate.open');
+            });
+
+            await runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never, contextPolicy: contextPolicy as never, ingressGate: ingressGate as never,
+            }));
+
+            expect(callOrder).toEqual(['markEventsSeenAt', 'ingressGate.open']);
+        });
+
+        test('honours perch triggerOnStartup by suppressing the merged boot envelope entirely, never calling appendWithoutTurn or submit for it', async () => {
+            const conductor = makeFakeConductor();
+            const contextPolicy = makeFakeContextPolicy();
+
+            await runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never,
+                contextPolicy:         contextPolicy as never,
+                perchConfig:           { testMode: { triggerOnStartup: true } } as never,
+            }));
+
+            expect(conductor.appendWithoutTurn).not.toHaveBeenCalled();
+            const catchupSubmissions = conductor.submit.mock.calls.filter(([envelope]: [{ kind: string }]) => envelope.kind === 'catchup');
+            expect(catchupSubmissions).toHaveLength(0);
+            expect(contextPolicy.markEventsSeenAt).not.toHaveBeenCalled();
+        });
+
+        test('without a contextPolicy, the merged envelope carries no events section and no mark calls are attempted', async () => {
+            const conductor = makeFakeConductor();
+            const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 2, channels: [{ channelId: 'c1' }] })) });
+            spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
+
+            await expect(runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never, inboxManager: inboxManager as never,
+            }))).resolves.toBeUndefined();
+
+            const [envelope] = conductor.submit.mock.calls.find(([e]: [{ kind: string }]) => e.kind === 'catchup')! as unknown as [{ text: string }];
+            expect(envelope.text).not.toContain('Events while you were away');
+        });
+
+        test('a failure while building/submitting the merged boot envelope is swallowed and logged, never rejecting runConductorInboxInit', async () => {
+            const conductor = makeFakeConductor({
+                submit: mock(async (envelope: { id: string, kind: string }) => {
+                    if(envelope.kind === 'catchup') {
+                        throw new Error('boom');
+                    }
+                    return {
+                        envelopeId: envelope.id, response: 'ok', wasInterrupted: false, sessionId: 'sess-1', isError: false, contextUsagePercent: 0,
+                    };
+                }),
+            });
+            const inboxManager = makeFakeInboxManager({ getUnreadOverview: mock(() => ({ totalUnread: 1, channels: [{ channelId: 'c1' }] })) });
+            const warnSpy = spyOn(loggerModule.logger, 'warn');
+            spies.push(warnSpy);
+
+            await expect(runConductorInboxInit(conductorParams({
+                conversationConductor: conductor as never, inboxManager: inboxManager as never,
+            }))).resolves.toBeUndefined();
+
+            expect(warnSpy).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error), msg: 'Boot-time catch-up envelope submission failed' }));
+        });
     });
 });
 

@@ -284,7 +284,6 @@ export const sessionConfigSchema = z.object({
     humanWaitCeilingMs:         z.number().int().positive().default(30_000),
     perchWrapUpLeadMs:          z.number().int().positive().default(300_000),
     perchInterruptGraceMs:      z.number().int().positive().default(120_000),
-    userMemoryWindowMs:         z.number().int().positive().default(6 * 60 * 60 * 1000),
     bootEventsWindowMs:         z.number().int().positive().default(24 * 60 * 60 * 1000),
     shutdownTurnWaitMs:         z.number().int().positive().default(60_000),
     shutdownDeadlineMs:         z.number().int().positive().default(120_000),

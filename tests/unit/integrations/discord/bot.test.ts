@@ -138,7 +138,7 @@ describe('createDiscordBot', () => {
         return {
             conversationConductor: makeFakeConductor(),
             ledgerStore:           makeFakeLedgerStore(),
-            contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined), calendarDelta: mock(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })), markCalendarSeen: mock(() => undefined), healthNote: mock(() => undefined), markHealthSeen: mock(() => undefined) },
+            contextPolicy:         { shouldInjectUserMemory: mock(() => false), markInjected: mock(() => undefined), eventsDelta: mock(() => Promise.resolve([])), markEventsSeen: mock(() => undefined), eventsSinceMs: mock(() => undefined), markEventsSeenAt: mock(() => undefined), stateTopSetDelta: mock(() => Promise.resolve({ added: [], removed: [], changed: [] })), markStateTopSetSeen: mock(() => Promise.resolve()), resetAll: mock(() => undefined), calendarDelta: mock(() => Promise.resolve({ agenda: [], events: [], added: [], removed: [], changed: [], isFirst: false, polled: false })), markCalendarSeen: mock(() => undefined), healthNote: mock(() => undefined), markHealthSeen: mock(() => undefined) },
             journal:               { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
             // A no-op stand-in for the real process.exit — the conductor-open-failure path calls
             // this with code 1, and without a mock here that would kill the whole test runner.
@@ -1999,6 +1999,34 @@ describe('createDiscordBot', () => {
                 expect(setupInboxAndCatchUpSpy).toHaveBeenCalledTimes(1);
                 const call = setupInboxAndCatchUpSpy.mock.calls[0]?.[0] as { excludeChannelIds?: ReadonlySet<string> } | undefined;
                 expect(call?.excludeChannelIds).toEqual(new Set(['perch-time-channel-id']));
+            });
+
+            test('R1: forwards the same contextPolicy given to createDiscordBot, and bootEventsWindowMs, through to setupInboxAndCatchUp', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                stubPerchSetup();
+
+                const setupInboxAndCatchUpSpy = spyOn(catchupSetupModule, 'setupInboxAndCatchUp').mockResolvedValue(undefined);
+                spies.push(setupInboxAndCatchUpSpy);
+
+                const deps = conductorDeps();
+
+                createDiscordBot({
+                    config:             mockConfig,
+                    channelRegistry:    mockChannelRegistry,
+                    perchConfig:        minimalPerchConfig,
+                    inboxManager:       { getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
+                    bootEventsWindowMs: 12_345,
+                    ...deps,
+                });
+
+                await triggerReady(client);
+
+                expect(setupInboxAndCatchUpSpy).toHaveBeenCalledTimes(1);
+                const call = setupInboxAndCatchUpSpy.mock.calls[0]?.[0] as { contextPolicy?: unknown, bootEventsWindowMs?: number } | undefined;
+                expect(call?.contextPolicy).toBe(deps.contextPolicy);
+                expect(call?.bootEventsWindowMs).toBe(12_345);
             });
 
             test('a rejected well-known perch-time channel lookup does not abort the rest of clientReady — setupInboxAndCatchUp still runs and the gate still opens', async () => {

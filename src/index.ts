@@ -810,6 +810,7 @@ export async function createApp(): Promise<App> {
     let conversationLedgerStore: LedgerStore | undefined;
     let conversationContextPolicy: ContextPolicy | undefined;
     let conversationJournal: SessionJournal | undefined;
+    let conversationBootLostTasks: string[] | undefined;
     {
         // eslint-disable-next-line prefer-const -- assigned once, immediately after createConversationConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
         let conductorForTaskReader: Conductor | undefined;
@@ -859,6 +860,7 @@ export async function createApp(): Promise<App> {
         notificationBridge.attachConductor(builtConductor.conductor);
         conversationLedgerStore = builtConductor.ledgerStore;
         conversationContextPolicy = builtConductor.contextPolicy;
+        conversationBootLostTasks = builtConductor.bootLostTasks;
     }
     // Stryker restore all
 
@@ -985,6 +987,13 @@ export async function createApp(): Promise<App> {
         // createShutdown falls back to its hard-coded 60s/120s defaults regardless of config.
         shutdownTurnWaitMs: config.session.shutdownTurnWaitMs,
         shutdownDeadlineMs: config.session.shutdownDeadlineMs,
+        // R1: without this, catchup-setup.ts always falls back to its own hard-coded 24h
+        // default regardless of an operator-configured config.session.bootEventsWindowMs.
+        bootEventsWindowMs: config.session.bootEventsWindowMs,
+        // R1: the pre-open recovery snapshot for the merged Discord boot envelope — see
+        // ConversationConductorResult.bootLostTasks's own doc for why this must come from
+        // createConversationConductor rather than a read done inside bot.ts/catchup-setup.ts.
+        bootLostTasks:      conversationBootLostTasks,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');

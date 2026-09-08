@@ -5,6 +5,9 @@
  * fresh). `clear`/`fork` pass through untouched, and a builder rejection degrades to a bare
  * `{ continue: true }` with a warning rather than blocking the session from starting.
  *
+ * An empty string from `build` (R1: an empty `resume` bundle — nothing happened while offline)
+ * adds NO `additionalContext` at all, rather than injecting an empty string as context.
+ *
  * @module agent/hooks/boot-bundle
  */
 import type { HookCallbackMatcher, HookEvent, SessionStartHookInput } from '@anthropic-ai/claude-agent-sdk';
@@ -35,6 +38,9 @@ export function createBootBundleHooks(build: (source: BootBundleSource) => Promi
 
                         try {
                             const additionalContext = await build(source as BootBundleSource);
+                            if(additionalContext === '') {
+                                return { 'continue': true };
+                            }
                             return {
                                 'continue':         true,
                                 hookSpecificOutput: {

@@ -500,6 +500,80 @@ describe('buildCatchupEnvelope', () => {
         expect(envelope.hostPriority).toBe('wake');
         expect(envelope.shouldQuery).toBe(true);
     });
+
+    test('omits the unread summary entirely when unreadCount is 0', () => {
+        const envelope = buildCatchupEnvelope({ unreadCount: 0, channelCount: 0, now, timezone, timeHeader });
+
+        expect(envelope.text).not.toContain('unread');
+        expect(envelope.text).not.toContain('getUnreadOverview');
+    });
+
+    test('omits the unread summary when unreadCount is undefined; shouldQuery/hostPriority follow the accumulate rule', () => {
+        const envelope = buildCatchupEnvelope({ channelCount: 0, now, timezone, timeHeader });
+
+        expect(envelope.text).not.toContain('unread');
+        expect(envelope.shouldQuery).toBe(false);
+        expect(envelope.hostPriority).toBe('accumulate');
+    });
+
+    test('renders "## Events while you were away" only when eventsDelta is non-empty, in order after the unread summary', () => {
+        const withEvents = buildCatchupEnvelope({
+            unreadCount: 1, channelCount: 1, now, timezone, timeHeader, eventsDelta: ['- /events/1 (1h ago): did a thing'],
+        });
+        expect(withEvents.text).toContain('## Events while you were away\n- /events/1 (1h ago): did a thing');
+        expect(withEvents.text.indexOf('unread')).toBeLessThan(withEvents.text.indexOf('## Events while you were away'));
+
+        const without = buildCatchupEnvelope({ unreadCount: 1, channelCount: 1, now, timezone, timeHeader, eventsDelta: [] });
+        expect(without.text).not.toContain('## Events while you were away');
+    });
+
+    test('renders "## Background tasks lost at restart" only when lostTasks is non-empty', () => {
+        const withLost = buildCatchupEnvelope({ unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: ['lost-task-1'] });
+        expect(withLost.text).toContain('## Background tasks lost at restart\nlost-task-1');
+
+        const without = buildCatchupEnvelope({ unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: [] });
+        expect(without.text).not.toContain('## Background tasks lost at restart');
+    });
+
+    test('renders "## Replies redelivered for you" only when redelivered is non-empty, ordered last', () => {
+        const envelope = buildCatchupEnvelope({
+            unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: ['lost-1'], redelivered: ['reply-to-@user: hello'],
+        });
+
+        expect(envelope.text).toContain('## Replies redelivered for you\nreply-to-@user: hello');
+        expect(envelope.text.indexOf('## Background tasks lost at restart')).toBeLessThan(envelope.text.indexOf('## Replies redelivered for you'));
+    });
+
+    test('joins multiple items within one catch-up list section with a newline', () => {
+        const envelope = buildCatchupEnvelope({
+            unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: ['lost-1', 'lost-2'],
+        });
+
+        expect(envelope.text).toContain('## Background tasks lost at restart\nlost-1\nlost-2');
+    });
+
+    test('shouldQuery is true when unreadCount > 0, even with nothing else', () => {
+        const envelope = buildCatchupEnvelope({ unreadCount: 1, channelCount: 1, now, timezone, timeHeader });
+
+        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.hostPriority).toBe('wake');
+    });
+
+    test('shouldQuery is true when lostTasks is non-empty, even with unreadCount 0', () => {
+        const envelope = buildCatchupEnvelope({ unreadCount: 0, channelCount: 0, now, timezone, timeHeader, lostTasks: ['lost-1'] });
+
+        expect(envelope.shouldQuery).toBe(true);
+        expect(envelope.hostPriority).toBe('wake');
+    });
+
+    test('shouldQuery is false (accumulate, appendWithoutTurn) when only events/redelivered are present', () => {
+        const envelope = buildCatchupEnvelope({
+            unreadCount: 0, channelCount: 0, now, timezone, timeHeader, eventsDelta: ['- /events/1: a thing'], redelivered: ['reply: hi'],
+        });
+
+        expect(envelope.shouldQuery).toBe(false);
+        expect(envelope.hostPriority).toBe('accumulate');
+    });
 });
 
 describe('buildWrapUpEnvelope', () => {

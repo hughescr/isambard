@@ -160,7 +160,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         const storedTimezone = await contextBuilder.loadUserTimezone(first.userId);
         const timezone = resolveTimezone(storedTimezone);
 
-        const [names, channelList, newEvents, stateTopSetDelta, calendarDelta, thinkingSynopsis] = await Promise.all([
+        const [names, channelList, newEvents, stateTopSetDelta, calendarDelta, thinkingSynopsis, memoryBlock] = await Promise.all([
             envelopeProvider.resolveNames(first),
             envelopeProvider.channelList(),
             contextPolicy.eventsDelta(),
@@ -173,11 +173,16 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
                 return EMPTY_CALENDAR_DELTA;
             }),
             thinkingSynopsisPromise,
+            // R1: the memory block is loaded on every message (one query, as the one-shot path
+            // always did) — the fingerprint decision below, not the query itself, gates injection.
+            contextBuilder.loadUserMemories(first.userId),
         ]);
 
         const input = envelopeProvider.toEnvelopeInput(enrichedContexts, names, platformImages, channelList);
-        const shouldInjectMemory = contextPolicy.shouldInjectUserMemory(input.authorId);
-        const userMemoryBlock = shouldInjectMemory ? await contextBuilder.loadUserMemories(input.authorId) : undefined;
+        // R1: fingerprint-based, not time-windowed — true when this exact block content has never
+        // been shown to this user, or differs from what was last shown (see context-policy.ts).
+        const shouldInjectMemory = contextPolicy.shouldInjectUserMemory(input.authorId, memoryBlock);
+        const userMemoryBlock = shouldInjectMemory ? memoryBlock : undefined;
         // An interrupted turn's captured partial work (message-coordinator.ts's own resume-context
         // handling), rendered as a `[RESUME NOTE]` block so it still reaches Claude even though the
         // interrupting messages arrive as a fresh envelope rather than a continuation of the old one.
@@ -251,9 +256,11 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // SDK — a withdrawn envelope's memory block/events delta/state-top-set delta were never
         // shown to Claude, so marking them seen would wrongly skip the real injection next time
         // (Q9: `markStateTopSetSeen` gated here exactly like `markEventsSeen`). `markInjected` is
-        // further gated on `shouldInjectMemory` itself: when the window hadn't elapsed and no
-        // block was built, writing the mark here would reset the injection clock to now and
-        // defer the real re-injection indefinitely for an active user.
+        // unconditional on a non-withdrawn submit (R1) — not further gated on `shouldInjectMemory`
+        // — because the fingerprint recorded is always the block actually loaded this turn: when
+        // `shouldInjectMemory` was false the block was unchanged, so re-recording the same
+        // fingerprint is a no-op; when it was true, this is exactly the mark the next turn's
+        // comparison needs.
         if(result.outcome !== 'withdrawn') {
             contextPolicy.markEventsSeen();
             // Best-effort: unlike markEventsSeen/markInjected (synchronous, in-memory, cannot
@@ -266,9 +273,7 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
             } catch (err) {
                 logger.warn({ err, envelopeId: envelope.id }, 'markStateTopSetSeen failed; state top-set baseline not updated this turn');
             }
-            if(shouldInjectMemory) {
-                contextPolicy.markInjected(input.authorId);
-            }
+            contextPolicy.markInjected(input.authorId, memoryBlock);
             // Q12: synchronous, in-memory marks (like markEventsSeen/markInjected above) — cannot
             // throw, so no try/catch is needed here.
             contextPolicy.markCalendarSeen(first.userId);
