@@ -1,8 +1,10 @@
 /**
  * Perch Time Scheduler
  *
- * Schedules hourly perch time triggers using cron-parser's H option for jitter.
- * Handles deferral when bot is busy and triggers perch when idle.
+ * Schedules hourly perch time triggers using cron-parser's H option for jitter. When an
+ * `isPerchTurnRunning` predicate is supplied it defers a trigger that fires mid-turn into
+ * pending state, re-checking the predicate on the next trigger; otherwise every trigger fires
+ * unconditionally, leaving overlap/deferral entirely to the conductor-mode perch driver.
  */
 
 import type { Logger } from '@hughescr/logger';
@@ -10,7 +12,6 @@ import { CronExpressionParser } from 'cron-parser';
 import { DateTime } from 'luxon';
 import { getSlotForHour } from './schedule';
 import { type PerchSlot, type PerchConfig, type PerchSchedulerState } from './types';
-import type { AgentStateManager, AgentStateChange } from '@/agent/types';
 import { InvariantViolationError } from '@/errors';
 
 /**
@@ -18,13 +19,15 @@ import { InvariantViolationError } from '@/errors';
  */
 export interface PerchSchedulerDeps {
     /**
-     * State manager for checking/transitioning modes. Optional: when omitted, the scheduler
-     * never subscribes to it and every trigger (scheduled, `triggerNow`, `triggerTestPerch`)
-     * calls `onPerchTrigger` unconditionally with no idle check and no pending state — the
-     * conductor-mode perch driver owns overlap/deferral itself (see `perch-driver.ts`), so the
-     * scheduler's own idle-gating exists only for the oneshot-mode `stateManager`-present path.
+     * Optional predicate reporting whether a perch turn is currently running, read from the
+     * perch ledger. When provided, a trigger (scheduled, `triggerNow`, `triggerTestPerch`) that
+     * fires while it returns `true` is deferred — recorded as pending state rather than calling
+     * `onPerchTrigger` — and the predicate is re-checked the next time a trigger fires. When
+     * omitted, every trigger calls `onPerchTrigger` unconditionally with no check and no pending
+     * state — the conductor-mode perch driver owns overlap/deferral itself (see
+     * `perch-driver.ts`), so this scheduler-level gate is optional belt-and-braces only.
      */
-    stateManager?:        AgentStateManager
+    isPerchTurnRunning?:  () => boolean
     /** Logger instance */
     logger:               Logger
     /** Perch configuration */
@@ -72,23 +75,21 @@ function getDefaultLocalHour(timezone: string): number {
  *
  * The scheduler:
  * 1. Uses cron-parser's H option for random minute scheduling
- * 2. Checks if bot is idle when trigger fires
- * 3. If busy, sets perchPending flag and waits for idle
- * 4. Subscribes to state manager for idle transitions
- * 5. After each trigger, reschedules for next hour with new random minute
+ * 2. Checks `isPerchTurnRunning()` (if supplied) when a trigger fires
+ * 3. If it reports a turn already running, sets perchPending and waits for the next trigger
+ * 4. After each trigger, reschedules for next hour with new random minute
  *
  * @param deps - Scheduler dependencies
  * @returns PerchScheduler instance
  */
 export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
-    const { stateManager, logger, config, onPerchTrigger } = deps;
+    const { isPerchTurnRunning, logger, config, onPerchTrigger } = deps;
     const getCurrentLocalHour = deps.getCurrentLocalHour ?? (() => getDefaultLocalHour(config.timezone));
 
     // Internal state
     let state: PerchSchedulerState = {
         perchPending: false,
     };
-    let unsubscribe: (() => void) | null = null;
     let schedulerTimeout: ReturnType<typeof setTimeout> | null = null;
     let lastScheduledTime: Date | null = null;
 
@@ -97,28 +98,15 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
     const TEST_SLOTS: PerchSlot[] = ['pre-dawn', 'mid-morning', 'afternoon', 'evening', 'late-night'];
 
     /**
-     * Handle the actual perch trigger.
-     * Called either immediately (if idle) or when bot becomes idle.
+     * Handle the actual perch trigger: fires `onPerchTrigger` immediately unless
+     * `isPerchTurnRunning()` reports a perch turn already running, in which case the trigger is
+     * deferred into pending state instead. Called by every trigger path (scheduled, `triggerNow`,
+     * `triggerTestPerch`) — each re-checks the predicate fresh rather than caching a prior result.
      */
     function doTrigger(slot: PerchSlot): void {
-        // No stateManager: no idle check, no pending state — trigger unconditionally (the
-        // conductor-mode perch driver owns overlap/deferral itself).
-        if(!stateManager) {
+        if(isPerchTurnRunning?.()) {
             // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.info({ slot }, 'Triggering perch time');
-            onPerchTrigger(slot);
-            return;
-        }
-
-        // Clear pending state
-        // Stryker disable next-line BooleanLiteral: State cleared regardless of previous value
-        state = { perchPending: false };
-
-        // Check if still idle (could have changed during jitter delay)
-        if(stateManager.getMode() !== 'idle') {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
-            logger.debug({ slot }, 'Perch trigger skipped - bot no longer idle');
-            // Set pending again
+            logger.debug({ slot }, 'Perch trigger deferred - a perch turn is already running');
             state = {
                 perchPending:       true,
                 pendingSlot:        slot,
@@ -127,6 +115,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             return;
         }
 
+        state = { perchPending: false };
         // Stryker disable next-line ObjectLiteral,StringLiteral: Log message content is not behavior-affecting
         logger.info({ slot }, 'Triggering perch time');
         onPerchTrigger(slot);
@@ -156,20 +145,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
 
         logger.debug({ hour, slot }, 'Perch trigger fired');
 
-        // No stateManager: trigger unconditionally, no idle check, no pending state.
-        if(!stateManager) {
-            doTrigger(slot);
-        } else if(stateManager.getMode() === 'idle') {
-            doTrigger(slot);
-        } else {
-            // Bot is busy - set pending
-            logger.debug({ slot, mode: stateManager.getMode() }, 'Bot busy - deferring perch');
-            state = {
-                perchPending:       true,
-                pendingSlot:        slot,
-                pendingTriggerTime: new Date(),
-            };
-        }
+        doTrigger(slot);
 
         // Schedule next trigger with new random minute
         scheduleNextTrigger();
@@ -243,58 +219,12 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
         }, 'Next perch trigger scheduled');
     }
 
-    /**
-     * Handle state change from BotStateManager.
-     * If transitioning to idle and perchPending, trigger perch.
-     */
-    function onStateChange(change: AgentStateChange): void {
-        // Only care about mode transitions to idle
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — tests have getMode()='processing_message', so doTrigger() guards against non-idle state anyway; removing early return produces no observable trigger
-        if(change.changeType !== 'mode_transition') {
-            return;
-        }
-
-        // Stryker disable next-line ConditionalExpression,BlockStatement: Equivalent — same reason: doTrigger() re-checks getMode() before calling onPerchTrigger; skipping this guard produces same result when bot is not idle
-        if(change.newState.mode !== 'idle') {
-            return;
-        }
-
-        // Check if we have a pending perch
-        // Stryker disable next-line LogicalOperator: && mutant is L-class — pendingSlot=undefined with perchPending=true is unreachable in practice; both conditions true → same early return
-        if(!state.perchPending || !state.pendingSlot) {
-            return;
-        }
-
-        // Re-check the current slot (time may have passed)
-        const hour = getCurrentLocalHour();
-        const currentSlot = getSlotForHour(hour);
-
-        // Stryker disable next-line all: Logging for observability - hour calculation for display only
-        logger.info({
-            originalSlot:       state.pendingSlot,
-            currentSlot,
-            // Stryker disable all: Logging calculation for observability
-            hoursSinceDeferred: state.pendingTriggerTime
-                ? Math.round((Date.now() - state.pendingTriggerTime.getTime()) / 3_600_000 * 10) / 10
-                : undefined,
-            // Stryker restore all
-        }, 'Bot now idle - running deferred perch with current slot');
-
-        // Use current slot, not the pending one (time may have changed)
-        setTimeout(() => doTrigger(currentSlot), 0);
-    }
-
     return {
         start(): void {
             if(!config.enabled) {
                 // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
                 logger.info('Perch scheduler disabled');
                 return;
-            }
-
-            // Subscribe to state changes — never subscribes when there is no stateManager to subscribe to.
-            if(stateManager) {
-                unsubscribe = stateManager.subscribe(onStateChange);
             }
 
             // Skip cron scheduling if test mode is enabled
@@ -327,12 +257,6 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
                 schedulerTimeout = null;
             }
 
-            // Unsubscribe from state changes
-            if(unsubscribe) {
-                unsubscribe();
-                unsubscribe = null;
-            }
-
             // Clear state
             state = { perchPending: false };
             lastScheduledTime = null;
@@ -350,17 +274,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
             const hour = getCurrentLocalHour();
             const slot = getSlotForHour(hour);
 
-            if(!stateManager) {
-                doTrigger(slot);
-            } else if(stateManager.getMode() === 'idle') {
-                doTrigger(slot);
-            } else {
-                state = {
-                    perchPending:       true,
-                    pendingSlot:        slot,
-                    pendingTriggerTime: new Date(),
-                };
-            }
+            doTrigger(slot);
         },
 
         triggerTestPerch(): void {
@@ -386,19 +300,7 @@ export function createPerchScheduler(deps: PerchSchedulerDeps): PerchScheduler {
                 logger.info({ slot, nextIndex: nextTestSlotIndex }, 'Triggering test perch with cycling slot');
             }
 
-            // Trigger immediately if idle, otherwise defer
-            if(!stateManager) {
-                doTrigger(slot);
-            // Stryker disable next-line ConditionalExpression: Test mode check validated via test-mode-specific tests
-            } else if(stateManager.getMode() === 'idle') {
-                doTrigger(slot);
-            } else {
-                state = {
-                    perchPending:       true,
-                    pendingSlot:        slot,
-                    pendingTriggerTime: new Date(),
-                };
-            }
+            doTrigger(slot);
         },
     };
 }

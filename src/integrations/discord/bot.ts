@@ -12,8 +12,8 @@ import { createIngressGate, type IngressGate } from './ingress-gate';
 import { createInteractionHandler } from './interactions';
 import type { MessageCoordinator } from './message-coordinator';
 import {
-    createDynamicStatusGenerator,
     createPresenceThrottle,
+    type DynamicStatusGenerator,
     type PresenceManager
 } from './presence';
 import { DiscordRateLimiter } from './rate-limiter';
@@ -25,12 +25,7 @@ import { channelListProvider, resolveNames as resolveEnvelopeNames, toEnvelopeIn
 import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchDriverAndScheduler } from './setup/perch-setup';
-import { setupConductorPresence, setupPresence, type PresenceSetupResult } from './setup/presence-setup';
-import {
-    BotStateManagerImpl,
-    type BotStateManager
-} from './state';
-import { installLedgerShim } from './state/ledger-shim';
+import { setupConductorPresence } from './setup/presence-setup';
 import { createChannelId, createUserId, type ChannelId } from './types';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn  } from '@/agent';
 import type { DiscordConfig } from '@/config';
@@ -112,13 +107,6 @@ export interface DiscordBotOptions {
      * If provided, enables inbox functionality for the bot.
      */
     inboxManager?: InboxManager
-
-    /**
-     * Optional bot state manager.
-     * If provided, this will be used instead of creating a new one.
-     * Useful when the state manager needs to be shared with other components.
-     */
-    botStateManager?: BotStateManager
 
     /**
      * Channel registry for dynamic channel management.
@@ -228,7 +216,7 @@ export interface DiscordBotOptions {
      * every one of these four fields is then simply never used.
      */
     conversationConductor?: Conductor
-    /** The conductor's own ledger — `installLedgerShim` subscribes to it, and `lastSessionId` is seeded from `ledgerStore.get().sessionId` after a successful `open()`. */
+    /** The conductor's own ledger — presence composition and the ring buffers subscribe to it, and `lastSessionId` is seeded from `ledgerStore.get().sessionId` after a successful `open()`. */
     ledgerStore?:           LedgerStore
     contextPolicy?:         ContextPolicy
     journal?:               SessionJournal
@@ -298,12 +286,6 @@ export interface DiscordBot {
      * has opened.
      */
     shutdown?: Shutdown
-
-    /**
-     * For testing - expose internal state manager (Phase 2).
-     * @internal
-     */
-    _botStateManager?: BotStateManager
 }
 
 /**
@@ -350,7 +332,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, client: providedClient, inboxManager, botStateManager: providedBotStateManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, clock: providedClock } = options;
+    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, clock: providedClock } = options;
     // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process actually terminates on a failed conductor open; see the option's own doc
     const exit: (code: number) => void = options.exit ?? (code => process.exit(code));
     const clock: Clock = providedClock ?? systemClock;
@@ -386,10 +368,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? new QuestionRegistry();
 
-    // Capture unsubscribe functions for cleanup
-    let unsubscribeModeTransition: (() => void) | undefined;
-    let unsubscribeActivityPhase: (() => void) | undefined;
-    // P11: torn down instead of the two above when presence is composed from ledgers.
+    // Torn down (if presence was ever set up) on stop().
     let unsubscribeLedgerPresence: (() => void) | undefined;
     // P11: the ONE process-wide throttle shared by presence-setup's conductor branch and the
     // ledger-sink stream handler wired per turn by conductor-processor.ts (design doc section 8:
@@ -403,7 +382,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // shim/conductor to tear down. Stays false if conversationConductor was never provided, or if
     // open() rejected — message processing simply does not start this process.
     let conductorOpened = false;
-    let unsubscribeLedgerShim: (() => void) | undefined;
     // The ingress gate (buffers live messages during boot), the cross-session shutdown
     // orchestrator, and a captured reference to clientReady's own `responseRouter` (needed by
     // `triggerCatchUp`'s conductor branch, which runs outside clientReady's own scope) — all
@@ -412,12 +390,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let ingressGate: IngressGate<Message> | undefined;
     let shutdownRef: Shutdown | undefined;
     let responseRouterRef: ResponseRouter | undefined;
-
-    // Use provided bot state manager or create a new one
-    const botStateManager: BotStateManager = providedBotStateManager ?? new BotStateManagerImpl({
-        logger,
-        updateThrottleMs: config.presence?.updateThrottleMs,
-    });
 
     // Register error handler for Discord client errors
     // Stryker disable next-line StringLiteral: Discord.js event name
@@ -638,13 +610,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         // Stryker restore BlockStatement
     });
 
-    // P11: in conductor mode, the ring buffers are fed from the session ledger(s) instead of
-    // BotStateManager — ledger-shim.ts no longer forwards activity phases at all, so the
-    // botStateManager-based subscriptions below would silently starve the moment a Discord turn
-    // migrates to the conductor. P12: the perch conductor's own ledger (`perchLedgerStore`) folds
-    // in here whenever it is present — replacing the throwaway legacy-perch-ledger adapter this
-    // package deletes — regardless of whether `perchConductor.open()` itself later succeeds (an
-    // untouched ledger simply never emits, contributing nothing rather than something wrong).
+    // P11/P14: the ring buffers are fed exclusively from the session ledger(s) — there is no
+    // other source of activity-phase/turn data in conductor mode. P12: the perch conductor's own
+    // ledger (`perchLedgerStore`) folds in here whenever it is present, regardless of whether
+    // `perchConductor.open()` itself later succeeds (an untouched ledger simply never emits,
+    // contributing nothing rather than something wrong). When `ledgerStore` itself is absent (no
+    // conductor configured at all — e.g. a minimal test setup), both ring buffers simply see no
+    // activity; there is no fallback source to subscribe to instead.
     function buildConductorLedgers(): readonly LedgerStore[] | undefined {
         if(!ledgerStore) {
             return undefined;
@@ -653,8 +625,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     }
     const conductorLedgers: readonly LedgerStore[] | undefined = buildConductorLedgers();
     // Stryker disable BlockStatement: Composition root — ring-buffer subscriptions are integration-wiring, not unit-testable
-    let unsubscribeToolTracking: () => void;
-    let unsubscribeChannelTracking: () => void;
+    let unsubscribeToolTracking: () => void = () => undefined;
+    let unsubscribeChannelTracking: () => void = () => undefined;
     if(conductorLedgers) {
         const ledgers = conductorLedgers;
         const lastToolNameByLedger = new Map<LedgerStore, string | undefined>();
@@ -679,36 +651,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         };
         unsubscribeToolTracking = unsubscribeAll;
         unsubscribeChannelTracking = unsubscribeAll;
-    } else {
-        // Subscribe to botStateManager for recent-tools ring buffer
-        unsubscribeToolTracking = botStateManager.subscribe((change) => {
-            if(change.changeType === 'activity_phase') {
-                const phase = change.newState.activityPhase;
-                if(phase?.type === 'using_tool') {
-                    addRecentTool(phase.toolName);
-                }
-            }
-        });
-
-        // Subscribe to botStateManager for recent-channels ring buffer
-        // Records the channel whenever the bot transitions into processing_message mode
-        unsubscribeChannelTracking = botStateManager.subscribe((change) => {
-            if(change.changeType === 'mode_transition' && change.newState.mode === 'processing_message') {
-                const ctx = change.newState.modeContext as { channelId?: RecentChannel['channelId'] };
-                if(ctx.channelId) {
-                    addRecentChannel(ctx.channelId);
-                }
-            }
-        });
     }
     // Stryker restore BlockStatement
 
-    // Create dynamic status generator if identityContext is provided
-    // IMPORTANT: Must create before presence manager, catch-up session runner, and coordinator
-    // Stryker disable next-line ConditionalExpression: composition root — identityContext optional dep wiring
-    const dynamicStatusGenerator = identityContext
-        ? createDynamicStatusGenerator({ identityContext })
-        : undefined;
+    // P14: no longer created here — `setupConductorPresence` creates one instance PER LEDGER
+    // (conversation, perch), each with its own cooldown/cache/in-flight state, and this variable
+    // is set from its result once presence is set up below (before setupCoordinatorIntegration
+    // needs it).
+    let dynamicStatusGenerator: DynamicStatusGenerator | undefined;
 
     // Idempotency guard: track whether clientReady setup has run.
     // The handler is registered with .on() (not .once()) so reconnects fire it again,
@@ -761,7 +711,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // frozen on the boot-time idle status for the process lifetime whenever open() rejected
             // or timed out, since the ledger it was composing from would then never receive
             // another event.
-            let presenceSetup: PresenceSetupResult | undefined;
 
             // Create DMTracker and ResponseRouter (after client is ready, BEFORE session runners)
             const dmTracker = new DMTracker(channelRegistry, readyClient);
@@ -801,7 +750,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 try {
                     await withTimeout(conversationConductor.open(), CONDUCTOR_OPEN_TIMEOUT_MS, 'conductor.open() timed out');
                     setLastSessionId(ledgerStore.get().sessionId);
-                    unsubscribeLedgerShim = installLedgerShim({ ledgerStore, botStateManager, logger });
                     // Created here (before setupCoordinatorIntegration/setupMessageProcessing pick
                     // a processor) so both can be handed the SAME gate/shutdown instances.
                     // `onDrain` reads the outer `coordinator` variable at CALL time (gate.open()
@@ -891,12 +839,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             }
             // Stryker restore all
 
-            // Setup presence manager if optional deps provided.
-            // IMPORTANT: Must create before coordinator.setProcessor so it's available in onStreamEvent.
-            // P11 fix: gated on `conductorOpened` (open() actually succeeded), not on `ledgerStore`'s
-            // mere existence (conductor mode merely REQUESTED) — see the comment left at this
-            // block's old position, above, for why.
-            if(identityContext && config.presence) {
+            // Setup presence manager once the conductor has actually opened (open() SUCCEEDED, not
+            // merely requested) — IMPORTANT: must happen before coordinator.setProcessor so
+            // dynamicStatusGenerator is available in onStreamEvent. There is no fallback presence
+            // path any more (P13b removed the one-shot agent; P14 removed the legacy state-machine
+            // bridged `setupPresence`): a conductor that never opens simply runs with no presence
+            // at all.
+            if(identityContext && config.presence && conductorOpened && presenceThrottle && ledgerStore) {
                 // Stryker disable next-line BlockStatement: composition root callback
                 const getRecentContext = async (): Promise<string | undefined> => {
                     // Stryker disable next-line BlockStatement: optimization guard — empty array short-circuit, not covered by unit tests
@@ -906,11 +855,13 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
                     return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
                 };
-                const sharedPresenceParams = {
+                // P11/P12: presence composes from the session ledger(s) — conversation always,
+                // perch too whenever its ledger exists — see setupConductorPresence's own doc for
+                // exactly what that composition does.
+                const conductorPresence = setupConductorPresence({
                     identityContext,
                     presenceConfig: config.presence,
                     readyClient,
-                    dynamicStatusGenerator,
                     getTaskContext: () => taskListReader.buildTaskListSummary(),
                     getRecentContext,
                     contextBuilder,
@@ -919,40 +870,22 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     getLiveSignals: liveSignals ? () => liveSignals.snapshot() : undefined,
                     getPreviousStatus,
                     setPreviousStatus,
-                };
-                // P11/P12: in conductor mode, presence composes from the session ledger(s) —
-                // conversation always, perch too whenever its ledger exists — instead of bridging
-                // BotStateManager (design doc section 8); see setupConductorPresence's own doc for
-                // exactly what it deliberately omits versus the oneshot bridge below.
-                if(conductorOpened && presenceThrottle && ledgerStore) {
-                    const conductorPresence = setupConductorPresence({
-                        ...sharedPresenceParams,
-                        // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorLedgers() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorLedgers` can never be undefined here; the `?? [ledgerStore]` exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
-                        ledgers:      conductorLedgers ?? [ledgerStore],
-                        throttle:     presenceThrottle,
-                        // Forwarded only for its recordPresenceUpdate() bookkeeping (see
-                        // setupConductorPresence's own doc) — perch has no fallback runner in
-                        // conductor mode; a rejected/omitted perchConductor.open() just leaves
-                        // perch disabled.
-                        botStateManager,
-                        // Q3/B4: only forward the predicate when perch is actually enabled — the
-                        // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
-                        // scheduler was ever going to run, so nothing is paused regardless of what
-                        // isCostPaused() reports (finding: the marker rendered even with perch off).
-                        isCostPaused: options.perchConfig?.enabled ? options.isCostPaused : undefined,
-                    });
-                    presenceManager = conductorPresence.presenceManager;
-                    unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
-                } else {
-                    presenceSetup = setupPresence({
-                        ...sharedPresenceParams,
-                        botStateManager,
-                        inboxManager,
-                    });
-                    presenceManager = presenceSetup.presenceManager;
-                    unsubscribeModeTransition = presenceSetup.unsubscribeModeTransition;
-                    unsubscribeActivityPhase = presenceSetup.unsubscribeActivityPhase;
-                }
+                    // Stryker disable next-line ArrayDeclaration: equivalent — buildConductorLedgers() (above) returns undefined iff `!ledgerStore`, and this `if` already requires `ledgerStore` truthy, so `conductorLedgers` can never be undefined here; the `?? [ledgerStore]` exists only to satisfy TypeScript's narrowing, not to handle a reachable branch.
+                    ledgers:        conductorLedgers ?? [ledgerStore],
+                    throttle:       presenceThrottle,
+                    // Q3/B4: only forward the predicate when perch is actually enabled — the
+                    // `⏸ perch` marker asserts a pause that has a subject; with perch off, no
+                    // scheduler was ever going to run, so nothing is paused regardless of what
+                    // isCostPaused() reports (finding: the marker rendered even with perch off).
+                    isCostPaused:   options.perchConfig?.enabled ? options.isCostPaused : undefined,
+                });
+                presenceManager = conductorPresence.presenceManager;
+                unsubscribeLedgerPresence = conductorPresence.unsubscribeLedgers;
+                // P14: the conversation session's own per-instance generator — the first entry,
+                // matching buildConductorLedgers()'s [ledgerStore, perchLedgerStore] ordering —
+                // feeds setupCoordinatorIntegration below so every conductor turn overlays
+                // synopses from an instance no other session's calls can abort or gate.
+                dynamicStatusGenerator = conductorPresence.dynamicStatusGenerators[0];
             }
 
             // Create the perch driver+scheduler once the perch conductor has successfully opened.
@@ -1080,7 +1013,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                 void setupInboxAndCatchUp({
                     inboxManager,
                     readyClient,
-                    botStateManager,
                     perchConfig:           options.perchConfig,
                     healthRegistry:        options.healthRegistry,
                     conversationConductor: conversationConductor!,
@@ -1102,7 +1034,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             await client.login(config.botToken);
         },
 
-        // eslint-disable-next-line sonarjs/cognitive-complexity -- shutdown coordinates coordinator, conductor, shim, question registry, presence, sessions, and the client in a fixed order; branching is inherent
         async stop(): Promise<void> {
             // Stop coordinator if it exists
             if(coordinator) {
@@ -1124,8 +1055,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // coordinator.stop() -> perch driver/scheduler stop() -> gate.stop() ->
             // shutdown.run() (the cross-session wait/interrupt/flush/close sequence, covering both
             // conductors under ONE shared config.session.shutdownTurnWaitMs/shutdownDeadlineMs
-            // budget — see createShutdown) -> shim unsubscribe, ahead of botStateManager.stop()
-            // below.
+            // budget — see createShutdown) -> ledger/ring-buffer unsubscribes below.
             // Stryker disable all: bot.ts IS in the mutate glob (stryker.conf.mjs) — this block is
             // disabled because the shutdown() call ORDER (asserted by bot.test.ts's 'stop order'
             // conductor-mode test) is the behaviour that matters; the catch's error-message
@@ -1142,20 +1072,9 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                     });
                 }
             }
-            if(unsubscribeLedgerShim) {
-                unsubscribeLedgerShim();
-                unsubscribeLedgerShim = undefined;
-            }
             // Stryker restore all
             // Stop question registry (always exists now)
             questionRegistry.stop();
-            // Unsubscribe from botStateManager subscriptions
-            if(unsubscribeModeTransition) {
-                unsubscribeModeTransition();
-            }
-            if(unsubscribeActivityPhase) {
-                unsubscribeActivityPhase();
-            }
             if(unsubscribeLedgerPresence) {
                 unsubscribeLedgerPresence();
             }
@@ -1163,7 +1082,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             unsubscribeChannelTracking();
             // Perch scheduler/driver are already stopped above, before shutdownRef.run() — see
             // that comment.
-            botStateManager.stop();
             // Stop presence manager if it exists
             if(presenceManager) {
                 presenceManager.stop();
@@ -1214,8 +1132,5 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         get shutdown(): Shutdown | undefined {
             return shutdownRef;
         },
-
-        // For testing - expose internal state manager (Phase 2)
-        _botStateManager: botStateManager,
     };
 }

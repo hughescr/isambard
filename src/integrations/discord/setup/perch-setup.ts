@@ -95,11 +95,11 @@ function wrapConductorWithDelivery(
 
 /**
  * Perch setup: builds a {@link createPerchDriver} bound to a {@link wrapConductorWithDelivery}-
- * wrapped perch conductor and a {@link createPerchScheduler} with no `stateManager` — the driver
- * owns overlap/deferral itself (see `perch-driver.ts`'s own doc), so the scheduler simply calls
- * `driver.runSlot(slot)` unconditionally on every trigger. Returns the driver so the caller
- * (`bot.ts`) can `stop()` it during shutdown. There is no `botStateManager`/presence wiring here —
- * the perch conductor's own ledger feeds presence (see `bot.ts`'s presence composition).
+ * wrapped perch conductor and a {@link createPerchScheduler} with no `isPerchTurnRunning`
+ * predicate — the driver owns overlap/deferral itself (see `perch-driver.ts`'s own doc), so the
+ * scheduler simply calls `driver.runSlot(slot)` unconditionally on every trigger. Returns the
+ * driver so the caller (`bot.ts`) can `stop()` it during shutdown. There is no presence wiring
+ * here — the perch conductor's own ledger feeds presence (see `bot.ts`'s presence composition).
  * @param params See {@link SetupPerchDriverParams}.
  * @returns The built driver and scheduler; the scheduler has already been started.
  */

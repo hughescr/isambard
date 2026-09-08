@@ -14,9 +14,9 @@
  *
  * Deliberately does none of the legacy processor's other work: no channel list folded into a
  * system prompt, no `contextNote` for a suspended perch/catch-up session, no cross-platform
- * person-history race, and — critically — no `BotStateManager` writes at all (that is
- * `../state/ledger-shim.ts`'s sole job in conductor mode, driven by the conductor's own ledger
- * rather than by this processor).
+ * person-history race, and — critically — no separate state-machine writes at all; presence and
+ * activity-phase transitions are read directly off the conductor's own ledger (composed by
+ * `presence-setup.ts`'s `setupConductorPresence`), never written by this processor.
  *
  * @module integrations/discord/setup/conductor-processor
  */
@@ -146,8 +146,8 @@ export function createConductorProcessor(params: CreateConductorProcessorParams)
         // P11: pre-generated alongside the other independent I/O below (never on its own await) so
         // the first `thinking` phase of the turn — before any accumulated content or tool history
         // exists for handleThinkingTransition to regenerate from — still carries a synopsis instead
-        // of falling through to nothing (the oneshot path's own `buildThinkingSynopsis`, mirrored
-        // here against `throttle` since the conductor path has no `BotStateManager` to peek).
+        // of falling through to nothing (the same throttle-gated pattern `buildLedgerThinkingSynopsis`
+        // itself uses, since the conductor path has no separate state manager to peek).
         const thinkingSynopsisPromise = ledgerStore && throttle
             ? buildLedgerThinkingSynopsis(dynamicStatusGenerator, throttle, first.content)
             : Promise.resolve(undefined);

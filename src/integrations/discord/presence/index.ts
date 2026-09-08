@@ -9,7 +9,6 @@ export {
     type PresencePhase,
     type PresenceDisplayMode,
     type SynopsisContext,
-    type CatchUpSynopsisContext,
     type StatusUpdate,
     ToolStatusMap,
     ToolDescriptions,
@@ -24,14 +23,12 @@ export {
 } from '@/errors';
 
 export { createActiveStatusGenerator } from './status-generator-active.js';
-export { createDynamicStatusGenerator, resetCooldownState } from './status-generator-dynamic.js';
+export { createDynamicStatusGenerator, type DynamicStatusGenerator } from './status-generator-dynamic.js';
 export { createIdleStatusGenerator, type IdleStatusGeneratorDeps, type IdleStatusOptions } from './status-generator-idle.js';
 export { PresenceManager, type PresenceManagerDeps } from './manager.js';
 export {
     buildLedgerThinkingSynopsis,
-    buildThinkingSynopsis,
     createLedgerStreamEventHandler,
-    createStreamEventHandler,
     type CreateLedgerStreamEventHandlerDeps,
     type LedgerSink,
     type LedgerStreamEventHandler,

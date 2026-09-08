@@ -19,8 +19,6 @@ import * as searchModule from '@/integrations/discord/message-history/search';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import * as summarizerModule from '@/integrations/discord/message-history/summarizer';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
-import * as stateModule from '@/integrations/discord/state';
-import type { BotStateManager } from '@/integrations/discord/state/types';
 import { createGuildId } from '@/integrations/discord/types';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
 
@@ -76,7 +74,6 @@ describe('createDiscordInfrastructure', () => {
         const mockMessageSearchService = {} as unknown as MessageSearchService;
         const mockCheckpointManager = {};
         const mockInboxManager = {} as unknown as InboxManager;
-        const mockBotStateManager = {} as unknown as BotStateManager;
 
         const clientSpy = spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockDiscordClient);
         spies.push(clientSpy);
@@ -114,10 +111,6 @@ describe('createDiscordInfrastructure', () => {
         });
         spies.push(inboxSpy);
 
-        // @ts-expect-error - Mocking constructor
-        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => mockBotStateManager);
-        spies.push(stateSpy);
-
         const result = discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: mockDiscordConfig,
             docClient:     mockDocClient,
@@ -130,7 +123,6 @@ describe('createDiscordInfrastructure', () => {
             channelRegistry:      mockChannelRegistry,
             messageSearchService: mockMessageSearchService,
             inboxManager:         mockInboxManager,
-            botStateManager:      mockBotStateManager,
         });
     });
 
@@ -148,9 +140,7 @@ describe('createDiscordInfrastructure', () => {
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})),
             // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}))
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
@@ -179,9 +169,7 @@ describe('createDiscordInfrastructure', () => {
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})),
             // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}))
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
@@ -213,9 +201,7 @@ describe('createDiscordInfrastructure', () => {
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})),
             // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}))
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
@@ -252,9 +238,7 @@ describe('createDiscordInfrastructure', () => {
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})),
             // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}))
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
@@ -288,9 +272,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService),
             checkpointSpy,
             // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}))
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
@@ -323,9 +305,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(searchModule, 'createMessageSearchService').mockReturnValue(mockSearchService),
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => mockCheckpointManager),
-            inboxSpy,
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            inboxSpy
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
@@ -340,38 +320,6 @@ describe('createDiscordInfrastructure', () => {
             messageSearchService: mockSearchService,
             channelRegistry:      mockRegistry,
             config:               mockDiscordConfig.inbox,
-        });
-    });
-
-    test('creates BotStateManager with logger and throttle config', () => {
-        // @ts-expect-error - Mocking constructor
-        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}));
-        spies.push(
-            spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client),
-            // @ts-expect-error - Mocking constructor
-            spyOn(channelRegistryModule, 'ChannelRegistryBackend').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(channelRegistryModule, 'ChannelRegistryManager').mockImplementation(() => ({})),
-            spyOn(fetcherModule, 'createMessageFetcher').mockReturnValue({} as unknown as MessageFetcher),
-            spyOn(summarizerModule, 'createMessageSummarizer').mockReturnValue({} as unknown as MessageSummarizer),
-            spyOn(searchModule, 'createMessageSearchService').mockReturnValue({} as unknown as MessageSearchService),
-            // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})),
-            // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            stateSpy
-        );
-
-        discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
-        });
-
-        expect(stateSpy).toHaveBeenCalledWith({
-            logger:           expect.anything(),
-            updateThrottleMs: mockDiscordConfig.presence?.updateThrottleMs,
         });
     });
 
@@ -409,8 +357,6 @@ describe('createDiscordInfrastructure', () => {
     });
 
     test('handles missing presence config', () => {
-        // @ts-expect-error - Mocking constructor
-        const stateSpy = spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}));
         spies.push(
             spyOn(clientModule, 'createDiscordClient').mockReturnValue({} as unknown as Client),
             // @ts-expect-error - Mocking constructor
@@ -423,8 +369,7 @@ describe('createDiscordInfrastructure', () => {
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => ({})),
             // @ts-expect-error - Mocking constructor
-            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({})),
-            stateSpy
+            spyOn(inboxModule, 'InboxManager').mockImplementation(() => ({}))
         );
 
         const configWithoutPresence = {
@@ -432,17 +377,12 @@ describe('createDiscordInfrastructure', () => {
             presence: undefined,
         };
 
-        discordInfrastructureModule.createDiscordInfrastructure({
+        expect(() => discordInfrastructureModule.createDiscordInfrastructure({
             discordConfig: configWithoutPresence,
             docClient:     mockDocClient,
             tableName:     mockTableName,
             memoryBackend: mockMemoryBackend,
-        });
-
-        expect(stateSpy).toHaveBeenCalledWith({
-            logger:           expect.anything(),
-            updateThrottleMs: undefined,
-        });
+        })).not.toThrow();
     });
 
     test('handles missing inbox config', () => {
@@ -463,9 +403,7 @@ describe('createDiscordInfrastructure', () => {
             spyOn(searchModule, 'createMessageSearchService').mockReturnValue(mockSearchService),
             // @ts-expect-error - Mocking constructor
             spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => mockCheckpointManager),
-            inboxSpy,
-            // @ts-expect-error - Mocking constructor
-            spyOn(stateModule, 'BotStateManagerImpl').mockImplementation(() => ({}))
+            inboxSpy
         );
 
         const configWithoutInbox = {

@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import type { HookCallback, PostCompactHookInput, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { createCompactionHooks, createBotStateCompactionSink, type CompactionSink, type CompactionStateManager } from '../../../../src/agent/hooks/compaction';
+import { createCompactionHooks, type CompactionSink } from '../../../../src/agent/hooks/compaction';
 
 const makeSignal = (): AbortSignal => new AbortController().signal;
 
@@ -17,16 +17,6 @@ function makeMockSink(): {
     return {
         onCompactionStart: mock((_trigger?: 'manual' | 'auto') => undefined),
         onCompactionEnd:   mock((_summary: string) => undefined),
-    };
-}
-
-function makeMockStateManager(): {
-    stashAndSetCompacting: ReturnType<typeof mock>
-    restoreFromCompacting: ReturnType<typeof mock>
-} & CompactionStateManager {
-    return {
-        stashAndSetCompacting: mock((_trigger?: 'manual' | 'auto') => undefined),
-        restoreFromCompacting: mock(() => undefined),
     };
 }
 
@@ -162,55 +152,5 @@ describe('createCompactionHooks', () => {
             const result = await fn(input, undefined, { signal: makeSignal() });
             expect(result).toEqual({ 'continue': true });
         });
-    });
-});
-
-describe('createBotStateCompactionSink', () => {
-    let stateManager: ReturnType<typeof makeMockStateManager>;
-
-    beforeEach(() => {
-        stateManager = makeMockStateManager();
-    });
-
-    test('does not touch the state manager at construction', () => {
-        createBotStateCompactionSink(stateManager);
-        expect(stateManager.stashAndSetCompacting).not.toHaveBeenCalled();
-        expect(stateManager.restoreFromCompacting).not.toHaveBeenCalled();
-    });
-
-    test('onCompactionStart maps to stashAndSetCompacting(trigger)', () => {
-        const sink = createBotStateCompactionSink(stateManager);
-        sink.onCompactionStart('manual');
-        expect(stateManager.stashAndSetCompacting).toHaveBeenCalledTimes(1);
-        expect(stateManager.stashAndSetCompacting).toHaveBeenCalledWith('manual');
-        expect(stateManager.restoreFromCompacting).not.toHaveBeenCalled();
-    });
-
-    test('onCompactionStart with no trigger passes undefined through', () => {
-        const sink = createBotStateCompactionSink(stateManager);
-        sink.onCompactionStart();
-        expect(stateManager.stashAndSetCompacting).toHaveBeenCalledWith(undefined);
-    });
-
-    test('onCompactionEnd maps to restoreFromCompacting()', () => {
-        const sink = createBotStateCompactionSink(stateManager);
-        sink.onCompactionEnd('some summary');
-        expect(stateManager.restoreFromCompacting).toHaveBeenCalledTimes(1);
-        expect(stateManager.restoreFromCompacting).toHaveBeenCalledWith();
-        expect(stateManager.stashAndSetCompacting).not.toHaveBeenCalled();
-    });
-
-    test('a sink built via the adapter satisfies createCompactionHooks', async () => {
-        const sink = createBotStateCompactionSink(stateManager);
-        const hooks = createCompactionHooks(sink);
-        const fn = getHook(hooks, 'PreCompact');
-        const input: PreCompactHookInput = {
-            ...BASE_HOOK_FIELDS,
-            hook_event_name:     'PreCompact',
-            trigger:             'auto',
-            custom_instructions: null,
-        };
-        await fn(input, undefined, { signal: makeSignal() });
-        expect(stateManager.stashAndSetCompacting).toHaveBeenCalledWith('auto');
     });
 });

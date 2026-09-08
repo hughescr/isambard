@@ -154,9 +154,10 @@ interface SetupCoordinatorParams {
      * The long-lived conversation conductor: the coordinator's processor is always
      * `createConductorProcessor(...)`, and `onResponse` delivers exactly once via
      * `conversationConductor.deliver` (keyed on the conductor's own envelope id, idempotent
-     * against the same guard `open()` seeds from crash recovery at boot) and never calls
-     * `botStateManager.goIdle()` — the ledger shim (`../state/ledger-shim.ts`) is the sole writer
-     * of that transition. `conversationConductor`/`contextPolicy`/`envelopeProvider`/
+     * against the same guard `open()` seeds from crash recovery at boot). Presence/activity-phase
+     * transitions are driven entirely by the conductor's own ledger (composed by
+     * `presence-setup.ts`'s `setupConductorPresence`), not by this coordinator.
+     * `conversationConductor`/`contextPolicy`/`envelopeProvider`/
      * `contextBuilder` travel together — this file stays Stryker-disabled so no test exercises
      * the required-ness itself, only bot.ts's own wiring, which always supplies all four.
      */
@@ -214,9 +215,9 @@ function newestMessagePerChannel(batch: Message[]): Map<string, Message> {
 
 /**
  * Sets up the message coordinator integration with the long-lived conversation conductor: the
- * processor is always `createConductorProcessor(...)`, `onProcessingEnd` never calls `goIdle`
- * (the ledger shim — `../state/ledger-shim.ts` — is the sole writer of that transition), and
- * `onResponse` delivers exactly once through `conversationConductor.deliver` — keyed on
+ * processor is always `createConductorProcessor(...)`, `onProcessingEnd` is a no-op (presence/
+ * activity-phase transitions are driven entirely by the conductor's own ledger, composed in
+ * `presence-setup.ts`), and `onResponse` delivers exactly once through `conversationConductor.deliver` — keyed on
  * `result.envelopeId`, the CONDUCTOR's own envelope id (`conductor-processor.ts` passes it
  * through on every `ProcessResult`), not the triggering Discord message id: a merged
  * multi-message batch has one envelope id and potentially several Discord message ids.
@@ -247,8 +248,9 @@ export function setupCoordinatorIntegration(params: SetupCoordinatorParams): Mes
         debounceMs:      250,
         registryReady:   () => params.channelRegistry.isReady(),
         onProcessingEnd: () => {
-            // No-op: startProcessingMessage/goIdle are owned entirely by ../state/ledger-shim.ts,
-            // driven by the conductor's own ledger — never by the coordinator's processing-end signal.
+            // No-op: presence/activity-phase transitions are driven entirely by the conductor's
+            // own ledger (composed in presence-setup.ts), never by the coordinator's
+            // processing-end signal.
         },
         // eslint-disable-next-line sonarjs/cognitive-complexity -- onResponse coordinates idempotent delivery, the per-channel HANDLED watermark, ring-buffer, and activity-log writes; branching is inherent
         onResponse: async (result, discordMessage, batch) => {

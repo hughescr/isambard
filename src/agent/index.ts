@@ -6,7 +6,7 @@
 
 export { extractToolUses, redactSensitiveArgs } from './stream-extractors';
 export { createStreamEventLogger, createRoleLogger, type StreamEventLogger, type FieldLogger } from './stream-event-logger';
-export { createCompactionHooks, createBotStateCompactionSink, type CompactionSink, type CompactionStateManager } from './hooks/compaction';
+export { createCompactionHooks, type CompactionSink } from './hooks/compaction';
 export { createBootBundleHooks } from './hooks/boot-bundle';
 export { createSessionLifecycleHooks, type SessionLifecycleHooksDeps } from './hooks/lifecycle';
 export { createTaskTrackingHooks } from './hooks/task-tracking';

@@ -49,7 +49,6 @@ import * as staticMessageSearchModule from '@/integrations/discord/message-histo
 import * as staticMessageSummarizerModule from '@/integrations/discord/message-history/summarizer';
 import * as staticBskySetupModule from '@/integrations/discord/setup/bsky-setup';
 import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setup';
-import * as staticStateModule from '@/integrations/discord/state';
 import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
 import type { HealthChangeListener } from '@/services';
@@ -187,8 +186,6 @@ function wireHappyPathForCleanupTests(spies: ReturnType<typeof spyOn>[], session
         spyOn(staticCheckpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.CheckpointManager>)),
         // @ts-expect-error - Mocking constructor
         spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>)),
-        // @ts-expect-error - Mocking constructor
-        spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>)),
         // @ts-expect-error - Mocking constructor
         spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({
             getSessionIdForRole, setSessionIdForRole: mock(async () => undefined), clearSessionIdForRole: mock(async () => undefined),
@@ -481,10 +478,6 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const InboxManagerSpy = spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>));
             spies.push(InboxManagerSpy);
-
-            // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>));
-            spies.push(createBotStateManagerSpy);
 
             // @ts-expect-error - Mocking constructor
             const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
@@ -1170,6 +1163,16 @@ describe('createApp', () => {
             expect(app.config.session).not.toHaveProperty('mode');
         });
 
+        test('createDiscordBot is called without a botStateManager option (P14: the state/ directory is gone)', async () => {
+            const { createBotSpy } = wireHappyPathForCleanupTests(spies);
+
+            const { createApp } = staticIndexModule;
+            await createApp();
+
+            const botOptions = createBotSpy.mock.calls[0]?.[0];
+            expect(botOptions).not.toHaveProperty('botStateManager');
+        });
+
         /**
          * app.start() fires real `healthRegistry.sendEvent` transitions, which (independently of
          * this seam) wake the outbox drainer's health subscription — it needs a `docClient.send`
@@ -1278,10 +1281,6 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const InboxManagerSpy = spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>));
             spies.push(InboxManagerSpy);
-
-            // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>));
-            spies.push(createBotStateManagerSpy);
 
             // @ts-expect-error - Mocking constructor
             const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));
@@ -2188,10 +2187,6 @@ describe('createApp', () => {
             // @ts-expect-error - Mocking constructor
             const InboxManagerSpy = spyOn(staticCheckpointModule, 'InboxManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.InboxManager>));
             spies.push(InboxManagerSpy);
-
-            // @ts-expect-error - Mocking constructor
-            const createBotStateManagerSpy = spyOn(staticStateModule, 'BotStateManagerImpl').mockImplementation(() => ({ getCompactionStateManager: () => ({}) } as unknown as InstanceType<typeof staticStateModule.BotStateManagerImpl>));
-            spies.push(createBotStateManagerSpy);
 
             // @ts-expect-error - Mocking constructor
             const TaskSessionBackendSpy = spyOn(staticTaskSessionModule, 'TaskSessionBackend').mockImplementation(() => ({} as unknown as InstanceType<typeof staticTaskSessionModule.TaskSessionBackend>));

@@ -9,9 +9,6 @@
 import { IsambardError } from './base';
 import { ErrorCode } from './codes';
 
-/** @see OperationalMode in src/agent/types.ts */
-type OperationalMode = 'idle' | 'catching_up' | 'processing_message' | 'perching';
-
 /** @see WellKnownChannel in src/integrations/discord/channel-registry/types.ts */
 type WellKnownChannel = 'general' | 'catch-up' | 'perch-time' | 'fallback';
 
@@ -181,25 +178,5 @@ export class StatusGenerationError extends PresenceError {
     constructor(message: string, cause?: unknown) {
         super(message, ErrorCode.STATUS_GENERATION_ERROR, cause);
         this.name = 'StatusGenerationError';
-    }
-}
-
-// ============================================================================
-// State Errors
-// ============================================================================
-
-/**
- * Error thrown when an invalid state transition is attempted.
- */
-export class TransitionError extends DiscordError {
-    declare public readonly context: { fromMode: OperationalMode, toMode: OperationalMode };
-
-    constructor(fromMode: OperationalMode, toMode: OperationalMode, message?: string) {
-        super(
-            message ?? `Invalid transition from ${fromMode} to ${toMode}`,
-            ErrorCode.TRANSITION_ERROR,
-            { fromMode, toMode }
-        );
-        this.name = 'TransitionError';
     }
 }

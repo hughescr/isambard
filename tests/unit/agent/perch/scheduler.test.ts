@@ -2,7 +2,6 @@ import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } 
 import type { Logger } from '@hughescr/logger';
 import { createPerchScheduler, type PerchSchedulerDeps } from '@/agent/perch/scheduler';
 import type { PerchConfig } from '@/agent/perch/types';
-import type { BotStateManager, StateChange, OperationalMode, BotState } from '@/integrations/discord/state/types';
 
 // Mock logger
 function createMockLogger(): Logger {
@@ -14,51 +13,8 @@ function createMockLogger(): Logger {
     } as unknown as Logger;
 }
 
-// Helper to create minimal StateChange objects
-function createStateChange(
-    changeType: StateChange['changeType'],
-    mode: OperationalMode
-): StateChange {
-    const botState: BotState = {
-        mode,
-        activityPhase: null,
-        modeEnteredAt: new Date(),
-        modeContext:   {},
-    };
-
-    return {
-        changeType,
-        previousState: botState,
-        newState:      botState,
-    };
-}
-
-// Mock state manager
-function createMockStateManager(): BotStateManager {
-    const subscribers = new Set<(change: StateChange) => void>();
-
-    return {
-
-        getMode:   () => 'idle' as OperationalMode,
-        subscribe: mock((callback: (change: StateChange) => void) => {
-            subscribers.add(callback);
-            return () => {
-                subscribers.delete(callback);
-            };
-        }),
-        // Helper for testing
-        _triggerStateChange: (change: StateChange) => {
-            for(const cb of subscribers) {
-                /* eslint-disable-next-line n/callback-return -- test helper doesn't need return */
-                cb(change);
-            }
-        },
-    } as unknown as BotStateManager;
-}
-
 describe('PerchScheduler', () => {
     let mockLogger: Logger;
-    let mockStateManager: BotStateManager & { _triggerStateChange: (change: StateChange) => void };
     let mockOnPerchTrigger: ReturnType<typeof mock>;
     let config: PerchConfig;
 
@@ -68,7 +24,6 @@ describe('PerchScheduler', () => {
         jest.setSystemTime(1000);
 
         mockLogger = createMockLogger();
-        mockStateManager = createMockStateManager() as BotStateManager & { _triggerStateChange: (change: StateChange) => void };
         mockOnPerchTrigger = mock(() => undefined);
         config = {
             enabled:              true,
@@ -87,7 +42,6 @@ describe('PerchScheduler', () => {
     describe('constructor', () => {
         test('should create scheduler with provided config', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -102,7 +56,6 @@ describe('PerchScheduler', () => {
 
         test('should use default local hour function if not provided', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -115,7 +68,6 @@ describe('PerchScheduler', () => {
         test('should use custom local hour function if provided', () => {
             const customHourFn = mock(() => 10);
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: customHourFn,
@@ -128,25 +80,8 @@ describe('PerchScheduler', () => {
     });
 
     describe('start()', () => {
-        test('should subscribe to state changes', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
-                logger:         mockLogger,
-                config,
-                onPerchTrigger: mockOnPerchTrigger,
-            };
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-
-            expect(mockStateManager.subscribe).toHaveBeenCalled();
-
-            scheduler.stop();
-        });
-
         test('should create cron job with correct schedule', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -173,7 +108,6 @@ describe('PerchScheduler', () => {
         test('should not start if disabled', () => {
             const disabledConfig = { ...config, enabled: false };
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         disabledConfig,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -187,7 +121,6 @@ describe('PerchScheduler', () => {
 
         test('should log start message', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -206,12 +139,23 @@ describe('PerchScheduler', () => {
 
             scheduler.stop();
         });
+
+        test('never subscribes to anything: it does not throw with no isPerchTurnRunning to consult', () => {
+            const deps: PerchSchedulerDeps = {
+                logger:         mockLogger,
+                config,
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            expect(() => scheduler.start()).not.toThrow();
+            scheduler.stop();
+        });
     });
 
     describe('stop()', () => {
         test('should handle stop without start gracefully', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -223,38 +167,19 @@ describe('PerchScheduler', () => {
             expect(() => scheduler.stop()).not.toThrow();
         });
 
-        test('should unsubscribe from state changes', () => {
-            const unsubscribeMock = mock(() => undefined);
-            mockStateManager.subscribe = mock(() => unsubscribeMock);
-
-            const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
-                logger:         mockLogger,
-                config,
-                onPerchTrigger: mockOnPerchTrigger,
-            };
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.stop();
-
-            expect(unsubscribeMock).toHaveBeenCalled();
-        });
-
         test('should clear perch pending state', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => true,
             };
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
 
-            // Set a pending state via triggerNow when bot is busy
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
+            // Set a pending state via triggerNow while a perch turn is running
             scheduler.triggerNow();
 
             const state = scheduler.getState();
@@ -268,7 +193,6 @@ describe('PerchScheduler', () => {
 
         test('should log stop message', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -285,7 +209,6 @@ describe('PerchScheduler', () => {
     describe('getState()', () => {
         test('should return initial state with perchPending false', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -301,7 +224,6 @@ describe('PerchScheduler', () => {
 
         test('should return readonly copy of state', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -318,16 +240,14 @@ describe('PerchScheduler', () => {
     });
 
     describe('triggerNow()', () => {
-        test('should trigger immediately when bot is idle', () => {
+        test('should trigger immediately when no perch turn is running', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10, // mid-morning
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => false,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
@@ -335,16 +255,14 @@ describe('PerchScheduler', () => {
             expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
         });
 
-        test('should set pending when bot is busy', () => {
+        test('should set pending when a perch turn is already running', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10, // mid-morning
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => true,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
@@ -358,14 +276,12 @@ describe('PerchScheduler', () => {
 
         test('should use current local hour', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 18, // evening
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => false,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
@@ -375,201 +291,87 @@ describe('PerchScheduler', () => {
 
         test('should handle unscheduled slot', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 11, // unscheduled
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => false,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
 
             expect(mockOnPerchTrigger).toHaveBeenCalledWith('unscheduled');
         });
+
+        test('triggers immediately with no isPerchTurnRunning to consult', () => {
+            const deps: PerchSchedulerDeps = {
+                logger:              mockLogger,
+                config,
+                onPerchTrigger:      mockOnPerchTrigger,
+                getCurrentLocalHour: () => 18, // evening
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.triggerNow();
+
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
+            expect(scheduler.getState().perchPending).toBe(false);
+        });
+
+        test('keeps no pending state across repeated triggers with no isPerchTurnRunning', () => {
+            const deps: PerchSchedulerDeps = {
+                logger:              mockLogger,
+                config,
+                onPerchTrigger:      mockOnPerchTrigger,
+                getCurrentLocalHour: () => 10,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.triggerNow();
+            scheduler.triggerNow();
+
+            expect(mockOnPerchTrigger).toHaveBeenCalledTimes(2);
+            expect(scheduler.getState()).toEqual({ perchPending: false });
+        });
     });
 
-    describe('doTrigger edge cases', () => {
-        test('should reset pending state if bot becomes non-idle after being idle', () => {
+    describe('perch-ledger deferral (isPerchTurnRunning)', () => {
+        test('RED->GREEN: trigger is deferred while isPerchTurnRunning() is true, fires once it is false', () => {
+            let running = true;
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10, // mid-morning
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => running,
             };
 
-            // Start with idle, then change to non-idle before doTrigger completes
-            let callCount = 0;
-            mockStateManager.getMode = mock((): OperationalMode => {
-                callCount++;
-                // First call (triggerNow check): idle
-                // Second call (doTrigger check): non-idle
-                return (callCount === 1 ? 'idle' : 'processing_message') satisfies OperationalMode;
-            });
-
             const scheduler = createPerchScheduler(deps);
-            scheduler.triggerNow();
 
-            // Should not have called onPerchTrigger
+            // A perch turn is running: the trigger is deferred, not fired.
+            scheduler.triggerNow();
             expect(mockOnPerchTrigger).not.toHaveBeenCalled();
+            expect(scheduler.getState().perchPending).toBe(true);
+            expect(scheduler.getState().pendingSlot).toBe('mid-morning');
 
-            // Should have set pending state again
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-            expect(state.pendingSlot).toBe('mid-morning');
-        });
-    });
-
-    describe('perchPending behavior', () => {
-        test('should set perchPending when trigger fires and bot is busy', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
-
-            const scheduler = createPerchScheduler(deps);
+            // The predicate is re-checked fresh on the next trigger, so once the perch
+            // turn has ended, the very same trigger source fires.
+            running = false;
             scheduler.triggerNow();
-
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-            expect(state.pendingSlot).toBe('mid-morning');
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
+            expect(scheduler.getState().perchPending).toBe(false);
         });
 
-        test('should trigger when bot transitions to idle with pending perch', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10, // mid-morning
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = () => 'processing_message';
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.triggerNow();
-
-            // Verify pending state
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-
-            // Transition to idle
-
-            mockStateManager.getMode = () => 'idle';
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
-
-            // Advance timers to allow deferred trigger to fire
-            jest.advanceTimersByTime(0);
-
-            // Should trigger and clear pending
-            expect(mockOnPerchTrigger).toHaveBeenCalled();
-
-            scheduler.stop();
-        });
-
-        test('should defer trigger via setTimeout when transitioning to idle with pending perch', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = () => 'processing_message';
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.triggerNow();
-
-            // Transition to idle
-            mockStateManager.getMode = () => 'idle';
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
-
-            // Trigger should NOT have fired synchronously
-            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-
-            // After advancing timers, trigger should fire
-            jest.advanceTimersByTime(0);
-            expect(mockOnPerchTrigger).toHaveBeenCalled();
-
-            scheduler.stop();
-        });
-
-        test('should not trigger on non-mode-transition state changes', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.triggerNow();
-
-            // Trigger non-mode-transition change
-            mockStateManager._triggerStateChange(createStateChange('context_update', 'idle'));
-
-            // Advance timers to flush any deferred trigger that should NOT have been scheduled
-            jest.advanceTimersByTime(0);
-
-            // Should not trigger — context_update should be ignored regardless of pending state
-            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-
-            scheduler.stop();
-        });
-
-        test('should not trigger on transition to non-idle mode', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.triggerNow();
-
-            // Transition to still-busy mode
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'processing_message'));
-
-            // Advance timers to flush any deferred trigger that should NOT have been scheduled
-            jest.advanceTimersByTime(0);
-
-            // Should not trigger — non-idle transition should not fire pending perch
-            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-
-            scheduler.stop();
-        });
-
-        test('should replace pending perch if triggered multiple times while busy', () => {
+        test('replaces pending perch if triggered multiple times while a perch turn is running', () => {
             let currentHour = 10; // First trigger: mid-morning
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => currentHour,
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => true,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
@@ -584,69 +386,11 @@ describe('PerchScheduler', () => {
             state = scheduler.getState();
             expect(state.pendingSlot).toBe('evening'); // Should be replaced, not queued
         });
-
-        test('should use current slot when deferred trigger runs, not original slot', () => {
-            let currentHour = 10; // mid-morning
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => currentHour,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = () => 'processing_message';
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.triggerNow();
-
-            // Time passes - now it's evening
-            currentHour = 18;
-
-            // Transition to idle
-            mockStateManager.getMode = () => 'idle';
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
-
-            jest.advanceTimersByTime(0);
-
-            // Should trigger with current slot (evening), not original (mid-morning)
-            expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
-
-            scheduler.stop();
-        });
-
-        test('should not trigger if no pending slot when transitioning to idle', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-
-            // Transition to idle without pending perch
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
-
-            // Advance timers to flush any setTimeout(fn, 0) that shouldn't exist
-            jest.advanceTimersByTime(0);
-
-            // Should not trigger (no pending perch)
-            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-
-            scheduler.stop();
-        });
     });
 
     describe('randomized scheduling with H option', () => {
         test('should schedule next trigger using cron-parser H option', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -685,14 +429,11 @@ describe('PerchScheduler', () => {
             [23, 'late-night'],
         ])('hour %d should map to slot %s', (hour, expectedSlot) => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => hour,
                 onPerchTrigger:      mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
@@ -708,14 +449,11 @@ describe('PerchScheduler', () => {
             [22, 'unscheduled'],
         ])('hour %d should map to unscheduled', (hour, expectedSlot) => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => hour,
                 onPerchTrigger:      mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerNow();
@@ -725,12 +463,11 @@ describe('PerchScheduler', () => {
     });
 
     describe('disabled scheduler', () => {
-        test('should not trigger when disabled', () => {
+        test('should not trigger scheduled cron when disabled, but a manual trigger still works', () => {
             const disabledConfig = { ...config, enabled: false };
             const deps: PerchSchedulerDeps = {
-                stateManager: mockStateManager,
-                logger:       mockLogger,
-                config:       disabledConfig,
+                logger: mockLogger,
+                config: disabledConfig,
 
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
@@ -740,10 +477,11 @@ describe('PerchScheduler', () => {
             scheduler.start();
 
             // Manual trigger should still work (for testing)
-            mockStateManager.getMode = () => 'idle';
             scheduler.triggerNow();
 
             expect(mockOnPerchTrigger).toHaveBeenCalled();
+
+            scheduler.stop();
         });
     });
 
@@ -757,7 +495,6 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         testConfig,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -781,13 +518,10 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         testConfig,
                 onPerchTrigger: mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerTestPerch();
@@ -804,13 +538,10 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         testConfig,
                 onPerchTrigger: mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
 
@@ -839,7 +570,21 @@ describe('PerchScheduler', () => {
             expect(mockOnPerchTrigger).toHaveBeenCalledWith('pre-dawn');
         });
 
-        test('triggerTestPerch should defer if bot is busy', () => {
+        test('triggerTestPerch triggers immediately with no isPerchTurnRunning to consult', () => {
+            const deps: PerchSchedulerDeps = {
+                logger:         mockLogger,
+                config:         { ...config, testMode: { forceSlot: 'pre-dawn' } },
+                onPerchTrigger: mockOnPerchTrigger,
+            };
+
+            const scheduler = createPerchScheduler(deps);
+            scheduler.triggerTestPerch();
+
+            expect(mockOnPerchTrigger).toHaveBeenCalledWith('pre-dawn');
+            expect(scheduler.getState().perchPending).toBe(false);
+        });
+
+        test('triggerTestPerch should defer if a perch turn is already running', () => {
             const testConfig = {
                 ...config,
                 testMode: {
@@ -849,13 +594,11 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
-                logger:         mockLogger,
-                config:         testConfig,
-                onPerchTrigger: mockOnPerchTrigger,
+                logger:             mockLogger,
+                config:             testConfig,
+                onPerchTrigger:     mockOnPerchTrigger,
+                isPerchTurnRunning: () => true,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.triggerTestPerch();
@@ -869,7 +612,7 @@ describe('PerchScheduler', () => {
             expect(state.pendingSlot).toBe('pre-dawn');
         });
 
-        test('should trigger perch on startup when triggerOnStartup is true and bot is idle', () => {
+        test('should trigger perch on startup when triggerOnStartup is true', () => {
             const testConfig = {
                 ...config,
                 testMode: {
@@ -880,13 +623,10 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         testConfig,
                 onPerchTrigger: mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -911,13 +651,10 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         testConfig,
                 onPerchTrigger: mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -945,13 +682,10 @@ describe('PerchScheduler', () => {
             };
 
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         testConfig,
                 onPerchTrigger: mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -971,7 +705,6 @@ describe('PerchScheduler', () => {
         test('should reschedule even when disabled', () => {
             const disabledConfig = { ...config, enabled: false };
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config:         disabledConfig,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -992,14 +725,11 @@ describe('PerchScheduler', () => {
         test('should determine slot from local hour on scheduled trigger', () => {
             const currentHour = 10; // mid-morning
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => currentHour,
                 onPerchTrigger:      mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1014,16 +744,14 @@ describe('PerchScheduler', () => {
             scheduler.stop();
         });
 
-        test('should defer if bot is busy on scheduled trigger', () => {
+        test('should defer if a perch turn is already running on scheduled trigger', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => true,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1040,50 +768,11 @@ describe('PerchScheduler', () => {
 
             scheduler.stop();
         });
-
-        test('should log when deferred perch runs after becoming idle', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = () => 'processing_message';
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-            scheduler.triggerNow();
-
-            // Verify pending state
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-
-            // Transition to idle
-            mockStateManager.getMode = () => 'idle';
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
-
-            jest.advanceTimersByTime(0);
-
-            // Should log about running deferred perch
-
-            expect(mockLogger.info).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    originalSlot: 'mid-morning',
-                    currentSlot:  'mid-morning',
-                }),
-                expect.stringContaining('deferred perch')
-            );
-
-            scheduler.stop();
-        });
     });
 
     describe('cost ceiling pause (Q3 / B4)', () => {
         test('skips onPerchTrigger but still reschedules when isCostPaused() is true', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1110,7 +799,6 @@ describe('PerchScheduler', () => {
 
         test('triggers normally when isCostPaused() is false', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1128,7 +816,6 @@ describe('PerchScheduler', () => {
 
         test('triggers normally when isCostPaused is omitted', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1146,7 +833,6 @@ describe('PerchScheduler', () => {
         test('isCostPaused() toggling false/true/false across successive ticks is honored every tick, never permanently paused', () => {
             let paused = false;
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1175,7 +861,6 @@ describe('PerchScheduler', () => {
         test('should return positive delay for next hour trigger', () => {
             // This is tested indirectly through scheduler start
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1200,7 +885,6 @@ describe('PerchScheduler', () => {
         test('scheduler can be created without custom local hour function', () => {
             // Test that scheduler creation doesn't require custom hour function
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1216,7 +900,6 @@ describe('PerchScheduler', () => {
     describe('cron expression validation', () => {
         test('should use H option in cron expression for randomized minutes', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1240,7 +923,6 @@ describe('PerchScheduler', () => {
 
         test('should schedule trigger at a future time', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1267,14 +949,11 @@ describe('PerchScheduler', () => {
             // Start with enabled config
             const enabledConfig = { ...config, enabled: true };
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config:              enabledConfig,
                 getCurrentLocalHour: () => 10, // mid-morning
                 onPerchTrigger:      mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1291,7 +970,6 @@ describe('PerchScheduler', () => {
         test('should not trigger when config.enabled is false', () => {
             const disabledConfig = { ...config, enabled: false };
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config:              disabledConfig,
                 getCurrentLocalHour: () => 10,
@@ -1314,14 +992,11 @@ describe('PerchScheduler', () => {
     describe('log message content', () => {
         test('should log hour and slot when trigger fires', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10, // mid-morning
                 onPerchTrigger:      mockOnPerchTrigger,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1336,16 +1011,14 @@ describe('PerchScheduler', () => {
             scheduler.stop();
         });
 
-        test('should log deferral when bot is busy', () => {
+        test('should log deferral when a perch turn is already running', () => {
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config,
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => true,
             };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1353,71 +1026,26 @@ describe('PerchScheduler', () => {
             jest.advanceTimersByTime(3_600_000); // 1 hour
 
             expect(mockLogger.debug).toHaveBeenCalledWith(
-                { slot: 'mid-morning', mode: 'processing_message' },
-                'Bot busy - deferring perch'
+                { slot: 'mid-morning' },
+                'Perch trigger deferred - a perch turn is already running'
             );
 
             scheduler.stop();
         });
     });
 
-    describe('time calculation in deferred trigger', () => {
-        test('should log when deferred perch runs after becoming idle', () => {
-            const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
-                logger:              mockLogger,
-                config,
-                getCurrentLocalHour: () => 10,
-                onPerchTrigger:      mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = () => 'processing_message';
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.start();
-
-            // Set initial time
-            const startTime = 1000;
-            jest.setSystemTime(startTime);
-            scheduler.triggerNow();
-
-            // Verify pending state is set with timestamp
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-            expect(state.pendingTriggerTime).toBeInstanceOf(Date);
-
-            // Advance time by 2 hours
-            const twoHoursMs = 7_200_000;
-            jest.setSystemTime(startTime + twoHoursMs);
-
-            // Transition to idle
-            mockStateManager.getMode = () => 'idle';
-            mockStateManager._triggerStateChange(createStateChange('mode_transition', 'idle'));
-
-            jest.advanceTimersByTime(0);
-
-            // Should have triggered the deferred perch
-            expect(mockOnPerchTrigger).toHaveBeenCalled();
-
-            scheduler.stop();
-        });
-    });
-
     describe('config.enabled check on scheduled trigger', () => {
-        test('should not trigger when disabled, even if bot is idle', () => {
+        test('should not trigger when disabled, even if no perch turn is running', () => {
             // This test kills the ConditionalExpression mutant on line 135
             // The mutant changes !config.enabled to false, which would cause triggers even when disabled
             const disabledConfig = { ...config, enabled: false };
             const deps: PerchSchedulerDeps = {
-                stateManager:        mockStateManager,
                 logger:              mockLogger,
                 config:              disabledConfig,
                 getCurrentLocalHour: () => 10,
                 onPerchTrigger:      mockOnPerchTrigger,
+                isPerchTurnRunning:  () => false,
             };
-
-            // Bot is idle - if the mutant survived, it would trigger
-            mockStateManager.getMode = mock((): OperationalMode => 'idle');
 
             const scheduler = createPerchScheduler(deps);
             scheduler.start();
@@ -1437,7 +1065,6 @@ describe('PerchScheduler', () => {
             // This test kills the ArithmeticOperator mutant on line 178
             // by verifying that Date.now() + delayMs is used correctly
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1488,7 +1115,6 @@ describe('PerchScheduler', () => {
             // rapid successive calls to scheduleNextTrigger() skip past the
             // previously scheduled hour instead of picking the same one.
             const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
                 logger:         mockLogger,
                 config,
                 onPerchTrigger: mockOnPerchTrigger,
@@ -1526,138 +1152,5 @@ describe('PerchScheduler', () => {
 
             scheduler.stop();
         });
-    });
-
-    describe('triggerTestPerch mode check', () => {
-        test('should defer test perch when bot is not idle', () => {
-            // This test kills the ConditionalExpression mutant on line 307
-            // by verifying the behavior when bot is busy
-            const testConfig = {
-                ...config,
-                testMode: {
-                    enabled:   true,
-                    forceSlot: 'pre-dawn' as const,
-                },
-            };
-
-            const deps: PerchSchedulerDeps = {
-                stateManager:   mockStateManager,
-                logger:         mockLogger,
-                config:         testConfig,
-                onPerchTrigger: mockOnPerchTrigger,
-            };
-
-            mockStateManager.getMode = mock((): OperationalMode => 'processing_message');
-
-            const scheduler = createPerchScheduler(deps);
-            scheduler.triggerTestPerch();
-
-            // Should set pending state, not trigger
-            const state = scheduler.getState();
-            expect(state.perchPending).toBe(true);
-            expect(mockOnPerchTrigger).not.toHaveBeenCalled();
-        });
-    });
-});
-
-describe('PerchScheduler without a stateManager', () => {
-    let mockLogger: Logger;
-    let mockOnPerchTrigger: ReturnType<typeof mock>;
-    let config: PerchConfig;
-
-    beforeEach(() => {
-        jest.useFakeTimers();
-        jest.clearAllTimers();
-        jest.setSystemTime(1000);
-
-        mockLogger = createMockLogger();
-        mockOnPerchTrigger = mock(() => undefined);
-        config = {
-            enabled:              true,
-            timezone:             'America/Los_Angeles',
-            intervalMinutes:      60,
-            jitterMinutes:        15,
-            maxSessionMinutes:    45,
-            wrapUpTimeoutMinutes: 5,
-        };
-    });
-
-    afterEach(() => {
-        jest.useRealTimers();
-    });
-
-    test('a scheduled trigger calls onPerchTrigger unconditionally, with no idle check', () => {
-        const deps: PerchSchedulerDeps = {
-            logger:              mockLogger,
-            config,
-            onPerchTrigger:      mockOnPerchTrigger,
-            getCurrentLocalHour: () => 10, // mid-morning
-        };
-
-        const scheduler = createPerchScheduler(deps);
-        scheduler.start();
-
-        jest.advanceTimersByTime(3_600_000); // 1 hour — H-jitter fires somewhere in it
-
-        expect(mockOnPerchTrigger).toHaveBeenCalledWith('mid-morning');
-        scheduler.stop();
-    });
-
-    test('triggerNow() triggers immediately with no stateManager to consult', () => {
-        const deps: PerchSchedulerDeps = {
-            logger:              mockLogger,
-            config,
-            onPerchTrigger:      mockOnPerchTrigger,
-            getCurrentLocalHour: () => 18, // evening
-        };
-
-        const scheduler = createPerchScheduler(deps);
-        scheduler.triggerNow();
-
-        expect(mockOnPerchTrigger).toHaveBeenCalledWith('evening');
-        expect(scheduler.getState().perchPending).toBe(false);
-    });
-
-    test('triggerTestPerch() triggers immediately with no stateManager to consult', () => {
-        const deps: PerchSchedulerDeps = {
-            logger:         mockLogger,
-            config:         { ...config, testMode: { forceSlot: 'pre-dawn' } },
-            onPerchTrigger: mockOnPerchTrigger,
-        };
-
-        const scheduler = createPerchScheduler(deps);
-        scheduler.triggerTestPerch();
-
-        expect(mockOnPerchTrigger).toHaveBeenCalledWith('pre-dawn');
-        expect(scheduler.getState().perchPending).toBe(false);
-    });
-
-    test('keeps no pending state across repeated triggers', () => {
-        const deps: PerchSchedulerDeps = {
-            logger:              mockLogger,
-            config,
-            onPerchTrigger:      mockOnPerchTrigger,
-            getCurrentLocalHour: () => 10,
-        };
-
-        const scheduler = createPerchScheduler(deps);
-        scheduler.triggerNow();
-        scheduler.triggerNow();
-
-        expect(mockOnPerchTrigger).toHaveBeenCalledTimes(2);
-        expect(scheduler.getState()).toEqual({ perchPending: false });
-    });
-
-    test('start() never subscribes: it does not throw with no stateManager to subscribe to', () => {
-        const deps: PerchSchedulerDeps = {
-            logger:              mockLogger,
-            config,
-            onPerchTrigger:      mockOnPerchTrigger,
-            getCurrentLocalHour: () => 10,
-        };
-
-        const scheduler = createPerchScheduler(deps);
-        expect(() => scheduler.start()).not.toThrow();
-        scheduler.stop();
     });
 });

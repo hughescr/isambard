@@ -949,7 +949,6 @@ export async function createApp(): Promise<App> {
         client:             discordInfra.discordClient,
         questionRegistry,
         inboxManager:       discordInfra.inboxManager,
-        botStateManager:    discordInfra.botStateManager,
         channelRegistry:    discordInfra.channelRegistry,
         contextBuilder:     contextLayer.contextBuilder,
         emailSetup,

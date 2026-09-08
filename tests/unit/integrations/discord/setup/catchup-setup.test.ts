@@ -36,10 +36,6 @@ function makeFakeInboxManager(overrides: Record<string, unknown> = {}) {
     };
 }
 
-function makeFakeBotStateManager() {
-    return { start: mock(() => undefined) };
-}
-
 function makeFakeJournal(overrides: Record<string, unknown> = {}) {
     return {
         readSince: mock(async () => []),
@@ -71,7 +67,6 @@ function conductorParams(overrides: Partial<RunConductorInboxInitParams> = {}): 
     return {
         inboxManager:          makeFakeInboxManager() as unknown as RunConductorInboxInitParams['inboxManager'],
         readyClient:           makeFakeClient(),
-        botStateManager:       makeFakeBotStateManager() as unknown as RunConductorInboxInitParams['botStateManager'],
         perchConfig:           undefined,
         ingressGate:           makeFakeIngressGate() as unknown as RunConductorInboxInitParams['ingressGate'],
         conversationConductor: makeFakeConductor() as unknown as RunConductorInboxInitParams['conversationConductor'],
@@ -214,14 +209,9 @@ describe('runConductorInboxInit', () => {
         jest.restoreAllMocks();
     });
 
-    test('starts botStateManager, sets the bot user id, and loads unread before anything else', async () => {
+    test('sets the bot user id and loads unread before replaying', async () => {
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ sent: true }));
         const callOrder: string[] = [];
-        const botStateManager = {
-            start: mock(() => {
-                callOrder.push('botStateManager.start');
-            }),
-        };
         const inboxManager = makeFakeInboxManager({
             setBotUserId: mock(() => {
                 callOrder.push('setBotUserId');
@@ -236,11 +226,10 @@ describe('runConductorInboxInit', () => {
         });
 
         await runConductorInboxInit(conductorParams({
-            botStateManager: botStateManager as never,
-            inboxManager:    inboxManager as never,
+            inboxManager: inboxManager as never,
         }));
 
-        expect(callOrder).toEqual(['botStateManager.start', 'setBotUserId', 'loadUnread', 'replayUnhandled']);
+        expect(callOrder).toEqual(['setBotUserId', 'loadUnread', 'replayUnhandled']);
     });
 
     test('sets the bot user id from readyClient.user.id', async () => {
@@ -566,7 +555,6 @@ describe('setupInboxAndCatchUp', () => {
         return {
             inboxManager:          makeFakeInboxManager(),
             readyClient:           makeFakeClient(),
-            botStateManager:       makeFakeBotStateManager(),
             perchConfig:           undefined,
             conversationConductor: makeFakeConductor(),
             journal:               makeFakeJournal(),

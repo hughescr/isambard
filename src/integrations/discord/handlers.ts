@@ -241,8 +241,8 @@ function updateChannelMetadataInInbox(
 
 /**
  * Helper function to refresh channel metadata in the inbox once a message is known to warrant a
- * response — startProcessingMessage/goIdle transitions are owned entirely by
- * `../state/ledger-shim.ts`, driven by the conductor's own turn lifecycle, never by this handler.
+ * response — presence/activity-phase transitions are driven entirely by the conductor's own
+ * turn lifecycle (composed in `presence-setup.ts`), never by this handler.
  */
 function refreshInboxChannelMetadata(
     message: Message,

@@ -15,15 +15,14 @@ import type { InboxManager } from '@/integrations/discord/inbox';
 import * as ingressGateModule from '@/integrations/discord/ingress-gate';
 import * as messageCoordinatorModule from '@/integrations/discord/message-coordinator';
 import type { MessageCoordinator } from '@/integrations/discord/message-coordinator';
-import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager } from '@/integrations/discord/presence/manager';
+import type { DynamicStatusGenerator } from '@/integrations/discord/presence/status-generator-dynamic';
 import * as catchupSetupModule from '@/integrations/discord/setup/catchup-setup';
 import * as coordinatorSetupModule from '@/integrations/discord/setup/coordinator-setup';
 import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup';
 import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-handler-setup';
 import * as perchSetupModule from '@/integrations/discord/setup/perch-setup';
 import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
-import { BotStateManagerImpl } from '@/integrations/discord/state/manager';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
 /** Flushes enough microtask ticks for a chained promise sequence to settle. */
@@ -113,18 +112,10 @@ describe('createDiscordBot', () => {
 
     /**
      * `emit` is test-only (not part of `LedgerStore`): it invokes every listener `subscribe()`
-     * was ever called with (mirroring the real store's multi-subscriber `Set`, since
-     * production wires more than one subscriber — e.g. `installLedgerShim` AND bot.ts's own
-     * ring-buffer mirror — onto the same store), letting a test simulate a ledger change
-     * without a real `createLedgerStore` reducer.
-     *
-     * `unsubscribe` is returned specifically to whichever `subscribe()` call registers a
-     * 2-argument `(ledger, event) => …` listener — `installLedgerShim`'s own signature (see
-     * `state/ledger-shim.ts`) — since that is the one existing tests (e.g. the shutdown-order
-     * suite) name and assert on; the ring-buffer listener declares only `(ledger) => …`
-     * (1 argument) and gets its own independent, unasserted unsubscribe instead. Distinguishing
-     * by arity rather than call order keeps this fake correct regardless of which subscriber
-     * bot.ts happens to wire up first.
+     * was ever called with, letting a test simulate a ledger change without a real
+     * `createLedgerStore` reducer. `unsubscribe` (P14: bot.ts's own ring-buffer mirror is now the
+     * ONLY subscriber a real ledger store has — the legacy ledger-shim subscriber was removed) is
+     * returned to every `subscribe()` call.
      */
     function makeFakeLedgerStore(sessionId: string | undefined = 'ledger-sess-1', unsubscribe: ReturnType<typeof mock> = mock(() => undefined)) {
         const listeners = new Set<(ledger: unknown, event?: unknown) => void>();
@@ -133,7 +124,7 @@ describe('createDiscordBot', () => {
             dispatch:  mock(() => undefined),
             subscribe: mock((l: (ledger: unknown, event?: unknown) => void) => {
                 listeners.add(l);
-                return l.length >= 2 ? unsubscribe : mock(() => undefined);
+                return unsubscribe;
             }),
             emit: (ledger: unknown, event?: unknown): void => {
                 for(const listener of listeners) {
@@ -309,496 +300,6 @@ describe('createDiscordBot', () => {
 
         expect(mockClient.login).toHaveBeenCalledTimes(2);
         expect(mockClient.destroy).toHaveBeenCalledTimes(2);
-    });
-
-    describe('BotStateManager Throttle Integration', () => {
-        test('should NOT call presenceManager.updatePhase when shouldUpdatePresence returns false', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000, // 2 seconds
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            const mockUpdatePhase = mock(async () => undefined);
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mockUpdatePhase,
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
-
-            // Create a bot state manager with a mock shouldUpdatePresence that always returns false
-            const mockBotStateManager = new BotStateManagerImpl({
-                logger:           mockLogger,
-                updateThrottleMs: 2000,
-            });
-            mockBotStateManager.start();
-
-            mockBotStateManager.shouldUpdatePresence = mock(() => false);
-
-            createDiscordBot({
-                config: configWithPresence,
-
-                channelRegistry: mockChannelRegistry,
-                identityContext: 'Test identity',
-                botStateManager: mockBotStateManager,
-            });
-
-            // Trigger clientReady to set up subscriptions
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-            // Clear any calls from initialization
-            mockUpdatePhase.mockClear();
-
-            // Transition to processing_message mode
-            mockBotStateManager.startProcessingMessage(createChannelId('123456789'), 'test message');
-
-            // Trigger activity phase update - shouldUpdatePresence will return false
-            mockBotStateManager.updateActivityPhase({ type: 'thinking', startedAt: new Date() });
-            await Promise.resolve();
-
-            // presenceManager.updatePhase should NOT have been called (throttle blocked)
-            expect(mockUpdatePhase).not.toHaveBeenCalled();
-
-            // Now make shouldUpdatePresence return true
-            mockBotStateManager.shouldUpdatePresence = mock(() => true);
-
-            // Trigger another activity phase update
-            mockBotStateManager.updateActivityPhase({ type: 'responding', startedAt: new Date() });
-            await Promise.resolve();
-
-            // Now it should have been called
-            expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            expect(mockUpdatePhase).toHaveBeenCalledWith({ type: 'responding', startedAt: expect.any(Date) });
-        });
-
-        // NOTE: Real timing-based throttle tests are not feasible with current architecture.
-        // The issue: updateActivityPhase() sets lastPresenceUpdateTime BEFORE notifying subscribers,
-        // so shouldUpdatePresence() always sees ~0ms elapsed time and throttles the update.
-        // The mock-based tests above verify the throttle logic is correctly wired (check is called,
-        // true allows update, false blocks it). Timing verification would require architectural
-        // changes to set lastPresenceUpdateTime AFTER the throttle check passes.
-    });
-
-    describe('Presence Flow Integration', () => {
-        test('should set up activity phase subscription when presence manager is created', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000,
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            const mockUpdatePhase = mock(async () => undefined);
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mockUpdatePhase,
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
-
-            // Track subscription calls
-            let subscribeCallCount = 0;
-            const realBotStateManager = new BotStateManagerImpl({
-                logger:           mockLogger,
-                updateThrottleMs: 2000,
-            });
-            const originalSubscribe = realBotStateManager.subscribe;
-            realBotStateManager.subscribe = (listener) => {
-                subscribeCallCount++;
-                return originalSubscribe.call(realBotStateManager, listener);
-            };
-            realBotStateManager.start();
-
-            createDiscordBot({
-                config: configWithPresence,
-
-                channelRegistry: mockChannelRegistry,
-                identityContext: 'Test identity',
-                botStateManager: realBotStateManager,
-            });
-
-            // Trigger clientReady to set up subscriptions
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-
-            // Verify subscriptions were created (4: mode transition, activity phase from presence-setup;
-            // plus tool-tracking and channel-tracking ring-buffer subscriptions from bot.ts)
-            expect(subscribeCallCount).toBe(4);
-        });
-
-        test('should complete full presence flow: state update → subscription → throttle check → presence update', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000,
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            const mockUpdatePhase = mock(async () => undefined);
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mockUpdatePhase,
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
-
-            // Create a real bot state manager to test the subscription mechanism
-            const mockBotStateManager = new BotStateManagerImpl({
-                logger:           mockLogger,
-                updateThrottleMs: 2000,
-            });
-            mockBotStateManager.start();
-
-            createDiscordBot({
-                config: configWithPresence,
-
-                channelRegistry: mockChannelRegistry,
-                identityContext: 'Test identity',
-                botStateManager: mockBotStateManager,
-            });
-
-            // Trigger clientReady to set up subscriptions
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-
-            // Clear any calls from initialization
-            mockUpdatePhase.mockClear();
-
-            // Step 1: Transition to processing_message mode
-            mockBotStateManager.startProcessingMessage(createChannelId('123456789'), 'test message');
-
-            // Step 2: Mock shouldUpdatePresence to return true for first update
-            mockBotStateManager.shouldUpdatePresence = mock(() => true);
-
-            // Step 3: Update activity phase to 'thinking'
-            const phase1 = { type: 'thinking' as const, startedAt: new Date() };
-            mockBotStateManager.updateActivityPhase(phase1);
-
-            // Step 4: Allow event loop to process subscription callbacks
-            await Promise.resolve();
-
-            // Step 5: Verify presenceManager.updatePhase was called (throttle allowed)
-            expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            expect(mockUpdatePhase).toHaveBeenCalledWith({ type: 'thinking', startedAt: expect.any(Date) });
-
-            // Clear mock for next phase
-            mockUpdatePhase.mockClear();
-
-            // Step 6: Mock shouldUpdatePresence to return false for second update (throttled)
-            mockBotStateManager.shouldUpdatePresence = mock(() => false);
-
-            // Step 7: Update again immediately - throttle should block this
-            const phase2 = { type: 'responding' as const, startedAt: new Date() };
-            mockBotStateManager.updateActivityPhase(phase2);
-            await Promise.resolve();
-
-            // Step 8: Verify presenceManager.updatePhase was NOT called (throttle blocked)
-            expect(mockUpdatePhase).not.toHaveBeenCalled();
-
-            // Step 9: Mock shouldUpdatePresence to return true again (throttle window passed)
-            mockBotStateManager.shouldUpdatePresence = mock(() => true);
-
-            // Step 10: Update again - throttle should allow this
-            const phase3 = { type: 'using_tool' as const, startedAt: new Date(), toolName: 'test-tool' };
-            mockBotStateManager.updateActivityPhase(phase3);
-            await Promise.resolve();
-
-            // Step 11: Verify presenceManager.updatePhase was called (throttle allows after delay)
-            expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            expect(mockUpdatePhase).toHaveBeenCalledWith({
-                type:      'using_tool',
-                startedAt: expect.any(Date),
-                toolName:  'test-tool',
-            });
-        });
-
-        test('should verify throttle works correctly with recordPresenceUpdate timing', async () => {
-            // Use fake time to control Date.now() for throttle checks
-            const baseTime = 1_000_000;
-            jest.setSystemTime(baseTime);
-
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      100, // Short throttle for testing
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            const mockUpdatePhase = mock(async () => undefined);
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mockUpdatePhase,
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
-
-            const mockBotStateManager = new BotStateManagerImpl({
-                logger:           mockLogger,
-                updateThrottleMs: 100, // Short throttle for testing
-            });
-            mockBotStateManager.start();
-
-            createDiscordBot({
-                config: configWithPresence,
-
-                channelRegistry: mockChannelRegistry,
-                identityContext: 'Test identity',
-                botStateManager: mockBotStateManager,
-            });
-
-            // Trigger clientReady to set up subscriptions
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-            mockUpdatePhase.mockClear();
-
-            // Transition to processing_message mode
-            mockBotStateManager.startProcessingMessage(createChannelId('123456789'), 'test message');
-
-            // First update should go through (no previous timestamp)
-            const phase1 = { type: 'thinking' as const, startedAt: new Date() };
-            mockBotStateManager.updateActivityPhase(phase1);
-            await Promise.resolve();
-
-            expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            expect(mockUpdatePhase).toHaveBeenCalledWith(phase1);
-            mockUpdatePhase.mockClear();
-
-            // Immediate second update should be throttled (still at same time)
-            const phase2 = { type: 'using_tool' as const, startedAt: new Date(), toolName: 'tool1' };
-            mockBotStateManager.updateActivityPhase(phase2);
-            await Promise.resolve();
-
-            expect(mockUpdatePhase).toHaveBeenCalledTimes(0); // Throttled
-
-            // Advance fake time past throttle window (100ms + buffer)
-            jest.setSystemTime(baseTime + 150);
-
-            // Third update should now go through
-            const phase3 = { type: 'responding' as const, startedAt: new Date() };
-            mockBotStateManager.updateActivityPhase(phase3);
-            await Promise.resolve();
-
-            expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-            expect(mockUpdatePhase).toHaveBeenCalledWith(phase3);
-
-            // Reset system time
-            jest.setSystemTime();
-        });
-
-        test('should verify subscription fires on activity phase updates', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000,
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            const mockUpdatePhase = mock(async () => undefined);
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mockUpdatePhase,
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
-
-            // Create a real bot state manager
-            const mockBotStateManager = new BotStateManagerImpl({
-                logger:           mockLogger,
-                updateThrottleMs: 2000,
-            });
-            mockBotStateManager.start();
-
-            createDiscordBot({
-                config: configWithPresence,
-
-                channelRegistry: mockChannelRegistry,
-                identityContext: 'Test identity',
-                botStateManager: mockBotStateManager,
-            });
-
-            // Trigger clientReady to set up subscriptions
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-
-            // Clear any calls from initialization
-            mockUpdatePhase.mockClear();
-
-            // Transition to processing_message
-            mockBotStateManager.startProcessingMessage(createChannelId('123456789'), 'test message');
-
-            // Mock shouldUpdatePresence to return true to allow update
-            mockBotStateManager.shouldUpdatePresence = mock(() => true);
-
-            // Update activity phase to different types and verify each triggers subscription
-            const phases = [
-                { type: 'thinking' as const, startedAt: new Date() },
-                { type: 'responding' as const, startedAt: new Date() },
-                { type: 'using_tool' as const, startedAt: new Date(), toolName: 'test-tool' },
-            ];
-
-            for(const phase of phases) {
-                mockUpdatePhase.mockClear();
-                mockBotStateManager.updateActivityPhase(phase);
-                // eslint-disable-next-line no-await-in-loop -- sequential: must observe each phase transition separately
-                await Promise.resolve();
-
-                // Verify subscription fired and presence was updated
-                expect(mockUpdatePhase).toHaveBeenCalledTimes(1);
-                expect(mockUpdatePhase).toHaveBeenCalledWith(expect.objectContaining({ type: phase.type }));
-            }
-        });
     });
 
     describe('Reconnection Handler Safety', () => {
@@ -998,18 +499,8 @@ describe('createDiscordBot', () => {
     });
 
     describe('Presence Manager Lifecycle', () => {
-        test('should create presence manager when identityContext and config.presence provided', () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
+        function presenceConfig(): DiscordConfig {
+            return {
                 ...mockConfig,
                 presence: {
                     updateThrottleMs:      2000,
@@ -1017,222 +508,137 @@ describe('createDiscordBot', () => {
                     idleRefreshIntervalMs: 300_000,
                 },
             };
+        }
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+        test('P14: creates presence manager (via setupConductorPresence) once the conductor has opened, with identityContext and config.presence', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
 
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mock(async () => undefined),
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            // @ts-expect-error - Mocking constructor
-            const presenceManagerSpy = spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager);
-            spies.push(
-                presenceManagerSpy,
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
+            const mockPresenceManager = { start: mock(() => undefined), stop: mock(() => undefined) };
+            const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                presenceManager:         mockPresenceManager as unknown as PresenceManager,
+                unsubscribeLedgers:      mock(() => undefined),
+                dynamicStatusGenerators: [],
+            });
+            spies.push(setupConductorPresenceSpy);
+
+            const ledgerStore = makeFakeLedgerStore();
+            const deps = conductorDeps({ ledgerStore });
 
             createDiscordBot({
-                config: configWithPresence,
-
+                config:          presenceConfig(),
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
+                ...deps,
             });
 
-            // Simulate clientReady event
+            await triggerReady(client);
 
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-
-            expect(presenceManagerSpy).toHaveBeenCalled();
-            expect(mockPresenceManager.start).toHaveBeenCalled();
+            expect(setupConductorPresenceSpy).toHaveBeenCalled();
         });
 
-        test('should NOT create presence manager when identityContext is missing', () => {
-            // Spy on createPresenceManager FIRST and clear any stale calls
-            const presenceManagerSpy = spyOn(presenceModule, 'PresenceManager');
-            presenceManagerSpy.mockClear();
-            spies.push(presenceManagerSpy);
+        test('P14: feeds setupConductorPresence().dynamicStatusGenerators[0] into setupCoordinatorIntegration\'s dynamicStatusGenerator', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
 
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
+            const mockPresenceManager = { start: mock(() => undefined), stop: mock(() => undefined) };
+            const conversationGenerator = { generateSynopsis: mock(() => Promise.resolve(null)) };
+            const perchGenerator = { generateSynopsis: mock(() => Promise.resolve(null)) };
+            spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                presenceManager:         mockPresenceManager as unknown as PresenceManager,
+                unsubscribeLedgers:      mock(() => undefined),
+                // Ordering matters: buildConductorLedgers() yields [ledgerStore, perchLedgerStore],
+                // so index 0 here is the CONVERSATION session's own generator, distinct from a
+                // perch-session generator at index 1.
+                dynamicStatusGenerators: [conversationGenerator, perchGenerator] as DynamicStatusGenerator[],
+            }));
 
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000,
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
+            let capturedGenerator: DynamicStatusGenerator | undefined;
+            spies.push(spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { dynamicStatusGenerator?: DynamicStatusGenerator }) => {
+                capturedGenerator = params.dynamicStatusGenerator;
+                return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
+            }));
 
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+            const ledgerStore = makeFakeLedgerStore();
+            const deps = conductorDeps({ ledgerStore });
 
             createDiscordBot({
-                config: configWithPresence,
+                config:          presenceConfig(),
+                channelRegistry: mockChannelRegistry,
+                identityContext: 'Test identity',
+                ...deps,
+            });
 
+            await triggerReady(client);
+
+            expect(capturedGenerator).toBe(conversationGenerator as unknown as DynamicStatusGenerator);
+        });
+
+        test('should NOT create presence manager when identityContext is missing', async () => {
+            const client = makeMockClientForConductor();
+            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+            stubCoordinator();
+
+            const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence');
+            spies.push(setupConductorPresenceSpy);
+
+            const ledgerStore = makeFakeLedgerStore();
+            const deps = conductorDeps({ ledgerStore });
+
+            createDiscordBot({
+                config:          presenceConfig(),
                 channelRegistry: mockChannelRegistry,
                 // identityContext missing
+                ...deps,
             });
 
-            // Simulate clientReady event - call ALL handlers to avoid order dependency
+            await triggerReady(client);
 
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandlers = calls.filter(([event]) => event === 'clientReady');
-            for(const [, handler] of readyHandlers) {
-                handler(mockClient);
-            }
-
-            expect(presenceManagerSpy).not.toHaveBeenCalled();
+            expect(setupConductorPresenceSpy).not.toHaveBeenCalled();
         });
 
-        test('should call presenceManager.stop() on bot stop() when manager exists', async () => {
-            const mockClient = {
-                on:                 mock(() => mockClient),
-                once:               mock(() => mockClient),
-                login:              mock(async () => 'mock-token'),
-                destroy:            mock(async () => undefined),
-                removeAllListeners: mock(() => undefined),
-                user:               { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest:               null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000,
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            const mockPresenceManager = {
-                start:                         mock(() => undefined),
-                stop:                          mock(() => undefined),
-                updatePhase:                   mock(async () => undefined),
-                transitionPresenceDisplayMode: mock(() => undefined),
-            };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
-
-            const bot = createDiscordBot({
-                config: configWithPresence,
-
-                channelRegistry: mockChannelRegistry,
-                identityContext: 'Test identity',
-            });
-
-            // Simulate clientReady event to create presenceManager
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-
-            await bot.stop();
-
-            expect(mockPresenceManager.stop).toHaveBeenCalled();
-            expect(mockClient.destroy).toHaveBeenCalled();
-        });
-
-        test('should call presenceManager.stop() before client.destroy()', async () => {
+        test('P14: calls presenceManager.stop() before client.destroy()', async () => {
             const callOrder: string[] = [];
-
-            const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => {
+            const client = makeMockClientForConductor();
+            spies.push(
+                spyOn(clientModule, 'createDiscordClient').mockReturnValue(client),
+                spyOn(client, 'destroy').mockImplementation(async () => {
                     callOrder.push('destroy');
                 }),
-                removeAllListeners: mock(() => {
+                spyOn(client, 'removeAllListeners').mockImplementation(() => {
                     callOrder.push('removeAllListeners');
-                }),
-                user: { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest: null,
-            } as unknown as Client;
-
-            const configWithPresence: DiscordConfig = {
-                ...mockConfig,
-                presence: {
-                    updateThrottleMs:      2000,
-                    idleTimeoutMs:         60_000,
-                    idleRefreshIntervalMs: 300_000,
-                },
-            };
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
+                    return client;
+                })
+            );
+            stubCoordinator();
 
             const mockPresenceManager = {
                 start: mock(() => undefined),
                 stop:  mock(() => {
-                    callOrder.push('stop');
+                    callOrder.push('presenceManager.stop');
                 }),
-                updatePhase:                   mock(async () => undefined),
-                transitionPresenceDisplayMode: mock(() => undefined),
             };
-            spies.push(
-                // @ts-expect-error - Mocking constructor
-                spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-                spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                    generate:     mock(() => ({ name: 'Thinking...', type: 4 })),
-                    formatStatus: mock((status: string) => ({ name: status, type: 4 })),
-                }),
-                spyOn(presenceModule, 'createIdleStatusGenerator').mockReturnValue({
-                    generate: mock(async () => ({ name: 'Idle', type: 4 })),
-                })
-            );
+            spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
+                presenceManager:         mockPresenceManager as unknown as PresenceManager,
+                unsubscribeLedgers:      mock(() => undefined),
+                dynamicStatusGenerators: [],
+            }));
+
+            const ledgerStore = makeFakeLedgerStore();
+            const deps = conductorDeps({ ledgerStore });
 
             const bot = createDiscordBot({
-                config: configWithPresence,
-
+                config:          presenceConfig(),
                 channelRegistry: mockChannelRegistry,
                 identityContext: 'Test identity',
+                ...deps,
             });
 
-            // Simulate clientReady event to create presenceManager
-
-            const calls = (mockClient.on as unknown as { mock: { calls: unknown[][] } }).mock.calls as [string, (client: Client) => void][];
-            const readyHandler = calls.find(([event]) => event === 'clientReady');
-            const messageSetupHandler = readyHandler?.[1]; // Handler registered with once()
-            if(messageSetupHandler) {
-                messageSetupHandler(mockClient);
-            }
-
+            await triggerReady(client);
             await bot.stop();
 
-            expect(callOrder).toEqual(['stop', 'removeAllListeners', 'destroy']);
+            expect(callOrder).toEqual(['presenceManager.stop', 'removeAllListeners', 'destroy']);
         });
     });
 
@@ -1660,54 +1066,6 @@ describe('createDiscordBot', () => {
         });
     });
 
-    describe('Shutdown Ordering', () => {
-        test('should abort sessions before stopping botStateManager', async () => {
-            const callOrder: string[] = [];
-
-            const mockClient = {
-                on:      mock(() => mockClient),
-                once:    mock(() => mockClient),
-                login:   mock(async () => 'mock-token'),
-                destroy: mock(async () => {
-                    callOrder.push('destroy');
-                }),
-                removeAllListeners: mock(() => {
-                    callOrder.push('removeAllListeners');
-                }),
-                user: { id: '999999999999999999', tag: 'TestBot#1234' },
-                rest: null,
-            } as unknown as Client;
-
-            spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(mockClient));
-
-            // Mock botStateManager with stop method that tracks call order
-            const mockBotStateManager = new BotStateManagerImpl({
-                logger: mockLogger,
-            });
-            const originalStop = mockBotStateManager.stop;
-            mockBotStateManager.stop = () => {
-                callOrder.push('botStateManager.stop');
-                originalStop.call(mockBotStateManager);
-            };
-
-            const bot = createDiscordBot({
-                config: mockConfig,
-
-                channelRegistry: mockChannelRegistry,
-                botStateManager: mockBotStateManager,
-            });
-
-            await bot.stop();
-
-            // botStateManager.stop should be called AFTER removeAllListeners
-            // (removeAllListeners happens before destroy, which is the last step)
-            const callOrderIndex = new Map(callOrder.map((e, i) => [e, i] as [string, number]));
-            const stopIdx = callOrderIndex.get('botStateManager.stop') ?? -1;
-            const listenerIdx = callOrderIndex.get('removeAllListeners') ?? -1;
-            expect(stopIdx).toBeLessThan(listenerIdx);
-        });
-    });
-
     describe('Conductor mode (P9)', () => {
         test('opens the conductor after initializeChannelRegistry and before setupCoordinatorIntegration', async () => {
             const client = makeMockClientForConductor();
@@ -1919,7 +1277,7 @@ describe('createDiscordBot', () => {
             expect(capturedGetCurrentSessionId?.()).toBe('from-the-ledger');
         });
 
-        test('stop order: coordinator.stop -> conductor.shutdown -> shim unsubscribe -> botStateManager.stop', async () => {
+        test('stop order: coordinator.stop -> conductor.shutdown -> ring-buffer unsubscribe', async () => {
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
 
@@ -1937,31 +1295,26 @@ describe('createDiscordBot', () => {
                     callOrder.push('conductor.shutdown');
                 }),
             });
-            const shimUnsubscribe = mock(() => {
-                callOrder.push('shim unsubscribe');
+            const ledgerUnsubscribe = mock(() => {
+                callOrder.push('ring-buffer unsubscribe');
             });
-            const ledgerStore = makeFakeLedgerStore('ledger-sess-1', shimUnsubscribe);
+            const ledgerStore = makeFakeLedgerStore('ledger-sess-1', ledgerUnsubscribe);
             const deps = conductorDeps({ conversationConductor: conductor, ledgerStore });
-
-            const mockBotStateManager = new BotStateManagerImpl({ logger: mockLogger });
-            const originalStop = mockBotStateManager.stop.bind(mockBotStateManager);
-            mockBotStateManager.stop = () => {
-                callOrder.push('botStateManager.stop');
-                originalStop();
-            };
 
             const bot = createDiscordBot({
                 config:          mockConfig,
                 channelRegistry: mockChannelRegistry,
-                botStateManager: mockBotStateManager,
                 ...deps,
             });
 
             await triggerReady(client);
             await bot.stop();
 
-            expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'shim unsubscribe', 'botStateManager.stop']);
-            expect(shimUnsubscribe).toHaveBeenCalledTimes(1);
+            // Both the tool-tracking and channel-tracking ring buffers unsubscribe from the same
+            // underlying ledger subscription, so the fake's unsubscribe fires twice — after
+            // conductor.shutdown either way.
+            expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe']);
+            expect(ledgerUnsubscribe).toHaveBeenCalledTimes(2);
         });
 
         test('stop() calls the ingress gate\'s stop() (P10, gate.stop -> shutdown.run)', async () => {
@@ -2245,45 +1598,20 @@ describe('createDiscordBot', () => {
                 expect(channels).toHaveLength(1);
                 expect(channels[0].channelId).toBe('chan-1');
             });
-
-            test('the ring buffers themselves never subscribe to botStateManager in conductor mode (P12: the legacy-perch-ledger adapter is retired — the perch ledger is real)', async () => {
-                const client = makeMockClientForConductor();
-                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
-                stubCoordinator();
-
-                const customBotStateManager = new BotStateManagerImpl({ logger: mockLogger });
-                const subscribeSpy = spyOn(customBotStateManager, 'subscribe');
-                spies.push(subscribeSpy);
-
-                const deps = conductorDeps();
-                createDiscordBot({
-                    config:          mockConfig,
-                    channelRegistry: mockChannelRegistry,
-                    botStateManager: customBotStateManager,
-                    ...deps,
-                });
-
-                await triggerReady(client);
-
-                // No subscription at all: the ring buffers subscribe only to the session
-                // ledger(s), never to botStateManager, and the throwaway legacy-perch-ledger
-                // adapter (which used to subscribe once here) no longer exists.
-                expect(subscribeSpy).not.toHaveBeenCalled();
-            });
         });
 
         describe('P11: presence composed from ledgers', () => {
-            test('uses setupConductorPresence (never setupPresence) once identityContext/config.presence/ledgerStore are all present', async () => {
+            test('uses setupConductorPresence once identityContext/config.presence/ledgerStore are all present', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers: mock(() => undefined),
+                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers:      mock(() => undefined),
+                    dynamicStatusGenerators: [],
                 });
-                const setupPresenceSpy = spyOn(presenceSetupModule, 'setupPresence');
-                spies.push(setupConductorPresenceSpy, setupPresenceSpy);
+                spies.push(setupConductorPresenceSpy);
 
                 const ledgerStore = makeFakeLedgerStore();
                 const perchLedgerStore = makeFakeLedgerStore('perch-sess-1');
@@ -2299,7 +1627,6 @@ describe('createDiscordBot', () => {
                 await triggerReady(client);
 
                 expect(setupConductorPresenceSpy).toHaveBeenCalledTimes(1);
-                expect(setupPresenceSpy).not.toHaveBeenCalled();
                 const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { ledgers?: readonly unknown[] } | undefined;
                 expect(call?.ledgers).toHaveLength(2);
             });
@@ -2310,8 +1637,9 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers: mock(() => undefined),
+                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers:      mock(() => undefined),
+                    dynamicStatusGenerators: [],
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2331,18 +1659,18 @@ describe('createDiscordBot', () => {
                 expect(call?.ledgers).toHaveLength(1);
             });
 
-            test('passes botStateManager through so the legacy perch runner\'s own presence throttle clock keeps ticking (P11 review finding)', async () => {
+            test('P14: calls setupConductorPresence with no botStateManager param — the legacy bridge no longer exists', async () => {
                 const client = makeMockClientForConductor();
                 spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers: mock(() => undefined),
+                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers:      mock(() => undefined),
+                    dynamicStatusGenerators: [],
                 });
                 spies.push(setupConductorPresenceSpy);
 
-                const customBotStateManager = new BotStateManagerImpl({ logger: mockLogger });
                 const ledgerStore = makeFakeLedgerStore();
                 const deps = conductorDeps({ ledgerStore });
 
@@ -2350,14 +1678,13 @@ describe('createDiscordBot', () => {
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
                     identityContext: 'Test identity',
-                    botStateManager: customBotStateManager,
                     ...deps,
                 });
 
                 await triggerReady(client);
 
-                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as { botStateManager?: unknown } | undefined;
-                expect(call?.botStateManager).toBe(customBotStateManager);
+                const call = setupConductorPresenceSpy.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+                expect(call).not.toHaveProperty('botStateManager');
             });
 
             test('forwards options.isCostPaused to setupConductorPresence by identity when perch is enabled (Q3 / B4)', async () => {
@@ -2366,8 +1693,9 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers: mock(() => undefined),
+                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers:      mock(() => undefined),
+                    dynamicStatusGenerators: [],
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2396,8 +1724,9 @@ describe('createDiscordBot', () => {
                 stubCoordinator();
 
                 const setupConductorPresenceSpy = spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
-                    unsubscribeLedgers: mock(() => undefined),
+                    presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
+                    unsubscribeLedgers:      mock(() => undefined),
+                    dynamicStatusGenerators: [],
                 });
                 spies.push(setupConductorPresenceSpy);
 
@@ -2427,8 +1756,9 @@ describe('createDiscordBot', () => {
 
                 const unsubscribeLedgers = mock(() => undefined);
                 spies.push(spyOn(presenceSetupModule, 'setupConductorPresence').mockReturnValue({
-                    presenceManager: { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
+                    presenceManager:         { start: mock(() => undefined), stop: mock(() => undefined) } as unknown as PresenceManager,
                     unsubscribeLedgers,
+                    dynamicStatusGenerators: [],
                 }));
 
                 const ledgerStore = makeFakeLedgerStore();
@@ -2456,8 +1786,9 @@ describe('createDiscordBot', () => {
                         spyOn(presenceSetupModule, 'setupConductorPresence').mockImplementation((params: { getRecentContext: () => Promise<string | undefined> }) => {
                             getRecentContext = params.getRecentContext;
                             return {
-                                presenceManager:    { start: mock(() => undefined) } as unknown as PresenceManager,
-                                unsubscribeLedgers: mock(() => undefined),
+                                presenceManager:         { start: mock(() => undefined) } as unknown as PresenceManager,
+                                unsubscribeLedgers:      mock(() => undefined),
+                                dynamicStatusGenerators: [],
                             };
                         }),
                         spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { addRecentMessage?: (content: string, author: 'user' | 'izzy') => void }) => {

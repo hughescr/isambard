@@ -2,7 +2,8 @@
  * Presence Manager
  *
  * Coordinates Discord presence updates and idle status refresh loops.
- * Throttling is handled upstream by BotStateManager - this manager applies
+ * Throttling for conductor-mode ledger composition is handled upstream by
+ * `presence-setup.ts`'s `setupConductorPresence` — this manager applies
  * all updates it receives.
  *
  * Update behavior:
@@ -15,9 +16,8 @@ import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
 import { DateTime } from 'luxon';
 import { renderPresenceText, type PresenceView } from './presence-view.js';
 import type { ActiveStatusGenerator } from './status-generator-active.js';
-import type { DynamicStatusGenerator } from './status-generator-dynamic.js';
 import type { IdleStatusGenerator } from './status-generator-idle.js';
-import type { PresenceConfig, PresencePhase, PresenceDisplayMode, CatchUpSynopsisContext } from './types.js';
+import type { PresenceConfig, PresencePhase, PresenceDisplayMode } from './types.js';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 
 /**
@@ -25,15 +25,13 @@ import { withDiscordRetry } from '@/integrations/discord/retry';
  */
 export interface PresenceManagerDeps {
     /** Discord client for setting presence */
-    discordClient:           DiscordClient
+    discordClient:         DiscordClient
     /** Generator for active status text */
-    activeStatusGenerator:   ActiveStatusGenerator
+    activeStatusGenerator: ActiveStatusGenerator
     /** Generator for idle status text */
-    idleStatusGenerator:     IdleStatusGenerator
-    /** Optional generator for dynamic status text (used for catch-up mode) */
-    dynamicStatusGenerator?: DynamicStatusGenerator
+    idleStatusGenerator:   IdleStatusGenerator
     /** Configuration for timing and rate limiting */
-    config:                  PresenceConfig
+    config:                PresenceConfig
     /**
      * Q3/B4: optional recompose hook consulted on every idle refresh (the periodic timer AND the
      * immediate refresh `applyView` triggers), not only when a fresh view arrives via `applyView`.
@@ -44,7 +42,7 @@ export interface PresenceManagerDeps {
      * (the legacy `setupPresence` bridge, which never composes a `PresenceView` at all) leaves the
      * cached prefix behaviour unchanged.
      */
-    recomposeIdlePrefix?:    () => { prefix: string, compacting: boolean }
+    recomposeIdlePrefix?:  () => { prefix: string, compacting: boolean }
     /** Logger instance */
     logger: {
         debug: (message: unknown, ...args: unknown[]) => void
@@ -57,7 +55,7 @@ export interface PresenceManagerDeps {
  * Presence manager coordinating Discord presence updates.
  *
  * The manager coordinates all presence updates with:
- * - Immediate updates for all phases (throttling handled upstream by BotStateManager)
+ * - Immediate updates for all phases (conductor-mode throttling handled upstream by presence-setup.ts)
  * - Automatic idle status refresh on an interval
  * - State transitions between active and idle phases
  * - Graceful error handling
@@ -258,45 +256,20 @@ export class PresenceManager {
     }
 
     /**
-     * Generate and apply catch-up status, with optional dynamic synopsis or idle fallback.
-     */
-    // Stryker disable next-line BlockStatement: function body — mutating causes test timeout (status never applied, test hangs waiting for presence update)
-    private async applyCatchUpStatus(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): Promise<void> {
-        // Stryker disable BlockStatement: Error logging catch block for observability
-        try {
-            // Use dynamic generator if catch-up context provided and generator available
-            if(catchUpContext && this.deps.dynamicStatusGenerator) {
-                const statusText = await this.deps.dynamicStatusGenerator.generateCatchUpSynopsis(catchUpContext);
-                // Stryker disable next-line ConditionalExpression: Null guard — fall through to idle generator when Haiku returns null
-                if(statusText !== null) {
-                    const activity = this.deps.activeStatusGenerator.formatStatus(statusText, mode);
-                    await this.applyPresenceUpdate(activity);
-                    return;
-                }
-            }
-            // Fallback to idle generator (no dynamic generator, no context, or null result)
-            const activity = await this.deps.idleStatusGenerator.generate();
-            await this.applyPresenceUpdate(activity);
-        } catch (error) {
-            // Stryker disable next-line ObjectLiteral,StringLiteral: Error logging content
-            this.deps.logger.error({ error, mode }, 'Failed to generate catch-up status');
-        }
-        // Stryker restore BlockStatement
-    }
-
-    /**
-     * Transition to a new presence display mode, managing status updates and lifecycle.
-     * This method has side effects: generates LLM-powered status updates,
-     * manages idle refresh loop lifecycle, and handles complex state transitions.
+     * Transition to a new presence display mode, managing status updates and idle refresh
+     * lifecycle.
+     *
+     * P14: conductor-mode presence flows exclusively through {@link applyView}, which never sets
+     * `presenceDisplayMode` — so no production code calls this method today, and
+     * `getPresencePrefix`'s 💬/🦉 prefixes (in `status-generator-active.ts`) never fire on this
+     * path in practice. Kept as public API (with its own test coverage) for a future non-`applyView`
+     * caller rather than deleted with the last one that used it.
      *
      * @param mode - Presence display mode state
-     * @param catchUpContext - Optional rich context for catch-up status generation
      */
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- state machine transitions require branching on (currentPhase, mode, previousMode) combinations; each branch is a distinct valid state
-    transitionPresenceDisplayMode(mode: PresenceDisplayMode, catchUpContext?: CatchUpSynopsisContext): void {
+    transitionPresenceDisplayMode(mode: PresenceDisplayMode): void {
         // Stryker disable next-line StringLiteral,ObjectLiteral: Log message content is not behavior-affecting
         this.deps.logger.debug({ mode, previousMode: this.presenceDisplayMode }, 'Setting presence display mode');
-        const previousMode = this.presenceDisplayMode;
         this.presenceDisplayMode = mode;
 
         // Stryker disable next-line ConditionalExpression: stopIdleRefresh() is idempotent — →true equivalent (adds harmless no-op when mode=none)
@@ -304,51 +277,24 @@ export class PresenceManager {
             this.stopIdleRefresh();
         }
 
-        // When ENTERING catch-up mode (from 'none'), generate ONE initial status update
-        // with the 📥 prefix. The catch-up agent session's stream handler will then
-        // drive all subsequent status updates (thinking, using_tool, responding).
-        // We do NOT start the idle refresh loop during catch-up.
-        const enteringCatchUp = mode === 'catching_up' && previousMode === 'none';
-
-        // Handle based on current phase state
-        if(this.currentPhase) {
-            // We have a current phase - update it with the new mode
-            if(this.currentPhase.type === 'idle') {
-                // For idle phase, generate ONE initial status when entering catch-up mode
-                // This shows the 📥 prefix immediately
-                // Do NOT start the idle refresh loop - stream handler will drive updates
-                if(enteringCatchUp) {
-                    void this.applyCatchUpStatus(mode, catchUpContext);
-                }
-                // When exiting catch-up mode, generate an immediate idle refresh
-                // This ensures we show normal idle status without waiting for the next interval
-                const exitingCatchUp = mode === 'none' && previousMode === 'catching_up';
-                if(exitingCatchUp) {
-                    void this.refreshIdleStatus();
-                }
-            } else if(mode !== 'none') {
-                // For active phases, update immediately with new mode prefix
-                // Skip when transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it
-                const activity = this.deps.activeStatusGenerator.generate(this.currentPhase, mode);
-                void this.applyPresenceUpdate(activity);
-            }
-        } else {
-            // No current phase (startup case) - generate ONE initial status when entering catch-up mode
-            if(enteringCatchUp) {
-                // Generate catch-up status (with 📥 prefix)
-                // Note: We can't use refreshIdleStatus() here because it checks currentPhase.type === 'idle'
-                // and returns early if false. At startup, currentPhase is null.
-                void this.applyCatchUpStatus(mode, catchUpContext);
-            }
+        // For active phases, update immediately with the new mode prefix. Skip when
+        // transitioning to 'none' (idle) — the subsequent updatePhase(idle) handles it — and
+        // skip when there is no current phase at all (nothing to re-render with a prefix).
+        if(this.currentPhase && this.currentPhase.type !== 'idle' && mode !== 'none') {
+            const activity = this.deps.activeStatusGenerator.generate(this.currentPhase, mode);
+            void this.applyPresenceUpdate(activity);
         }
-
-        // DON'T trigger idle refresh loop during catch-up - stream handler drives updates
-        // DO trigger immediate idle refresh when exiting catch-up to 'none' (handled above)
     }
 
     /**
      * Update presence based on current phase.
-     * Applies updates immediately (throttling handled upstream by BotStateManager).
+     * Applies updates immediately (conductor-mode throttling handled upstream by presence-setup.ts).
+     *
+     * P14: no production caller today — conductor-mode presence flows exclusively through
+     * {@link applyView}, which folds this method's idle-refresh-lifecycle logic in directly
+     * (plus the composed-prefix handling `updatePhase` doesn't do). Kept as public API, with its
+     * own extensive test coverage of the idle refresh loop, for a caller outside the conductor
+     * composition (e.g. a bare phase-only presence source) rather than deleted with the last one.
      *
      * @param phase - Current activity phase
      */
@@ -390,7 +336,7 @@ export class PresenceManager {
             this.stopIdleRefresh();
         }
 
-        // Handle active phases (throttling is now done upstream by BotStateManager)
+        // Handle active phases (conductor-mode throttling is done upstream by presence-setup.ts)
         // Stryker disable next-line ConditionalExpression: Equivalent — !nowIdle is always true here; both nowIdle branches above return early
         if(!nowIdle) {
             const activity = this.deps.activeStatusGenerator.generate(phase, this.presenceDisplayMode);

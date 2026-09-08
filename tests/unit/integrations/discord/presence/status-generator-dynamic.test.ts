@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:
 import { mockGenerateText, mockLogger, originalGenerateText } from '../../../../setup';
 import {
     createDynamicStatusGenerator,
-    resetCooldownState,
     truncateToWordBoundary,
     HARD_MAX_STATUS_LENGTH
 } from '@/integrations/discord/presence/status-generator-dynamic';
@@ -119,12 +118,12 @@ describe('DynamicStatusGenerator', () => {
             // Logger mocks may have been corrupted by another test modifying the logger object
             // This is a known issue with context-builder-loading.test.ts
         }
-        // Reset module-level cooldown state between tests
-        resetCooldownState();
+        // P14: cooldown/cache/in-flight state now lives per-instance (createDynamicStatusGenerator's
+        // own closure), so a fresh `generator` per test — the existing pattern throughout this file —
+        // already gives test isolation with no module-level reset needed.
     });
 
     afterEach(() => {
-        resetCooldownState();
         // Reset system time in case any test used setSystemTime
         setSystemTime();
         mockGenerateText.mockReset();
@@ -325,9 +324,6 @@ describe('DynamicStatusGenerator', () => {
             it('should NOT attempt responseFragment replacement in using_tool phase', async () => {
                 // This kills the mutant: if(phase === 'responding') -> if(true)
                 // With the mutation, 'Some unique response value' WOULD appear in the prompt
-                // Reset cooldown state to allow call
-                resetCooldownState();
-
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -965,6 +961,9 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should allow call after cooldown period expires', async () => {
+                const baseTime = 2_000_000;
+                setSystemTime(new Date(baseTime));
+
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -978,12 +977,14 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
-                // Simulate time passing (reset cooldown state to simulate 2+ seconds passing)
-                resetCooldownState();
+                // Advance real (system) time past the 2s cooldown window
+                setSystemTime(new Date(baseTime + 2001));
 
                 // Now call should go through
                 await generator.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(2);
+
+                setSystemTime();
             });
 
             it('should make real API call when within cooldown window but cache is null', async () => {
@@ -1198,61 +1199,6 @@ describe('DynamicStatusGenerator', () => {
 
                 setSystemTime();
             });
-
-            it('should abort in-flight call via resetCooldownState', async () => {
-                // resetCooldownState aborts any in-flight controller and clears it.
-                // After reset, a subsequent call within cooldown window makes a real API call
-                // (since lastHaikuCall = 0 with time = 1000ms: 1000 < 2000 cooldown,
-                // but cache is also null after reset, so it falls through to real call).
-                setSystemTime(new Date(1000));
-
-                let firstAbortController!: AbortController;
-                let abortFired = false;
-
-                mockGenerateText.mockImplementationOnce(
-                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
-                        firstAbortController = opts?.abortController ?? new AbortController();
-                        firstAbortController.signal.addEventListener('abort', () => {
-                            abortFired = true;
-                        }, { once: true });
-                        // Wait until aborted
-                        await new Promise<void>((resolve) => {
-                            firstAbortController.signal.addEventListener('abort', () => resolve(), { once: true });
-                        });
-                        return '';
-                    }
-                );
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test',
-                };
-
-                // Start first call (in-flight)
-                const firstCallPromise = generator.generateSynopsis(context);
-
-                // Reset cooldown state — should abort the in-flight controller
-                resetCooldownState();
-
-                // The abort should have fired
-                expect(abortFired).toBe(true);
-
-                // Now make a second call — it should start fresh since inFlightController was cleared
-                mockGenerateText.mockResolvedValueOnce('After reset');
-                const result = await generator.generateSynopsis(context);
-                expect(result).toBe('After reset');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
-
-                // First call resolves to null (its generateText was aborted, returns '')
-                const firstResult = await firstCallPromise;
-                expect(firstResult).toBeNull();
-
-                setSystemTime();
-            });
         });
 
         describe('logging', () => {
@@ -1398,9 +1344,6 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                // Reset cooldown state to allow this call
-                resetCooldownState();
-
                 const context: SynopsisContext = {
                     phase:       'using_tool',
                     userMessage: 'Find something',
@@ -1419,9 +1362,6 @@ describe('DynamicStatusGenerator', () => {
                     identityContext: 'Test identity',
                 });
 
-                // Reset cooldown state to allow this call
-                resetCooldownState();
-
                 const context: SynopsisContext = {
                     phase:       'responding',
                     userMessage: 'Test',
@@ -1433,8 +1373,8 @@ describe('DynamicStatusGenerator', () => {
             });
         });
 
-        describe('multiple generators', () => {
-            it('should share cooldown state across generators', async () => {
+        describe('multiple generators (P14: per-instance cooldown/cache/in-flight state)', () => {
+            it('does NOT share cooldown state across generators — a second instance is not gated by the first\'s cooldown', async () => {
                 const generator1 = createDynamicStatusGenerator({
                     identityContext: 'Identity 1',
                 });
@@ -1451,9 +1391,84 @@ describe('DynamicStatusGenerator', () => {
                 await generator1.generateSynopsis(context);
                 expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
-                // Second generator should be within cooldown due to shared state
+                // Second generator, called immediately after, must NOT be gated by generator1's
+                // cooldown — each instance keeps its own cooldown clock.
                 await generator2.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+            });
+
+            it('does NOT share cache across generators — a second instance never returns the first\'s cached status', async () => {
+                const generator1 = createDynamicStatusGenerator({
+                    identityContext: 'Identity 1',
+                });
+                const generator2 = createDynamicStatusGenerator({
+                    identityContext: 'Identity 2',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                mockGenerateText.mockResolvedValueOnce('Generator 1 status');
+                const first = await generator1.generateSynopsis(context);
+                expect(first).toBe('Generator 1 status');
+
+                mockGenerateText.mockResolvedValueOnce('Generator 2 status');
+                const second = await generator2.generateSynopsis(context);
+                expect(second).toBe('Generator 2 status');
+            });
+
+            it('instance B\'s call does not abort instance A\'s STILL-IN-FLIGHT AbortController', async () => {
+                const generator1 = createDynamicStatusGenerator({
+                    identityContext: 'Identity 1',
+                });
+                const generator2 = createDynamicStatusGenerator({
+                    identityContext: 'Identity 2',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                let firstAbortController: AbortController | undefined;
+                let abortFired = false;
+                let resolveFirstCall!: (value: string) => void;
+
+                // Generator1's call hangs until we resolve it below — it is still in-flight
+                // when generator2's call runs, which is the only way to observe a shared
+                // (module-level) in-flight controller getting aborted by a second instance.
+                mockGenerateText.mockImplementationOnce(
+                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                        firstAbortController = opts?.abortController;
+                        firstAbortController?.signal.addEventListener('abort', () => {
+                            abortFired = true;
+                        }, { once: true });
+                        return new Promise<string>((resolve) => {
+                            resolveFirstCall = resolve;
+                        });
+                    }
+                );
+
+                // Start generator1's call but do NOT await it yet — it stays in-flight.
+                const firstCallPromise = generator1.generateSynopsis(context);
+                // Let the mock implementation run far enough to capture its AbortController.
+                await Promise.resolve();
+                expect(firstAbortController).toBeDefined();
+
+                // generator2's call runs to completion WHILE generator1's call is still pending.
+                // It must use its own AbortController and never touch generator1's.
+                mockGenerateText.mockResolvedValueOnce('Generator 2 result');
+                const second = await generator2.generateSynopsis(context);
+                expect(second).toBe('Generator 2 result');
+
+                expect(abortFired).toBe(false);
+
+                // Clean up: let generator1's still-pending call resolve.
+                resolveFirstCall('Generator 1 result');
+                const first = await firstCallPromise;
+                expect(first).toBe('Generator 1 result');
             });
         });
 
@@ -1547,271 +1562,6 @@ describe('DynamicStatusGenerator', () => {
                 expect(prompt).toContain(json);
                 expect(prompt).not.toContain(`${json}...`);
             });
-        });
-    });
-
-    describe('generateCatchUpSynopsis', () => {
-        describe('in-flight cooldown behavior', () => {
-            it('should cancel previous in-flight catch-up call and start a new one (cancel-and-replace)', async () => {
-                let firstAborted = false;
-
-                // First call: hangs until aborted
-                mockGenerateText.mockImplementationOnce(
-                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
-                        const controller = opts?.abortController ?? new AbortController();
-                        controller.signal.addEventListener('abort', () => {
-                            firstAborted = true;
-                        }, { once: true });
-                        await new Promise<void>((resolve) => {
-                            controller.signal.addEventListener('abort', () => resolve(), { once: true });
-                        });
-                        return '';
-                    }
-                );
-                // Second call: returns a value immediately
-                mockGenerateText.mockResolvedValueOnce('Craig left me something!');
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const catchUpContext = {
-                    totalUnread:         5,
-                    channelCount:        2,
-                    channelNames:        ['general', 'random'],
-                    topAuthors:          ['Craig', 'Alice'],
-                    timeSinceLastActive: '3 hours',
-                    timeOfDay:           'morning',
-                    dayOfWeek:           'Monday',
-                };
-
-                // Start first call (will be in-flight)
-                const firstCallPromise = generator.generateCatchUpSynopsis(catchUpContext);
-
-                // Second call cancels the first and returns its own result
-                const second = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(second).toBe('Craig left me something!');
-                expect(firstAborted).toBe(true);
-
-                // First call resolves to null (aborted)
-                const first = await firstCallPromise;
-                expect(first).toBeNull();
-            });
-
-            it('should use cached catch-up status on subsequent cooldown calls', async () => {
-                mockGenerateText.mockResolvedValueOnce('Craig left me something!');
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const catchUpContext = {
-                    totalUnread:         5,
-                    channelCount:        2,
-                    channelNames:        ['general', 'random'],
-                    topAuthors:          ['Craig', 'Alice'],
-                    timeSinceLastActive: '3 hours',
-                    timeOfDay:           'morning',
-                    dayOfWeek:           'Monday',
-                };
-
-                const first = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(first).toBe('Craig left me something!');
-
-                // Second cooldown call should use cache, NOT in-flight null
-                // This kills the BlockStatement mutant on `haikuInFlight = false` in the finally block
-                mockGenerateText.mockResolvedValueOnce('Different status');
-                const second = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(second).toBe('Craig left me something!');
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
-            });
-
-            it('should make fresh API call when outside cooldown window', async () => {
-                // This kills the ConditionalExpression mutant that turns the outer `if` to `if(true)`.
-                // With the mutant, ALL catch-up calls go through the cooldown path; if cache is
-                // populated from the first call, the second call returns the stale cache even after
-                // the cooldown window expires. Without the mutant, the condition is correctly false
-                // (now - lastHaikuCall >= 2000), so a fresh API call is made.
-                const baseTime = 1_000_000;
-                setSystemTime(new Date(baseTime));
-
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const catchUpContext = {
-                    totalUnread:         5,
-                    channelCount:        2,
-                    channelNames:        ['general', 'random'],
-                    topAuthors:          ['Craig', 'Alice'],
-                    timeSinceLastActive: '3 hours',
-                    timeOfDay:           'morning',
-                    dayOfWeek:           'Monday',
-                };
-
-                // First call at t=baseTime populates the cache
-                mockGenerateText.mockResolvedValueOnce('First catch-up status');
-                const first = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(first).toBe('First catch-up status');
-
-                // Advance past cooldown window (3000ms > 2000ms threshold)
-                setSystemTime(new Date(baseTime + 3000));
-
-                // Second call should make a fresh API call (cooldown window expired)
-                // With the mutant (if true), it would return cached 'First catch-up status'
-                // Without the mutant (correct), it makes a real API call and returns new value
-                mockGenerateText.mockResolvedValueOnce('Fresh catch-up status');
-                const second = await generator.generateCatchUpSynopsis(catchUpContext);
-                expect(second).toBe('Fresh catch-up status');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
-
-                setSystemTime();
-            });
-
-            it('should make real API call when within cooldown window but cache is null for catch-up', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const catchUpContext = {
-                    totalUnread:         5,
-                    channelCount:        2,
-                    channelNames:        ['general', 'random'],
-                    topAuthors:          ['Craig', 'Alice'],
-                    timeSinceLastActive: '3 hours',
-                    timeOfDay:           'morning',
-                    dayOfWeek:           'Monday',
-                };
-
-                // First call fails, cache stays null
-                mockGenerateText.mockRejectedValueOnce(new Error('fail'));
-                await generator.generateCatchUpSynopsis(catchUpContext); // fails, null returned, cache stays null
-
-                // Second call within cooldown window - should NOT use null cache, should make real call
-                mockGenerateText.mockResolvedValueOnce('Success after fail');
-                const result = await generator.generateCatchUpSynopsis(catchUpContext);
-
-                // With cachedStatus mutation to if(true): would return null (cachedStatus)
-                // With original if(cachedStatus): makes real call since cachedStatus is null
-                expect(result).toBe('Success after fail');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
-            });
-        });
-    });
-
-    describe('cross-function cancel-and-replace sharing', () => {
-        beforeEach(() => {
-            mockGenerateText.mockReset();
-            mockGenerateText.mockResolvedValue('Pondering deeply...');
-            resetCooldownState();
-        });
-
-        afterEach(() => {
-            resetCooldownState();
-            setSystemTime();
-        });
-
-        it('should cancel synopsis and start catch-up when generateCatchUpSynopsis is called while synopsis is in-flight', async () => {
-            let synopsisAborted = false;
-
-            // First call: synopsis — hangs until aborted
-            mockGenerateText.mockImplementationOnce(
-                async (_prompt: string, opts?: { abortController?: AbortController }) => {
-                    const controller = opts?.abortController ?? new AbortController();
-                    controller.signal.addEventListener('abort', () => {
-                        synopsisAborted = true;
-                    }, { once: true });
-                    await new Promise<void>((resolve) => {
-                        controller.signal.addEventListener('abort', () => resolve(), { once: true });
-                    });
-                    return '';
-                }
-            );
-            // Second call: catch-up — returns a value immediately
-            mockGenerateText.mockResolvedValueOnce('Catch-up wins');
-
-            const generator = createDynamicStatusGenerator({
-                identityContext: 'Test identity',
-            });
-
-            const synopsisContext: SynopsisContext = {
-                phase:       'thinking',
-                userMessage: 'Test',
-            };
-
-            const catchUpContext = {
-                totalUnread:         5,
-                channelCount:        2,
-                channelNames:        ['general', 'random'],
-                topAuthors:          ['Craig', 'Alice'],
-                timeSinceLastActive: '3 hours',
-                timeOfDay:           'morning',
-                dayOfWeek:           'Monday',
-            };
-
-            // Start synopsis call (will be in-flight)
-            const synopsisPromise = generator.generateSynopsis(synopsisContext);
-
-            // Catch-up call cancels synopsis and returns its own result
-            const catchUp = await generator.generateCatchUpSynopsis(catchUpContext);
-            expect(catchUp).toBe('Catch-up wins');
-            expect(synopsisAborted).toBe(true);
-
-            // Synopsis resolves to null (its generateText returned '' when aborted)
-            const synopsis = await synopsisPromise;
-            expect(synopsis).toBeNull();
-        });
-
-        it('should cancel catch-up and start synopsis when generateSynopsis is called while catch-up is in-flight', async () => {
-            let catchUpAborted = false;
-
-            // First call: catch-up — hangs until aborted
-            mockGenerateText.mockImplementationOnce(
-                async (_prompt: string, opts?: { abortController?: AbortController }) => {
-                    const controller = opts?.abortController ?? new AbortController();
-                    controller.signal.addEventListener('abort', () => {
-                        catchUpAborted = true;
-                    }, { once: true });
-                    await new Promise<void>((resolve) => {
-                        controller.signal.addEventListener('abort', () => resolve(), { once: true });
-                    });
-                    return '';
-                }
-            );
-            // Second call: synopsis — returns a value immediately
-            mockGenerateText.mockResolvedValueOnce('Synopsis wins');
-
-            const generator = createDynamicStatusGenerator({
-                identityContext: 'Test identity',
-            });
-
-            const synopsisContext: SynopsisContext = {
-                phase:       'using_tool',
-                userMessage: 'Test',
-                toolName:    'Read',
-            };
-
-            const catchUpContext = {
-                totalUnread:         3,
-                channelCount:        1,
-                channelNames:        ['general'],
-                topAuthors:          ['Alice'],
-                timeSinceLastActive: '1 hour',
-                timeOfDay:           'afternoon',
-                dayOfWeek:           'Tuesday',
-            };
-
-            // Start catch-up call (will be in-flight)
-            const catchUpPromise = generator.generateCatchUpSynopsis(catchUpContext);
-
-            // Synopsis call cancels catch-up and returns its own result
-            const synopsis = await generator.generateSynopsis(synopsisContext);
-            expect(synopsis).toBe('Synopsis wins');
-            expect(catchUpAborted).toBe(true);
-
-            // Catch-up resolves to null (its generateText returned '' when aborted)
-            const catchUp = await catchUpPromise;
-            expect(catchUp).toBeNull();
         });
     });
 });

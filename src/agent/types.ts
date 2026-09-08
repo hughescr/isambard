@@ -65,60 +65,6 @@ export function isUserId(value: unknown): value is UserId {
     return result.success;
 }
 
-// ============================================================================
-// Agent-Level Operational State Types
-// ============================================================================
-
-/**
- * The bot's operational mode. Platform-agnostic — shared between agent and integrations.
- */
-export type OperationalMode = 'idle' | 'catching_up' | 'processing_message' | 'perching';
-
-/**
- * Minimal state change notification for agent-level consumers.
- * Discord's StateChange extends this with richer state data.
- * @internal Only consumed by src/agent/perch/scheduler.ts.
- */
-export interface AgentStateChange {
-    /** Type of change that occurred */
-    changeType:    'mode_transition' | 'activity_phase' | 'context_update'
-    /** State after the change */
-    newState:      { mode: OperationalMode }
-    /** State before the change */
-    previousState: { mode: OperationalMode }
-}
-
-/**
- * Minimal state manager interface for agent-level consumers.
- * Discord's BotStateManager extends this with richer capabilities.
- * @internal Only consumed by src/agent/perch/ session-runner and scheduler.
- */
-export interface AgentStateManager {
-    /** Get the current operational mode */
-    getMode(): OperationalMode
-    /** Subscribe to state changes. Returns unsubscribe function. */
-    subscribe(listener: (change: AgentStateChange) => void): () => void
-    /** Start perching mode */
-    startPerching(activityType: string): void
-    /** Return to idle mode */
-    goIdle(): void
-}
-
-/**
- * Details about a message that interrupted a session.
- * Platform-agnostic — used by perch session runner.
- */
-export interface InterruptingMessageDetails {
-    /** Channel ID where the interruption occurred */
-    channelId:   ChannelId
-    /** Author of the interrupting message */
-    author:      string
-    /** Channel name where the interruption occurred */
-    channelName: string
-    /** Content of the interrupting message */
-    content:     string
-}
-
 /**
  * Union type representing all possible events from the Agent SDK stream.
  *

@@ -42,8 +42,7 @@ export {
     InvalidSnowflakeError,
     WellKnownChannelNotFoundError,
     PresenceError,
-    StatusGenerationError,
-    TransitionError
+    StatusGenerationError
 } from './discord';
 
 export { PathSecurityError, MediaProcessingError } from './utils';

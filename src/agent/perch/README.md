@@ -63,180 +63,72 @@ Each session should produce at least one tangible artifact. Time-specific hints 
 
 ### Deferral Logic
 
-**If bot is busy when trigger fires:**
-1. Scheduler sets `perchPending: true` and stores `pendingSlot`
-2. Subscribes to `BotStateManager` for mode transitions
-3. When bot becomes idle, triggers perch with **current time slot** (not original)
-4. Example: Trigger at 6am (pre-dawn) deferred, runs at 9am (mid-morning)
+There is one perch conductor session, and a slot turn is just a turn submitted to it
+(`priority: 'other'`). Deferral is the driver's job (`perch-driver.ts`), not a bot-wide mode
+machine:
 
-**Busy states that defer perch:**
-- `catching_up`: Processing backlog of Discord messages
-- `processing_message`: Handling active user message
-- `perching`: Already in active perch session
+1. `runSlot(slot)` checks its own `slotRunning` flag — set the moment a slot turn is submitted,
+   cleared once it settles
+2. If a slot turn is already running, the trigger just sets a single `pending` flag and returns
+   `'deferred'` — no queue, no original-slot bookkeeping
+3. When the running slot turn settles, `onSlotSettled()` checks `pending` and — if set — starts a
+   fresh slot turn for **whatever slot the current hour maps to now** (not the one that was
+   deferred)
+4. Example: a trigger fires at 6am (pre-dawn) while a still-running 5am slot is finishing; the
+   deferred run starts once that turn settles, using whatever slot the clock says it is by then
 
-**Suspension guard:**
-- Scheduler checks `isSuspended()` before starting new perch
-- Won't start if perch is currently suspended (waiting to resume)
+The perch scheduler (`scheduler.ts`) itself has no notion of "busy" at all beyond an optional
+`isPerchTurnRunning` predicate (unused in production — see its own module doc): every cron trigger
+calls `onPerchTrigger` unconditionally, and `perch-setup.ts` wires that straight to
+`driver.runSlot(slot)`, letting the driver above do the actual overlap handling.
 
 ### Session Lifecycle
 
 ```mermaid
 graph TD
-    A[Scheduler Trigger] --> B{Bot Idle?}
-    B -->|Yes| C[Start Perch Session]
-    B -->|No| D[Set perchPending]
-    D --> E{Bot Becomes Idle}
-    E --> F[Run Deferred Perch]
-    F --> C
-    C --> G[Agent Runs with Prompt]
-    G --> H{User Message?}
-    H -->|Yes| I[Suspend: Save State]
-    H -->|No| J[Complete & Go Idle]
-    I --> K[Bot → Idle State]
-    K --> L[Handle Message Normally]
-    L --> M[Resume: Restore State]
-    M --> N[Continue with Paused Clock]
-    N --> G
+    A[Scheduler Trigger] --> B{Driver.runSlot}
+    B -->|Not running| C[Submit Slot Envelope]
+    B -->|Already running| D[Set pending flag]
+    C --> E[Perch Conductor Runs Turn]
+    E --> F{Perch-channel message arrives?}
+    F -->|Yes| G[Queued behind, submitted at priority 'other']
+    G --> E
+    F -->|No| H[Turn settles]
+    H --> I{pending?}
+    I -->|Yes| J[Resolve current slot, runSlot again]
+    J --> C
+    I -->|No| K[Idle until next trigger]
 ```
 
-## Suspension Handling
+## Perch-Channel Messages During a Slot
 
-### When User Messages Arrive
+A message in the perch-time channel while a slot turn is running is **not** a suspend/resume of
+a separate session — `handlers.ts` submits it straight to the same perch conductor
+(`submitPerchChannelMessage`) as a `discord`-kind envelope at `priority: 'other'`. It queues
+behind the running slot turn and the conductor answers it once that turn (or whatever is ahead of
+it) settles. There is no bot-wide mode transition, no separate conversation session, and no state
+to save and restore — it is the same mechanism a Discord message uses against the conversation
+conductor, pointed at the perch conductor instead.
 
-If a message arrives during perch time:
+## Wrap-Up and Timeout
 
-1. **Save state**: `suspend()` stores `sessionId`, `slot`, `elapsedMs`, and `suspendedAt`
-2. **Transition to idle**: Bot state changes from `perching` to `idle`
-3. **Abort signal fired**: Agent stream stops gracefully
-4. **Handle message normally**: Message coordinator processes message in standard `idle→processing_message` flow
-5. **Pass context note**: Message handler receives note: "Note: This message arrived during perch-time..."
-6. **Resume after response**: `resumeAfterSuspension()` restores state and continues perch
+Perch sessions have a maximum duration (`maxSessionMinutes`, default 45), measured from the slot
+trigger, not from any per-message activity. `perch-driver.ts` arms two timers off the slot's
+`endsAt = trigger + maxSessionMinutes`:
 
-### Key Differences from Old Model
+1. **Wrap-up timer** (`endsAt - wrapUpTimeoutMinutes`, default 5 minutes before the end): submits
+   a `[WRAP-UP · perch slot ends in N min]` envelope (`buildPerchWrapUpEnvelope`) at
+   `priority: 'human'` — the highest priority, so it is the very next turn the conductor runs once
+   the current slot turn ends, ahead of any queued perch-channel message or the next slot's own
+   envelope. There is no forcible interruption here: the agent decides for itself how to wrap up,
+   the same as any other turn.
+2. **Interrupt timer** (`endsAt + interruptGraceMinutes`, default 2 minutes past the end): if the
+   slot turn is *still* the conductor's active turn at that point (checked via `conductor.status()`
+   against the slot's own envelope id, so a wrap-up turn or an unrelated perch-channel turn is never
+   mistakenly aborted), the driver calls `conductor.interruptCurrent()` to forcibly end it.
 
-**OLD (Interruption):**
-- Bot stayed in `perching+interrupted` state during message handling
-- Timeout kept ticking (wall-clock based)
-- Resumed prompt included partialWork + user message content
-- Single state machine with interrupted flag
-
-**NEW (Suspension):**
-- Bot transitions to `idle` state during suspension
-- Timeout clock **pauses** (tracks elapsed perch time, not wall clock)
-- Resumed prompt is lightweight (no partialWork, no user message)
-- Clear separation: perch session vs. message session
-
-### Suspended State
-
-The session runner tracks suspension state:
-
-```typescript
-interface SuspendedState {
-  sessionId: string;          // Same session continues
-  slot: PerchSlot;           // Original time slot
-  elapsedMs: number;         // How much perch time used so far
-  suspendedAt: Date;         // When suspension happened
-  interruptingMessage: InterruptingMessage; // The message that caused suspension
-}
-```
-
-**Guaranteed minimum time on resume:** At least 1 minute (`Math.max(maxMs - elapsedMs, 60_000)`)
-
-### Resumed Prompt
-
-When resuming, agent receives a clean, lightweight prompt:
-
-```
-[Current time: Saturday, February 15, 2026 at 2:30 PM Pacific]
-
---- PERCH TIME RESUMED ---
-
-You were suspended for approximately 15 minutes while a user message was handled in a separate conversation session.
-
-[While you were suspended:]
-- A message from Craig in #general was handled separately
-- 2 new events were logged to your memory
-
-Continue your perch work from where you left off. Check TaskList for your active tasks.
-Trust TaskList as your source of truth — sessions are transient, tasks are durable.
-```
-
-**Why no partialWork?**
-- Session history already contains prior thinking (same `sessionId`)
-- No need to repeat what's already in context
-
-**Why no user message content?**
-- Message was handled in a separate conversation session
-- Avoids confusion about needing to respond
-- Keeps perch focus clean
-
-### Session Continuity
-
-- Same `sessionId` preserved across suspension/resumption
-- Elapsed time tracked independently of wall-clock time
-- Clock pauses during suspension, resumes with remaining time
-- Multiple suspensions possible within one perch session
-- Session history maintains coherent conversation thread
-
-## Timeout System
-
-### Session Timeout
-
-Perch sessions have a maximum duration (`maxSessionMinutes`, default 45) to prevent runaway sessions. When the timeout is reached:
-
-1. **Timeout triggered**: After `maxSessionMinutes` of **active perch time** (not wall-clock)
-2. **Capture context**: StreamProgress stores thinking, text, pending tool use
-3. **Send timeout prompt**: Agent receives wrapped-up prompt with partialWork
-4. **Graceful wrap-up**: Agent has `wrapUpTimeoutMinutes` (default 5) to finish
-
-### Timeout Prompt
-
-The timeout prompt includes the agent's partial work for context:
-
-```
---- PERCH SESSION TIMEOUT ---
-
-Your perch session has reached the maximum duration (45 minutes).
-
-[Your thinking so far:]
-{captured thinking text}
-
-[You were composing:]
-{partial response text}
-
-[You were about to use "tool-name"]
-
----
-
-Please wrap up:
-- Save any important thoughts or findings to memory
-- Complete any in-progress work if quick, otherwise note where you left off
-- Don't start new explorations
-
-Please finalize and conclude this perch session.
-```
-
-### Clock Behavior
-
-**Important:** The timeout clock tracks **elapsed perch time**, not wall-clock time:
-- Clock runs during active perch session
-- Clock **pauses** during suspension (while message is being handled)
-- Clock resumes when perch resumes after suspension
-- Multiple suspensions don't count against the timeout
-
-**Example:**
-- Perch starts at 6:00am with 45-minute max
-- At 6:20am (20 minutes elapsed), suspended for user message
-- Message handled from 6:20am-6:30am (10 minutes wall-clock)
-- Resume at 6:30am with 25 minutes **remaining** (not 15)
-- Timeout triggers at 7:15am (45 minutes of actual perch time)
-
-### Wrap-Up Timeout
-
-To prevent sessions from hanging during wrap-up:
-- After timeout prompt sent, agent has `wrapUpTimeoutMinutes` (default 5)
-- If wrap-up exceeds this time, session is forcefully aborted
-- Ensures perch sessions always terminate eventually
+Both timers are cleared the moment the slot turn actually settles (`onSlotSettled`), so a slot
+that finishes early never fires a stale wrap-up nudge or interrupt into whatever runs next.
 
 ## Configuration
 
@@ -254,11 +146,14 @@ interface PerchConfig {
   /** @deprecated No longer used - cron-parser's H option provides full jitter */
   jitterMinutes: number;      // Default: 15
 
-  /** Max session duration (timeout clock pauses during suspension) */
+  /** Max slot turn duration, measured from the trigger time */
   maxSessionMinutes: number;  // Default: 45
 
-  /** Wrap-up timeout to prevent hangs during graceful shutdown */
+  /** How long before endsAt the wrap-up nudge envelope is submitted */
   wrapUpTimeoutMinutes: number; // Default: 5
+
+  /** Grace period after endsAt before an overrunning slot turn is interrupted */
+  interruptGraceMinutes?: number; // Default: 2
 
   /** Optional test mode configuration */
   testMode?: PerchTestModeConfig;
@@ -335,7 +230,9 @@ a Discord turn is a turn submitted to the conversation conductor.
   - `triggerTestPerch()`: Trigger a test perch, cycling through `TEST_SLOTS` (all slots except `wikipedia`)
   - Uses `cron-parser` with `H * * * *` pattern
   - Overlap/deferral against a running slot turn is the driver's job (see `perch-driver.ts`), not
-    the scheduler's — the scheduler only gates on the legacy `stateManager` when one is supplied
+    the scheduler's — the scheduler only gates on an optional injected `isPerchTurnRunning`
+    predicate, unused in production (`perch-setup.ts` omits it), and otherwise fires every trigger
+    unconditionally
 
 - **`perch-driver.ts`**: Slot turn lifecycle
   - `createPerchDriver()`: Submits a slot's envelope to the perch conductor, arms the wrap-up and
@@ -354,15 +251,13 @@ a Discord turn is a turn submitted to the conversation conductor.
 import { createPerchDriver, createPerchScheduler } from '@/agent/perch';
 
 const driver = createPerchDriver({
-  conductor: perchConductor, // Pick<Conductor, 'submit' | 'interruptCurrent' | 'deliver' | 'status'>
-  perchConfig: config.perch,
+  conductor: perchConductor, // Pick<Conductor, 'submit' | 'interruptCurrent' | 'status'>
+  config: perchConfig,
   clock,
+  getCurrentLocalHour,
   contextBuilder,
   activityLogger,
-  channelRegistry,
-  responseRouter,
-  client,
-  rateLimiter,
+  logger,
 });
 
 const scheduler = createPerchScheduler({
@@ -371,9 +266,10 @@ const scheduler = createPerchScheduler({
     enabled: true,
     timezone: 'America/Los_Angeles',
     intervalMinutes: 60,
-    jitterMinutes: 15,
+    jitterMinutes: 15, // deprecated, unused
     maxSessionMinutes: 45,
     wrapUpTimeoutMinutes: 5,
+    interruptGraceMinutes: 2,
   },
   onPerchTrigger: slot => driver.runSlot(slot),
 });
@@ -390,7 +286,7 @@ scheduler.triggerNow();
 // Trigger test perch (cycles through TEST_SLOTS, excludes wikipedia)
 scheduler.triggerTestPerch();
 
-// Check scheduler state
+// Check scheduler state (only meaningful if isPerchTurnRunning was supplied — unused in production)
 const state = scheduler.getState();
 console.log(state.perchPending); // true if deferred
 console.log(state.pendingSlot);  // 'pre-dawn', etc.
@@ -399,11 +295,16 @@ console.log(state.pendingSlot);  // 'pre-dawn', etc.
 ## Testing Considerations
 
 - **Time slot logic**: Test `getSlotForHour()` with all edge cases (midnight, boundaries)
-- **Deferral**: Verify pending state when bot busy, correct slot on resume
-- **Suspension**: Ensure state saved/restored correctly, clock pauses, session resumed with same ID
-- **Timeout**: Test elapsed time tracking, timeout prompt generation, wrap-up timeout
-- **Scheduling**: Mock cron-parser to control trigger timing, verify suspension guard
-- **Error handling**: Test abort signals, network failures, state recovery, `clearSuspension()`
+- **Scheduler-level deferral**: Verify `perchPending`/`pendingSlot` when `isPerchTurnRunning`
+  reports true, correct slot resolved on the next trigger
+- **Driver-level deferral**: `runSlot` returns `'deferred'` while a slot turn is already running,
+  and starts a fresh turn for the current slot once the running one settles
+- **Wrap-up/interrupt timers**: `armWrapUpTimer` fires at `endsAt - wrapUpTimeoutMinutes`,
+  `armInterruptTimer` fires at `endsAt + interruptGraceMinutes` and interrupts only when
+  `conductor.status().turn` still matches the slot's own envelope id
+- **Scheduling**: Mock cron-parser to control trigger timing
+- **Error handling**: a failed `conductor.submit`/`interruptCurrent` is logged, never thrown back
+  into the scheduler loop
 
 ## Design Decisions
 
@@ -416,38 +317,28 @@ console.log(state.pendingSlot);  // 'pre-dawn', etc.
 
 ### Why Current Slot on Deferral?
 
-If trigger fires at 6am (pre-dawn) but bot is busy until 9am:
+If the scheduler-level `isPerchTurnRunning` gate defers a trigger fired at 6am (pre-dawn) until a
+running turn settles at 9am:
 - **Using original slot** (pre-dawn) would be misleading - time has passed
 - **Using current slot** (mid-morning) reflects actual context
 - Agent should know what time it *is*, not what time it *was*
 
-### Why Same SessionId on Resume?
+The driver's own `pending` flag (`perch-driver.ts`) applies the same rule when it defers a slot
+turn against an already-running one — `onSlotSettled` resolves the slot for the current hour, not
+the one that triggered the deferral.
 
-- Preserves conversation context across suspension
-- Agent can reference earlier thinking from session history
-- No need to repeat partialWork in resumed prompt
-- More coherent multi-suspension sessions
-- Matches user expectation of continuous perch "session"
+### Why One Conductor, No Suspend/Resume?
 
-### Why Pause the Clock During Suspension?
+Earlier designs paused a perch session's own clock and suspended its turn whenever a Discord
+message arrived, then resumed it afterward — tracking `SuspendedState` (sessionId, slot,
+elapsedMs, suspendedAt) and a bot-wide mode transition to coordinate the two. The conductor
+architecture (design doc section 6/9) replaces all of that with one long-lived session per role:
+perch-channel messages are just turns submitted to the same perch conductor a slot runs on, queued
+behind whatever is already running. There is nothing to suspend because there is nothing running
+outside the conductor's own turn queue — no duplicated timeout/elapsed-time bookkeeping, no
+separate mode machine to keep in sync, and no race between "which state owns the session right
+now."
 
-**OLD model (wall-clock timeout):**
-- 45-minute perch starts at 6:00am
-- At 6:30am, suspended for 15 minutes (user message)
-- Resume at 6:45am with 0 minutes remaining → immediate timeout
-- Agent gets no time to continue work
-
-**NEW model (elapsed time timeout):**
-- 45-minute perch starts at 6:00am
-- At 6:30am (30 minutes elapsed), suspended for 15 minutes
-- Resume at 6:45am with **15 minutes remaining** (45 - 30 = 15)
-- Agent can complete meaningful work
-
-The timeout should measure **work time**, not **wall-clock time**. Suspension is not the agent's "fault" — it shouldn't count against the session limit.
-
-### Why BotStateManager as Single Source of Truth?
-
-- No duplicate state between scheduler, runner, and state manager
-- Clear ownership: BotStateManager owns all mode/suspension state
-- Prevents race conditions and state drift
-- Simplifies testing - one place to verify state
+The maximum-duration timeout (`maxSessionMinutes`) is measured from the slot's own trigger time,
+not from any per-message activity — a perch-channel message queued behind a slot turn does not
+pause or extend that turn's clock.

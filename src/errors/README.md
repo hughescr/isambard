@@ -44,7 +44,6 @@ classDiagram
     DiscordError <|-- InvalidSnowflakeError
     DiscordError <|-- ChannelRegistryError
     DiscordError <|-- PresenceError
-    DiscordError <|-- TransitionError
 
     ChannelRegistryError <|-- ChannelNotFoundByNameError
     ChannelRegistryError <|-- AmbiguousChannelError
@@ -349,7 +348,7 @@ Three patterns coexist in the codebase. Choose based on the decision tree below.
 
 **Why:** These errors indicate the system cannot safely continue. Letting execution proceed would corrupt state or produce incorrect results.
 
-**Examples:** `TransitionError` in `BotStateManagerImpl`, `ZodError` in config parsing.
+**Examples:** `InvariantViolationError` for unreachable-in-practice invariants, `ZodError` in config parsing.
 
 ### Pattern 2: Log and Degrade Gracefully
 

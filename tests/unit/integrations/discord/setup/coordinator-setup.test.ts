@@ -44,8 +44,8 @@ function makeMockRateLimiter() {
 
 // ---------------------------------------------------------------------------
 // P9/P13b: the conductor branch is the only path — createConductorProcessor is always the
-// processor (never agent.handleInput, which no longer exists); onResponse delivers idempotently
-// and never calls goIdle.
+// processor (never agent.handleInput, which no longer exists); onResponse delivers idempotently.
+// Presence/activity-phase transitions are driven entirely by the conductor's own ledger.
 // ---------------------------------------------------------------------------
 
 describe('setupCoordinatorIntegration — conductor branch', () => {

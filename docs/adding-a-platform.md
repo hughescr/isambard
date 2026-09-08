@@ -167,7 +167,7 @@ Follow the patterns in `src/agent/bsky-mcp-server.ts` or `src/agent/email-mcp-se
 
 When your platform client performs an action (send, reject, etc.), log it via the activity logger.
 
-First, add `ActivityType` values for your platform in `src/agent/activity-logger.ts`:
+First, add `ActivityType` values for your platform in `src/storage/activity-log.ts`:
 
 ```typescript
 export type ActivityType
@@ -175,10 +175,12 @@ export type ActivityType
       | 'bsky-post-sent' | 'bsky-post-rejected'
       | 'bsky-dm-sent' | 'bsky-dm-rejected'
       | 'discord-exchange'
-      | 'perch-start' | 'perch-end' | 'perch-suspend' | 'perch-resume'
-      | 'catchup-start' | 'catchup-complete' | 'catchup-suspend'
+      | 'perch-start' | 'perch-end'
+      | 'catchup-start' | 'catchup-complete'
       | 'yourplatform-sent' | 'yourplatform-rejected';  // add here
 ```
+
+(There is no `perch-suspend`/`perch-resume`/`catchup-suspend` — the conductor's perch driver and startup catch-up turn don't suspend/resume; see the Session Architecture section of `docs/architecture.md`.)
 
 Then wire fire-and-forget logging at the action site (typically in the MCP server handler or outbound approval handler):
 
@@ -249,7 +251,7 @@ Export only what other modules need. Run `bun dead-code` (knip) to verify no unu
 - [ ] `src/integrations/{platform}/index.ts` — barrel exports (public API only)
 - [ ] `src/storage/contacts/types.ts` — add platform to `platformTypeSchema`
 - [ ] `src/agent/{platform}-mcp-server.ts` — MCP tools (if platform supports interactive ops)
-- [ ] `src/agent/activity-logger.ts` — add `ActivityType` values for platform actions
+- [ ] `src/storage/activity-log.ts` — add `ActivityType` values for platform actions
 - [ ] Activity logger calls wired at action sites (fire-and-forget)
 - [ ] `src/app/mcp-servers.ts` — register MCP server
 - [ ] `src/index.ts` / `src/app/*.ts` — instantiate client, register history provider

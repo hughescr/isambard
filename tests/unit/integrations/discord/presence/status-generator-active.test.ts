@@ -98,17 +98,6 @@ describe('ActiveStatusGenerator', () => {
             expect(result.name).not.toContain('💬');
         });
 
-        test('catching_up mode -> 📥 prefix', () => {
-            const generator = createActiveStatusGenerator({
-                logger:       createMockLogger(),
-                activityType: ActivityType.Custom,
-            });
-            const phase: PresencePhase = { type: 'thinking', startedAt: new Date() };
-            const result = generator.generate(phase, 'catching_up');
-            expect(result.name).toBe('📥 Thinking...');
-            expect(result.name).toStartWith('📥 ');
-        });
-
         test('processing_message mode -> 💬 prefix', () => {
             const generator = createActiveStatusGenerator({
                 logger:       createMockLogger(),

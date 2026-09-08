@@ -1,9 +1,10 @@
 /**
  * Behavioural tests for {@link setupPerchDriverAndScheduler} (P12): the conductor-mode branch of
  * perch setup — no `stateManager`/`PerchSessionRunner`, just a {@link createPerchDriver} wired to
- * a {@link createPerchScheduler} that triggers it unconditionally (no `stateManager` passed
- * through, per `scheduler.ts`'s own optional-`stateManager` contract), and a conductor wrapped so
- * a settled `perch`/`wrapup` turn's response is delivered to the well-known `perch-time` channel.
+ * a {@link createPerchScheduler} that triggers it unconditionally (no `isPerchTurnRunning` passed
+ * through, per `scheduler.ts`'s own optional-`isPerchTurnRunning` contract), and a conductor
+ * wrapped so a settled `perch`/`wrapup` turn's response is delivered to the well-known
+ * `perch-time` channel.
  */
 import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
 import { mockLogger } from '../../../../setup';
@@ -64,7 +65,7 @@ describe('setupPerchDriverAndScheduler', () => {
         mockLogger.error.mockClear();
     });
 
-    it('creates a driver with no stateManager/runner dependency and a scheduler with no stateManager', () => {
+    it('creates a driver with no stateManager/runner dependency and a scheduler with no isPerchTurnRunning', () => {
         const fakeDriver = { runSlot: mock(), stop: mock() };
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
@@ -84,7 +85,7 @@ describe('setupPerchDriverAndScheduler', () => {
 
         expect(createPerchSchedulerSpy).toHaveBeenCalledTimes(1);
         const schedulerArgs = createPerchSchedulerSpy.mock.calls[0][0];
-        expect(schedulerArgs.stateManager).toBeUndefined();
+        expect(schedulerArgs.isPerchTurnRunning).toBeUndefined();
         expect(schedulerArgs).not.toHaveProperty('perchSessionRunner');
         expect(schedulerArgs.isCostPaused).toBeUndefined();
 

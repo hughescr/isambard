@@ -1,19 +1,20 @@
 import { logger } from '@hughescr/logger';
 import { ActivityType, type Client  } from 'discord.js';
-import type { InboxManager } from '../inbox';
 import {
     composePresence,
     createActiveStatusGenerator,
-    type createDynamicStatusGenerator,
+    createDynamicStatusGenerator,
     createIdleStatusGenerator,
     planPresenceUpdate,
     PresenceManager,
     type PresenceThrottle,
     type PresenceView
 } from '../presence';
-import type { BotStateManager, StateChange } from '../state';
 import { IdentityCache, type ContextBuilder, type LedgerStore, type Signal } from '@/agent';
 import type { DiscordConfig } from '@/config';
+
+/** Return type of {@link createDynamicStatusGenerator} — one per session ledger (P14). */
+type DynamicStatusGenerator = ReturnType<typeof createDynamicStatusGenerator>;
 
 /**
  * How long a freshly-idle composed view must persist before it is applied. A follow-up message
@@ -23,175 +24,6 @@ import type { DiscordConfig } from '@/config';
  * conductor-mode soak, 2026-09-06). Going idle is never urgent enough to need the first 1.5 s.
  */
 export const IDLE_SETTLE_MS = 1500;
-
-/**
- * Result of setting up presence management.
- */
-export interface PresenceSetupResult {
-    /** Presence manager for Discord status updates */
-    presenceManager:           PresenceManager
-    /** Unsubscribe function for mode transition subscription */
-    unsubscribeModeTransition: () => void
-    /** Unsubscribe function for activity phase subscription */
-    unsubscribeActivityPhase:  () => void
-}
-
-/**
- * Sets up Discord presence management with status generators and state manager integration.
- *
- * Creates the presence manager with active, idle, and dynamic status generators.
- * Sets up bidirectional integration with bot state manager:
- * - Mode transitions sync to presence display modes
- * - Activity phase changes update Discord status
- *
- * @param params - Configuration for presence setup
- * @returns Presence setup result with manager and unsubscribe functions, or undefined if presence config not provided
- */
-export function setupPresence(params: {
-    identityContext:         string
-    presenceConfig:          NonNullable<DiscordConfig['presence']>
-    readyClient:             Client
-    botStateManager:         BotStateManager
-    dynamicStatusGenerator:  ReturnType<typeof createDynamicStatusGenerator> | undefined
-    inboxManager:            InboxManager | undefined
-    getTaskContext?:         () => Promise<string | undefined>
-    getRecentContext:        () => Promise<string | undefined>
-    contextBuilder?:         ContextBuilder
-    getLastThinkingContent?: () => string | undefined
-    /** Pre-built write-through identity cache. When provided, replaces the inline loader. */
-    identityCache?:          IdentityCache
-    /** Optional live-signals snapshot callback. Step 3 will consume this. */
-    getLiveSignals?:         () => Promise<Signal[]>
-    /** Getter for the last idle status text (anti-rut, Step 3). */
-    getPreviousStatus?:      () => string | undefined
-    /** Setter for persisting the last idle status text (anti-rut, Step 3). */
-    setPreviousStatus?:      (text: string) => void
-}): PresenceSetupResult {
-    const {
-        identityContext,
-        presenceConfig,
-        readyClient,
-        botStateManager,
-        dynamicStatusGenerator,
-        inboxManager,
-        getTaskContext,
-        getRecentContext,
-        contextBuilder,
-        getLastThinkingContent,
-        identityCache: providedIdentityCache,
-        getLiveSignals,
-        getPreviousStatus,
-        setPreviousStatus,
-    } = params;
-
-    const activeStatusGenerator = createActiveStatusGenerator({
-        activityType: ActivityType.Custom,
-        logger,
-    });
-
-    // Use the provided write-through identity cache, or create a local one.
-    // The loader falls back to the static identityContext string when contextBuilder
-    // is not available (e.g. in tests or minimal setups).
-    const identityCache = providedIdentityCache ?? new IdentityCache(
-        // Stryker disable next-line ConditionalExpression: loader fallback — contextBuilder absent path is a valid production configuration
-        contextBuilder ? () => contextBuilder.loadCoreIdentity() : () => Promise.resolve(identityContext)
-    );
-
-    const idleStatusGenerator = createIdleStatusGenerator({
-        logger,
-        activityType:    ActivityType.Custom,
-        identityContext: () => identityCache.get(),
-        getLiveSignals,
-        getPreviousStatus,
-        setPreviousStatus,
-        getTaskContext,
-        getRecentContext,
-        getLastThinkingContent,
-    });
-
-    const presenceManager = new PresenceManager({
-        discordClient: readyClient,
-        config:        presenceConfig,
-        activeStatusGenerator,
-        idleStatusGenerator,
-        dynamicStatusGenerator,
-        logger,
-    });
-
-    presenceManager.start();
-
-    // Stryker disable all: Integration callbacks syncing state between components - tested via bot integration tests
-    // Bridge: Sync BotStateManager → PresenceManager
-    const unsubscribeModeTransition = botStateManager.subscribe((change: StateChange) => {
-        // Sync mode changes to presence manager
-        if(change.changeType === 'mode_transition') {
-            const mode = change.newState.mode;
-
-            // Map BotState mode to PresenceDisplayMode for presence
-            switch(mode) {
-                case 'idle': {
-                    presenceManager.transitionPresenceDisplayMode('none');
-                    // Explicitly transition presence to idle phase
-                    void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-
-                    break;
-                }
-                case 'catching_up': {
-                    presenceManager.transitionPresenceDisplayMode('catching_up');
-
-                    break;
-                }
-                case 'processing_message': {
-                    presenceManager.transitionPresenceDisplayMode('processing_message');
-
-                    break;
-                }
-                case 'perching': {
-                    presenceManager.transitionPresenceDisplayMode('perching');
-
-                    break;
-                }
-            // No default
-            }
-        }
-    });
-
-    // Bridge: Sync activity phases to presence manager
-    const unsubscribeActivityPhase = botStateManager.subscribe((change: StateChange) => {
-        if(change.changeType === 'activity_phase') {
-            const phase = change.newState.activityPhase;
-            if(phase) {
-                // Throttle active phase updates to avoid Discord rate limits
-                if(botStateManager.shouldUpdatePresence()) {
-                    void presenceManager.updatePhase(phase);
-                    botStateManager.recordPresenceUpdate();
-                }
-            } else {
-                // Idle transitions intentionally bypass throttling:
-                // - End of work should show immediately to users
-                // - Prevents "stuck" active status after processing completes
-                // - Idle is a stable state, not a rapid-fire event
-                if(change.newState.mode === 'idle') {
-                    void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-                    botStateManager.recordPresenceUpdate();
-                }
-            }
-        }
-    });
-
-    // If no inbox manager, transition to idle immediately
-    // (otherwise, idle transition happens after catch-up check in inbox init)
-    if(!inboxManager) {
-        void presenceManager.updatePhase({ type: 'idle', since: new Date() });
-    }
-
-    return {
-        presenceManager,
-        unsubscribeModeTransition,
-        unsubscribeActivityPhase,
-    };
-}
-// Stryker restore all
 
 /** `${activeRole}:${phaseType}` for a non-idle {@link PresenceView}, `null` for idle. */
 function phaseSignature(view: PresenceView): string | null {
@@ -213,26 +45,30 @@ function digestOf(view: PresenceView): string | undefined {
 /** Result of {@link setupConductorPresence}. */
 export interface ConductorPresenceSetupResult {
     /** Presence manager for Discord status updates. */
-    presenceManager:    PresenceManager
+    presenceManager:         PresenceManager
     /** Stops mirroring every ledger in `ledgers` into `presenceManager`. */
-    unsubscribeLedgers: () => void
+    unsubscribeLedgers:      () => void
+    /**
+     * One dynamic-status-generator instance per entry in the `ledgers` param, in the same order
+     * (conventionally `[conversation, perch]`) — each with its own cooldown/cache/in-flight state
+     * (P14). Callers wire the entry for a given session's turns (e.g. the conversation entry into
+     * `createConductorProcessor`'s own `dynamicStatusGenerator` dep).
+     */
+    dynamicStatusGenerators: DynamicStatusGenerator[]
 }
 
 /**
  * Sets up Discord presence for the long-lived conversation conductor: composes presence from
- * the session ledgers (design doc section 8) instead of bridging
- * `BotStateManager`. Deliberately does none of what `setupPresence`'s bridge (:110-181, untouched
- * — see this file's module-level doc discipline) does: no `botStateManager.subscribe`, no
- * `transitionPresenceDisplayMode` call, and no explicit idle bootstrap — the very first
+ * the session ledgers (design doc section 8) instead of bridging a state machine: no
+ * `subscribe`, no display-mode transition call, and no explicit idle bootstrap — the very first
  * synchronous compose (before any ledger has emitted an event) already renders `💤`, because every
  * ledger starts with no open turn.
  *
  * The composition/throttle DECISION lives entirely in `presence-view.ts`'s pure
  * `composePresence`/`planPresenceUpdate` (already measured at 100% mutation coverage on their
  * own); this function's own body is just the plumbing that calls them and applies the result.
- * @param params Construction inputs mirroring `setupPresence`'s (status generators, identity
- * cache, live-signals/task-context callbacks), plus the ledgers to compose from and the shared
- * `PresenceThrottle` instance.
+ * @param params Construction inputs (status generators, identity cache, live-signals/task-context
+ * callbacks), plus the ledgers to compose from and the shared `PresenceThrottle` instance.
  * @returns See {@link ConductorPresenceSetupResult}.
  */
 export function setupConductorPresence(params: {
@@ -243,7 +79,15 @@ export function setupConductorPresence(params: {
     ledgers:                 readonly LedgerStore[]
     /** The one process-wide throttle shared with the ledger-sink stream handler (P11). */
     throttle:                PresenceThrottle
-    dynamicStatusGenerator:  ReturnType<typeof createDynamicStatusGenerator> | undefined
+    /**
+     * P14: injectable dynamic-status-generator factory, defaulting to the real
+     * {@link createDynamicStatusGenerator}. Called once PER LEDGER (in `ledgers` order) so each
+     * session gets its own cooldown/cache/in-flight-controller instance — a single shared
+     * instance let one session's Haiku call abort the other's and let one session's cooldown gate
+     * the other's synopsis (status-generator-dynamic.ts now keeps that state in the closure
+     * returned by this factory, not at module scope). See {@link ConductorPresenceSetupResult.dynamicStatusGenerators}.
+     */
+    createDynamicGenerator?: typeof createDynamicStatusGenerator
     getTaskContext?:         () => Promise<string | undefined>
     getRecentContext:        () => Promise<string | undefined>
     contextBuilder?:         ContextBuilder
@@ -257,14 +101,6 @@ export function setupConductorPresence(params: {
     /** Setter for persisting the last idle status text (anti-rut). */
     setPreviousStatus?:      (text: string) => void
     /**
-     * The still-legacy `BotStateManager` — used ONLY to call `recordPresenceUpdate()` on every
-     * applied update, never `subscribe`d to. Perch gets its own real conductor, but a rejected
-     * (or omitted) `perchConductor.open()` leaves perch without any fallback runner in conductor
-     * mode; this field is kept so a caller can still forward the shared `botStateManager` for its
-     * own bookkeeping without a wiring change.
-     */
-    botStateManager?:        Pick<BotStateManager, 'recordPresenceUpdate'>
-    /**
      * Optional Q3/B4 daily cost ceiling predicate: `tick()` re-reads it on every compose (never
      * cached), so a pause taken or cleared mid-run is reflected on the very next ledger event —
      * rendered as a `⏸ perch` marker in the composed prefix (see `composePresence`'s own doc).
@@ -277,7 +113,7 @@ export function setupConductorPresence(params: {
         readyClient,
         ledgers,
         throttle,
-        dynamicStatusGenerator,
+        createDynamicGenerator = createDynamicStatusGenerator,
         getTaskContext,
         getRecentContext,
         contextBuilder,
@@ -286,9 +122,12 @@ export function setupConductorPresence(params: {
         getLiveSignals,
         getPreviousStatus,
         setPreviousStatus,
-        botStateManager,
         isCostPaused,
     } = params;
+
+    // P14: one instance per ledger — see this param's own doc for why sharing one instance across
+    // sessions is a defect, not an optimisation.
+    const dynamicStatusGenerators: DynamicStatusGenerator[] = ledgers.map(() => createDynamicGenerator({ identityContext }));
 
     const activeStatusGenerator = createActiveStatusGenerator({
         activityType: ActivityType.Custom,
@@ -316,7 +155,6 @@ export function setupConductorPresence(params: {
         config:              presenceConfig,
         activeStatusGenerator,
         idleStatusGenerator,
-        dynamicStatusGenerator,
         logger,
         // Q3/B4: recompose fresh on every idle refresh tick (the periodic timer, not only a
         // ledger-driven applyView) so the `⏸ perch` marker clearing at local midnight — a
@@ -351,10 +189,9 @@ export function setupConductorPresence(params: {
     let lastSeenSignature: string | null = null;
     let lastSeenDigest: string | undefined;
 
-    /** Applies `view` and, if a legacy `botStateManager` was provided, keeps its own throttle clock in sync (see the param's doc). */
+    /** Applies `view` via the presence manager. */
     function apply(view: PresenceView): void {
         void presenceManager.applyView(view);
-        botStateManager?.recordPresenceUpdate();
     }
 
     let idleSettleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -410,6 +247,7 @@ export function setupConductorPresence(params: {
 
     return {
         presenceManager,
+        dynamicStatusGenerators,
         unsubscribeLedgers: (): void => {
             for(const unsubscribe of unsubscribes) {
                 unsubscribe();

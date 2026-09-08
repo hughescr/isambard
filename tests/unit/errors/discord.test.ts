@@ -12,8 +12,7 @@ import {
     AmbiguousChannelError,
     WellKnownChannelNotFoundError,
     PresenceError,
-    StatusGenerationError,
-    TransitionError
+    StatusGenerationError
 } from '@/errors/discord';
 
 describe.concurrent('DiscordError', () => {
@@ -185,34 +184,6 @@ describe.concurrent('StatusGenerationError', () => {
     ])('should support cause: %s', (_label, causeValue) => {
         const error = new StatusGenerationError('Status generation failed', causeValue);
         expect(error.cause).toBe(causeValue);
-    });
-});
-
-describe.concurrent('TransitionError', () => {
-    test('should have correct inheritance chain', () => {
-        const error = new TransitionError('idle', 'idle');
-        expect(error).toBeInstanceOf(TransitionError);
-        expect(error).toBeInstanceOf(DiscordError);
-        expect(error).toBeInstanceOf(IsambardError);
-        expect(error).toBeInstanceOf(Error);
-    });
-
-    test('should have correct default message', () => {
-        const error = new TransitionError('idle', 'idle');
-        expect(error.message).toBe('Invalid transition from idle to idle');
-    });
-
-    test('should support custom message', () => {
-        const error = new TransitionError('idle', 'idle', 'Custom transition error');
-        expect(error.message).toBe('Custom transition error');
-    });
-
-    test('should have correct properties', () => {
-        const error = new TransitionError('catching_up', 'processing_message');
-        expect(error.name).toBe('TransitionError');
-        expect(error.code).toBe(ErrorCode.TRANSITION_ERROR);
-        expect(error.context.fromMode).toBe('catching_up');
-        expect(error.context.toMode).toBe('processing_message');
     });
 });
 

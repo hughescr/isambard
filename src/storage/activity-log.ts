@@ -8,8 +8,8 @@ export type ActivityType
       | 'bsky-post-sent' | 'bsky-post-rejected'
       | 'bsky-dm-sent' | 'bsky-dm-rejected'
       | 'discord-exchange'
-      | 'perch-start' | 'perch-end' | 'perch-suspend' | 'perch-resume'
-      | 'catchup-start' | 'catchup-complete' | 'catchup-suspend';
+      | 'perch-start' | 'perch-end'
+      | 'catchup-start' | 'catchup-complete';
 
 /**
  * An entry to be logged in the activity log.

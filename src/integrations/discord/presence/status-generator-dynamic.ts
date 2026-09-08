@@ -6,11 +6,9 @@
  */
 
 import { logger } from '@hughescr/logger';
-import { getToolDescription, type SynopsisContext, type CatchUpSynopsisContext  } from './types.js';
+import { getToolDescription, type SynopsisContext } from './types.js';
 import { generateText } from '@/agent';
 import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
-
-// Re-export for backwards compatibility with existing imports
 
 /**
  * Interface for generating dynamic status synopses.
@@ -23,15 +21,6 @@ export interface DynamicStatusGenerator {
      * @returns Promise resolving to a status string (max 40 chars), or null if a Haiku call is in-flight or failed
      */
     generateSynopsis(context: SynopsisContext): Promise<string | null>
-
-    /**
-     * Generate a catch-up status based on inbox context.
-     * Used when entering catch-up mode to show a rich, contextual status.
-     *
-     * @param context - The inbox state context
-     * @returns Promise resolving to a status string (max 40 chars), or null if a Haiku call is in-flight or failed
-     */
-    generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string | null>
 }
 
 /**
@@ -48,14 +37,12 @@ const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
 
-// Rate limiting: minimum 2 seconds between Haiku calls (cooldown measured from call completion)
-// Module-level state shared across all generator instances
-// Stryker disable next-line AssignmentOperator: Initial value irrelevant, first call always sets lastHaikuCall = now
-let lastHaikuCall = 0;
-// Stryker disable next-line AssignmentOperator: Initial value irrelevant, first successful call always updates cache
-let cachedStatus: string | null = null;
-// Stryker disable next-line AssignmentOperator: Initial null means no call in-flight; set to controller before every API call
-let inFlightController: AbortController | null = null;
+// Rate limiting: minimum 2 seconds between Haiku calls (cooldown measured from call completion).
+// P14: this used to be module-level state shared across every generator instance — a single
+// shared cooldown/cache/in-flight-controller let one session's Haiku call abort the other
+// session's in-flight call, and one session's cooldown gate the other's synopsis. It now lives in
+// the closure `createDynamicStatusGenerator` returns, so each instance (one per session, per
+// `presence-setup.ts`'s `setupConductorPresence`) keeps its own.
 const HAIKU_COOLDOWN_MS = 2000;
 
 /**
@@ -128,50 +115,6 @@ What you're writing: "{responseFragment}"
 
 What thought captures this moment of putting your ideas into words?`,
 };
-
-/**
- * Prompt template for catch-up status generation.
- * Used when entering catch-up mode to generate a contextual status based on inbox state.
- */
-// Stryker disable StringLiteral: Prompt template content - mutations don't change behavior
-const CATCH_UP_PROMPT = `You (Izzy) just woke up and found messages waiting in your inbox:
-- {totalUnread} messages across {channelCount} channel(s)
-- Channels: {channelNames}
-- From: {topAuthors}
-- You've been away for {timeSinceLastActive}
-- It's {timeOfDay} on {dayOfWeek}
-
-Generate a thought that SPECIFICALLY mentions one of: an author name, a channel name, the time away, or the time/day. Be curious, excited, playful.
-
-NEVER output generic phrases like:
-- "Catching up..." / "What did I miss..." / "Messages waiting..."
-- "Time to see what's new..." / "Let's see what happened..."
-- Anything that could apply to ANY inbox state
-
-GOOD examples (notice they use specific details):
-- "Ooh, Craig left me something—Monday treat!"
-- "Three hours and #general got busy!"
-- "Sarah AND Mike wrote? Intriguing..."
-- "Early morning messages from the team..."
-- "{totalUnread} messages? Someone's chatty!"
-- "Been away {timeSinceLastActive} and look what I find!"
-
-What thought flashes through your mind as you see what's waiting?`;
-// Stryker restore StringLiteral
-
-/**
- * Resets the cooldown state for testing purposes.
- * This allows tests to simulate time passing without actual delays.
- */
-export function resetCooldownState(): void {
-    lastHaikuCall = 0;
-    cachedStatus = null;
-    // Stryker disable next-line ConditionalExpression,BlockStatement: abort in-flight call if any — test isolation cleanup
-    if(inFlightController) {
-        inFlightController.abort();
-    }
-    inFlightController = null;
-}
 
 /**
  * Format tool input as a JSON summary, truncated if needed.
@@ -272,16 +215,19 @@ interface CooldownLogContext {
  *
  * @param promptBuilder - Function that builds the prompt string
  * @param logContext - Per-site log objects; each carries its own fields and `msg`
+ * @param state - The calling instance's own cooldown/cache/in-flight-controller state (P14: no
+ * longer module-level — see this file's own top-of-file doc note).
  * @returns Promise resolving to a status string, or null if on cooldown or error
  */
 async function executeWithCooldown(
     promptBuilder: () => string,
-    logContext: CooldownLogContext
+    logContext: CooldownLogContext,
+    state: InstanceState
 ): Promise<string | null> {
-    // Cancel-and-replace: abort any previous in-flight call and start fresh
+    // Cancel-and-replace: abort any previous in-flight call (from THIS instance only) and start fresh
     // Stryker disable next-line ConditionalExpression,BlockStatement: abort previous call — cancel-and-replace pattern
-    if(inFlightController) {
-        inFlightController.abort();
+    if(state.inFlightController) {
+        state.inFlightController.abort();
         // Stryker disable next-line ObjectLiteral,StringLiteral: Debug logging for cancellation diagnostics
         logger.debug({ ...logContext.inFlight });
     }
@@ -289,14 +235,14 @@ async function executeWithCooldown(
     // Rate limiting - check if we're within cooldown window (measured from last call completion)
     const now = Date.now();
     // Stryker disable next-line EqualityOperator: < vs <= boundary at exact cooldown time is equivalent
-    if(now - lastHaikuCall < HAIKU_COOLDOWN_MS && cachedStatus) {
+    if(now - state.lastHaikuCall < HAIKU_COOLDOWN_MS && state.cachedStatus) {
         logger.debug(logContext.cooldown);
-        return cachedStatus;
+        return state.cachedStatus;
     }
     // No cache — fall through to make real call
 
     const controller = new AbortController();
-    inFlightController = controller;
+    state.inFlightController = controller;
 
     try {
         const prompt = promptBuilder();
@@ -314,7 +260,7 @@ async function executeWithCooldown(
         }
 
         // eslint-disable-next-line require-atomic-updates -- cancel-and-replace: inFlightController identity check in finally ensures only the winning call updates cachedStatus
-        cachedStatus = statusText;
+        state.cachedStatus = statusText;
         logger.info({ statusText, ...logContext.success });
         return statusText;
     } catch (error) {
@@ -330,13 +276,20 @@ async function executeWithCooldown(
     } finally {
         // Record timestamp for cooldown AFTER call completion (not before)
         // eslint-disable-next-line require-atomic-updates -- cancel-and-replace: each call sets its own lastHaikuCall in finally; concurrent calls don't share this write path
-        lastHaikuCall = Date.now();
+        state.lastHaikuCall = Date.now();
         // Only clear if WE are still the current controller
         // Stryker disable next-line EqualityOperator,ConditionalExpression,BlockStatement: identity check — only clear if we're still the active controller; if we skip clearing, the next call aborts this controller at its start (equivalent behavior)
-        if(inFlightController === controller) {
-            inFlightController = null;
+        if(state.inFlightController === controller) {
+            state.inFlightController = null;
         }
     }
+}
+
+/** Per-instance cooldown/cache/in-flight-controller state (P14: see this file's top-of-file doc note). */
+interface InstanceState {
+    lastHaikuCall:      number
+    cachedStatus:       string | null
+    inFlightController: AbortController | null
 }
 
 /**
@@ -344,7 +297,10 @@ async function executeWithCooldown(
  * contextual status messages.
  *
  * The generator implements rate limiting (2 second cooldown measured from call completion)
- * to avoid excessive API calls during rapid status updates.
+ * to avoid excessive API calls during rapid status updates. P14: the cooldown/cache/in-flight
+ * state lives in THIS closure — every call to this factory returns an instance with its own,
+ * independent state, so two instances (e.g. the conversation and perch sessions) never abort
+ * each other's in-flight call or gate each other's cooldown.
  *
  * @param deps - Dependencies including identity context
  * @returns DynamicStatusGenerator instance
@@ -367,6 +323,15 @@ export function createDynamicStatusGenerator(
 ): DynamicStatusGenerator {
     const { identityContext } = deps;
 
+    // Stryker disable next-line ObjectLiteral: initial field values are irrelevant — the first call
+    // through executeWithCooldown always sets lastHaikuCall/cachedStatus itself and treats a null
+    // inFlightController identically to one already cleared by a prior call's finally block.
+    const state: InstanceState = {
+        lastHaikuCall:      0,
+        cachedStatus:       null,
+        inFlightController: null,
+    };
+
     return {
         async generateSynopsis(context: SynopsisContext): Promise<string | null> {
             const { phase } = context;
@@ -379,39 +344,10 @@ export function createDynamicStatusGenerator(
                     generating: { phase, userMessageLength: context.userMessage.length, msg: 'Generating synopsis with Haiku' },
                     success:    { phase, msg: 'Generated dynamic status' },
                     failure:    { phase, msg: 'Failed to generate synopsis' },
-                }
-            );
-        },
-
-        // Stryker disable StringLiteral,ObjectLiteral: Prompt template building and logging for status generation
-        async generateCatchUpSynopsis(context: CatchUpSynopsisContext): Promise<string | null> {
-            return executeWithCooldown(
-                () => {
-                    // Build the prompt with context values
-                    let prompt = SYSTEM_PROMPT;
-                    prompt = prompt.replace('{identityContext}', identityContext);
-                    prompt = `${prompt}\n\n---\n\n${CATCH_UP_PROMPT}`;
-
-                    // Replace placeholders with context values
-                    prompt = prompt.replace('{totalUnread}', String(context.totalUnread));
-                    prompt = prompt.replace('{channelCount}', String(context.channelCount));
-                    prompt = prompt.replace('{channelNames}', context.channelNames.join(', '));
-                    prompt = prompt.replace('{topAuthors}', context.topAuthors.join(', '));
-                    prompt = prompt.replace('{timeSinceLastActive}', context.timeSinceLastActive);
-                    prompt = prompt.replace('{timeOfDay}', context.timeOfDay);
-                    prompt = prompt.replace('{dayOfWeek}', context.dayOfWeek);
-                    return prompt;
                 },
-                {
-                    inFlight:   { msg: 'Cancelling previous in-flight catch-up synopsis call' },
-                    cooldown:   { msg: 'Haiku call within cooldown for catch-up, using cached status' },
-                    generating: { totalUnread: context.totalUnread, channelCount: context.channelCount, msg: 'Generating catch-up synopsis with Haiku' },
-                    success:    { msg: 'Generated catch-up status' },
-                    failure:    { msg: 'Failed to generate catch-up synopsis' },
-                }
+                state
             );
         },
-        // Stryker restore StringLiteral,ObjectLiteral
     };
 }
 

@@ -72,11 +72,8 @@ describe.concurrent('createActivityLogger', () => {
             'discord-exchange',
             'perch-start',
             'perch-end',
-            'perch-suspend',
-            'perch-resume',
             'catchup-start',
             'catchup-complete',
-            'catchup-suspend',
         ] satisfies ActivityType[])('should use activity type %s in path', async (activityType) => {
             const logger = createActivityLogger(mockBackend);
             const entry: ActivityLogEntry = { type: activityType, summary: 'Test' };
@@ -187,24 +184,24 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should produce exactly {auto-logged, type} tags when entry.tags is undefined', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-resume', summary: 'Resumed' };
+            const entry: ActivityLogEntry = { type: 'perch-end', summary: 'Perch session completed' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
             const input = createCall[0] as { tags: Set<string> };
             expect(input.tags.size).toBe(2);
-            expect([...input.tags].toSorted((a, b) => a.localeCompare(b))).toEqual(['auto-logged', 'perch-resume']);
+            expect([...input.tags].toSorted((a, b) => a.localeCompare(b))).toEqual(['auto-logged', 'perch-end']);
         });
 
         test('should produce exactly {auto-logged, type} tags when entry.tags is empty array', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-suspend', summary: 'Suspended', tags: [] };
+            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch session started', tags: [] };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
             const input = createCall[0] as { tags: Set<string> };
             expect(input.tags.size).toBe(2);
-            expect([...input.tags].toSorted((a, b) => a.localeCompare(b))).toEqual(['auto-logged', 'perch-suspend']);
+            expect([...input.tags].toSorted((a, b) => a.localeCompare(b))).toEqual(['auto-logged', 'perch-start']);
         });
     });
 

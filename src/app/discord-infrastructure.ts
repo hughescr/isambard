@@ -6,7 +6,6 @@
  * - Channel registry (backend + manager)
  * - Message history (fetcher + summarizer + search service)
  * - Inbox system (checkpoint manager + inbox manager)
- * - Bot state manager
  *
  * This module wires together the Discord integration subsystems that are
  * required for the bot to function. It does NOT create MCP servers - those
@@ -26,14 +25,11 @@ import {
     createMessageSearchService,
     CheckpointManager,
     InboxManager,
-    BotStateManagerImpl,
     type ChannelRegistryManager as ChannelRegistryManagerType,
     type MessageFetcher,
     type MessageSummarizer,
     type MessageSearchService,
-    type InboxManager as InboxManagerType,
-    type BotStateManager
-
+    type InboxManager as InboxManagerType
 } from '@/integrations/discord';
 import type { DynamoDBClientHolder, MemoryToolBackend } from '@/storage';
 
@@ -63,8 +59,6 @@ interface DiscordInfrastructure {
     messageSearchService: MessageSearchService
     /** Inbox manager for tracking unread messages */
     inboxManager:         InboxManagerType
-    /** Bot state manager for operational mode and activity phase tracking */
-    botStateManager:      BotStateManager
 }
 
 /**
@@ -75,7 +69,6 @@ interface DiscordInfrastructure {
  * 2. Channel registry (backend + manager with caching)
  * 3. Message history chain (fetcher → summarizer → search service)
  * 4. Inbox system (checkpoint manager + inbox manager)
- * 5. Bot state manager (for presence and context injection)
  *
  * The Discord client is created but NOT logged in - the caller must call
  * client.login(token) when ready to connect to Discord.
@@ -136,12 +129,6 @@ export function createDiscordInfrastructure(options: DiscordInfrastructureOption
         config: discordConfig.inbox,  // Optional inbox config from Discord config
     });
 
-    // Create bot state manager (shared between inbox MCP server and bot)
-    const botStateManager: BotStateManager = new BotStateManagerImpl({
-        logger,
-        updateThrottleMs: discordConfig.presence?.updateThrottleMs,
-    });
-
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Inbox system initialized');
 
@@ -150,6 +137,5 @@ export function createDiscordInfrastructure(options: DiscordInfrastructureOption
         channelRegistry,
         messageSearchService,
         inboxManager,
-        botStateManager,
     };
 }

@@ -22,7 +22,7 @@ import type { HookCallbackMatcher, HookEvent } from '@anthropic-ai/claude-agent-
  * const merged = mergeHookMaps(
  *   createTaskTrackingHooks(tracker),
  *   createSessionLifecycleHooks({}),
- *   createCompactionHooks(stateManager),
+ *   createCompactionHooks(sink),
  * );
  * ```
  */

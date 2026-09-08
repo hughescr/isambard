@@ -251,19 +251,6 @@ mockLogger.warn = mock((..._args: unknown[]) => mockLogger);
 mockLogger.error = mock((..._args: unknown[]) => mockLogger);
 mockLogger.child = mock(() => mockLogger);
 
-// Mock helpers for Discord handlers
-export function createMockBotStateManager() {
-    return {
-        shouldUpdatePresence:   mock(() => true),
-        updateActivityPhase:    mock(() => undefined),
-        clearActivityPhase:     mock(() => undefined),
-        getMode:                mock(() => 'idle' as const),
-        goIdle:                 mock(() => undefined),
-        startProcessingMessage: mock(() => undefined),
-        getSessionType:         mock((isDM: boolean) => (isDM ? 'dm' : 'guild')),
-    };
-}
-
 // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Module mock setup, doesn't need await
 mock.module('@hughescr/logger', () => ({
     logger: mockLogger,

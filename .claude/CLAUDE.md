@@ -51,6 +51,10 @@ Mechanized via ESLint (sources: `~/code/hughescr/eslint-plugin-test-hygiene`, `~
 
 **Intentionally disabled**: `jest/require-hook` — conflicts with the module-level `mock.module()` setup pattern. See `eslint.config.mjs`.
 
+### Session Architecture Rules
+- `src/agent/session/` (the conductor, ledger, journal, envelope builders) stays mutation-measured at 100% like everything else — never add a `// Stryker disable all` region there to sidestep the gate.
+- Any new session open path (a new conductor role, a new way of calling `Conductor.open()`/`submit()`) must be verified against the real Claude Agent SDK CLI, not only against the test fakes, before it ships: with a streaming-input prompt the SDK emits nothing at all — not even the `system/init` frame carrying the session id — until it has read a first user message, so a silent/empty open never resolves against the real SDK even though a fake happily returns. This is the `[BOOT]` handshake lesson (found the hard way on the first production conductor start, 2026-09-06); `src/agent/session/index.ts`'s handshake envelope is the fix, and any future session-open path needs the same real-SDK check, not just green fakes.
+
 ### Self-Modification Protocol
 Isambard can propose improvements to its own code:
 1. Changes are submitted as PRs

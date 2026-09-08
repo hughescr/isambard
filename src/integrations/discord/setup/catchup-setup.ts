@@ -6,7 +6,6 @@ import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendEnvelopeResponse } from '../response-sender';
-import type { BotStateManager } from '../state';
 import { createChannelId, type ChannelId } from '../types';
 import {
     type PerchConfig, type Conductor, type SessionJournal, type Envelope, type UndeliveredEnvelope,
@@ -143,7 +142,6 @@ export async function submitConductorCatchUp(params: SubmitConductorCatchUpParam
 export interface RunConductorInboxInitParams {
     inboxManager:          InboxManager
     readyClient:           Client
-    botStateManager:       BotStateManager
     perchConfig:           PerchConfig | undefined
     ingressGate:           IngressGate<Message>
     conversationConductor: Conductor
@@ -163,9 +161,8 @@ export interface RunConductorInboxInitParams {
 }
 
 /**
- * The conductor-mode inbox/boot sequence (P10), run once from `bot.ts`'s `clientReady` in place
- * of the legacy catch-up-runner branch below: starts `botStateManager` and loads unread mail
- * exactly as the oneshot branch does, then runs {@link runBootSequence} exactly once to redeliver
+ * The conductor-mode inbox/boot sequence (P10), run once from `bot.ts`'s `clientReady`: loads
+ * unread mail, then runs {@link runBootSequence} exactly once to redeliver
  * anything a crash left undelivered, replay anything received-but-unhandled, open the ingress
  * gate (always, even with nothing to replay — a boot with no crash-recovery work still needs its
  * live-message buffer drained), and submit the catch-up envelope when unread mail remains.
@@ -192,7 +189,7 @@ export interface RunConductorInboxInitParams {
  */
 export async function runConductorInboxInit(params: RunConductorInboxInitParams): Promise<void> {
     const {
-        inboxManager, readyClient, botStateManager, perchConfig, ingressGate,
+        inboxManager, readyClient, perchConfig, ingressGate,
         conversationConductor, journal, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
     } = params;
 
@@ -283,7 +280,6 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
     // guarantees the gate opens exactly once, so the backstop below must not double-open it.
     let bootSequenceStarted = false;
     try {
-        botStateManager.start();
         inboxManager.setBotUserId(readyClient.user!.id);
         await inboxManager.loadUnread();
 
@@ -317,7 +313,6 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
 interface SetupInboxParams {
     inboxManager:    InboxManager
     readyClient:     Client
-    botStateManager: BotStateManager
     perchConfig:     PerchConfig | undefined
     /** Optional health registry — when provided, catch-up defers until Discord is online. */
     healthRegistry?: ServiceHealthRegistry
@@ -345,7 +340,6 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
     const {
         inboxManager,
         readyClient,
-        botStateManager,
         perchConfig,
         healthRegistry,
         conversationConductor,
@@ -362,7 +356,7 @@ export function setupInboxAndCatchUp(params: SetupInboxParams): Promise<void> {
             logger.info({ msg: 'Starting inbox initialization...' });
 
             await runConductorInboxInit({
-                inboxManager, readyClient, botStateManager, perchConfig, ingressGate,
+                inboxManager, readyClient, perchConfig, ingressGate,
                 conversationConductor, journal, responseRouter, rateLimiter, excludeChannelIds, discordCapability,
             });
         } catch (error) {

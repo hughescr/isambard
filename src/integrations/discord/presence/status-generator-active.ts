@@ -62,9 +62,6 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
 
     // Switch case emojis are tested in test file
     switch(presenceDisplayMode) { // Stryker disable ConditionalExpression,StringLiteral
-        case 'catching_up': {
-            return '📥 ';
-        }
         case 'processing_message': {
             return '💬 ';
         }
@@ -86,7 +83,6 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
  * for unknown tools.
  *
  * When presence display mode is provided, adds appropriate emoji prefixes:
- * - catching_up: 📥
  * - processing_message: 💬
  * - perching: 🦉
  *
@@ -105,9 +101,9 @@ function getPresencePrefix(presenceDisplayMode: PresenceDisplayMode | undefined)
  *
  * const activityWithPrefix = generator.generate(
  *   { type: 'thinking', startedAt: new Date() },
- *   'catching_up'
+ *   'processing_message'
  * );
- * // Returns: { name: '📥 Thinking...', type: ActivityType.Custom }
+ * // Returns: { name: '💬 Thinking...', type: ActivityType.Custom }
  * ```
  */
 export function createActiveStatusGenerator(

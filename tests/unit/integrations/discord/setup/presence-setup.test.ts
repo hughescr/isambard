@@ -1,9 +1,11 @@
 /**
- * Tests for presence-setup.ts
+ * Tests for presence-setup.ts (setupConductorPresence — the sole surviving setup function; the
+ * legacy oneshot `setupPresence` bridge was retired in P14).
  *
  * Covers:
  * - getPreviousStatus forwarding: verifies the callback is passed to createIdleStatusGenerator
  *   so the anti-rut block in status-generator-idle.ts fires on the live path.
+ * - createDynamicGenerator: the injectable per-ledger dynamic-status-generator factory (P14).
  */
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach, jest } from 'bun:test';
 import { ActivityType, type Client } from 'discord.js';
@@ -14,8 +16,7 @@ import * as presenceModule from '@/integrations/discord/presence';
 import type { PresenceManager, PresenceManagerDeps } from '@/integrations/discord/presence/manager';
 import type { PresenceView } from '@/integrations/discord/presence/presence-view';
 import type { IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
-import { IDLE_SETTLE_MS, setupConductorPresence, setupPresence } from '@/integrations/discord/setup/presence-setup';
-import type { BotStateManager, StateChange } from '@/integrations/discord/state';
+import { IDLE_SETTLE_MS, setupConductorPresence } from '@/integrations/discord/setup/presence-setup';
 
 /** Minimal presence config for tests — required fields only, all others use defaults */
 const MINIMAL_PRESENCE_CONFIG: NonNullable<DiscordConfig['presence']> = {
@@ -24,115 +25,16 @@ const MINIMAL_PRESENCE_CONFIG: NonNullable<DiscordConfig['presence']> = {
     idleRefreshIntervalMs: 300_000,
 };
 
-/** Minimal mock BotStateManager */
-function makeMockBotStateManager(): BotStateManager {
-    return {
-        subscribe:            mock((_listener: (change: StateChange) => void) => mock(() => undefined)),
-        shouldUpdatePresence: mock(() => false),
-        recordPresenceUpdate: mock(() => undefined),
-        start:                mock(() => undefined),
-        stop:                 mock(() => undefined),
-    } as unknown as BotStateManager;
-}
-
 /** Minimal mock Client */
 function makeMockClient(): Client {
     return {} as unknown as Client;
 }
 
-describe('setupPresence — getPreviousStatus forwarding', () => {
-    const spies: ReturnType<typeof spyOn>[] = [];
-    let capturedIdleDeps: IdleStatusGeneratorDeps | undefined;
-
-    const mockPresenceManager = {
-        start:                         mock(() => undefined),
-        stop:                          mock(() => undefined),
-        updatePhase:                   mock(async () => undefined),
-        transitionPresenceDisplayMode: mock(() => undefined),
-    };
-
-    beforeEach(() => {
-        capturedIdleDeps = undefined;
-
-        spies.push(
-            // @ts-expect-error — Mocking constructor
-            spyOn(presenceModule, 'PresenceManager').mockImplementation((): PresenceManager => mockPresenceManager as unknown as PresenceManager),
-            spyOn(presenceModule, 'createActiveStatusGenerator').mockReturnValue({
-                generate:     mock(() => ({ name: 'Active', type: ActivityType.Custom })),
-                formatStatus: mock((s: string) => ({ name: s, type: ActivityType.Custom })),
-            }),
-            spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: IdleStatusGeneratorDeps) => {
-                capturedIdleDeps = deps;
-                return { generate: mock(async () => ({ name: 'Idle', type: ActivityType.Custom })) };
-            })
-        );
-    });
-
-    afterEach(() => {
-        for(const spy of spies) {
-            spy.mockRestore();
-        }
-        spies.length = 0;
-        mock.restore();
-    });
-
-    test('should forward getPreviousStatus to createIdleStatusGenerator when provided', () => {
-        const getPreviousStatus = mock((): string | undefined => 'previous status text');
-
-        setupPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            botStateManager:        makeMockBotStateManager(),
-            dynamicStatusGenerator: undefined,
-            inboxManager:           undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            getPreviousStatus,
-        });
-
-        // Verify createIdleStatusGenerator was called with the deps
-        expect(presenceModule.createIdleStatusGenerator).toHaveBeenCalled();
-        expect(capturedIdleDeps?.getPreviousStatus).toBe(getPreviousStatus);
-    });
-
-    test('getPreviousStatus passed to setupPresence reaches createIdleStatusGenerator deps', () => {
-        const getPreviousStatus = mock((): string | undefined => 'last idle text');
-
-        setupPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            botStateManager:        makeMockBotStateManager(),
-            dynamicStatusGenerator: undefined,
-            inboxManager:           undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            getPreviousStatus,
-        });
-
-        // The captured deps must include the exact same getPreviousStatus function
-        expect(capturedIdleDeps?.getPreviousStatus).toBe(getPreviousStatus);
-    });
-
-    test('getPreviousStatus is undefined in createIdleStatusGenerator deps when not passed to setupPresence', () => {
-        setupPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            botStateManager:        makeMockBotStateManager(),
-            dynamicStatusGenerator: undefined,
-            inboxManager:           undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            // No getPreviousStatus
-        });
-
-        expect(capturedIdleDeps?.getPreviousStatus).toBeUndefined();
-    });
-});
-
 describe('setupConductorPresence', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
     let mockPresenceManager: { start: ReturnType<typeof mock>, stop: ReturnType<typeof mock>, applyView: ReturnType<typeof mock> };
     let capturedPresenceManagerDeps: PresenceManagerDeps | undefined;
+    let capturedIdleDeps: IdleStatusGeneratorDeps | undefined;
 
     beforeEach(() => {
         jest.useFakeTimers();
@@ -142,6 +44,7 @@ describe('setupConductorPresence', () => {
             applyView: mock(async (_view: PresenceView) => undefined),
         };
         capturedPresenceManagerDeps = undefined;
+        capturedIdleDeps = undefined;
 
         spies.push(
             // @ts-expect-error — Mocking constructor
@@ -153,9 +56,10 @@ describe('setupConductorPresence', () => {
                 generate:     mock(() => ({ name: 'Active', type: ActivityType.Custom })),
                 formatStatus: mock((s: string) => ({ name: s, type: ActivityType.Custom })),
             }),
-            spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation(() => ({
-                generate: mock(async () => ({ name: 'Idle', type: ActivityType.Custom })),
-            }))
+            spyOn(presenceModule, 'createIdleStatusGenerator').mockImplementation((deps: IdleStatusGeneratorDeps) => {
+                capturedIdleDeps = deps;
+                return { generate: mock(async () => ({ name: 'Idle', type: ActivityType.Custom })) };
+            })
         );
     });
 
@@ -176,17 +80,134 @@ describe('setupConductorPresence', () => {
         return { shouldUpdate: mock(() => true), record: mock(() => undefined) };
     }
 
+    test('forwards getPreviousStatus to createIdleStatusGenerator when provided', () => {
+        const conversation = makeConversationLedger();
+        const getPreviousStatus = mock((): string | undefined => 'previous status text');
+
+        setupConductorPresence({
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
+            getPreviousStatus,
+        });
+
+        expect(presenceModule.createIdleStatusGenerator).toHaveBeenCalled();
+        expect(capturedIdleDeps?.getPreviousStatus).toBe(getPreviousStatus);
+    });
+
+    test('getPreviousStatus is undefined in createIdleStatusGenerator deps when not passed', () => {
+        const conversation = makeConversationLedger();
+
+        setupConductorPresence({
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
+            // No getPreviousStatus
+        });
+
+        expect(capturedIdleDeps?.getPreviousStatus).toBeUndefined();
+    });
+
+    describe('createDynamicGenerator (P14: per-ledger instances)', () => {
+        test('is called exactly once per ledger, with the identityContext, when two ledgers are supplied', () => {
+            const conversation = makeConversationLedger();
+            const perch = createLedgerStore('perch', { logger: { error: mock() } });
+            const createDynamicGenerator = mock(() => ({
+                generateSynopsis:        mock(async () => null),
+                generateCatchUpSynopsis: mock(async () => null),
+            }));
+
+            setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                ledgers:          [conversation, perch],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                createDynamicGenerator,
+            });
+
+            expect(createDynamicGenerator).toHaveBeenCalledTimes(2);
+            expect(createDynamicGenerator).toHaveBeenNthCalledWith(1, { identityContext: 'Test identity' });
+            expect(createDynamicGenerator).toHaveBeenNthCalledWith(2, { identityContext: 'Test identity' });
+        });
+
+        test('is called exactly once when a single ledger is supplied', () => {
+            const conversation = makeConversationLedger();
+            const createDynamicGenerator = mock(() => ({
+                generateSynopsis:        mock(async () => null),
+                generateCatchUpSynopsis: mock(async () => null),
+            }));
+
+            setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                ledgers:          [conversation],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                createDynamicGenerator,
+            });
+
+            expect(createDynamicGenerator).toHaveBeenCalledTimes(1);
+        });
+
+        test('returns one generator instance per ledger, in ledger order', () => {
+            const conversation = makeConversationLedger();
+            const perch = createLedgerStore('perch', { logger: { error: mock() } });
+            const conversationGenerator = { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) };
+            const perchGenerator = { generateSynopsis: mock(async () => null), generateCatchUpSynopsis: mock(async () => null) };
+            const createDynamicGenerator = mock()
+                .mockReturnValueOnce(conversationGenerator)
+                .mockReturnValueOnce(perchGenerator);
+
+            const result = setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                ledgers:          [conversation, perch],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                createDynamicGenerator,
+            });
+
+            expect(result.dynamicStatusGenerators).toEqual([conversationGenerator, perchGenerator]);
+        });
+
+        test('defaults to the real createDynamicStatusGenerator factory when omitted', () => {
+            const conversation = makeConversationLedger();
+
+            const result = setupConductorPresence({
+                identityContext:  'Test identity',
+                presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+                readyClient:      makeMockClient(),
+                ledgers:          [conversation],
+                throttle:         throttleAlways(),
+                getRecentContext: () => Promise.resolve(undefined),
+                // No createDynamicGenerator override
+            });
+
+            expect(result.dynamicStatusGenerators).toHaveLength(1);
+            expect(typeof result.dynamicStatusGenerators[0]?.generateSynopsis).toBe('function');
+        });
+    });
+
     test('composes once synchronously at setup, applying an idle view before any ledger event', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
 
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
@@ -197,13 +218,12 @@ describe('setupConductorPresence', () => {
     test('applies a new view when a subscribed ledger store changes', () => {
         const conversation = makeConversationLedger();
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -220,13 +240,12 @@ describe('setupConductorPresence', () => {
         const conversation = makeConversationLedger();
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
             throttle,
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            getRecentContext: () => Promise.resolve(undefined),
         });
 
         expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
@@ -236,13 +255,12 @@ describe('setupConductorPresence', () => {
         const conversation = makeConversationLedger();
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
             throttle,
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -257,13 +275,12 @@ describe('setupConductorPresence', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
 
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
@@ -274,14 +291,13 @@ describe('setupConductorPresence', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            isCostPaused:           () => true,
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
+            isCostPaused:     () => true,
         });
 
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
@@ -293,14 +309,13 @@ describe('setupConductorPresence', () => {
         let paused = false;
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            isCostPaused:           () => paused,
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
+            isCostPaused:     () => paused,
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -318,14 +333,13 @@ describe('setupConductorPresence', () => {
         let paused = true;
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            isCostPaused:           () => paused,
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
+            isCostPaused:     () => paused,
         });
 
         expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).toContain('⏸ perch');
@@ -341,36 +355,30 @@ describe('setupConductorPresence', () => {
         const conversation = makeConversationLedger();
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
 
         expect(capturedPresenceManagerDeps?.recomposeIdlePrefix?.().prefix).not.toContain('⏸');
     });
 
-    test('return shape carries no BotStateManager-bridge unsubscribe handles (setupConductorPresence takes no BotStateManager to subscribe to)', () => {
-        // `setupConductorPresence`'s own parameter list has no `botStateManager`, so it cannot
-        // call `.subscribe()` on one — there is no reference to spy on here. The behavioural
-        // guarantee this test's old name claimed ("botStateManager.subscribe is never called in
-        // the conductor branch") is verified where it is actually observable: bot.test.ts's "the
-        // ring buffers themselves never subscribe to botStateManager in conductor mode". This test
-        // only pins the return shape: no `unsubscribeModeTransition`/`unsubscribeActivityPhase`
-        // (the oneshot bridge's handles), just `unsubscribeLedgers`.
+    test('return shape carries only unsubscribeLedgers — no legacy bridge unsubscribe handles', () => {
+        // The legacy `setupPresence` bridge (deleted in P14) returned
+        // `unsubscribeModeTransition`/`unsubscribeActivityPhase`; `setupConductorPresence` never
+        // did and still does not.
         const conversation = makeConversationLedger();
 
         const result = setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
 
         expect(result).not.toHaveProperty('unsubscribeModeTransition');
@@ -389,13 +397,12 @@ describe('setupConductorPresence', () => {
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
             throttle,
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         mockPresenceManager.applyView.mockClear();
 
@@ -448,13 +455,12 @@ describe('setupConductorPresence', () => {
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
             throttle,
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
@@ -485,13 +491,12 @@ describe('setupConductorPresence', () => {
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
 
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
             throttle,
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
@@ -512,13 +517,12 @@ describe('setupConductorPresence', () => {
     test('going idle is held for IDLE_SETTLE_MS: a turn opening inside the window cancels the idle apply entirely', () => {
         const conversation = makeConversationLedger();
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
@@ -547,13 +551,12 @@ describe('setupConductorPresence', () => {
         const conversation = makeConversationLedger();
         const throttle = { shouldUpdate: mock(() => false), record: mock(() => undefined) };
         setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
             throttle,
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
@@ -579,13 +582,12 @@ describe('setupConductorPresence', () => {
     test('unsubscribeLedgers cancels a pending idle apply', () => {
         const conversation = makeConversationLedger();
         const result = setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         conversation.dispatch({
             type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
@@ -599,68 +601,15 @@ describe('setupConductorPresence', () => {
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
     });
 
-    test('records every applied update on the legacy BotStateManager throttle, without ever subscribing to it', () => {
-        // Regression test for the P11 review finding: `setupPresence`'s oneshot bridge (the only
-        // caller of `botStateManager.recordPresenceUpdate()`) does not run in conductor mode, so
-        // `shouldUpdatePresence()` — read by the still-legacy perch runner's own stream handler via
-        // `createStreamEventHandler` — is permanently true unless something else keeps recording.
-        const conversation = makeConversationLedger();
-        const botStateManager = { recordPresenceUpdate: mock(() => undefined) };
-
-        setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            botStateManager,
-        });
-        // The synchronous setup-time compose (idle) already recorded once.
-        expect(botStateManager.recordPresenceUpdate).toHaveBeenCalledTimes(1);
-
-        conversation.dispatch({
-            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(0), channelId: 'chan-1' }, at: new Date(0),
-        });
-
-        expect(botStateManager.recordPresenceUpdate).toHaveBeenCalledTimes(2);
-    });
-
-    test('never calls anything on botStateManager but recordPresenceUpdate (still no subscribe)', () => {
-        const conversation = makeConversationLedger();
-        const recordPresenceUpdate = mock(() => undefined);
-        const botStateManager = new Proxy({ recordPresenceUpdate }, {
-            get(target, prop: string) {
-                if(prop === 'recordPresenceUpdate') {
-                    return target.recordPresenceUpdate;
-                }
-                throw new Error(`Unexpected access to botStateManager.${prop} from setupConductorPresence`);
-            },
-        });
-
-        expect(() => setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
-            botStateManager,
-        })).not.toThrow();
-    });
-
     test('unsubscribeLedgers stops mirroring from every ledger', () => {
         const conversation = makeConversationLedger();
         const { unsubscribeLedgers } = setupConductorPresence({
-            identityContext:        'Test identity',
-            presenceConfig:         MINIMAL_PRESENCE_CONFIG,
-            readyClient:            makeMockClient(),
-            ledgers:                [conversation],
-            throttle:               throttleAlways(),
-            dynamicStatusGenerator: undefined,
-            getRecentContext:       () => Promise.resolve(undefined),
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle:         throttleAlways(),
+            getRecentContext: () => Promise.resolve(undefined),
         });
         mockPresenceManager.applyView.mockClear();
         unsubscribeLedgers();

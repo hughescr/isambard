@@ -6,7 +6,7 @@
  */
 
 import type { ActivitiesOptions } from 'discord.js';
-import type { ActivityPhase } from '../state/types.js';
+import type { ActivityPhase } from '@/agent';
 
 // ============================================================================
 // Presence Phase - State Machine
@@ -40,38 +40,20 @@ export type PresencePhase
  * ## Design Rationale
  *
  * PresenceManager uses simple enum values to:
- * - Generate status emoji prefixes (📥, 💬, 🦅)
+ * - Generate status emoji prefixes (💬, 🦉)
  * - Map directly to status text templates
  * - Avoid complex conditional logic in status generation
- *
- * ## Mapping from BotStateManager
- *
- * The bot.ts integration layer maps BotState to PresenceDisplayMode:
- * - `mode='catching_up'` → `'catching_up'` (📥 prefix)
- * - `mode='processing_message'` → `'processing_message'` (💬 prefix)
- * - `mode='perching'` → `'perching'` (🦅 prefix)
- * - `mode='idle'` → `'none'` (no prefix)
  *
  * ## Discord Status Mapping
  *
  * Maps to emoji prefixes shown in Discord status:
  * - `'none'`: No special prefix (normal operation)
- * - `'catching_up'`: 📥 prefix (processing backlog)
  * - `'processing_message'`: 💬 prefix (normal message handling)
  * - `'perching'`: 🦉 prefix (autonomous perch time)
  *
- * @see BotState in src/integrations/discord/state/types.ts for the authoritative state model
- * @see bot.ts for the mapping logic between these type systems
- *
- * @example
- * ```typescript
- * // In bot.ts mapping logic:
- * const presenceDisplayMode: PresenceDisplayMode = state.mode === 'catching_up'
- *   ? 'catching_up'
- *   : (state.mode === 'processing_message' ? 'processing_message' : 'none');
- * ```
+ * @see bot.ts for the composition-root wiring that sets this mode
  */
-export type PresenceDisplayMode = 'none' | 'catching_up' | 'processing_message' | 'perching';
+export type PresenceDisplayMode = 'none' | 'processing_message' | 'perching';
 
 // ============================================================================
 // Synopsis Context - For LLM status generation
@@ -102,27 +84,6 @@ export interface SynopsisContext {
     recentToolCalls?:  string[]
     /** AI-generated progress summary from a running subagent */
     subagentSummary?:  string
-}
-
-/**
- * Context for generating catch-up status synopses.
- * Provides rich information about the inbox state when entering catch-up mode.
- */
-export interface CatchUpSynopsisContext {
-    /** Total number of unread messages */
-    totalUnread:         number
-    /** Number of channels with unread messages */
-    channelCount:        number
-    /** Names of channels with unread messages (e.g., ["general", "DM"]) */
-    channelNames:        string[]
-    /** Top authors who sent messages (up to 3) */
-    topAuthors:          string[]
-    /** Human-readable time since last active (e.g., "3 hours", "overnight", "2 days") */
-    timeSinceLastActive: string
-    /** Time of day (morning, afternoon, evening, night) */
-    timeOfDay:           string
-    /** Day of week (e.g., "Monday", "Saturday") */
-    dayOfWeek:           string
 }
 
 // ============================================================================

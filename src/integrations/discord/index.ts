@@ -20,12 +20,6 @@ export {
     buildQuestionButtons
 } from './button-builder';
 
-// State management (explicit — conflicts: TransitionError, AgentConfig)
-export {
-    BotStateManagerImpl,
-    type BotStateManager
-} from './state';
-
 // Channel Registry (explicit — conflicts: ChannelNotFoundError alias, error classes moved to @/errors block)
 export {
     ChannelRegistryBackend,
@@ -87,11 +81,6 @@ export {
     toEnvelopeInput,
     type ResolvedDiscordNames
 } from './setup/discord-envelope-provider';
-
-export {
-    installLedgerShim,
-    type InstallLedgerShimParams
-} from './state/ledger-shim';
 
 // Contact commands
 export {
