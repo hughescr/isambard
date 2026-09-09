@@ -13,6 +13,7 @@ import { FakeResumeStore } from '../../../helpers/fake-resume-store';
 import * as frames from '../../../helpers/sdk-frames';
 import { createConductor, type Conductor, type CreateConductorParams } from '@/agent/session/conductor';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
+import { createTaskLaunchRegistry } from '@/agent/session/task-launch-registry';
 import type { Envelope } from '@/agent/session/types';
 import { DEFAULT_RETRY_CONFIG } from '@/config/retry-config';
 import { sessionConfigSchema, type SessionConfig } from '@/config/schemas';
@@ -515,6 +516,26 @@ describe('createConductor', () => {
             expect(resultOther.envelopeId).toBe(otherEnvelope.id);
         });
 
+        it('a human envelope for a different channel while a discord turn runs never arms the human-wait escalation (isBackgroundKind boundary: discord is not a background kind)', async () => {
+            const h = build();
+            await openWith(h);
+            const firstResult = h.conductor.submit(discordEnvelope({ channelId: 'chan-A' }), { priority: 'human', requestingChannelId: 'chan-A' });
+            await flush();
+
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-B' }), { priority: 'human', requestingChannelId: 'chan-B' });
+            await flush();
+
+            expect(h.clock.pending()).toBe(0);
+            h.clock.advance(30_000);
+            expect(h.instances[0].interruptCalls).toBe(0);
+
+            h.instances[0].emit(frames.resultSuccess());
+            await firstResult;
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
         it('a human envelope for the SAME channel as the running discord turn interrupts it exactly once', async () => {
             const h = build();
             await openWith(h);
@@ -776,6 +797,30 @@ describe('createConductor', () => {
             expect(h.instances[0].interruptCalls).toBe(0);
             h.instances[0].emit(frames.resultSuccess());
             await humanPromise;
+        });
+
+        it('an interrupted discord turn is not a "background" kind: no resume note is injected even with partial work — only notification/task turns get one (isBackgroundKind boundary)', async () => {
+            const h = build();
+            await openWith(h);
+            const firstEnvelope = discordEnvelope({ channelId: 'chan-1' });
+            const firstResult = h.conductor.submit(firstEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.assistantText('partial work in progress'));
+            await flush();
+
+            void h.conductor.submit(discordEnvelope({ channelId: 'chan-1' }), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            expect(h.instances[0].interruptCalls).toBe(1);
+
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await firstResult;
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).not.toContain('resume');
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
         });
     });
 
@@ -1588,12 +1633,12 @@ describe('createConductor', () => {
             expect(h.conductor.status()).toMatchObject({ role: 'conversation', opened: false, turn: null });
 
             await openWith(h, 'sess-status');
-            const envelope = discordEnvelope();
+            const envelope = discordEnvelope({ authorId: 'user-status' });
             void h.conductor.submit(envelope, { priority: 'human', requestingChannelId: 'chan-1' });
             await flush();
 
             expect(h.conductor.status()).toMatchObject({
-                role: 'conversation', sessionId: 'sess-status', opened: true, turn: { kind: 'discord', channelId: 'chan-1', envelopeId: envelope.id },
+                role: 'conversation', sessionId: 'sess-status', opened: true, turn: { kind: 'discord', channelId: 'chan-1', envelopeId: envelope.id, authorId: 'user-status' },
             });
         });
     });
@@ -1926,5 +1971,424 @@ describe('createConductor', () => {
         const result = await resultPromise;
 
         expect(result.isError).toBe(true);
+    });
+
+    describe('adoptWakeTurn() (R2: background-work wake turns adopt the launching envelope)', () => {
+        it('unit-level end-to-end: a launch recorded from a discord turn is adopted by its wake, opening a task turn delivered back to the launching channel/author, with no SDK push', async () => {
+            const journal = new FakeJournal();
+            const registry = createTaskLaunchRegistry({ journal });
+            const onWakeTurnSettled = jest.fn();
+            const h = build({ journal, taskLaunches: registry, onWakeTurnSettled });
+            await openWith(h);
+
+            const launchEnvelope = discordEnvelope({ channelId: 'chan-C', authorId: 'user-U' });
+            const discordResult = h.conductor.submit(launchEnvelope, { priority: 'human', requestingChannelId: 'chan-C' });
+            await flush();
+
+            // PostToolUse, mid-turn: an Agent launch (agentId 'agent-X', tool_use_id 'tool-T'),
+            // recorded from the launching turn's own status().turn context.
+            const launchingTurn = h.conductor.status().turn;
+            expect(launchingTurn).toMatchObject({ kind: 'discord', channelId: 'chan-C', authorId: 'user-U' });
+            registry.record({
+                taskId: 'agent-X', toolUseId: 'tool-T', toolName: 'Agent', envelopeId: launchEnvelope.id, kind: 'discord', channelId: 'chan-C', authorId: 'user-U', launchedAt: new Date(h.clock.now()),
+            });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'LAUNCHED' }));
+            await discordResult;
+            await flush();
+
+            expect(journal.byKind('task_launched')).toEqual([
+                {
+                    type: 'task_launched', at: expect.any(Date), taskId: 'agent-X', toolUseId: 'tool-T', toolName: 'Agent', envelopeId: launchEnvelope.id, kind: 'discord', channelId: 'chan-C', authorId: 'user-U',
+                },
+            ]);
+
+            // UserPromptSubmit: the SDK wakes the session with the task-notification prompt.
+            h.conductor.adoptWakeTurn({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'done' });
+            h.instances[0].emit(frames.assistantText('done'));
+            await flush();
+
+            const submittedTaskEnvelope = journal.byKind('envelope_submitted').at(-1);
+            expect(submittedTaskEnvelope).toEqual({
+                type: 'envelope_submitted', at: expect.any(Date), envelopeId: expect.any(String), kind: 'task', channelId: 'chan-C',
+            });
+            expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'task', channelId: 'chan-C' });
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task', channelId: 'chan-C', authorId: 'user-U' });
+            // Nothing was pushed to the SDK queue for the adopted turn — only the original discord submission's own prompt.
+            expect(turnPrompts(h.instances[0])).toHaveLength(1);
+            expect(registry.lookup({ taskId: 'agent-X', toolUseId: 'tool-T' })).toBeUndefined();
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'done' }));
+            await flush();
+
+            const taskEnvelopeId = submittedTaskEnvelope?.envelopeId ?? '';
+            expect(journal.byKind('turn_completed').at(-1)).toEqual({
+                type: 'turn_completed', at: expect.any(Date), envelopeId: taskEnvelopeId, kind: 'task', responseText: 'done',
+            });
+            expect(onWakeTurnSettled).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    id: taskEnvelopeId, kind: 'task', channelId: 'chan-C', authorId: 'user-U', text: 'done', hostPriority: 'wake', shouldQuery: true,
+                }),
+                expect.objectContaining({ response: 'done', isError: false })
+            );
+        });
+
+        it('with no matching launch record, the adopted envelope carries no channelId/authorId', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'unknown-task', toolUseId: 'unknown-tool', summary: 'no record for this one' });
+            h.instances[0].emit(frames.assistantText('no record for this one'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task', channelId: undefined, authorId: undefined });
+            const [entry] = h.journal.byKind('envelope_submitted');
+            expect(entry).not.toHaveProperty('channelId');
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'no record for this one' }));
+            await flush();
+        });
+
+        it('with no pendingWake, a spontaneous assistant frame still opens the bare notification turn unchanged', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.instances[0].emit(frames.assistantText('musing, unprompted'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'notification' });
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('a single, fresh adoptWakeTurn() call (no prior pending wake) never logs the overwrite warning', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-only', toolUseId: 'tool-only', summary: 'only one' });
+
+            expect(h.logger.warn).not.toHaveBeenCalled();
+
+            h.instances[0].emit(frames.assistantText('only one'));
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: 'only one' }));
+            await flush();
+        });
+
+        it('a second adoptWakeTurn() call before the first is consumed overwrites the pending wake and logs a warning naming both the previous and next wake', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-first', toolUseId: 'tool-first', summary: 'first' });
+            h.conductor.adoptWakeTurn({ taskId: 'task-second', toolUseId: 'tool-second', summary: 'second' });
+
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                {
+                    previous: expect.objectContaining({ taskId: 'task-first', toolUseId: 'tool-first' }),
+                    next:     { taskId: 'task-second', toolUseId: 'tool-second', summary: 'second' },
+                },
+                'adoptWakeTurn called again before the previous pending wake turn was consumed; overwriting'
+            );
+
+            h.instances[0].emit(frames.assistantText('second'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+            h.instances[0].emit(frames.resultSuccess({ result: 'second' }));
+            await flush();
+
+            expect(h.journal.byKind('turn_completed').at(-1)?.responseText).toBe('second');
+        });
+
+        it('a rejecting onWakeTurnSettled is caught and logged, never surfacing as an unhandled rejection', async () => {
+            const onWakeTurnSettled = jest.fn(() => Promise.reject(new Error('delivery failed')));
+            const h = build({ onWakeTurnSettled });
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'done' });
+            h.instances[0].emit(frames.assistantText('done'));
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: 'done' }));
+            await flush();
+
+            expect(onWakeTurnSettled).toHaveBeenCalled();
+            expect(h.logger.error).toHaveBeenCalledWith(
+                { error: expect.any(Error) },
+                'onWakeTurnSettled failed for an adopted wake turn'
+            );
+        });
+
+        it('forgets the launch via taskLaunches.forget once adopted, looking it up by the pendingWake key', async () => {
+            const lookup = jest.fn(() => undefined);
+            const forget = jest.fn();
+            const h = build({ taskLaunches: { lookup, forget } });
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'done' });
+            h.instances[0].emit(frames.assistantText('done'));
+            await flush();
+
+            expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-1', toolUseId: 'tool-1' }));
+            expect(forget).toHaveBeenCalledWith('task-1');
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'done' }));
+            await flush();
+        });
+
+        it('a human envelope arriving during an adopted task turn is enqueued and arms the human-wait escalation, rather than interrupting immediately like a same-channel discord turn', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'working' });
+            h.instances[0].emit(frames.assistantText('working'));
+            await flush();
+
+            const humanPromise = h.conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+
+            h.clock.advance(10_000);
+            expect(h.instances[0].interruptCalls).toBe(1);
+
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await flush();
+            h.instances[0].emit(frames.resultSuccess()); // closes the injected resume turn
+            await flush();
+            h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
+            await humanPromise;
+        });
+
+        it('a transient is_error on an adopted wake turn fails the turn immediately rather than retrying — retrying would re-push the synthesized envelope\'s text into the SDK queue as a fresh, unframed user message, which beginAdoptedWakeTurn deliberately never does', async () => {
+            const h = build();
+            await openWith(h);
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'partial result' });
+            h.instances[0].emit(frames.assistantText('partial result'));
+            await flush();
+
+            const submittedTaskEnvelope = h.journal.byKind('envelope_submitted').at(-1);
+            expect(submittedTaskEnvelope).toBeDefined();
+            const taskEnvelopeId = submittedTaskEnvelope?.envelopeId ?? '';
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+
+            h.instances[0].emit(frames.resultSuccess({ is_error: true, result: 'overloaded', api_error_status: 529 }));
+            await flush();
+            h.clock.advance(FAST_RETRY_POLICY.baseDelayMs);
+            await flush();
+
+            // No retry was scheduled — nothing was ever pushed to the SDK queue for this turn,
+            // and it failed immediately rather than waiting on a backoff timer.
+            expect(turnPrompts(h.instances[0])).toHaveLength(0);
+            expect(h.journal.byKind('turn_failed')).toEqual([
+                {
+                    type: 'turn_failed', at: expect.any(Date), envelopeId: taskEnvelopeId, kind: 'task', error: 'overloaded',
+                },
+            ]);
+        });
+
+        it('a pendingWake that misses its own woken turn (e.g. raced by the awaitingTurnEnd window) expires after PENDING_WAKE_TTL_MS — a much LATER, unrelated spontaneous turn is not misattributed to it', async () => {
+            const h = build();
+            await openWith(h);
+
+            // Reproduces the missed-adoption race the module doc for `pendingWake` describes:
+            // adoptWakeTurn() fires while a PRIOR turn's own afterResult() is blocked inside
+            // guard.onTurnEnd() (awaitingTurnEnd), so the wake's own first assistant frame is
+            // dropped rather than adopted — exactly the pre-R2 behaviour for a racing frame.
+            const deferredUsage = h.instances[0].deferContextUsage();
+            const priorEnvelope = discordEnvelope();
+            const priorResult = h.conductor.submit(priorEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'from the launch' });
+            h.instances[0].emit(frames.assistantText('the wake\'s own first frame, racing the compaction decision'));
+            await flush();
+            expect(h.conductor.status().turn).toBeNull();
+
+            deferredUsage.resolve(frames.contextUsage({ percentage: 10 }));
+            await flush();
+            await priorResult;
+            // Nothing else was queued — the guard decided against auto-compaction (10% < the
+            // default 60% threshold) and the queue is otherwise empty, so the session is idle here.
+            expect(h.conductor.status().turn).toBeNull();
+
+            // Long afterward (well past PENDING_WAKE_TTL_MS), an entirely unrelated spontaneous
+            // notification turn opens.
+            h.clock.advance(60 * 60 * 1000);
+            h.instances[0].emit(frames.assistantText('an unrelated later musing, hours afterward'));
+            await flush();
+
+            // Must NOT be adopted as the stale task wake (which would misdeliver this turn's
+            // reply to the original launch's channel/author) — it opens an ordinary bare
+            // notification turn instead, exactly as if no wake had ever been signalled.
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'notification' });
+            expect(h.journal.byKind('envelope_submitted').some(e => e.kind === 'task')).toBe(false);
+            expect(h.logger.warn).toHaveBeenCalledWith(
+                { pendingWake: expect.objectContaining({ taskId: 'task-1', toolUseId: 'tool-1' }) },
+                'a pending wake turn expired (PENDING_WAKE_TTL_MS) before it could be adopted; a later spontaneous turn will not be misattributed to it'
+            );
+
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('pins PENDING_WAKE_TTL_MS at exactly 5 minutes (a strict ">", not ">="): a frame arriving exactly AT the TTL, or 1ms before it, still adopts the pending wake; one arriving 1ms past it does not', async () => {
+            const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
+            // Just under the TTL: still adopted as the task wake.
+            const h1 = build();
+            await openWith(h1);
+            h1.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'still fresh' });
+            h1.clock.advance(FIVE_MINUTES_MS - 1);
+            h1.instances[0].emit(frames.assistantText('still fresh'));
+            await flush();
+            expect(h1.conductor.status().turn).toMatchObject({ kind: 'task' });
+            h1.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // Exactly AT the TTL (elapsed === PENDING_WAKE_TTL_MS): the check is a strict `>`, so
+            // this must NOT yet be treated as expired.
+            const hExact = build();
+            await openWith(hExact);
+            hExact.conductor.adoptWakeTurn({ taskId: 'task-exact', toolUseId: 'tool-exact', summary: 'right at the wire' });
+            hExact.clock.advance(FIVE_MINUTES_MS);
+            hExact.instances[0].emit(frames.assistantText('right at the wire'));
+            await flush();
+            expect(hExact.conductor.status().turn).toMatchObject({ kind: 'task' });
+            expect(hExact.logger.warn).not.toHaveBeenCalled();
+            hExact.instances[0].emit(frames.resultSuccess());
+            await flush();
+
+            // Just past the TTL: expired, falls back to a bare notification turn.
+            const h2 = build();
+            await openWith(h2);
+            h2.conductor.adoptWakeTurn({ taskId: 'task-2', toolUseId: 'tool-2', summary: 'gone stale' });
+            h2.clock.advance(FIVE_MINUTES_MS + 1);
+            h2.instances[0].emit(frames.assistantText('gone stale'));
+            await flush();
+            expect(h2.conductor.status().turn).toMatchObject({ kind: 'notification' });
+            h2.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('the pending-wake expiry check is ELAPSED time (clock.now() - setAt), not a raw sum of the two: a wake set only recently, but on a clock that has already run far ahead, is NOT treated as expired', async () => {
+            const h = build();
+            await openWith(h);
+
+            // The clock is already far along (e.g. a long-lived session) BEFORE this wake is
+            // ever set — with `+` in place of `-`, `clock.now() + pendingWake.setAt` would be
+            // roughly double the current clock value here and blow past PENDING_WAKE_TTL_MS
+            // even though barely any time has elapsed since the wake was set.
+            h.clock.advance(1_000_000);
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'fresh despite a high absolute clock value' });
+            h.clock.advance(1000); // well under PENDING_WAKE_TTL_MS
+            h.instances[0].emit(frames.assistantText('fresh despite a high absolute clock value'));
+            await flush();
+
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+            h.instances[0].emit(frames.resultSuccess());
+            await flush();
+        });
+
+        it('an "other"-priority envelope arriving during a spontaneous notification turn never arms the human-wait escalation — only "human" priority does (isBackgroundKind\'s sibling condition on item.priority)', async () => {
+            const h = build();
+            await openWith(h);
+            h.instances[0].emit(frames.assistantText('musing'));
+            await flush();
+
+            const otherEnvelope = catchupEnvelope();
+            const otherPromise = h.conductor.submit(otherEnvelope, { priority: 'other' });
+            await flush();
+
+            h.clock.advance(60_000);
+            expect(h.instances[0].interruptCalls).toBe(0);
+
+            h.instances[0].emit(frames.resultSuccess()); // closes the notification turn
+            await flush();
+            h.instances[0].emit(frames.resultSuccess()); // closes the queued 'other' turn
+            const otherResult = await otherPromise;
+            expect(otherResult.envelopeId).toBe(otherEnvelope.id);
+        });
+
+        it('a directly-submitted (non-adopted) task-kind turn starts with its human-wait escalation NOT yet armed: a human envelope during it still waits out humanWaitTargetMs rather than interrupting immediately', async () => {
+            const h = build();
+            await openWith(h);
+            const directTaskEnvelope: Envelope = {
+                id: 'direct-task-1', kind: 'task', text: 'direct task text', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0),
+            };
+            void h.conductor.submit(directTaskEnvelope, { priority: 'other' });
+            await flush();
+
+            const humanEnvelope = discordEnvelope();
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+
+            expect(h.instances[0].interruptCalls).toBe(0);
+            h.clock.advance(DEFAULT_CONFIG.humanWaitTargetMs - 1);
+            expect(h.instances[0].interruptCalls).toBe(0);
+            h.clock.advance(1);
+            expect(h.instances[0].interruptCalls).toBe(1);
+
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await flush();
+            // No resume note is injected here (no partial work was ever streamed for this bare,
+            // frameless task turn before it was interrupted), so the very next result frame
+            // closes the human's own discord turn directly.
+            h.instances[0].emit(frames.resultSuccess());
+            const result = await humanPromise;
+            expect(result.envelopeId).toBe(humanEnvelope.id);
+        });
+
+        it('an interrupted task turn injects a resume note ahead of the queued human envelope, exactly like an interrupted notification turn', async () => {
+            const h = build();
+            await openWith(h);
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'composing' });
+            h.instances[0].emit(frames.assistantText('composing a reply'));
+            await flush();
+
+            const humanEnvelope = discordEnvelope();
+            const humanPromise = h.conductor.submit(humanEnvelope, { priority: 'human', requestingChannelId: 'chan-1' });
+            await flush();
+            h.clock.advance(10_000);
+            h.instances[0].resolveInterrupt();
+            h.instances[0].emit(frames.resultInterrupted());
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'resume']);
+
+            h.instances[0].emit(frames.resultSuccess()); // closes the resume turn
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').map(e => e.kind)).toEqual(['task', 'resume', 'discord']);
+
+            h.instances[0].emit(frames.resultSuccess()); // closes the human's discord turn
+            const result = await humanPromise;
+            expect(result.envelopeId).toBe(humanEnvelope.id);
+        });
+
+        it('when a mid-life crash strands an ADOPTED wake turn in flight and both the resume and fresh-open fallback fail, its deferred is rejected via buildWakeSettledDeferred\'s own reject path — logged, not left as an unhandled rejection', async () => {
+            const h = build();
+            await openWith(h, 'sess-1');
+            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'in flight when it crashed' });
+            h.instances[0].emit(frames.assistantText('in flight when it crashed'));
+            await flush();
+            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+
+            h.instances[0].fail(new Error('worker crashed'));
+            await flush();
+            h.instances[1].fail(new Error('resume also failed'));
+            await flush();
+            h.instances[2].fail(new Error('fresh open also failed'));
+            await flush();
+
+            expect(h.logger.error).toHaveBeenCalledWith(
+                { error: expect.any(Error) },
+                'An adopted wake turn was rejected before it could settle'
+            );
+        });
     });
 });

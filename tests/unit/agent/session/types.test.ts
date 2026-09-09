@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { EnvelopeMeta, JournalEntry, SessionQuery } from '../../../../src/agent/session/types';
+import { ENVELOPE_KINDS, type EnvelopeMeta, type JournalEntry, type SessionQuery } from '../../../../src/agent/session/types';
 import type { SystemEvent } from '../../../../src/agent/types';
 import { FakeQuery } from '../../../helpers/fake-query';
 
@@ -25,6 +25,12 @@ describe('SessionQuery', () => {
 
         // eslint-disable-next-line sonarjs/no-trivial-assertions -- see comment above: reachability of this line IS the assertion; `ok` is only constructible when the type alias resolved to `true`
         expect(ok).toBe(true);
+    });
+});
+
+describe('ENVELOPE_KINDS', () => {
+    it('lists exactly the 9 envelope kinds, including \'task\' (R2) — an \'each\' table-driven test over an emptied array would silently run zero cases rather than fail, so this pins the full contents directly', () => {
+        expect(ENVELOPE_KINDS).toEqual(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task']);
     });
 });
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { computeRecovery, lastKnownAt } from '@/agent/session/recovery';
+import { computeRecovery, lastKnownAt, taskLaunchEntries } from '@/agent/session/recovery';
 import type { JournalEntry } from '@/agent/session/types';
 
 const AT = new Date(0);
@@ -68,6 +68,19 @@ describe('computeRecovery', () => {
 
         expect(computeRecovery(entries).undelivered).toEqual([
             { envelopeId: 'env-1', envelopeKind: 'discord', channelId: 'chan-1', responseText: 'hello there' },
+        ]);
+    });
+
+    test('a task envelope (R2 adopted wake turn) with turn_completed and no response_delivered is undelivered', () => {
+        const entries: JournalEntry[] = [
+            {
+                type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind: 'task', channelId: 'chan-1',
+            },
+            { type: 'turn_completed', at: AT, envelopeId: 'env-1', kind: 'task', responseText: 'background work is done' },
+        ];
+
+        expect(computeRecovery(entries).undelivered).toEqual([
+            { envelopeId: 'env-1', envelopeKind: 'task', channelId: 'chan-1', responseText: 'background work is done' },
         ]);
     });
 
@@ -213,5 +226,36 @@ describe('lastKnownAt', () => {
         ];
 
         expect(lastKnownAt(entries)).toBe(firstAt);
+    });
+});
+
+describe('taskLaunchEntries', () => {
+    test('empty over an empty journal', () => {
+        expect(taskLaunchEntries([])).toEqual([]);
+    });
+
+    test('filters out every non-task_launched entry', () => {
+        const entries: JournalEntry[] = [
+            { type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind: 'discord' },
+            { type: 'task_started', at: AT, taskId: 'task-1', description: 'do a thing' },
+        ];
+
+        expect(taskLaunchEntries(entries)).toEqual([]);
+    });
+
+    test('returns task_launched entries in their original order, with optional fields intact', () => {
+        const first: JournalEntry = {
+            type: 'task_launched', at: AT, taskId: 'task-1', toolUseId: 'tool-1', toolName: 'Agent', envelopeId: 'env-1', kind: 'discord', channelId: 'chan-1', authorId: 'user-1',
+        };
+        const second: JournalEntry = {
+            type: 'task_launched', at: AT, taskId: 'task-2', toolUseId: 'tool-2', toolName: 'Workflow', envelopeId: 'env-2', kind: 'discord',
+        };
+        const entries: JournalEntry[] = [
+            first,
+            { type: 'session_opened', at: AT, role: 'conversation', sessionId: 'sess-1', resumed: false },
+            second,
+        ];
+
+        expect(taskLaunchEntries(entries)).toEqual([first, second]);
     });
 });

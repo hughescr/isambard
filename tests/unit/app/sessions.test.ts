@@ -6,6 +6,7 @@
  * {@link FakeResumeStore}).
  */
 import { afterEach, describe, expect, it, jest } from 'bun:test';
+import type { PostToolUseHookInput, UserPromptSubmitHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { FakeClock } from '../../helpers/fake-clock';
 import { makeHealthRegistry } from '../../helpers/fake-health-registry';
 import { FakeJournal } from '../../helpers/fake-journal';
@@ -13,7 +14,7 @@ import { fakeQueryFn } from '../../helpers/fake-query';
 import { FakeResumeStore } from '../../helpers/fake-resume-store';
 import * as frames from '../../helpers/sdk-frames';
 import { mockLogger } from '../../setup';
-import { DEFAULT_STEP_PERCENT, type ContextBuilder } from '@/agent';
+import { DEFAULT_STEP_PERCENT, type ContextBuilder, type Envelope } from '@/agent';
 import type { JournalEntry } from '@/agent/session/types';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { McpSharedDeps } from '@/app/mcp-servers';
@@ -602,6 +603,113 @@ describe('createConversationConductor', () => {
         expect(mockLogger.error).toHaveBeenCalledTimes(1);
         expect(mockLogger.debug).not.toHaveBeenCalled();
     });
+
+    describe('R2: background-work wake-turn delivery wiring', () => {
+        const BASE_HOOK_FIELDS = { session_id: 'sess-1', transcript_path: '/tmp/transcript', cwd: '/tmp' };
+
+        function discordEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+            return {
+                id: 'discord-1', kind: 'discord', text: 'hello', channelId: 'chan-C', authorId: 'user-U', origin: { kind: 'human' }, hostPriority: 'human', shouldQuery: true, createdAt: new Date(0), ...overrides,
+            };
+        }
+
+        function postToolUseInput(overrides: Partial<PostToolUseHookInput> = {}): PostToolUseHookInput {
+            return {
+                ...BASE_HOOK_FIELDS, hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { description: 'run a background thing' }, tool_response: { agentId: 'agent-X', status: 'async_launched' }, tool_use_id: 'tool-T', ...overrides,
+            };
+        }
+
+        function userPromptSubmitInput(overrides: Partial<UserPromptSubmitHookInput> = {}): UserPromptSubmitHookInput {
+            return {
+                ...BASE_HOOK_FIELDS, hook_event_name: 'UserPromptSubmit', prompt: '<task-notification><task-id>agent-X</task-id><tool-use-id>tool-T</tool-use-id><output-file></output-file>done here</task-notification>', ...overrides,
+            };
+        }
+
+        it('merges createTaskLaunchHooks with the live conductor/registry: a PostToolUse launch recorded during a real discord turn is adopted by its UserPromptSubmit wake, opening a channel-addressed task turn, and warns-and-drops before setWakeTurnDelivery is attached', async () => {
+            const h = build();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+            const { conductor } = await createConversationConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const options = h.instances[0].receivedParams?.options;
+            const postToolUseHook = options?.hooks?.PostToolUse?.[0]?.hooks[0];
+            const userPromptSubmitHook = options?.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+            expect(postToolUseHook).toBeDefined();
+            expect(userPromptSubmitHook).toBeDefined();
+
+            const discordResult = conductor.submit(discordEnvelope(), { priority: 'human', requestingChannelId: 'chan-C' });
+            await flush();
+
+            await postToolUseHook?.(postToolUseInput(), undefined, { signal: new AbortController().signal });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'LAUNCHED' }));
+            await discordResult;
+            await flush();
+
+            expect(h.journal.byKind('task_launched')).toEqual([
+                expect.objectContaining({ taskId: 'agent-X', toolUseId: 'tool-T', channelId: 'chan-C', authorId: 'user-U' }),
+            ]);
+
+            await userPromptSubmitHook?.(userPromptSubmitInput(), undefined, { signal: new AbortController().signal });
+            h.instances[0].emit(frames.assistantText('done here'));
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task', channelId: 'chan-C' });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'done here' }));
+            await flush();
+
+            expect(h.journal.byKind('turn_completed').at(-1)).toMatchObject({ kind: 'task', responseText: 'done here' });
+            expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: expect.any(String) }), 'wake turn settled before delivery was attached');
+        });
+
+        it('seeds the task-launch registry from task_launched rows read at boot, so a wake for a launch recorded by a PRIOR process still resolves its channel/author', async () => {
+            const h = build();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+            h.journal.scriptReadSince([
+                { type: 'task_launched', at: new Date(0), taskId: 'seed-task', toolUseId: 'seed-tool', toolName: 'Agent', envelopeId: 'seed-env', kind: 'discord', channelId: 'seeded-chan', authorId: 'seeded-user' },
+            ]);
+
+            const { conductor } = await createConversationConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            conductor.adoptWakeTurn({ taskId: 'seed-task', toolUseId: 'seed-tool', summary: 'seeded summary' });
+            h.instances[0].emit(frames.assistantText('seeded summary'));
+            await flush();
+
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task', channelId: 'seeded-chan' });
+        });
+
+        it('setWakeTurnDelivery(fn) delivers a settled wake turn to the attached function instead of warning', async () => {
+            const h = build();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+            const { conductor, setWakeTurnDelivery } = await createConversationConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const delivery = jest.fn(async () => undefined);
+            setWakeTurnDelivery(delivery);
+
+            conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'summary text' });
+            h.instances[0].emit(frames.assistantText('summary text'));
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: 'summary text' }));
+            await flush();
+
+            expect(delivery).toHaveBeenCalledWith(expect.objectContaining({ kind: 'task', text: 'summary text' }), expect.objectContaining({ response: 'summary text' }));
+            expect(h.logger.warn).not.toHaveBeenCalledWith(expect.anything(), 'wake turn settled before delivery was attached');
+        });
+    });
 });
 
 function buildPerch(overrides: Partial<CreatePerchConductorParams> = {}) {
@@ -891,7 +999,18 @@ describe('createPerchConductor', () => {
         expect(startupContext).toContain('discord envelope env-no-text');
     });
 
-    it('R1: loadBootRecovery reads the perch journal from exactly 24h (RECOVERY_WINDOW_MS) before the clock\'s current time', async () => {
+    it('R1: loadBootRecovery reads the perch journal from exactly 24h (RECOVERY_WINDOW_MS) before the clock\'s current time, at construction', async () => {
+        const h = buildPerch();
+        h.clock.advance(100_000);
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const readSinceSpy = jest.spyOn(h.journal, 'readSince');
+
+        await createPerchConductor(h.params);
+
+        expect(readSinceSpy).toHaveBeenCalledWith(100_000 - 24 * 60 * 60 * 1000);
+    });
+
+    it('R2: the boot-bundle hook\'s FIRST SessionStart call reuses the construction-time recovery read instead of issuing a duplicate query; a LATER SessionStart (e.g. a compaction) reads fresh, from the clock\'s current time at that point', async () => {
         const h = buildPerch();
         h.clock.advance(100_000);
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
@@ -904,15 +1023,19 @@ describe('createPerchConductor', () => {
         await openPromise;
 
         // `conductor.open()` itself independently reads the journal over its own (unrelated)
-        // recovery window — clear that call so the assertion below isolates the SessionStart
-        // hook's own `loadBootRecovery` read.
+        // recovery window, on top of the construction-time read above — clear both so the
+        // assertions below isolate the SessionStart hook's own `loadBootRecovery` reads.
         readSinceSpy.mockClear();
 
         const options = h.instances[0].receivedParams?.options;
         const hookFn = options?.hooks?.SessionStart?.[0]?.hooks[0];
-        await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
 
-        expect(readSinceSpy).toHaveBeenCalledWith(100_000 - 24 * 60 * 60 * 1000);
+        await hookFn?.({ source: 'startup' } as never, undefined, undefined as never);
+        expect(readSinceSpy).not.toHaveBeenCalled();
+
+        h.clock.advance(5000);
+        await hookFn?.({ source: 'compact' } as never, undefined, undefined as never);
+        expect(readSinceSpy).toHaveBeenCalledWith(105_000 - 24 * 60 * 60 * 1000);
     });
 
     it('degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
@@ -984,5 +1107,125 @@ describe('createPerchConductor', () => {
 
         expect(mockLogger.error).toHaveBeenCalledTimes(1);
         expect(mockLogger.debug).not.toHaveBeenCalled();
+    });
+
+    describe('R2: background-work wake-turn delivery wiring', () => {
+        const PERCH_BASE_HOOK_FIELDS = { session_id: 'sess-1', transcript_path: '/tmp/transcript', cwd: '/tmp' };
+
+        function perchPostToolUseInput(overrides: Partial<PostToolUseHookInput> = {}): PostToolUseHookInput {
+            return {
+                ...PERCH_BASE_HOOK_FIELDS, hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { description: 'run a background thing' }, tool_response: { agentId: 'agent-X', status: 'async_launched' }, tool_use_id: 'tool-T', ...overrides,
+            };
+        }
+
+        function perchUserPromptSubmitInput(overrides: Partial<UserPromptSubmitHookInput> = {}): UserPromptSubmitHookInput {
+            return {
+                ...PERCH_BASE_HOOK_FIELDS, hook_event_name: 'UserPromptSubmit', prompt: '<task-notification><task-id>agent-X</task-id><tool-use-id>tool-T</tool-use-id><output-file></output-file>done here</task-notification>', ...overrides,
+            };
+        }
+
+        it('merges createTaskLaunchHooks with the LIVE perch conductor (not just the registry): a PostToolUse launch recorded during a real perch turn is looked up and adopted through the actual captured hook callbacks, proving taskLaunchConductor\'s status()/adoptWakeTurn() pass-through actually reaches the real conductor', async () => {
+            const h = buildPerch();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+            const { conductor } = await createPerchConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const options = h.instances[0].receivedParams?.options;
+            const postToolUseHook = options?.hooks?.PostToolUse?.[0]?.hooks[0];
+            const userPromptSubmitHook = options?.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+            expect(postToolUseHook).toBeDefined();
+            expect(userPromptSubmitHook).toBeDefined();
+
+            const perchEnvelope: Envelope = {
+                id: 'perch-1', kind: 'perch', text: 'perch turn', hostPriority: 'wake', shouldQuery: true, createdAt: new Date(0),
+            };
+            const perchResultPromise = conductor.submit(perchEnvelope, { priority: 'other' });
+            await flush();
+
+            await postToolUseHook?.(perchPostToolUseInput(), undefined, { signal: new AbortController().signal });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'LAUNCHED' }));
+            await perchResultPromise;
+            await flush();
+
+            // taskLaunchConductor.status() only sees this launching turn's envelopeId/kind when
+            // its call actually reaches the real, already-assigned conductor — the module doc's
+            // "narrow window before conductorRef is assigned" fallback is never taken here.
+            expect(h.journal.byKind('task_launched')).toEqual([
+                expect.objectContaining({ taskId: 'agent-X', toolUseId: 'tool-T', kind: 'perch' }),
+            ]);
+
+            await userPromptSubmitHook?.(perchUserPromptSubmitInput(), undefined, { signal: new AbortController().signal });
+            h.instances[0].emit(frames.assistantText('done here'));
+            await flush();
+
+            // taskLaunchConductor.adoptWakeTurn() likewise reached the real conductor: the wake
+            // opened a genuine task turn, not a no-op.
+            expect(h.journal.byKind('envelope_submitted').at(-1)).toMatchObject({ kind: 'task' });
+
+            h.instances[0].emit(frames.resultSuccess({ result: 'done here' }));
+            await flush();
+        });
+
+        it('seeds the task-launch registry from task_launched rows read at boot, merges createTaskLaunchHooks, and rewrites the settled envelope\'s kind to \'perch\' before calling the attached delivery function', async () => {
+            const h = buildPerch();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+            h.journal.scriptReadSince([
+                {
+                    type: 'task_launched', at: new Date(0), taskId: 'seed-task', toolUseId: 'seed-tool', toolName: 'Agent', envelopeId: 'seed-env', kind: 'perch', channelId: 'seeded-chan', authorId: 'seeded-user',
+                },
+            ]);
+
+            const { conductor, setWakeTurnDelivery } = await createPerchConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            const options = h.instances[0].receivedParams?.options;
+            expect(options?.hooks?.PostToolUse?.[0]?.hooks[0]).toBeDefined();
+            expect(options?.hooks?.UserPromptSubmit?.[0]?.hooks[0]).toBeDefined();
+
+            const delivery = jest.fn(async () => undefined);
+            setWakeTurnDelivery(delivery);
+
+            conductor.adoptWakeTurn({ taskId: 'seed-task', toolUseId: 'seed-tool', summary: 'perch task done' });
+            h.instances[0].emit(frames.assistantText('perch task done'));
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: 'perch task done' }));
+            await flush();
+
+            // channelId/authorId prove the boot-time seed (not merely adoptWakeTurn/kind-rewrite)
+            // actually populated the registry — an unseeded lookup would carry neither.
+            expect(delivery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    kind: 'perch', text: 'perch task done', channelId: 'seeded-chan', authorId: 'seeded-user',
+                }),
+                expect.objectContaining({ response: 'perch task done' })
+            );
+        });
+
+        it('warns and drops a settled wake turn before setWakeTurnDelivery is attached', async () => {
+            const h = buildPerch();
+            jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+            const { conductor } = await createPerchConductor(h.params);
+            const openPromise = conductor.open();
+            await flush();
+            h.instances[0].emit(frames.init('sess-1'));
+            await openPromise;
+
+            conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'summary text' });
+            h.instances[0].emit(frames.assistantText('summary text'));
+            await flush();
+            h.instances[0].emit(frames.resultSuccess({ result: 'summary text' }));
+            await flush();
+
+            expect(h.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: expect.any(String) }), 'wake turn settled before delivery was attached');
+        });
     });
 });

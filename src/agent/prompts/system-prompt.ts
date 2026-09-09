@@ -27,7 +27,7 @@ Every message you receive from a host arrives as an envelope whose first line na
 
 ## Background work and notifications
 
-Work you start — a sub-agent, a workflow, a scheduled task — is expected to outlive the turn that launched it; you do not need to wait for it before ending your turn. When it finishes, its result arrives as its own envelope, a notification, rather than as a continuation of the turn that launched it.
+Work you start — a sub-agent, a workflow, a scheduled task — is expected to outlive the turn that launched it; you do not need to wait for it before ending your turn. When it finishes, the host wakes you with its result in a new turn; whatever you write in that turn is delivered to the channel and person the work was launched for, exactly like a normal reply — so report as you would to them, or write nothing if there is nothing worth saying.
 
 \`TaskList\` tracks work currently in flight for this session. It is not a memory store — use durable memory for anything that must survive beyond the current task.
 

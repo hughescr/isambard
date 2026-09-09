@@ -40,6 +40,7 @@ import type { SessionJournal, ResumeStore } from './ports';
 import { computeRecovery } from './recovery';
 import { resultFrameToError } from './result-frame-error';
 import { openSession, type SessionHandle } from './session';
+import type { TaskLaunchRegistry } from './task-launch-registry';
 import type {
     Clock,
     Envelope,
@@ -71,6 +72,21 @@ const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Caps `turn_completed.responseText` (P8) so an unusually long assistant reply cannot bloat one journal row; `truncated: true` is set when the cap bit. */
 const TURN_RESPONSE_TEXT_CAP = 200_000;
+
+/**
+ * How long a {@link Conductor.adoptWakeTurn}-signalled `pendingWake` (R2) stays eligible for
+ * adoption before it is treated as stale and dropped. The real-SDK handshake this covers
+ * (`<task-notification>` UserPromptSubmit -> fresh `system/init` -> the woken turn's own first
+ * assistant frame) is normally sub-second, but that first frame can legitimately miss the
+ * `onFrame` adoption window entirely — e.g. arriving while a PRIOR turn's `afterResult` is still
+ * blocked inside `guard.onTurnEnd()` (`awaitingTurnEnd`), a race the module's spontaneous-turn
+ * branch has no way to hold the wake open for. Without a TTL, that miss leaves `pendingWake` set
+ * indefinitely, so the NEXT genuinely spontaneous notification turn — however much later —
+ * misattributes its own reply to the original launch's channel/author. Generous enough (minutes,
+ * not seconds) to tolerate real network/model-startup jitter in the legitimate handshake, while
+ * still ruling out an unrelated turn hours or days afterward.
+ */
+const PENDING_WAKE_TTL_MS = 5 * 60 * 1000;
 
 /** Priority the host queues an envelope at: `'human'` before `'other'` (design section 6). */
 export type SubmitPriority = 'human' | 'other';
@@ -143,29 +159,31 @@ export interface ConductorStatus {
         kind:        TurnKind
         channelId?:  string
         envelopeId?: string
+        /** The turn's originating envelope author (R2) — `undefined` for a bare spontaneous `notification` turn, or a `task` turn whose {@link CreateConductorParams.taskLaunches} lookup found no launch record. */
+        authorId?:   string
     } | null
 }
 
 /** Dependencies and configuration for {@link createConductor}. */
 export interface CreateConductorParams {
-    role:             SessionRole
-    queryFn:          SessionQueryFn
+    role:               SessionRole
+    queryFn:            SessionQueryFn
     /** Builds full Agent SDK `Options` for a fresh (`undefined`) or resumed (session id) open. */
-    buildOptions:     (resume?: string) => Options
-    clock:            Clock
+    buildOptions:       (resume?: string) => Options
+    clock:              Clock
     /** Reads the process's current resident set size, in bytes. */
-    readRss:          () => number
-    ledgerStore:      LedgerStore
-    config:           SessionConfig
+    readRss:            () => number
+    ledgerStore:        LedgerStore
+    config:             SessionConfig
     /** `config.retry.claude` — drives `is_error` resubmission, on the injected `clock`. */
-    retryPolicy:      RetryPolicy
-    journal:          SessionJournal
-    resumeStore:      ResumeStore
+    retryPolicy:        RetryPolicy
+    journal:            SessionJournal
+    resumeStore:        ResumeStore
     /**
      * Pre-formatted boot bundle text, pushed once as the `boot`-kind opening handshake (see
      * `openWithHandle`) on every fresh or resumed `open()`. Ignored when {@link buildBootBundle} is provided.
      */
-    bootBundle?:      string
+    bootBundle?:        string
     /**
      * Builds the boot bundle text from boot-time crash recovery (P8): `open()` reads the
      * journal window ending now, computes {@link import('./recovery').computeRecovery}, and
@@ -174,12 +192,25 @@ export interface CreateConductorParams {
      * to produce the text pushed as the boot envelope, taking precedence over the static
      * {@link bootBundle} string.
      */
-    buildBootBundle?: (input: Pick<BuildBootBundleInput, 'lostTasks' | 'undelivered'>) => string | Promise<string>
-    logger:           Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
+    buildBootBundle?:   (input: Pick<BuildBootBundleInput, 'lostTasks' | 'undelivered'>) => string | Promise<string>
+    logger:             Pick<Logger, 'info' | 'warn' | 'error' | 'debug'>
     /** Observes every raw frame alongside {@link Conductor.subscribeTurn} subscribers. */
-    onTurnFrame?:     (turnId: string, frame: SDKMessage) => void
+    onTurnFrame?:       (turnId: string, frame: SDKMessage) => void
     /** Classifies an `is_error` result's adapted error. Defaults to `classifyClaudeError`. */
-    classifyError?:   (error: unknown) => ErrorClassification
+    classifyError?:     (error: unknown) => ErrorClassification
+    /**
+     * Resolves the launch record for an adopted wake turn (R2) — see
+     * {@link Conductor.adoptWakeTurn}. `undefined` (the default) when no launch registry is
+     * wired; the adopted turn then carries no channelId/authorId.
+     */
+    taskLaunches?:      Pick<TaskLaunchRegistry, 'lookup' | 'forget'>
+    /**
+     * Called once an adopted wake turn (R2) settles, with the synthesized `task`-kind envelope
+     * and its {@link TurnResult} — the composition root's hook for delivering that reply to its
+     * origin channel (or a fallback, for a turn with no channel). A rejection is caught and
+     * logged; it never affects the conductor or any other caller.
+     */
+    onWakeTurnSettled?: (envelope: Envelope, result: TurnResult) => void | Promise<void>
 }
 
 /** The outcome of a {@link Conductor.deliver} call. */
@@ -204,6 +235,18 @@ export interface Conductor {
      * {@link InvariantViolationError} if `envelope.shouldQuery !== false`.
      */
     appendWithoutTurn:             (envelope: Envelope) => void
+    /**
+     * Adopts a pending wake turn synthesized from background work finishing (R2): the NEXT
+     * spontaneous assistant frame — the one the SDK's own `<task-notification>` wake produces —
+     * opens a real `task`-kind turn instead of falling through to the bare `notification`
+     * fallback. The turn's response text is `input.summary`; when
+     * {@link CreateConductorParams.taskLaunches} resolves a launch record for
+     * `{ input.taskId, input.toolUseId }`, that record's `channelId`/`authorId` seed the
+     * synthesized envelope, so the reply reaches the channel and author that launched the work,
+     * exactly like an ordinary turn. A second call before the first pending wake is consumed
+     * overwrites it and logs a warning — only the most recent call's wake is ever adopted.
+     */
+    adoptWakeTurn:                 (input: { taskId: string, toolUseId: string, summary: string }) => void
     /**
      * Delivers `envelopeId`'s response exactly once (P8): if the delivery guard already knows
      * this id, `send` is skipped entirely; otherwise `send` runs, `response_delivered` is
@@ -260,6 +303,8 @@ interface ActiveTurn {
     item?:              QueuedItem
     kind:               TurnKind
     channelId?:         string
+    /** The turn's originating envelope author (R2) — see {@link ConductorStatus.turn}. */
+    authorId?:          string
     tracker:            StreamTracker
     interruptRequested: boolean
     escalationArmed:    boolean
@@ -289,6 +334,18 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
 }
 
 /**
+ * True for turn kinds that open with no live human waiting synchronously for them: a spontaneous
+ * SDK-initiated turn nobody submitted (`'notification'`) or an adopted background-work wake turn
+ * (`'task'`, R2). Human pre-emption and escalation (`routeIncoming`) and interrupted-turn resume-
+ * note injection (`injectResumeNoteIfInterruptedBackgroundTurn`) treat both identically — enqueue
+ * behind them and arm the human-wait escalation, rather than interrupting immediately the way a
+ * same-channel `discord` turn is.
+ */
+function isBackgroundKind(kind: TurnKind): boolean {
+    return kind === 'notification' || kind === 'task';
+}
+
+/**
  * Creates a long-lived session conductor.
  * @param params See {@link CreateConductorParams}.
  * @returns A {@link Conductor}.
@@ -296,7 +353,7 @@ function computeBackoffDelayMs(policy: RetryPolicy, attemptNumber: number): numb
 export function createConductor(params: CreateConductorParams): Conductor {
     const {
         role, queryFn, buildOptions, clock, readRss, ledgerStore, config, retryPolicy,
-        journal, resumeStore, bootBundle, buildBootBundle, logger, onTurnFrame,
+        journal, resumeStore, bootBundle, buildBootBundle, logger, onTurnFrame, taskLaunches, onWakeTurnSettled,
     } = params;
     const classifyError = params.classifyError ?? classifyClaudeError;
 
@@ -319,6 +376,8 @@ export function createConductor(params: CreateConductorParams): Conductor {
     const turnEndedWaiters: (() => void)[] = [];
     let previousTasks = new Map(ledgerStore.get().tasks.map(task => [task.id, task] as const));
     let previousCompaction = ledgerStore.get().compaction;
+    /** Set by {@link adoptWakeTurn}; consumed by the next spontaneous assistant frame {@link onFrame} observes (R2) — `setAt` (clock time) backs the {@link PENDING_WAKE_TTL_MS} staleness check `onFrame` applies before adopting. */
+    let pendingWake: { taskId: string, toolUseId: string, summary: string, setAt: number } | undefined;
 
     function now(): Date {
         return new Date(clock.now());
@@ -470,7 +529,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         }
         const at = now();
         currentTurn = {
-            item, kind: item.envelope.kind, channelId: item.envelope.channelId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+            item, kind: item.envelope.kind, channelId: item.envelope.channelId, authorId: item.envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
         };
         const meta: EnvelopeMeta = { id: item.envelope.id, kind: item.envelope.kind, queuedAt: at, channelId: item.envelope.channelId };
         ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
@@ -546,7 +605,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             void interruptCurrentTurnInternal('human envelope for the running channel');
             return;
         }
-        if(item.priority === 'human' && currentTurn.kind === 'notification') {
+        if(item.priority === 'human' && isBackgroundKind(currentTurn.kind)) {
             enqueue(item);
             armHumanWaitEscalation();
             return;
@@ -554,9 +613,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
         enqueue(item);
     }
 
-    /** Injects a `resume`-kind envelope ahead of everything else queued when an interrupted spontaneous notification turn left meaningful partial work behind. */
-    function injectResumeNoteIfInterruptedNotification(turn: ActiveTurn, progress: StreamProgress): void {
-        if(turn.kind !== 'notification' || !turn.interruptRequested) {
+    /** Injects a `resume`-kind envelope ahead of everything else queued when an interrupted background turn (a spontaneous notification, or an adopted R2 task wake) left meaningful partial work behind. */
+    function injectResumeNoteIfInterruptedBackgroundTurn(turn: ActiveTurn, progress: StreamProgress): void {
+        if(!isBackgroundKind(turn.kind) || !turn.interruptRequested) {
             return;
         }
         const note = buildResumeNote(progress);
@@ -606,7 +665,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const wasInterrupted = turn.interruptRequested;
         const progress = turn.tracker.getProgress();
 
-        injectResumeNoteIfInterruptedNotification(turn, progress);
+        injectResumeNoteIfInterruptedBackgroundTurn(turn, progress);
 
         if(turn.item === undefined) {
             return;
@@ -663,10 +722,92 @@ export function createConductor(params: CreateConductorParams): Conductor {
         processQueue();
     }
 
+    /**
+     * The {@link Deferred} for an adopted wake turn's synthesized {@link QueuedItem} (R2): no
+     * external caller is waiting on a promise for this turn, so `resolve` routes the settled
+     * {@link TurnResult} to {@link onWakeTurnSettled} instead (when one was provided), catching
+     * and logging a rejection so a failing delivery callback never surfaces as an unhandled
+     * rejection. `reject` should never legitimately fire for this item (see `rejectAllQueued`
+     * and the reopen-failure path, whose callers only ever `resolve` a wake item's deferred), but
+     * is still logged defensively rather than silently swallowed.
+     */
+    function buildWakeSettledDeferred(envelope: Envelope): Deferred {
+        return {
+            resolve: (result: TurnResult) => {
+                if(onWakeTurnSettled === undefined) {
+                    return;
+                }
+                Promise.resolve(onWakeTurnSettled(envelope, result)).catch((error: unknown) => {
+                    logger.error({ error }, 'onWakeTurnSettled failed for an adopted wake turn');
+                });
+            },
+            reject: (error: unknown) => {
+                logger.error({ error }, 'An adopted wake turn was rejected before it could settle');
+            },
+        };
+    }
+
+    /**
+     * Consumes `wake` (R2): synthesizes a `task`-kind envelope — `channelId`/`authorId` from
+     * {@link taskLaunches}'s lookup, when a launch record is found — and opens it as the current
+     * turn exactly like {@link beginTurn} (ledger `turn_submitted`, journal
+     * `envelope_submitted`), EXCEPT it pushes nothing to the SDK queue: the SDK already started
+     * this turn on its own (the `<task-notification>` wake), so pushing again would submit a
+     * second, unwanted user message. For the same reason, the synthesized item is seeded at
+     * `retryPolicy.maxAttempts` (non-retryable): a transient `is_error` result on this turn must
+     * fail immediately (`failTurn`) rather than retry through `settleErroredTurn` -> `scheduleRetry`
+     * -> `beginTurn`, which WOULD push `wake.summary` into the SDK queue as a fresh, unframed user
+     * message — exactly the second submission this function exists to avoid. Forgets the launch
+     * record once adopted.
+     */
+    function beginAdoptedWakeTurn(wake: { taskId: string, toolUseId: string, summary: string }): void {
+        const launch = taskLaunches?.lookup(wake);
+        const at = now();
+        const envelope: Envelope = {
+            id:           crypto.randomUUID(),
+            kind:         'task',
+            text:         wake.summary,
+            channelId:    launch?.channelId,
+            authorId:     launch?.authorId,
+            hostPriority: 'wake',
+            shouldQuery:  true,
+            createdAt:    at,
+        };
+        const item: QueuedItem = {
+            envelope, priority: 'other', attempts: retryPolicy.maxAttempts, deferred: buildWakeSettledDeferred(envelope),
+        };
+        currentTurn = {
+            item, kind: 'task', channelId: envelope.channelId, authorId: envelope.authorId, tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false,
+        };
+        const meta: EnvelopeMeta = { id: envelope.id, kind: envelope.kind, queuedAt: at, channelId: envelope.channelId };
+        ledgerStore.dispatch({ type: 'turn_submitted', envelope: meta, at });
+        journal.append({
+            type: 'envelope_submitted', at, envelopeId: envelope.id, kind: envelope.kind, ...(envelope.channelId === undefined ? {} : { channelId: envelope.channelId }),
+        });
+        taskLaunches?.forget(wake.taskId);
+    }
+
+    function adoptWakeTurn(input: { taskId: string, toolUseId: string, summary: string }): void {
+        if(pendingWake !== undefined) {
+            logger.warn({ previous: pendingWake, next: input }, 'adoptWakeTurn called again before the previous pending wake turn was consumed; overwriting');
+        }
+        pendingWake = { ...input, setAt: clock.now() };
+    }
+
     function onFrame(frame: SDKMessage): void {
         guard.onFrame(frame);
+        if(pendingWake !== undefined && clock.now() - pendingWake.setAt > PENDING_WAKE_TTL_MS) {
+            logger.warn({ pendingWake }, 'a pending wake turn expired (PENDING_WAKE_TTL_MS) before it could be adopted; a later spontaneous turn will not be misattributed to it');
+            pendingWake = undefined;
+        }
         if(currentTurn === null && !awaitingTurnEnd && frame.type === 'assistant') {
-            currentTurn = { kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false };
+            if(pendingWake === undefined) {
+                currentTurn = { kind: 'notification', tracker: new StreamTracker(), interruptRequested: false, escalationArmed: false };
+            } else {
+                const wake = pendingWake;
+                pendingWake = undefined;
+                beginAdoptedWakeTurn(wake);
+            }
         }
         // boundary cast: AgentStreamEvent is the one-shot path's narrower observability-only view of a stream event; every SDKMessage shape StreamTracker.update switches on (system/task_started, assistant) is a subset of AgentStreamEvent's fields, matching the identical cast already documented in ./session.ts
         currentTurn?.tracker.update(frame as unknown as AgentStreamEvent);
@@ -1026,7 +1167,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
             opened,
             shuttingDown,
             queueLength: pendingQueue.length,
-            turn:        currentTurn === null ? null : { kind: currentTurn.kind, channelId: currentTurn.channelId, envelopeId: currentTurn.item?.envelope.id },
+            turn:        currentTurn === null
+                ? null
+                : {
+                    kind: currentTurn.kind, channelId: currentTurn.channelId, envelopeId: currentTurn.item?.envelope.id, authorId: currentTurn.authorId,
+                },
         };
     }
 
@@ -1087,7 +1232,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     return {
-        open, submit, appendWithoutTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
+        open, submit, appendWithoutTurn, adoptWakeTurn, deliver, interruptCurrent, subscribeTurn, status, shutdown,
         getCompactionThresholdPercent: () => guard.getThresholdPercent(),
         setCompactionThresholdPercent: (percent: number) => { guard.setThresholdPercent(percent); },
     };

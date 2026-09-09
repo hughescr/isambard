@@ -49,9 +49,9 @@
  * @module agent/session/notification-bridge
  */
 import type { Logger } from '@hughescr/logger';
-import type { Conductor } from './conductor';
+import type { Conductor, TurnResult } from './conductor';
 import { buildNotificationEnvelope } from './envelope';
-import type { Clock } from './types';
+import type { Clock, Envelope } from './types';
 
 /** Default capacity of the bounded FIFO dedupe set — see {@link CreateNotificationBridgeParams.dedupeCapacity}. */
 export const DEFAULT_NOTIFICATION_DEDUPE_CAPACITY = 200;
@@ -102,11 +102,21 @@ export type NotificationConductor = Pick<Conductor, 'submit' | 'appendWithoutTur
 
 /** What {@link createNotificationBridge} returns. */
 export interface NotificationBridge {
-    notify:          NotifyFn
+    notify:              NotifyFn
     /** Late-binds the real conductor once it exists (composition-root ordering, plan amendment B1). Subsequent `notify()` calls route through it. */
-    attachConductor: (conductor: NotificationConductor) => void
+    attachConductor:     (conductor: NotificationConductor) => void
     /** Detaches the conductor: subsequent `notify()` calls revert to the unattached no-op (debug log, drop) until re-attached. */
-    detach:          () => void
+    detach:              () => void
+    /**
+     * Attaches a reply-delivery callback (R2): once a `wake:true` `notify()`'s
+     * `conductor.submit()` resolves with a non-null `response` and no `outcome` (a genuine
+     * completed reply — not `null`/withdrawn/interrupted), `fn` is called with the notification's
+     * own envelope and that `TurnResult`, so the composition root can deliver a notification's
+     * reply the same way it delivers any other turn's. A rejection is caught and logged; it
+     * never affects `notify()`'s own synchronous return. Never called for a `wake:false`
+     * `notify()` (`appendWithoutTurn` produces no `TurnResult` to deliver).
+     */
+    attachReplyDelivery: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
 }
 
 /**
@@ -119,6 +129,7 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
     const { clock, timezone, timeHeader, dedupeCapacity = DEFAULT_NOTIFICATION_DEDUPE_CAPACITY, logger } = params;
 
     let conductor: NotificationConductor | undefined;
+    let replyDelivery: ((envelope: Envelope, result: TurnResult) => Promise<void>) | undefined;
     const dedupeOrder: string[] = [];
     const dedupeSeen = new Set<string>();
 
@@ -161,9 +172,23 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
         });
 
         if(wake) {
-            conductor.submit(envelope, { priority: 'other' }).catch((err: unknown) => {
-                logger.warn({ err, source, dedupeKey }, 'Failed to submit wake notification');
-            });
+            void (async (): Promise<void> => {
+                let result: TurnResult;
+                try {
+                    result = await conductor.submit(envelope, { priority: 'other' });
+                } catch (err) {
+                    logger.warn({ err, source, dedupeKey }, 'Failed to submit wake notification');
+                    return;
+                }
+                if(result.response === null || result.outcome !== undefined || replyDelivery === undefined) {
+                    return;
+                }
+                try {
+                    await replyDelivery(envelope, result);
+                } catch (err) {
+                    logger.warn({ err, source, dedupeKey }, 'Failed to deliver a wake notification\'s reply');
+                }
+            })();
         } else {
             try {
                 conductor.appendWithoutTurn(envelope);
@@ -182,5 +207,11 @@ export function createNotificationBridge(params: CreateNotificationBridgeParams)
         conductor = undefined;
     }
 
-    return { notify, attachConductor, detach };
+    function attachReplyDelivery(fn: (envelope: Envelope, result: TurnResult) => Promise<void>): void {
+        replyDelivery = fn;
+    }
+
+    return {
+        notify, attachConductor, detach, attachReplyDelivery,
+    };
 }

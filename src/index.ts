@@ -8,7 +8,7 @@ import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
 import { loadPlugins, QuestionRegistry, pruneStaleSessions, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type ContactChangeRequest, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { ChannelNotFoundByIdError, InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider } from '@/integrations/bsky';
@@ -811,6 +811,10 @@ export async function createApp(): Promise<App> {
     let conversationContextPolicy: ContextPolicy | undefined;
     let conversationJournal: SessionJournal | undefined;
     let conversationBootLostTasks: string[] | undefined;
+    // R2: threaded into createDiscordBot below so clientReady can late-bind the Discord-backed
+    // wake-turn delivery function it builds once responseRouter/rateLimiter exist — see
+    // ConversationConductorResult.setWakeTurnDelivery's own doc.
+    let conversationSetWakeTurnDelivery: ConversationConductorResult['setWakeTurnDelivery'] | undefined;
     {
         // eslint-disable-next-line prefer-const -- assigned once, immediately after createConversationConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
         let conductorForTaskReader: Conductor | undefined;
@@ -861,6 +865,7 @@ export async function createApp(): Promise<App> {
         conversationLedgerStore = builtConductor.ledgerStore;
         conversationContextPolicy = builtConductor.contextPolicy;
         conversationBootLostTasks = builtConductor.bootLostTasks;
+        conversationSetWakeTurnDelivery = builtConductor.setWakeTurnDelivery;
     }
     // Stryker restore all
 
@@ -872,6 +877,8 @@ export async function createApp(): Promise<App> {
     let perchConductor: Conductor | undefined;
     let perchLedgerStore: LedgerStore | undefined;
     let perchJournal: SessionJournal | undefined;
+    // R2: the perch conductor's own equivalent of conversationSetWakeTurnDelivery above.
+    let perchSetWakeTurnDelivery: PerchConductorResult['setWakeTurnDelivery'] | undefined;
     if(config.perch?.enabled) {
         // eslint-disable-next-line prefer-const -- assigned once, immediately after createPerchConductor resolves; the taskListReader closure below must reference the finished conductor, which cannot exist before this call returns
         let perchConductorForTaskReader: Conductor | undefined;
@@ -903,6 +910,7 @@ export async function createApp(): Promise<App> {
         perchConductorForTaskReader = builtPerchConductor.conductor;
         perchConductor = builtPerchConductor.conductor;
         perchLedgerStore = builtPerchConductor.ledgerStore;
+        perchSetWakeTurnDelivery = builtPerchConductor.setWakeTurnDelivery;
     }
     // Stryker restore all
 
@@ -944,39 +952,39 @@ export async function createApp(): Promise<App> {
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Creating Discord bot...');
     const bot: DiscordBot = createDiscordBot({
-        config:             config.discord,
-        perchConfig:        config.perch,
+        config:                   config.discord,
+        perchConfig:              config.perch,
         identityContext,
-        identityCache:      identityCacheSlot.cache,
-        client:             discordInfra.discordClient,
+        identityCache:            identityCacheSlot.cache,
+        client:                   discordInfra.discordClient,
         questionRegistry,
-        inboxManager:       discordInfra.inboxManager,
-        channelRegistry:    discordInfra.channelRegistry,
-        contextBuilder:     contextLayer.contextBuilder,
+        inboxManager:             discordInfra.inboxManager,
+        channelRegistry:          discordInfra.channelRegistry,
+        contextBuilder:           contextLayer.contextBuilder,
         emailSetup,
         bskySetup,
         allowlistHandler,
         allowlistInteractionHandler,
         calendarHandler,
-        contactHandler:     contactCommandHandler,
+        contactHandler:           contactCommandHandler,
         contactApprovalHandler,
         activityLogger,
         healthRegistry,
         discordCapability,
         // Q3 / B4: daily cost ceiling predicate — reaches only the conductor-mode perch scheduler
         // and presence composer (bot.ts); Discord's own turns are never gated by this.
-        isCostPaused:       costCeiling.isPaused,
+        isCostPaused:             costCeiling.isPaused,
         // Q5 / B1: the shared notification bridge's notify function — a safe no-op until
         // notificationBridge.attachConductor() has run (above). Q6-Q8 wire the actual
         // notification sources; this package only threads the seam through.
-        notify:             notificationBridge.notify,
+        notify:                   notificationBridge.notify,
         // P9/P13b: conductor-mode dependencies. bot.ts's clientReady opens conversationConductor
         // once the guild cache and channel registry exist; a rejected/timed-out open() leaves
         // message processing disabled for this process (there is no fallback agent to degrade to).
         conversationConductor,
-        ledgerStore:        conversationLedgerStore,
-        contextPolicy:      conversationContextPolicy,
-        journal:            conversationJournal,
+        ledgerStore:              conversationLedgerStore,
+        contextPolicy:            conversationContextPolicy,
+        journal:                  conversationJournal,
         // P12: the perch conductor's own build-only-then-open trio, undefined unless conductor
         // mode AND perch are both enabled. bot.ts's clientReady opens it after the conversation
         // conductor; a rejected/omitted open() just leaves perch disabled, without a restart.
@@ -985,15 +993,21 @@ export async function createApp(): Promise<App> {
         perchJournal,
         // P10: own config.session.shutdownTurnWaitMs/shutdownDeadlineMs — without these,
         // createShutdown falls back to its hard-coded 60s/120s defaults regardless of config.
-        shutdownTurnWaitMs: config.session.shutdownTurnWaitMs,
-        shutdownDeadlineMs: config.session.shutdownDeadlineMs,
+        shutdownTurnWaitMs:       config.session.shutdownTurnWaitMs,
+        shutdownDeadlineMs:       config.session.shutdownDeadlineMs,
         // R1: without this, catchup-setup.ts always falls back to its own hard-coded 24h
         // default regardless of an operator-configured config.session.bootEventsWindowMs.
-        bootEventsWindowMs: config.session.bootEventsWindowMs,
+        bootEventsWindowMs:       config.session.bootEventsWindowMs,
         // R1: the pre-open recovery snapshot for the merged Discord boot envelope — see
         // ConversationConductorResult.bootLostTasks's own doc for why this must come from
         // createConversationConductor rather than a read done inside bot.ts/catchup-setup.ts.
-        bootLostTasks:      conversationBootLostTasks,
+        bootLostTasks:            conversationBootLostTasks,
+        // R2: threaded so clientReady can attach a host-notification reply's delivery to the
+        // Discord-backed wake-turn delivery function it builds, and late-bind that same function
+        // (or a separate perch one) onto whichever conductor(s) actually exist.
+        notificationBridge,
+        setWakeTurnDelivery:      conversationSetWakeTurnDelivery,
+        setPerchWakeTurnDelivery: perchSetWakeTurnDelivery,
     });
     // Stryker disable next-line StringLiteral: Log message content is not behavior-affecting
     logger.info('Discord bot created');

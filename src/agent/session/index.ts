@@ -93,7 +93,17 @@ export {
 
 export { createCostCeilingStore, type CreateCostCeilingStoreParams } from './cost-ceiling-store';
 
-export { computeRecovery, lastKnownAt, type LostTask, type UndeliveredEnvelope, type RecoveryResult } from './recovery';
+export { computeRecovery, lastKnownAt, taskLaunchEntries, type LostTask, type UndeliveredEnvelope, type RecoveryResult } from './recovery';
+
+export {
+    createTaskLaunchRegistry,
+    launchIdFromToolResponse,
+    parseTaskNotification,
+    DEFAULT_TASK_LAUNCH_CAPACITY,
+    type TaskLaunch,
+    type TaskLaunchRegistry,
+    type CreateTaskLaunchRegistryParams
+} from './task-launch-registry';
 
 export { createDeliveryGuard, type DeliveryGuard } from './delivery-guard';
 

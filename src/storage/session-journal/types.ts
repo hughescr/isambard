@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { JournalEntry, SessionRole } from '@/agent';
 
 /** Mirrors {@link EnvelopeKind} (src/agent/session/types.ts) as literal values — the type itself stays owned there; this is just the runtime list a zod schema needs. */
-const envelopeKindSchema = z.enum(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot']);
+const envelopeKindSchema = z.enum(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task']);
 
 /** Mirrors {@link SessionRole} (src/agent/session/types.ts) as literal values, for the same reason as {@link envelopeKindSchema}. */
 const sessionRoleSchema = z.enum(['conversation', 'perch']);
@@ -45,6 +45,9 @@ export const journalEntrySchema = z.discriminatedUnion('type', [
     z.object({ ...journalEntryBase, type: z.literal('task_started'), taskId: z.string(), description: z.string() }),
     z.object({ ...journalEntryBase, type: z.literal('task_completed'), taskId: z.string(), description: z.string().optional() }),
     z.object({ ...journalEntryBase, type: z.literal('task_lost'), taskId: z.string(), description: z.string().optional() }),
+    z.object({
+        ...journalEntryBase, type: z.literal('task_launched'), taskId: z.string(), toolUseId: z.string(), toolName: z.string(), envelopeId: z.string(), kind: envelopeKindSchema, channelId: z.string().optional(), authorId: z.string().optional(), description: z.string().optional(),
+    }),
     z.object({ ...journalEntryBase, type: z.literal('compaction_started'), trigger: z.enum(['manual', 'auto']).optional() }),
     z.object({ ...journalEntryBase, type: z.literal('compaction_completed') }),
     z.object({ ...journalEntryBase, type: z.literal('compaction_failed'), error: z.string() }),

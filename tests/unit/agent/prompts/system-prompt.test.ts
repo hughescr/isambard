@@ -118,6 +118,14 @@ describe.concurrent('system-prompt', () => {
             assertPromptHygiene(PERCH_ROLE_PROMPT);
         });
 
+        test('SESSION_BASE_PROMPT tells Izzy a background-work wake turn delivers like a normal reply, not the old "its own envelope" framing', () => {
+            // R2: a finished background task now wakes the conductor into a real turn whose
+            // ordinary final text is delivered to the launching channel/author, rather than
+            // arriving as a separate notification envelope.
+            expect(SESSION_BASE_PROMPT).toContain('When it finishes, the host wakes you with its result in a new turn; whatever you write in that turn is delivered to the channel and person the work was launched for, exactly like a normal reply — so report as you would to them, or write nothing if there is nothing worth saying.');
+            expect(SESSION_BASE_PROMPT).not.toContain('its result arrives as its own envelope, a notification, rather than as a continuation of the turn that launched it.');
+        });
+
         test('SESSION_BASE_PROMPT, CONVERSATION_ROLE_PROMPT and PERCH_ROLE_PROMPT are non-empty and pass hygiene on their own', () => {
             expect(SESSION_BASE_PROMPT.length).toBeGreaterThan(0);
             expect(CONVERSATION_ROLE_PROMPT.length).toBeGreaterThan(0);

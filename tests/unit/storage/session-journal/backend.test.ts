@@ -175,6 +175,12 @@ describe('SessionJournalBackend', () => {
             {
                 ...BASE, SK: 'n', type: 'cost_ceiling_snapshot', dateKey: '2026-09-05', totalUsd: 1.23, paused: true,
             },
+            {
+                ...BASE, SK: 'o', type: 'task_launched', taskId: 'task-1', toolUseId: 'tool-1', toolName: 'Agent', envelopeId: 'e2', kind: 'discord', channelId: 'chan-1', authorId: 'user-1', description: 'do background work',
+            },
+            {
+                ...BASE, SK: 'p', type: 'turn_completed', envelopeId: 'e3', kind: 'task', responseText: 'done',
+            },
         ];
 
         test('every JournalEntry member round-trips through readSince with no malformed rows', async () => {

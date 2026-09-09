@@ -10,6 +10,7 @@ export { createCompactionHooks, type CompactionSink } from './hooks/compaction';
 export { createBootBundleHooks } from './hooks/boot-bundle';
 export { createSessionLifecycleHooks, type SessionLifecycleHooksDeps } from './hooks/lifecycle';
 export { createTaskTrackingHooks } from './hooks/task-tracking';
+export { createTaskLaunchHooks, type CreateTaskLaunchHooksParams } from './hooks/task-launch';
 export { mergeHookMaps } from './hooks/index';
 export { createContextBuilder, type ContextBuilder, type EmailService, type BskyDMService, type CalendarService } from './context-builder';
 export { summarizeEventBatches } from './event-summarizer';

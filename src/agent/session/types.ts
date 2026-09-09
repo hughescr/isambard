@@ -56,10 +56,10 @@ export type SessionQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>, o
  * The full set of envelope kinds the ledger and conductor key off of. `queued.human` in the
  * ledger keys on `kind === 'discord'`; every other kind increments `queued.other`.
  */
-export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact' | 'boot';
+export type EnvelopeKind = 'discord' | 'perch' | 'notification' | 'catchup' | 'wrapup' | 'resume' | 'compact' | 'boot' | 'task';
 
 /** Every {@link EnvelopeKind} member, for table-driven tests that must stay exhaustive as the union grows. */
-export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot'];
+export const ENVELOPE_KINDS: readonly EnvelopeKind[] = ['discord', 'perch', 'notification', 'catchup', 'wrapup', 'resume', 'compact', 'boot', 'task'];
 
 /**
  * The minimal envelope shape the ledger keys `turn_submitted` events on — distinct from
@@ -130,6 +130,16 @@ export type JournalEntry
       | { type: 'task_started', at: Date, taskId: string, description: string }
       | { type: 'task_completed', at: Date, taskId: string, description?: string }
       | { type: 'task_lost', at: Date, taskId: string, description?: string }
+      /**
+       * A background-work launch (R2): recorded by the {@link
+       * import('../hooks/task-launch').createTaskLaunchHooks} PostToolUse hook for an
+       * Agent/Workflow/Bash-background launch made during a live turn, so the eventual
+       * `<task-notification>` wake (see {@link import('./conductor').Conductor.adoptWakeTurn})
+       * can synthesize an envelope back to the launching turn's channel/author. `kind` is the
+       * launching turn's kind (a launch made from a `task`-kind turn — chained background work —
+       * inherits that turn's channel/author).
+       */
+      | { type: 'task_launched', at: Date, taskId: string, toolUseId: string, toolName: string, envelopeId: string, kind: EnvelopeKind, channelId?: string, authorId?: string, description?: string }
       | { type: 'compaction_started', at: Date, trigger?: 'manual' | 'auto' }
       /** Metadata only: the summary itself is never persisted (see conductor.ts's module doc). */
       | { type: 'compaction_completed', at: Date }

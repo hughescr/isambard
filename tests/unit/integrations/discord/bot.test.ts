@@ -23,6 +23,7 @@ import type { EmailSetupResult } from '@/integrations/discord/setup/email-setup'
 import * as eventHandlerSetupModule from '@/integrations/discord/setup/event-handler-setup';
 import * as perchSetupModule from '@/integrations/discord/setup/perch-setup';
 import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
+import * as wakeDeliveryModule from '@/integrations/discord/setup/wake-delivery';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
 /** Flushes enough microtask ticks for a chained promise sequence to settle. */
@@ -2174,6 +2175,115 @@ describe('createDiscordBot', () => {
                 expect(callOrder).toEqual(['perchScheduler.stop', 'perchDriver.stop', 'perch.shutdown']);
                 expect(driver.stop).toHaveBeenCalledTimes(1);
                 expect(scheduler.stop).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        describe('R2: background-work wake-turn delivery wiring', () => {
+            test('after clientReady builds responseRouter, calls setWakeTurnDelivery with a function built from createWakeTurnDelivery bound to the conversation conductor', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const conversationConductor = makeFakeConductor();
+                const sentinelDelivery = mock(async () => undefined);
+                const createWakeTurnDeliverySpy = spyOn(wakeDeliveryModule, 'createWakeTurnDelivery').mockReturnValue(sentinelDelivery);
+                spies.push(createWakeTurnDeliverySpy);
+                const setWakeTurnDelivery = mock(() => undefined);
+                const deps = conductorDeps({ conversationConductor });
+
+                createDiscordBot({
+                    config: mockConfig, channelRegistry: mockChannelRegistry, setWakeTurnDelivery, ...deps,
+                });
+                await triggerReady(client);
+
+                expect(createWakeTurnDeliverySpy).toHaveBeenCalledWith(expect.objectContaining({ conductor: conversationConductor }));
+                expect(setWakeTurnDelivery).toHaveBeenCalledWith(sentinelDelivery);
+            });
+
+            test('calls setPerchWakeTurnDelivery with a SEPARATE createWakeTurnDelivery instance bound to the perch conductor', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                spies.push(spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({
+                    driver: { runSlot: mock(), stop: mock() }, scheduler: { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() },
+                }));
+
+                const perchConductor = makeFakeConductor();
+                const conversationSentinel = mock(async () => undefined);
+                const perchSentinel = mock(async () => undefined);
+                const createWakeTurnDeliverySpy = spyOn(wakeDeliveryModule, 'createWakeTurnDelivery')
+                    .mockReturnValueOnce(conversationSentinel)
+                    .mockReturnValueOnce(perchSentinel);
+                spies.push(createWakeTurnDeliverySpy);
+                const setPerchWakeTurnDelivery = mock(() => undefined);
+                const deps = conductorDeps({
+                    perchConductor, perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+                });
+
+                createDiscordBot({
+                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 }, setPerchWakeTurnDelivery, ...deps,
+                });
+                await triggerReady(client);
+
+                expect(createWakeTurnDeliverySpy).toHaveBeenCalledWith(expect.objectContaining({ conductor: perchConductor }));
+                expect(setPerchWakeTurnDelivery).toHaveBeenCalledWith(perchSentinel);
+            });
+
+            test('never builds or attaches a perch wake-turn delivery when perchConductor is absent', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const createWakeTurnDeliverySpy = spyOn(wakeDeliveryModule, 'createWakeTurnDelivery').mockReturnValue(mock(async () => undefined));
+                spies.push(createWakeTurnDeliverySpy);
+                const setPerchWakeTurnDelivery = mock(() => undefined);
+                const deps = conductorDeps();
+
+                createDiscordBot({
+                    config: mockConfig, channelRegistry: mockChannelRegistry, setPerchWakeTurnDelivery, ...deps,
+                });
+                await triggerReady(client);
+
+                expect(setPerchWakeTurnDelivery).not.toHaveBeenCalled();
+                expect(createWakeTurnDeliverySpy).toHaveBeenCalledTimes(1);
+            });
+
+            test('attaches the conversation wake-turn delivery function to notificationBridge.attachReplyDelivery', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+
+                const conversationConductor = makeFakeConductor();
+                const sentinelDelivery = mock(async () => undefined);
+                spies.push(spyOn(wakeDeliveryModule, 'createWakeTurnDelivery').mockReturnValue(sentinelDelivery));
+                const attachReplyDelivery = mock(() => undefined);
+                const deps = conductorDeps({ conversationConductor });
+
+                createDiscordBot({
+                    config: mockConfig, channelRegistry: mockChannelRegistry, notificationBridge: { attachReplyDelivery }, ...deps,
+                });
+                await triggerReady(client);
+
+                expect(attachReplyDelivery).toHaveBeenCalledWith(sentinelDelivery);
+            });
+
+            test('omitting setWakeTurnDelivery/setPerchWakeTurnDelivery/notificationBridge never throws (bot.test.ts covers absent)', async () => {
+                const client = makeMockClientForConductor();
+                spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
+                stubCoordinator();
+                spies.push(spyOn(perchSetupModule, 'setupPerchDriverAndScheduler').mockReturnValue({
+                    driver: { runSlot: mock(), stop: mock() }, scheduler: { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() },
+                }));
+
+                const deps = conductorDeps({
+                    perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch-sess-1'), perchJournal: { append: mock(() => undefined), flush: mock(() => Promise.resolve()), readSince: mock(() => Promise.resolve([])) },
+                });
+
+                createDiscordBot({
+                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, maxSessionMinutes: 45, wrapUpTimeoutMinutes: 5, interruptGraceMinutes: 2 }, ...deps,
+                });
+
+                await expect(triggerReady(client)).resolves.toBeUndefined();
             });
         });
     });

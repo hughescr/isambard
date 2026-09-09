@@ -37,8 +37,11 @@ import {
     createContextPolicy,
     createLedgerStore,
     createSessionLifecycleHooks,
+    createTaskLaunchHooks,
+    createTaskLaunchRegistry,
     createTaskTrackingHooks,
     mergeHookMaps,
+    taskLaunchEntries,
     type BootKind,
     type Clock,
     type CompactionSink,
@@ -53,6 +56,7 @@ import {
     type SessionMcpServers,
     type SessionQueryFn,
     type StateTopSetSource,
+    type TurnResult,
     type CalendarAgendaSource
 } from '@/agent';
 import { type SessionConfig, loadRetryConfig  } from '@/config';
@@ -108,25 +112,29 @@ function bootKindFromSource(source: BootStartSource): BootKind {
 
 /**
  * Re-derives crash recovery from `journal` over {@link RECOVERY_WINDOW_MS} and formats it for a
- * boot-bundle build (lost-task/undelivered description lists). Never rejects: a `readSince`
- * failure degrades to an empty recovery section rather than blocking the boot-bundle hook, logged
- * as `'${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery section'`.
- * Shared by both session roles so the recovery-read/format/degrade behaviour cannot drift between
- * them.
+ * boot-bundle build (lost-task/undelivered description lists), alongside the raw `task_launched`
+ * rows in the same window (R2) — the boot-time seed for each role's own
+ * `TaskLaunchRegistry`, so a launch recorded just before a crash still resolves its
+ * channel/author if the wake arrives after restart. Never rejects: a `readSince` failure degrades
+ * to an empty recovery section (and no seed rows) rather than blocking the boot-bundle hook,
+ * logged as `'${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery
+ * section'`. Shared by both session roles so the recovery-read/format/degrade behaviour cannot
+ * drift between them.
  */
 async function loadBootRecovery(
     journal: SessionJournal, clock: Clock, logger: Pick<Logger, 'warn'>, roleLabel: 'Conversation' | 'Perch'
-): Promise<{ lostTasks: string[], undelivered: string[] }> {
+): Promise<{ lostTasks: string[], undelivered: string[], taskLaunches: ReturnType<typeof taskLaunchEntries> }> {
     try {
         const entries = await journal.readSince(clock.now() - RECOVERY_WINDOW_MS);
         const recovery = computeRecovery(entries);
         return {
-            lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
-            undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+            lostTasks:    recovery.lostTasks.map(task => task.description ?? task.taskId),
+            undelivered:  recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+            taskLaunches: taskLaunchEntries(entries),
         };
     } catch (err) {
         logger.warn({ err }, `${roleLabel} boot-bundle recovery read failed; continuing with an empty recovery section`);
-        return { lostTasks: [], undelivered: [] };
+        return { lostTasks: [], undelivered: [], taskLaunches: [] };
     }
 }
 
@@ -177,6 +185,14 @@ export interface ConversationConductorResult {
      * Reading here, before `open()` is even called, cannot race that write.
      */
     bootLostTasks:       string[]
+    /**
+     * Late-binds the delivery function for a settled background-work wake turn (R2) — the
+     * Discord client/responseRouter this needs do not exist yet when this function returns, so
+     * the caller (`bot.ts`'s `clientReady`, once it has built them) calls this once. Before it is
+     * called, a settled wake turn logs `'wake turn settled before delivery was attached'` and is
+     * dropped rather than silently discarded with no trace.
+     */
+    setWakeTurnDelivery: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
 }
 
 /**
@@ -196,7 +212,13 @@ export async function createConversationConductor(params: CreateConversationCond
     // — before conductor.open() is ever called by this function's caller — rather than lazily
     // inside the SessionStart hook below (which no longer renders lost tasks at all; see
     // buildBootBundleText's own doc) or from `catchup-setup.ts` after open() has run.
-    const { lostTasks: bootLostTasks } = await loadBootRecovery(journal, clock, logger, 'Conversation');
+    const { lostTasks: bootLostTasks, taskLaunches: bootTaskLaunches } = await loadBootRecovery(journal, clock, logger, 'Conversation');
+
+    // R2: seeded here (before open()) for the same reason bootLostTasks is read here — a launch
+    // recorded just before a crash must resolve its channel/author if the wake arrives on this
+    // fresh process, and the registry needs to be ready before any hook can possibly fire.
+    const taskLaunchRegistry = createTaskLaunchRegistry({ journal });
+    taskLaunchRegistry.seed(bootTaskLaunches);
 
     const mcpInstances = createMcpServerInstances(mcpShared, { role: 'conversation', emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
@@ -316,11 +338,38 @@ export async function createConversationConductor(params: CreateConversationCond
         },
     };
 
+    // R2: the same late-bound-conductor pattern as compactionTelemetry above — createTaskLaunchHooks
+    // needs a live Conductor's `status`/`adoptWakeTurn`, but hooks are built before createConductor
+    // returns one. The `status()` fallback below can only be observed in the narrow window before
+    // conductorRef is assigned (a few lines down, still before this function returns) — no hook
+    // ever fires that early, since firing requires a live turn, which requires open().
+    const taskLaunchConductor: Pick<Conductor, 'status' | 'adoptWakeTurn'> = {
+        // Stryker disable next-line ObjectLiteral,OptionalChaining,StringLiteral,BooleanLiteral: the `?? {...}` fallback is unreachable by construction — see the comment above: conductorRef is assigned synchronously below, with no `await` in between, and no hook (the only caller of this `status()`) can fire before this function has already returned that assignment complete.
+        status:        () => conductorRef?.status() ?? { role: 'conversation', sessionId: undefined, opened: false, shuttingDown: false, queueLength: 0, turn: null },
+        adoptWakeTurn: (input) => { conductorRef?.adoptWakeTurn(input); },
+    };
+
+    // R2: late-bound the same way — the Discord client/responseRouter a delivery function needs
+    // do not exist until `bot.ts`'s `clientReady` calls the returned `setWakeTurnDelivery`. Before
+    // that, a settled wake turn is logged and dropped rather than silently lost with no trace.
+    let wakeTurnDelivery: ((envelope: Envelope, result: TurnResult) => Promise<void>) | undefined;
+    async function onWakeTurnSettled(envelope: Envelope, result: TurnResult): Promise<void> {
+        if(wakeTurnDelivery === undefined) {
+            logger.warn({ envelopeId: envelope.id }, 'wake turn settled before delivery was attached');
+            return;
+        }
+        await wakeTurnDelivery(envelope, result);
+    }
+    function setWakeTurnDelivery(fn: (envelope: Envelope, result: TurnResult) => Promise<void>): void {
+        wakeTurnDelivery = fn;
+    }
+
     const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
         createBootBundleHooks(async source => buildBootBundleText(source)),
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
-        createTaskTrackingHooks()
+        createTaskTrackingHooks(),
+        createTaskLaunchHooks({ registry: taskLaunchRegistry, conductor: taskLaunchConductor, logger, clock })
     );
 
     function buildOptions(resume?: string): Options {
@@ -345,17 +394,19 @@ export async function createConversationConductor(params: CreateConversationCond
     const retryPolicy = loadRetryConfig().claude;
 
     const innerConductor = createConductor({
-        role:    'conversation',
+        role:         'conversation',
         queryFn,
         buildOptions,
         clock,
-        readRss: () => process.memoryUsage().rss,
+        readRss:      () => process.memoryUsage().rss,
         ledgerStore,
         config,
         retryPolicy,
         journal,
         resumeStore,
         logger,
+        taskLaunches: taskLaunchRegistry,
+        onWakeTurnSettled,
     });
     conductorRef = innerConductor;
 
@@ -390,7 +441,7 @@ export async function createConversationConductor(params: CreateConversationCond
     });
 
     return {
-        conductor, ledgerStore, contextPolicy, compactionTelemetry, bootLostTasks,
+        conductor, ledgerStore, contextPolicy, compactionTelemetry, bootLostTasks, setWakeTurnDelivery,
     };
 }
 
@@ -417,6 +468,15 @@ export interface PerchConductorResult {
     conductor:           Conductor
     ledgerStore:         LedgerStore
     compactionTelemetry: CompactionTelemetry
+    /**
+     * Late-binds the delivery function for a settled background-work wake turn (R2) — see
+     * {@link ConversationConductorResult.setWakeTurnDelivery}'s identical doc. The envelope
+     * `fn` receives always has `kind: 'perch'` (rewritten here from the conductor's own
+     * synthesized `'task'` kind) so `ResponseRouter`'s existing well-known-channel mapping routes
+     * it to `perch-time` — see this module's own Q12 perch-decision doc above for why perch has
+     * no origin channel of its own to fall back to instead.
+     */
+    setWakeTurnDelivery: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
 }
 
 /**
@@ -430,11 +490,14 @@ export interface PerchConductorResult {
  * legacy perch scheduler/runner if `open()` rejects.
  *
  * Unlike the conversation conductor, perch's boot-bundle SessionStart hook re-derives crash
- * recovery itself (a second, independent read of the SAME journal `Conductor.open()` already
- * scanned internally on this process's boot — see {@link RECOVERY_WINDOW_MS}'s doc) so a
- * background task a prior process started but never finished, or a perch-channel Discord turn
- * that finished but was never confirmed delivered, is actually reported in the next boot-bundle
- * text — the folded "perch conductor boot" gap this package closes. Also unlike conversation,
+ * recovery itself, independent of the recovery `Conductor.open()` already scans internally on
+ * this process's boot (see {@link RECOVERY_WINDOW_MS}'s doc), so a background task a prior
+ * process started but never finished, or a perch-channel Discord turn that finished but was
+ * never confirmed delivered, is actually reported in the next boot-bundle text — the folded
+ * "perch conductor boot" gap this package closes. Its FIRST call reuses the construction-time
+ * read this function already did to seed the task-launch registry (R2's `pendingBootRecovery`,
+ * below) rather than issuing a second duplicate 24h query; only a LATER SessionStart (a resume
+ * long afterward, or a compaction) reads the journal again. Also unlike conversation,
  * there is no `ContextPolicy`: perch's boot bundle carries no per-user memory block to gate (see
  * `boot-bundle.ts`'s perch variant), so there is nothing for a compaction to reset.
  *
@@ -452,6 +515,14 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     const {
         config, queryFn, mcpShared, emailServerFactory, plugins, contextBuilder, identityCache, taskListReader, journal, resumeStore, clock, logger,
     } = params;
+
+    // R2: seeded here (before open()), for the same reason createConversationConductor's own
+    // bootTaskLaunches read is — see that function's identical comment. Also reused by
+    // buildBootBundleText's own FIRST call below (pendingBootRecovery) so a perch process start
+    // issues exactly one 24h journal read rather than two.
+    const initialBootRecovery = await loadBootRecovery(journal, clock, logger, 'Perch');
+    const taskLaunchRegistry = createTaskLaunchRegistry({ journal });
+    taskLaunchRegistry.seed(initialBootRecovery.taskLaunches);
 
     const mcpInstances = createMcpServerInstances(mcpShared, { role: 'perch', emailServerFactory });
     const sessionMcpServers: SessionMcpServers = {
@@ -479,15 +550,31 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
 
     /**
+     * R2: the construction-time {@link initialBootRecovery} read, consumed exactly once by
+     * {@link buildBootBundleText}'s first call (the process's initial SessionStart) so a perch
+     * process start issues one 24h journal read rather than two; cleared immediately after, so a
+     * later SessionStart (a resume long afterward, or a compaction) re-reads the journal fresh
+     * rather than replaying stale recovery data.
+     */
+    let pendingBootRecovery: { lostTasks: string[], undelivered: string[] } | undefined = {
+        lostTasks: initialBootRecovery.lostTasks, undelivered: initialBootRecovery.undelivered,
+    };
+
+    /**
      * Maps the SessionStart `source` onto a {@link BootKind} (R1) and re-derives crash recovery
      * from the perch journal (see {@link loadBootRecovery}), feeding it, alongside the ledger's
      * own live task descriptions, into the perch boot-bundle variant. Never rejects: a
      * `readSince` failure degrades to an empty recovery section rather than blocking the
-     * boot-bundle hook.
+     * boot-bundle hook. The FIRST call reuses {@link pendingBootRecovery} instead of reading again
+     * (R2) — see that field's own doc.
      */
     async function buildBootBundleText(source: BootStartSource): Promise<string> {
         const kind = bootKindFromSource(source);
-        const { lostTasks, undelivered } = await loadBootRecovery(journal, clock, logger, 'Perch');
+        // Consumed (read then cleared) before the `await` below — never across it — so two
+        // overlapping calls cannot race on a stale read of `pendingBootRecovery`.
+        const cachedBootRecovery = pendingBootRecovery;
+        pendingBootRecovery = undefined;
+        const { lostTasks, undelivered } = cachedBootRecovery ?? await loadBootRecovery(journal, clock, logger, 'Perch');
 
         return bootBundleBuilder.build({
             kind,
@@ -519,11 +606,36 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         },
     };
 
+    // R2: see createConversationConductor's identical comment for why this pass-through exists.
+    const taskLaunchConductor: Pick<Conductor, 'status' | 'adoptWakeTurn'> = {
+        // Stryker disable next-line ObjectLiteral,OptionalChaining,StringLiteral,BooleanLiteral: the `?? {...}` fallback is unreachable by construction — see createConversationConductor's identical comment/disable above: conductorRef is assigned synchronously below with no `await` in between, and no hook can fire before that assignment completes.
+        status:        () => conductorRef?.status() ?? { role: 'perch', sessionId: undefined, opened: false, shuttingDown: false, queueLength: 0, turn: null },
+        adoptWakeTurn: (input) => { conductorRef?.adoptWakeTurn(input); },
+    };
+
+    // R2: late-bound the same way as createConversationConductor's own onWakeTurnSettled, with
+    // one difference (the Q12 perch decision, see PerchConductorResult.setWakeTurnDelivery's own
+    // doc): the envelope handed to `fn` always has `kind` rewritten to `'perch'`, so it routes to
+    // the well-known perch-time channel via ResponseRouter's existing mapping regardless of
+    // whether the launch record carried a channelId (a perch envelope never has one).
+    let wakeTurnDelivery: ((envelope: Envelope, result: TurnResult) => Promise<void>) | undefined;
+    async function onWakeTurnSettled(envelope: Envelope, result: TurnResult): Promise<void> {
+        if(wakeTurnDelivery === undefined) {
+            logger.warn({ envelopeId: envelope.id }, 'wake turn settled before delivery was attached');
+            return;
+        }
+        await wakeTurnDelivery({ ...envelope, kind: 'perch' }, result);
+    }
+    function setWakeTurnDelivery(fn: (envelope: Envelope, result: TurnResult) => Promise<void>): void {
+        wakeTurnDelivery = fn;
+    }
+
     const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = mergeHookMaps(
         createBootBundleHooks(async source => buildBootBundleText(source)),
         createCompactionHooks(compactionSink),
         createSessionLifecycleHooks({}),
-        createTaskTrackingHooks()
+        createTaskTrackingHooks(),
+        createTaskLaunchHooks({ registry: taskLaunchRegistry, conductor: taskLaunchConductor, logger, clock })
     );
 
     function buildOptions(resume?: string): Options {
@@ -545,17 +657,19 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     const retryPolicy = loadRetryConfig().claude;
 
     const conductor = createConductor({
-        role:    'perch',
+        role:         'perch',
         queryFn,
         buildOptions,
         clock,
-        readRss: () => process.memoryUsage().rss,
+        readRss:      () => process.memoryUsage().rss,
         ledgerStore,
         config,
         retryPolicy,
         journal,
         resumeStore,
         logger,
+        taskLaunches: taskLaunchRegistry,
+        onWakeTurnSettled,
     });
     conductorRef = conductor;
 
@@ -571,6 +685,6 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     });
 
     return {
-        conductor, ledgerStore, compactionTelemetry,
+        conductor, ledgerStore, compactionTelemetry, setWakeTurnDelivery,
     };
 }

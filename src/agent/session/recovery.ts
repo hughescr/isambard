@@ -41,8 +41,14 @@ export interface RecoveryResult {
     lastOpenWasFallback:  boolean
 }
 
-/** Envelope kinds whose finished-but-unconfirmed turns are worth replaying to a human. Every other kind (perch, notification, wrapup, resume, compact, boot) never counts as undelivered. */
-const REPLAYABLE_ENVELOPE_KINDS: ReadonlySet<EnvelopeKind> = new Set<EnvelopeKind>(['discord', 'catchup']);
+/**
+ * Envelope kinds whose finished-but-unconfirmed turns are worth replaying to a human. `task`
+ * (R2) is included: an adopted background-work wake turn that finished but was never confirmed
+ * delivered — most likely a crash between `turn_completed` and the reply reaching Discord — is
+ * exactly the kind of silently-lost reply this recovery path exists to catch. Every other kind
+ * (perch, notification, wrapup, resume, compact, boot) never counts as undelivered.
+ */
+const REPLAYABLE_ENVELOPE_KINDS: ReadonlySet<EnvelopeKind> = new Set<EnvelopeKind>(['discord', 'catchup', 'task']);
 
 /** Running tallies {@link computeRecovery} folds one journal entry at a time into, via {@link applyTaskEntry}/{@link applyEnvelopeEntry}/{@link applySessionEntry}. */
 interface RecoveryAccumulator {
@@ -153,4 +159,15 @@ export function lastKnownAt(entries: readonly JournalEntry[]): Date | undefined 
         }
     }
     return latest;
+}
+
+/**
+ * Every `task_launched` row in `entries`, in the given order (R2) — the boot-time seed for
+ * {@link import('./task-launch-registry').TaskLaunchRegistry.seed}, so a launch made just before
+ * a crash still resolves its channel/author if the wake arrives after restart.
+ * @param entries Journal entries, in any order
+ * @returns The `task_launched` entries, in the order they appear in `entries`
+ */
+export function taskLaunchEntries(entries: readonly JournalEntry[]): Extract<JournalEntry, { type: 'task_launched' }>[] {
+    return entries.filter((entry): entry is Extract<JournalEntry, { type: 'task_launched' }> => entry.type === 'task_launched');
 }

@@ -164,7 +164,10 @@ describe('createNotificationBridge', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(logger.warn).toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ err: expect.any(Error), source: 'test-source', dedupeKey: 'reject-key' }),
+            'Failed to submit wake notification'
+        );
     });
 
     test('a throwing conductor.appendWithoutTurn is caught and logged, never thrown out of notify()', () => {
@@ -256,5 +259,88 @@ describe('createNotificationBridge', () => {
 
         expect(delivered).toBe(true);
         expect(conductor.appendWithoutTurn).toHaveBeenCalledTimes(1);
+    });
+
+    describe('attachReplyDelivery() (R2)', () => {
+        function turnResult(overrides: Partial<TurnResult> = {}): TurnResult {
+            return {
+                envelopeId: 'env-1', response: 'a reply', wasInterrupted: false, partialWork: {} as TurnResult['partialWork'], sessionId: 'sess-1', isError: false, contextUsagePercent: 0, ...overrides,
+            };
+        }
+
+        test('is called with the envelope and result once a wake submit() resolves with a non-null response and no outcome', async () => {
+            const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
+            bridge.attachReplyDelivery(delivery);
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'the reply' })));
+
+            bridge.notify(baseParams({ wake: true, dedupeKey: 'reply-key' }));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(delivery).toHaveBeenCalledTimes(1);
+            const [envelope, result] = delivery.mock.calls[0];
+            expect(envelope.hostPriority).toBe('wake');
+            expect(result.response).toBe('the reply');
+        });
+
+        test('is not called when the resolved response is null', async () => {
+            const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
+            bridge.attachReplyDelivery(delivery);
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: null })));
+
+            bridge.notify(baseParams({ wake: true, dedupeKey: 'null-response-key' }));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(delivery).not.toHaveBeenCalled();
+        });
+
+        test('is not called when the result carries an outcome (withdrawn/interrupted)', async () => {
+            const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
+            bridge.attachReplyDelivery(delivery);
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'a reply', outcome: 'interrupted' })));
+
+            bridge.notify(baseParams({ wake: true, dedupeKey: 'interrupted-key' }));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(delivery).not.toHaveBeenCalled();
+        });
+
+        test('is never called for a wake:false notify() (the appendWithoutTurn path has no TurnResult to deliver)', () => {
+            const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.resolve());
+            bridge.attachReplyDelivery(delivery);
+
+            bridge.notify(baseParams({ wake: false, dedupeKey: 'accumulate-key-2' }));
+
+            expect(delivery).not.toHaveBeenCalled();
+        });
+
+        test('a rejecting delivery is caught and logged, and never affects notify()\'s own synchronous return', async () => {
+            const delivery = mock((_envelope: Envelope, _result: TurnResult) => Promise.reject(new Error('delivery failed')));
+            bridge.attachReplyDelivery(delivery);
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'a reply' })));
+
+            const delivered = bridge.notify(baseParams({ wake: true, dedupeKey: 'delivery-fails-key' }));
+            expect(delivered).toBe(true);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(logger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ err: expect.any(Error), source: 'test-source', dedupeKey: 'delivery-fails-key' }),
+                'Failed to deliver a wake notification\'s reply'
+            );
+        });
+
+        test('with no delivery attached, a resolved wake submit() with a real response does not throw', async () => {
+            conductor.submit.mockImplementationOnce(() => Promise.resolve(turnResult({ response: 'a reply' })));
+
+            expect(() => {
+                bridge.notify(baseParams({ wake: true, dedupeKey: 'no-delivery-key' }));
+            }).not.toThrow();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
     });
 });

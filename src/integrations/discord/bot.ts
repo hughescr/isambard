@@ -26,8 +26,9 @@ import type { EmailSetupResult } from './setup/email-setup';
 import { setupMessageProcessing, initializeChannelRegistry, setupChannelCleanupHandlers } from './setup/event-handler-setup';
 import { setupPerchDriverAndScheduler } from './setup/perch-setup';
 import { setupConductorPresence } from './setup/presence-setup';
+import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { createChannelId, createUserId, type ChannelId } from './types';
-import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn  } from '@/agent';
+import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type Envelope, type TurnResult  } from '@/agent';
 import type { DiscordConfig } from '@/config';
 import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
@@ -201,6 +202,32 @@ export interface DiscordBotOptions {
     notify?: NotifyFn
 
     /**
+     * R2: the shared notification bridge (see `agent/session/notification-bridge.ts`), threaded in
+     * from `src/index.ts` so `clientReady` can call `attachReplyDelivery` once it has built a
+     * Discord-backed wake-turn delivery function for the conversation conductor (the same one
+     * threaded into `setWakeTurnDelivery` below) — a host-notification reply then routes to the
+     * fallback channel instead of being silently discarded. Optional: `bot.test.ts` covers it
+     * absent, in which case a wake `notify()`'s reply is simply never delivered (unchanged from
+     * before this package).
+     */
+    notificationBridge?: Pick<NotificationBridge, 'attachReplyDelivery'>
+
+    /**
+     * R2: late-binds the conversation conductor's background-work wake-turn delivery function
+     * (`createConversationConductor`'s own `setWakeTurnDelivery` — see its doc) once `clientReady`
+     * has built the `responseRouter`/`rateLimiter` a delivery function needs. Optional: omitted in
+     * conductor-less tests and whenever `conversationConductor` itself is absent.
+     */
+    setWakeTurnDelivery?: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
+
+    /**
+     * R2: the perch conductor's own equivalent of {@link setWakeTurnDelivery} — a SEPARATE
+     * delivery function bound to `perchConductor` (a different `Conductor.deliver` target), only
+     * built/attached when `perchConductor` is present.
+     */
+    setPerchWakeTurnDelivery?: (fn: (envelope: Envelope, result: TurnResult) => Promise<void>) => void
+
+    /**
      * Optional write-through identity cache.
      * When provided, idle status generation uses the cache instead of the inline
      * TTL-based loader.  Invalidate this cache from the memory-tool write path
@@ -351,7 +378,7 @@ export interface DiscordBot {
  * ```
  */
 export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
-    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, bootEventsWindowMs, bootLostTasks, clock: providedClock } = options;
+    const { config, identityContext, client: providedClient, inboxManager, channelRegistry, contextBuilder, emailSetup, bskySetup, allowlistHandler, allowlistInteractionHandler, calendarHandler, contactHandler, contactApprovalHandler, activityLogger, healthRegistry, discordCapability, identityCache, conversationConductor, ledgerStore, contextPolicy, journal, perchConductor, perchLedgerStore, perchJournal, shutdownTurnWaitMs, shutdownDeadlineMs, bootEventsWindowMs, bootLostTasks, clock: providedClock, notificationBridge, setWakeTurnDelivery, setPerchWakeTurnDelivery } = options;
     // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process actually terminates on a failed conductor open; see the option's own doc
     const exit: (code: number) => void = options.exit ?? (code => process.exit(code));
     const clock: Clock = providedClock ?? systemClock;
@@ -739,6 +766,28 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             // Captured for triggerCatchUp's own use, which runs outside clientReady's own scope
             // (see the outer `let responseRouterRef` declaration).
             responseRouterRef = responseRouter;
+
+            // R2: build the Discord-backed wake-turn delivery function(s) now that
+            // responseRouter/readyClient/rateLimiter exist, and late-bind them into whichever
+            // conductor(s) were actually built — see `DiscordBotOptions.setWakeTurnDelivery`'s own
+            // doc for why this cannot happen at conductor-construction time. The conversation
+            // conductor's own delivery function doubles as the notification bridge's reply
+            // delivery (both a settled `task`-kind wake turn and a settled `notification`-kind
+            // bridge reply are delivered identically once each has an origin channel or falls back
+            // — see `wake-delivery.ts`'s own module doc).
+            if(conversationConductor) {
+                const conversationWakeDelivery = createWakeTurnDelivery({
+                    conductor: conversationConductor, responseRouter, client: readyClient, rateLimiter, discordCapability, logger,
+                });
+                setWakeTurnDelivery?.(conversationWakeDelivery);
+                notificationBridge?.attachReplyDelivery(conversationWakeDelivery);
+            }
+            if(perchConductor) {
+                const perchWakeDelivery = createWakeTurnDelivery({
+                    conductor: perchConductor, responseRouter, client: readyClient, rateLimiter, discordCapability, logger,
+                });
+                setPerchWakeTurnDelivery?.(perchWakeDelivery);
+            }
 
             // Initialize channel registry BEFORE setting up message handlers.
             // startHydration() fires the reconnection loop asynchronously — do not await.
