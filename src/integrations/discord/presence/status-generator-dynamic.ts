@@ -19,7 +19,8 @@ export interface DynamicStatusGenerator {
      * Generate a contextual status synopsis for the current activity.
      *
      * @param context - The current activity context
-     * @returns Promise resolving to a status string (max 40 chars), or null if a Haiku call is in-flight or failed
+     * @returns Promise resolving to a status string (max 40 chars), or null if a Haiku call is
+     * in-flight, failed, or returned something that is not a status line (see {@link rejectSynopsis})
      */
     generateSynopsis(context: SynopsisContext): Promise<string | null>
 }
@@ -31,6 +32,16 @@ interface DynamicStatusGeneratorDeps {
     /** Context about the assistant's identity for personalized status */
     identityContext: string
 }
+
+/**
+ * The line every user prompt ends with, always present.
+ *
+ * Without an ask at the end, the prompt is a document of `##` sections and nothing else, so Haiku
+ * commented on it instead of answering it ("Looking at what's happening here: Craig is asking me
+ * to...", "I need to capture what's actually happening in this moment for Izzy."). Ending on the
+ * question is what turns the snapshot back into a request for one status line.
+ */
+const CLOSING_ASK = "Izzy's status line right now (first person, under 40 characters, nothing else):";
 
 const MAX_USER_MESSAGE_LENGTH = 200;
 const MAX_ACCUMULATED_TEXT_LENGTH = 150;
@@ -109,6 +120,19 @@ Never:
 - Describing the job of writing a status, quoting these instructions, or adding a preamble.
 - Quotation marks, markdown, emoji, or any explanation.
 
+## Examples
+Good (each is a complete answer):
+- Digging through memories for that thread...
+- Wondering whether the Goldstein cite holds
+- Three essays, one fix—where does it go?
+- Rereading my own repair plan, wincing
+
+Bad (never answer like this):
+- I need to capture what's happening for Izzy...   (narrates the job instead of doing it)
+- Looking at what's happening here: Craig is...     (commentary, third person)
+- Thinking...                                       (filler)
+- "Pondering the question"                          (quotation marks)
+
 Output only the thought.`;
 }
 
@@ -136,7 +160,8 @@ function formatToolInputSummary(toolInput: unknown): string {
  * Build the user prompt: a snapshot of the current turn as labelled `##` sections.
  *
  * Sections appear in a fixed order and are omitted entirely when they have nothing to show,
- * except "Doing right now" which always carries at least the phase label.
+ * except "Doing right now" which always carries at least the phase label. {@link CLOSING_ASK} is
+ * always the last line, whatever the sections are.
  *
  * Two deliberate tail-slices (P14b): the newest thinking and the newest reply text are what the
  * status should reflect, so both are cut from the END of the accumulated string, not the head.
@@ -193,7 +218,55 @@ function buildUserPrompt(context: SynopsisContext, previousStatus: string | null
         sections.push(`## Previous status\n${previousStatus}`);
     }
 
+    // Always last: see CLOSING_ASK. The prompt has to END on the question.
+    sections.push(CLOSING_ASK);
+
     return sections.join('\n\n');
+}
+
+/**
+ * One pair of double quotes wrapped around the whole response, straight or curly. Haiku sometimes
+ * quotes the status even though the system prompt forbids it; that is a formatting tic, not a bad
+ * status, so the quotes come off and the thought inside is kept.
+ */
+const SURROUNDING_QUOTES_PATTERN = /^["“]([\s\S]*)["”]$/;
+
+/**
+ * Openings that mean Haiku narrated the task instead of answering it. Every one of these is from
+ * the production log after the prompt rewrite ("I need to capture what's actually happening in
+ * this moment for Izzy.", "Looking at what's happening here: Craig is asking me to...").
+ */
+const META_OPENING_PATTERN = /^(?:I need to|I should|I'm generating|I'm going to write|Looking at (?:this|what)|Here's|Here is|Status:|Context:|Reading the context)/i;
+
+/** Izzy written about rather than from: the one thing the system prompt forbids most explicitly. */
+const THIRD_PERSON_PATTERN = /\b(?:Izzy|Isambard) (?:is|was|needs|wants)\b/;
+
+/**
+ * Judge a Haiku response: is this a status line, or a comment about the job of writing one?
+ *
+ * Checked in order, so the reason reported is the first thing wrong: a multiline narration is
+ * `multiline`, not `meta`. A response over the hard cap is refused outright rather than trimmed —
+ * a sentence that long is a paragraph of narration, and trimming it would cache a bad shape that
+ * the next call's "## Previous status" section would then copy.
+ *
+ * @internal Exported for direct unit testing; production reaches it through executeWithCooldown.
+ * @param text - The trimmed, quote-stripped response
+ * @returns The reason to reject, or null when the response is usable
+ */
+export function rejectSynopsis(text: string): string | null {
+    if(text.includes('\n')) {
+        return 'multiline';
+    }
+    if(text.length > HARD_MAX_STATUS_LENGTH) {
+        return 'too_long';
+    }
+    if(META_OPENING_PATTERN.test(text)) {
+        return 'meta';
+    }
+    if(THIRD_PERSON_PATTERN.test(text)) {
+        return 'third_person';
+    }
+    return null;
 }
 
 /**
@@ -215,13 +288,14 @@ interface CooldownLogContext {
 }
 
 /**
- * Executes a Haiku call with cancel-and-replace, cooldown, caching, truncation, and error handling.
+ * Executes a Haiku call with cancel-and-replace, cooldown, caching, validation, truncation, and
+ * error handling.
  *
  * @param promptBuilder - Function that builds the system and user prompts
  * @param logContext - Per-site log objects; each carries its own fields and `msg`
  * @param state - The calling instance's own cooldown/cache/in-flight-controller state (P14: no
  * longer module-level — see this file's own top-of-file doc note).
- * @returns Promise resolving to a status string, or null if on cooldown or error
+ * @returns Promise resolving to a status string, or null on error or a rejected response
  */
 async function executeWithCooldown(
     promptBuilder: () => { systemPrompt: string | string[], userPrompt: string },
@@ -256,7 +330,18 @@ async function executeWithCooldown(
         // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
         const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true, abortController: controller });
         // Stryker disable next-line MethodExpression: trim() is defensive — generateTextWithSystemPrompt() already returns trimmed output
-        const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
+        const candidate = text.trim().replace(SURROUNDING_QUOTES_PATTERN, '$1');
+
+        // Refuse narration rather than caching it: a bad status that reaches state.cachedStatus is
+        // shown to the user AND fed back as "## Previous status" on the next call, which taught the
+        // model that narration was the expected shape.
+        const reason = rejectSynopsis(candidate);
+        if(reason) {
+            logger.warn({ rejectedText: candidate, reason, ...logContext.failure, msg: 'Rejected synopsis' });
+            return null;
+        }
+
+        const statusText = truncateToWordBoundary(candidate, HARD_MAX_STATUS_LENGTH);
 
         // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
         if(!statusText) {

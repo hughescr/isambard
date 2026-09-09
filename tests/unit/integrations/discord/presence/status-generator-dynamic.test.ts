@@ -3,10 +3,17 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../../../setup';
 import {
     createDynamicStatusGenerator,
+    rejectSynopsis,
     truncateToWordBoundary,
     HARD_MAX_STATUS_LENGTH
 } from '@/integrations/discord/presence/status-generator-dynamic';
 import type { SynopsisContext } from '@/integrations/discord/presence/types';
+
+/**
+ * The line every user prompt has to end with. Without an ask at the end, the `##` sections read
+ * as a document to comment on and Haiku narrates the task instead of answering it.
+ */
+const CLOSING_ASK = "Izzy's status line right now (first person, under 40 characters, nothing else):";
 
 describe('truncateToWordBoundary', () => {
     describe('text within maxLength', () => {
@@ -101,6 +108,122 @@ describe('truncateToWordBoundary', () => {
     describe('HARD_MAX_STATUS_LENGTH constant', () => {
         it('should be 80', () => {
             expect(HARD_MAX_STATUS_LENGTH).toBe(80);
+        });
+    });
+});
+
+describe('rejectSynopsis', () => {
+    describe('accepted responses', () => {
+        it.each([
+            'Digging through memories for that thread...',
+            'Wondering whether the Goldstein cite holds',
+            'Three essays, one fix—where does it go?',
+            'Rereading my own repair plan, wincing',
+        ])('should accept the status line %s', (text) => {
+            expect(rejectSynopsis(text)).toBeNull();
+        });
+
+        it('should accept a meta phrase that is not at the START of the line', () => {
+            // Kills the ^-anchor mutant: without the anchor this legitimate thought is refused.
+            const text = 'Digging for what I need to fix 9x7z';
+            expect(text).toContain('I need to');
+            expect(rejectSynopsis(text)).toBeNull();
+        });
+
+        it('should accept naming Izzy without a third-person verb after it', () => {
+            expect(rejectSynopsis('Izzy and Craig, mid-repair 9x7z')).toBeNull();
+        });
+
+        it('should accept an empty string (the empty-response path handles it)', () => {
+            expect(rejectSynopsis('')).toBeNull();
+        });
+    });
+
+    describe('multiline', () => {
+        it('should reject a response containing a newline', () => {
+            expect(rejectSynopsis('Rereading the plan 9x7z\nContext: the repair')).toBe('multiline');
+        });
+
+        it('should reject multiline BEFORE any other reason', () => {
+            // Straight from the production log: also meta, also over 80 chars. `multiline` wins.
+            const text = "I need to capture what's actually happening in this moment for Izzy.\n\nContext: Craig asked";
+            expect(text.length).toBeGreaterThan(HARD_MAX_STATUS_LENGTH);
+            expect(rejectSynopsis(text)).toBe('multiline');
+        });
+    });
+
+    describe('too_long', () => {
+        it('should accept a response of exactly 80 characters', () => {
+            const text = `Wondering whether the cite holds up 9x7z${'.'.repeat(40)}`;
+            expect(text).toHaveLength(80);
+            expect(rejectSynopsis(text)).toBeNull();
+        });
+
+        it('should reject a response of 81 characters', () => {
+            const text = `Wondering whether the cite holds up 9x7z${'.'.repeat(41)}`;
+            expect(text).toHaveLength(81);
+            expect(rejectSynopsis(text)).toBe('too_long');
+        });
+
+        it('should reject on length BEFORE the meta check', () => {
+            // Straight from the production log: also meta. `too_long` is checked first.
+            const text = "Looking at what's happening here: Craig is asking me to take another pass at the prompt";
+            expect(text.length).toBeGreaterThan(HARD_MAX_STATUS_LENGTH);
+            expect(rejectSynopsis(text)).toBe('too_long');
+        });
+    });
+
+    describe('meta', () => {
+        it.each([
+            'I need to capture what is happening',
+            'I should describe the current moment',
+            "I'm generating a status line now",
+            "I'm going to write the status line",
+            'Looking at this snapshot of the turn',
+            "Looking at what's happening here",
+            "Here's the status line you asked for",
+            'Here is the status line',
+            'Status: reading the config file',
+            'Context: Craig asked about the cite',
+            'Reading the context you handed me',
+        ])('should reject the narration %s', (text) => {
+            expect(text.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
+            expect(rejectSynopsis(text)).toBe('meta');
+        });
+
+        it('should match the meta openings case-insensitively', () => {
+            expect(rejectSynopsis('i need to capture what is happening')).toBe('meta');
+        });
+
+        it('should reject meta BEFORE third person', () => {
+            const text = 'I need to say Izzy is busy 9x7z';
+            expect(rejectSynopsis(text)).toBe('meta');
+        });
+
+        it('should not reject a line that merely starts with a similar word', () => {
+            expect(rejectSynopsis('Herewith the config, reread 9x7z')).toBeNull();
+            expect(rejectSynopsis('Reading the config, not the plan')).toBeNull();
+        });
+    });
+
+    describe('third_person', () => {
+        it.each([
+            'Izzy is deep in the config 9x7z',
+            'Izzy was rereading the plan 9x7z',
+            'Izzy needs a moment with the cite',
+            'Izzy wants the other repair plan',
+            'Isambard is chasing the hunch 9x7z',
+        ])('should reject the third-person line %s', (text) => {
+            expect(rejectSynopsis(text)).toBe('third_person');
+        });
+
+        it('should require a word boundary after the verb', () => {
+            // "island" is not "is": the trailing \b keeps this from being read as third person.
+            expect(rejectSynopsis('Izzy island, Craig mainland')).toBeNull();
+        });
+
+        it('should require a word boundary before the name', () => {
+            expect(rejectSynopsis('McIzzy is not a name 9x7z')).toBeNull();
         });
     });
 });
@@ -222,6 +345,37 @@ describe('DynamicStatusGenerator', () => {
                 expect(system).toContain('Output only the thought.');
             });
 
+            it('should show good and bad output examples, after the Never list and before the output rule', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain('## Examples');
+                expect(system).toContain('Good (each is a complete answer):');
+                expect(system).toContain('- Digging through memories for that thread...');
+                expect(system).toContain('- Wondering whether the Goldstein cite holds');
+                expect(system).toContain('- Three essays, one fix—where does it go?');
+                expect(system).toContain('- Rereading my own repair plan, wincing');
+                expect(system).toContain('Bad (never answer like this):');
+                expect(system).toContain("- I need to capture what's happening for Izzy...");
+                expect(system).toContain('narrates the job instead of doing it');
+                expect(system).toContain("- Looking at what's happening here: Craig is...");
+                expect(system).toContain('commentary, third person');
+                expect(system).toContain('- Thinking...');
+                expect(system).toContain('filler');
+                expect(system).toContain('- "Pondering the question"');
+                expect(system).toContain('quotation marks');
+
+                // Position, not just presence: the examples land between the Never list and the
+                // closing output rule.
+                expect(system.indexOf('## Examples')).toBeGreaterThan(system.indexOf('Quotation marks, markdown, emoji, or any explanation.'));
+                expect(system.indexOf('## Examples')).toBeLessThan(system.indexOf('Output only the thought.'));
+                expect(system).toEndWith('Output only the thought.');
+            });
+
             it('should keep the instructions out of the user prompt (system and user are sent separately)', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Identity 9x7z',
@@ -303,6 +457,8 @@ describe('DynamicStatusGenerator', () => {
                     '',
                     '## Background work',
                     'Scout is scanning docs.',
+                    '',
+                    CLOSING_ASK,
                 ].join('\n'));
             });
 
@@ -337,6 +493,8 @@ describe('DynamicStatusGenerator', () => {
                     '',
                     '## Previous status',
                     'Chasing a hunch 9x7z',
+                    '',
+                    CLOSING_ASK,
                 ].join('\n'));
             });
 
@@ -353,7 +511,7 @@ describe('DynamicStatusGenerator', () => {
                 await generator.generateSynopsis(context);
 
                 const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
-                expect(user).toBe('## Doing right now\nPhase: Just received the question, starting to think');
+                expect(user).toBe(`## Doing right now\nPhase: Just received the question, starting to think\n\n${CLOSING_ASK}`);
             });
 
             it('should keep sections in the fixed order even when the middle ones are missing', async () => {
@@ -383,7 +541,35 @@ describe('DynamicStatusGenerator', () => {
                     '',
                     '## Background work',
                     'Sub 9x7z',
+                    '',
+                    CLOSING_ASK,
                 ].join('\n'));
+            });
+        });
+
+        describe('prompt construction - the closing ask', () => {
+            // Without a question at the end, the sections read as a document to comment on, and
+            // Haiku answers with narration ("Looking at what's happening here: Craig is...").
+            it.each<SynopsisContext['phase']>(['thinking', 'using_tool', 'responding'])('should end the %s user prompt with the ask', async (phase) => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({
+                    phase,
+                    userMessage:     'Where is the config?',
+                    toolName:        'Read',
+                    thinkingContent: 'Maybe under src/config 9x7z',
+                    accumulatedText: 'Let me look 9x7z',
+                    recentToolCalls: ['Grep'],
+                    subagentSummary: 'Scout is scanning docs 9x7z',
+                });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toEndWith(`\n\n${CLOSING_ASK}`);
+                // Once, and only as the tail — never spliced in among the sections.
+                expect(user.indexOf(CLOSING_ASK)).toBe(user.lastIndexOf(CLOSING_ASK));
+                expect(user).toContain('Scout is scanning docs 9x7z');
             });
         });
 
@@ -1082,22 +1268,163 @@ describe('DynamicStatusGenerator', () => {
         });
 
         describe('output handling', () => {
-            it('should truncate output to HARD_MAX_STATUS_LENGTH (80 characters)', async () => {
-                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('This is a very long status message that exceeds eighty characters and keeps going on and on and on'));
+            it('should keep a response of exactly HARD_MAX_STATUS_LENGTH (80) characters', async () => {
+                const text = `Wondering whether the cite holds up 9x7z${'.'.repeat(40)}`;
+                expect(text).toHaveLength(HARD_MAX_STATUS_LENGTH);
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test',
-                };
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
-                const result = await generator.generateSynopsis(context);
-
-                expect(result).not.toBeNull();
+                expect(result).toBe(text);
                 expect(result!.length).toBeLessThanOrEqual(HARD_MAX_STATUS_LENGTH);
+            });
+
+            it('should reject a response one character over the cap instead of truncating it', async () => {
+                const text = `Wondering whether the cite holds up 9x7z${'.'.repeat(41)}`;
+                expect(text).toHaveLength(HARD_MAX_STATUS_LENGTH + 1);
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBeNull();
+            });
+
+            it('should reject a multiline response', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Rereading the plan 9x7z\nContext: the repair'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBeNull();
+            });
+
+            it('should reject a narration of the task', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve("I need to capture what's happening 9x7z"));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBeNull();
+            });
+
+            it('should reject a third-person response', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Izzy is deep in the config 9x7z'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBeNull();
+            });
+
+            it.each([
+                ['straight', '"Chasing a hunch 9x7z"'],
+                ['curly', '“Chasing a hunch 9x7z”'],
+            ])('should strip one pair of surrounding %s double quotes', async (_label, quoted) => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(quoted));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBe('Chasing a hunch 9x7z');
+            });
+
+            it('should leave quotes that are not a surrounding pair alone', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Wondering if "cite" holds 9x7z'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBe('Wondering if "cite" holds 9x7z');
+            });
+
+            it('should leave a status that merely ENDS with a quoted word alone', async () => {
+                // Kills the ^-anchor mutant: unanchored, this would swallow the inner quotes.
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Wondering about "the cite"'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBe('Wondering about "the cite"');
+            });
+
+            it('should leave a status that merely STARTS with a quoted word alone', async () => {
+                // Kills the $-anchor mutant: without it, the leading quoted word would be unwrapped.
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('"the cite" still holds 9x7z'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBe('"the cite" still holds 9x7z');
+            });
+
+            it('should strip the quotes BEFORE validating, so a quoted narration is still rejected', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('"I need to capture what\'s happening 9x7z"'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(result).toBeNull();
+            });
+
+            it('should leave the cached status untouched when a response is rejected', async () => {
+                const baseTime = 6_000_000;
+                setSystemTime(new Date(baseTime));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Chasing a good hunch 9x7z');
+                expect(await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' })).toBe('Chasing a good hunch 9x7z');
+
+                setSystemTime(new Date(baseTime + 2001));
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce("I need to capture what's happening 9x7z");
+                expect(await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' })).toBeNull();
+
+                // Within the rejected call's cooldown: the cache still holds the last GOOD status.
+                expect(await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' })).toBe('Chasing a good hunch 9x7z');
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
+
+                // And the next real call carries the good status forward, not the rejected text.
+                setSystemTime(new Date(baseTime + 4002));
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Rereading the repair plan 9x7z');
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[2][1];
+                expect(user).toContain('## Previous status\nChasing a good hunch 9x7z');
+                expect(user).not.toContain('I need to capture');
             });
 
             it('should trim whitespace from output', async () => {
@@ -1569,6 +1896,37 @@ describe('DynamicStatusGenerator', () => {
                     phase: 'responding',
                     msg:   'Failed to generate synopsis',
                 });
+            });
+
+            it('should log warn with the rejected text and reason when a response is refused', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('  "Izzy is deep in the config 9x7z"  '));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'responding', userMessage: 'Test' });
+
+                // The trimmed, unquoted candidate is what was judged, so it is what gets logged.
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    rejectedText: 'Izzy is deep in the config 9x7z',
+                    reason:       'third_person',
+                    phase:        'responding',
+                    msg:          'Rejected synopsis',
+                });
+                expect(mockLogger.info).not.toHaveBeenCalled();
+            });
+
+            it('should not log warn when the response is accepted', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Rereading the repair plan 9x7z'));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(mockLogger.warn).not.toHaveBeenCalled();
             });
 
             it('should log debug when cancelling a previous in-flight call', async () => {
