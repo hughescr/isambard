@@ -3,13 +3,18 @@
  *
  * Coordinates Discord presence updates and idle status refresh loops.
  * Throttling for conductor-mode ledger composition is handled upstream by
- * `presence-setup.ts`'s `setupConductorPresence` — this manager applies
- * all updates it receives.
+ * `presence-setup.ts`'s `setupConductorPresence`; this manager adds only one
+ * filter of its own — an identical-activity dedupe (see `lastAppliedActivity`).
  *
  * Update behavior:
- * - Active phases (thinking, responding, using_tool) are applied immediately
+ * - Active phases (thinking, responding, using_tool) are applied immediately, but an activity
+ *   identical (name AND type) to the last one Discord accepted is dropped rather than re-sent
  * - Idle transitions are applied immediately - they mark end of work
- * - Idle refresh loop runs independently on its own schedule
+ * - Idle refresh loop runs independently on its own schedule, and is EXEMPT from the dedupe:
+ *   it doubles as a presence keep-alive, since Discord clears a bot's activity on a fresh
+ *   IDENTIFY (not RESUME) and nothing else re-applies presence after a reconnect. The idle
+ *   line is usually identical tick to tick, so deduping it would silence the keep-alive
+ *   entirely and leave the bot showing no status until the next active phase.
  */
 
 import type { Client as DiscordClient, ActivitiesOptions } from 'discord.js';
@@ -91,24 +96,64 @@ export class PresenceManager {
     // Non-null means the idle refresh loop should render via the composed prefix, not the legacy '💤 ' default.
     private composedPrefix:      string | null = null;
     private composedCompacting = false;
+    /**
+     * The last activity Discord actually accepted (name + type), used to drop an update that
+     * would change nothing — the composition upstream can legitimately produce the same text
+     * twice (a digest bypass followed by the next ledger tick), and re-sending it spends a
+     * Discord API call to repaint the identical status. Deliberately NOT set when the apply
+     * failed, nor when there was no `client.user` to call `setActivity` on, so a retry of the
+     * same activity still goes out.
+     */
+    private lastAppliedActivity: { name: string, type: ActivitiesOptions['type'] } | null = null;
 
     constructor(private readonly deps: PresenceManagerDeps) {}
 
     /**
-     * Actually update Discord presence.
+     * Update Discord presence, unless the activity is identical (name AND type) to the last one
+     * Discord accepted. The idle refresh loop deliberately does NOT come through here — see
+     * {@link forcePresenceUpdate}.
      */
     private async applyPresenceUpdate(activity: ActivitiesOptions): Promise<void> {
+        if(this.lastAppliedActivity?.name === activity.name && this.lastAppliedActivity.type === activity.type) {
+            this.deps.logger.debug({ activity }, 'Presence unchanged, skipping update');
+            return;
+        }
+
+        await this.forcePresenceUpdate(activity);
+    }
+
+    /**
+     * Actually update Discord presence, with no dedupe: used by the idle refresh loop, whose
+     * periodic re-push is also the presence keep-alive after a gateway IDENTIFY clears the bot's
+     * activity. The idle line is usually word-for-word the same tick to tick, so it would be
+     * deduped away — leaving Discord showing nothing at all — if it went through
+     * {@link applyPresenceUpdate}. Still records `lastAppliedActivity`, so a following non-idle
+     * apply of the same text is deduped normally.
+     */
+    private async forcePresenceUpdate(activity: ActivitiesOptions): Promise<void> {
         try {
+            // `client.user` is null until the gateway READY frame lands; an apply in that window
+            // reaches nobody, so it must not be recorded as applied (which would dedupe away the
+            // first real apply afterwards). The operation reports whether it actually called
+            // setActivity.
             // Use low retry count for presence updates (not critical)
-            await withDiscordRetry(
+            const sent = await withDiscordRetry(
                 () => {
-                    this.deps.discordClient.user?.setActivity(activity);
-                    return Promise.resolve();
+                    const user = this.deps.discordClient.user;
+                    if(!user) {
+                        return Promise.resolve(false);
+                    }
+                    user.setActivity(activity);
+                    return Promise.resolve(true);
                 },
                 // Stryker disable next-line ObjectLiteral: Retry policy already tested in retry module
                 { policy: { maxAttempts: 2 } }
             );
-            this.deps.logger.info({ activity }, 'Updated Discord presence');
+            // Only an apply that actually reached Discord is remembered — see lastAppliedActivity.
+            if(sent) {
+                this.lastAppliedActivity = { name: activity.name, type: activity.type };
+                this.deps.logger.info({ activity }, 'Updated Discord presence');
+            }
         } catch (error) {
             this.deps.logger.error({ error, activity }, 'Failed to update Discord presence');
         }
@@ -190,7 +235,9 @@ export class PresenceManager {
             return;
         }
 
-        await this.applyPresenceUpdate(activity);
+        // Forced, not deduped: this periodic re-push is the presence keep-alive (see
+        // forcePresenceUpdate) and the idle line is usually identical tick to tick.
+        await this.forcePresenceUpdate(activity);
     }
 
     /**

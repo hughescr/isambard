@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import { mockGenerateText, mockLogger, originalGenerateText } from '../../../../setup';
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
+import { mockGenerateTextWithSystemPrompt, mockLogger, originalGenerateTextWithSystemPrompt } from '../../../../setup';
 import {
     createDynamicStatusGenerator,
     truncateToWordBoundary,
@@ -106,8 +107,8 @@ describe('truncateToWordBoundary', () => {
 
 describe('DynamicStatusGenerator', () => {
     beforeEach(() => {
-        mockGenerateText.mockReset();
-        mockGenerateText.mockResolvedValue('Pondering deeply...');
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockResolvedValue('Pondering deeply...');
         // Clear logger mocks - use try/catch in case another test corrupted the mock
         try {
             mockLogger.debug.mockClear();
@@ -126,295 +127,289 @@ describe('DynamicStatusGenerator', () => {
     afterEach(() => {
         // Reset system time in case any test used setSystemTime
         setSystemTime();
-        mockGenerateText.mockReset();
-        mockGenerateText.mockImplementation(originalGenerateText);
+        mockGenerateTextWithSystemPrompt.mockReset();
+        mockGenerateTextWithSystemPrompt.mockImplementation(originalGenerateTextWithSystemPrompt);
     });
 
     describe('generateSynopsis', () => {
         describe('prompt construction - system prompt', () => {
-            it('should include identity context in system prompt section', async () => {
+            it('should include the identity context verbatim', async () => {
                 const generator = createDynamicStatusGenerator({
-                    identityContext: 'I am Isambard, a curious AI who loves learning',
+                    identityContext: 'I am Isambard, a curious 9x7z owl who loves learning',
                 });
 
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Hello world',
-                };
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
-                await generator.generateSynopsis(context);
-
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('I am Isambard, a curious AI who loves learning');
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain('I am Isambard, a curious 9x7z owl who loves learning');
             });
 
-            it('should include Isambard identity framing in system prompt', async () => {
+            it('should not leave the {identityContext} placeholder in the system prompt', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Identity 9x7z',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).not.toContain('{identityContext}');
+            });
+
+            it('should state the status-line task, the 40-character cap and the first-person rule', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test',
-                };
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Who is Izzy?');
-                expect(prompt).toContain('first-person inner thought');
-                expect(prompt).toContain('max 40 characters');
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain("You write Izzy's Discord status line");
+                expect(system).toContain('at most 40 characters');
+                expect(system).toContain('First person, present tense, one line, no more than 40 characters.');
             });
 
-            it('should include guidelines about creative status generation', async () => {
+            it('should describe every labelled section the user prompt can carry', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test',
-                };
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('present participle form');
-                expect(prompt).toContain('inner monologue');
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain('"Question being answered"');
+                expect(system).toContain('"Most recent thinking"');
+                expect(system).toContain('"Doing right now"');
+                expect(system).toContain('"Recent tools"');
+                expect(system).toContain('"Background work"');
+                expect(system).toContain('"Previous status"');
+                expect(system).toContain('Weight it most.');
             });
 
-            it('should include anti-patterns to avoid', async () => {
+            it('should describe the "Doing right now" section exactly as the user prompt builds it', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test',
-                };
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
-                await generator.generateSynopsis(context);
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain('- "Doing right now": the current phase. For a tool call, also the tool, what it does, and the arguments. When any reply text has been written, also the newest part of it.');
+            });
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('NEVER output');
-                expect(prompt).toContain('"Thinking...", "Processing...", "Working..."');
+            it('should tell the model the previous status is there to be varied from', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain('- "Previous status": the thought shown last time. Write a different one.');
+            });
+
+            it('should forbid third person, filler and meta-commentary, and end with the output rule', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const system = (mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[])[0];
+                expect(system).toContain('Third person, or naming Izzy');
+                expect(system).toContain('Filler that fits any moment');
+                expect(system).toContain('Describing the job of writing a status');
+                expect(system).toContain('Quotation marks, markdown, emoji, or any explanation.');
+                expect(system).toContain('Output only the thought.');
+            });
+
+            it('should keep the instructions out of the user prompt (system and user are sent separately)', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Identity 9x7z',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain("You write Izzy's Discord status line");
+                expect(user).not.toContain('Identity 9x7z');
+            });
+
+            it('should send the system prompt as the [text, SYSTEM_PROMPT_DYNAMIC_BOUNDARY] array form for prompt caching', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Identity 9x7z',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const system = mockGenerateTextWithSystemPrompt.mock.calls[0][0] as string[];
+                expect(Array.isArray(system)).toBe(true);
+                expect(system).toHaveLength(2);
+                expect(system[0]).toContain('Identity 9x7z');
+                expect(system[1]).toBe(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+            });
+
+            it('should build the system prompt once per instance and hand the same array to every call', async () => {
+                const baseTime = 2_000_000;
+                setSystemTime(new Date(baseTime));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Identity 9x7z',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+                setSystemTime(new Date(baseTime + 2001));
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
+                expect(mockGenerateTextWithSystemPrompt.mock.calls[1][0]).toBe(mockGenerateTextWithSystemPrompt.mock.calls[0][0]);
             });
         });
 
-        describe('placeholder replacement verification', () => {
-            it('should replace {identityContext} placeholder completely', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'I am a test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).not.toContain('{identityContext}');
-                expect(prompt).toContain('I am a test identity');
-            });
-
-            it('should replace {userMessage} placeholder completely', async () => {
+        describe('prompt construction - user prompt: whole document', () => {
+            it('should emit every section, in order, separated by blank lines', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'My unique question here',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).not.toContain('{userMessage}');
-                expect(prompt).toContain('My unique question here');
-            });
-
-            it('should replace {thinkingSection} placeholder when thinkingContent is provided', async () => {
-                // This test kills the mutant that replaces '{thinkingSection}' with ""
-                // With the mutation, replace("", thinkingSection) won't find anything,
-                // leaving the literal {thinkingSection} in the prompt
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:           'thinking',
-                    userMessage:     'Test question',
-                    thinkingContent: 'Some deep thoughts about the problem',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // The placeholder should NOT be present - it should be replaced with content
-                expect(prompt).not.toContain('{thinkingSection}');
-                // And the actual thinking content should be present
-                expect(prompt).toContain('Some deep thoughts about the problem');
-            });
-
-            it('should NOT contain tool-specific placeholders in thinking phase prompt', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:           'thinking',
-                    userMessage:     'Test question',
-                    toolName:        'Read',
+                    phase:           'using_tool',
+                    userMessage:     'Where is the config?',
+                    thinkingContent: 'Maybe under src/config.',
                     toolDescription: 'Reading a file',
-                    toolInput:       { path: '/test' },
-                    accumulatedText: 'Some accumulated text',
+                    toolInput:       { path: '/src/config.ts' },
+                    accumulatedText: 'Let me look.',
+                    recentToolCalls: ['Grep', 'Read'],
+                    subagentSummary: 'Scout is scanning docs.',
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // These are using_tool placeholders that shouldn't appear in thinking template
-                expect(prompt).not.toContain('{toolDescription}');
-                expect(prompt).not.toContain('{toolInputSummary}');
-                expect(prompt).not.toContain('{accumulatedText}');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toBe([
+                    '## Question being answered',
+                    'Where is the config?',
+                    '',
+                    '## Most recent thinking',
+                    'Maybe under src/config.',
+                    '',
+                    '## Doing right now',
+                    'Phase: Using a tool',
+                    'Tool: Reading a file',
+                    'Arguments: {"path":"/src/config.ts"}',
+                    'Reply so far: Let me look.',
+                    '',
+                    '## Recent tools',
+                    'Searching file contents, Reading a file',
+                    '',
+                    '## Background work',
+                    'Scout is scanning docs.',
+                ].join('\n'));
             });
 
-            it('should NOT contain response-specific placeholders in thinking phase prompt', async () => {
+            it('should append the "Previous status" section last, after Background work', async () => {
+                const baseTime = 3_000_000;
+                setSystemTime(new Date(baseTime));
+
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const context: SynopsisContext = {
-                    phase:            'thinking',
-                    userMessage:      'Test question',
-                    responseFragment: 'Some response fragment',
-                };
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('Chasing a hunch 9x7z');
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Question 9x7z' });
 
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // This is a responding phase placeholder that shouldn't appear in thinking template
-                expect(prompt).not.toContain('{responseFragment}');
-            });
-
-            it('should NOT attempt responseFragment replacement in thinking phase', async () => {
-                // This kills the mutant: if(phase === 'responding') -> if(true)
-                // With the mutation, 'Some unique response value' WOULD appear in the prompt
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
+                setSystemTime(new Date(baseTime + 2001));
+                await generator.generateSynopsis({
+                    phase:           'responding',
+                    userMessage:     'Question 9x7z',
+                    subagentSummary: 'Sub 9x7z',
                 });
 
-                const context: SynopsisContext = {
-                    phase:            'thinking',
-                    userMessage:      'Test',
-                    responseFragment: 'Some unique response value 9x7z',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // If mutant fires (if(true)), the value would be inserted into the prompt
-                expect(prompt).not.toContain('Some unique response value 9x7z');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[1][1];
+                expect(user).toBe([
+                    '## Question being answered',
+                    'Question 9x7z',
+                    '',
+                    '## Doing right now',
+                    'Phase: Writing the reply',
+                    '',
+                    '## Background work',
+                    'Sub 9x7z',
+                    '',
+                    '## Previous status',
+                    'Chasing a hunch 9x7z',
+                ].join('\n'));
             });
 
-            it('should NOT attempt responseFragment replacement in using_tool phase', async () => {
-                // This kills the mutant: if(phase === 'responding') -> if(true)
-                // With the mutation, 'Some unique response value' WOULD appear in the prompt
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:            'using_tool',
-                    userMessage:      'Test',
-                    toolName:         'Read',
-                    responseFragment: 'Some unique response value 9x7z',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // If mutant fires (if(true)), the value would be inserted into the prompt
-                expect(prompt).not.toContain('Some unique response value 9x7z');
-            });
-
-            it('should NOT attempt tool-specific replacements in thinking phase', async () => {
-                // This kills the mutant: if(phase === 'using_tool') -> if(true)
-                // With the mutation, tool-specific values WOULD appear in the prompt
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:           'thinking',
-                    userMessage:     'Test',
-                    toolName:        'Read',
-                    toolDescription: 'Reading a unique file 9x7z',
-                    toolInput:       { path: '/test' },
-                    accumulatedText: 'Some unique accumulated text 9x7z',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // If mutant fires (if(true)), these values would be inserted into the prompt
-                expect(prompt).not.toContain('Reading a unique file 9x7z');
-                expect(prompt).not.toContain('Some unique accumulated text 9x7z');
-            });
-
-            it('should replace {toolInputSummary} placeholder completely in using_tool phase', async () => {
-                // This test kills the mutant that replaces '{toolInputSummary}' with ""
-                // With the mutation, replace(str, "", value) replaces at position 0,
-                // leaving the literal {toolInputSummary} in the prompt
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'using_tool',
-                    userMessage: 'Test question',
-                    toolName:    'Read',
-                    toolInput:   { path: '/test/file.txt' },
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // The placeholder should NOT be present - it should be replaced
-                expect(prompt).not.toContain('{toolInputSummary}');
-                // And the actual tool input should be present in the prompt
-                expect(prompt).toContain('/test/file.txt');
-            });
-        });
-
-        describe('prompt construction - thinking phase', () => {
-            it('should include user message in thinking prompt', async () => {
+            it('should emit only the "Doing right now" section when nothing else is present', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const context: SynopsisContext = {
                     phase:       'thinking',
-                    userMessage: 'What is the meaning of life?',
+                    userMessage: '',
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('What is the meaning of life?');
-                expect(prompt).toContain('You (Izzy) just received this question');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toBe('## Doing right now\nPhase: Just received the question, starting to think');
             });
 
-            it('should truncate user message to 200 characters', async () => {
+            it('should keep sections in the fixed order even when the middle ones are missing', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
-                const longMessage = 'A'.repeat(300);
+                const context: SynopsisContext = {
+                    phase:           'responding',
+                    userMessage:     'Question 9x7z',
+                    recentToolCalls: ['Read'],
+                    subagentSummary: 'Sub 9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toBe([
+                    '## Question being answered',
+                    'Question 9x7z',
+                    '',
+                    '## Doing right now',
+                    'Phase: Writing the reply',
+                    '',
+                    '## Recent tools',
+                    'Reading a file',
+                    '',
+                    '## Background work',
+                    'Sub 9x7z',
+                ].join('\n'));
+            });
+        });
+
+        describe('prompt construction - "Question being answered" section', () => {
+            it('should include the user message under its own heading', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'How do I implement authentication?',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Question being answered\nHow do I implement authentication?');
+            });
+
+            it('should truncate the user message to the first 200 characters', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const longMessage = `${'q'.repeat(200)}TAIL9x7z`;
                 const context: SynopsisContext = {
                     phase:       'thinking',
                     userMessage: longMessage,
@@ -422,143 +417,247 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('A'.repeat(200));
-                expect(prompt).not.toContain('A'.repeat(201));
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain(`## Question being answered\n${'q'.repeat(200)}\n\n## Doing right now`);
+                expect(user).not.toContain('TAIL9x7z');
             });
 
-            it('should include thinking content when provided', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:           'thinking',
-                    userMessage:     'How do I solve this?',
-                    thinkingContent: 'I need to consider the algorithm complexity first...',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Your internal thoughts so far:');
-                expect(prompt).toContain('I need to consider the algorithm complexity first...');
-            });
-
-            it('should NOT include thinking section when thinkingContent is undefined', async () => {
+            it('should omit the section entirely when the user message is empty', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const context: SynopsisContext = {
                     phase:       'thinking',
-                    userMessage: 'Test question',
+                    userMessage: '',
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).not.toContain('Your internal thoughts so far:');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Question being answered');
             });
+        });
 
-            it('should NOT include thinking section when thinkingContent is empty string', async () => {
+        describe('prompt construction - "Most recent thinking" section', () => {
+            it('should include the thinking content under its own heading', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const context: SynopsisContext = {
                     phase:           'thinking',
-                    userMessage:     'Test question',
+                    userMessage:     'Test',
+                    thinkingContent: 'The user wants authentication advice',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Most recent thinking\nThe user wants authentication advice');
+            });
+
+            it('should keep the LAST 500 characters of thinking content, not the first', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                // 628 chars: the first 128 (head marker + filler) must fall outside a 500-char tail
+                const thinkingContent = `HEADMARKER9x7z${'.'.repeat(600)}TAILMARKER9x7z`;
+                expect(thinkingContent).toHaveLength(628);
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                    thinkingContent,
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                // Exact 500-char tail: kills both "no slice at all" and "slice(+500)" mutants
+                expect(user).toContain(`## Most recent thinking\n${thinkingContent.slice(-500)}\n\n## Doing right now`);
+                expect(user).toContain('TAILMARKER9x7z');
+                expect(user).not.toContain('HEADMARKER9x7z');
+            });
+
+            it('should include short thinking content untouched', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const thinkingContent = 'x'.repeat(499);
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                    thinkingContent,
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain(`## Most recent thinking\n${thinkingContent}\n\n## Doing right now`);
+            });
+
+            it('should omit the section when thinkingContent is undefined', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Most recent thinking');
+            });
+
+            it('should omit the section when thinkingContent is an empty string', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
                     thinkingContent: '',
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).not.toContain('Your internal thoughts so far:');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Most recent thinking');
             });
 
-            it('should produce clean prompt when thinkingContent is absent (no garbage text)', async () => {
-                // This test kills the mutant that replaces the empty string fallback
-                // `? ... : ''` with `? ... : "Stryker was here!"`
-                // The prompt must not contain any garbage placeholder text
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'thinking',
-                    userMessage: 'Test question',
-                    // thinkingContent is undefined
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                // Verify no garbage from mutation survives in the prompt
-                expect(prompt).not.toContain('Stryker');
-                expect(prompt).not.toContain('Your internal thoughts so far:');
-                // The {thinkingSection} placeholder should be replaced with empty string
-                expect(prompt).not.toContain('{thinkingSection}');
-            });
-
-            it('should truncate thinking content to 500 characters', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const longThinking = 'T'.repeat(600);
-                const context: SynopsisContext = {
-                    phase:           'thinking',
-                    userMessage:     'Test',
-                    thinkingContent: longThinking,
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('T'.repeat(500));
-                expect(prompt).not.toContain('T'.repeat(501));
-            });
-        });
-
-        describe('prompt construction - using_tool phase', () => {
-            it('should include tool description when provided', async () => {
+            it('should include the newest thinking in the using_tool phase', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const context: SynopsisContext = {
                     phase:           'using_tool',
-                    userMessage:     'Search for something',
+                    userMessage:     'Test',
+                    toolName:        'Read',
+                    thinkingContent: 'Checking the config file 9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Most recent thinking\nChecking the config file 9x7z');
+            });
+
+            it('should include the newest thinking in the responding phase', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'responding',
+                    userMessage:     'Test',
+                    thinkingContent: 'Wording the answer 9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Most recent thinking\nWording the answer 9x7z');
+            });
+        });
+
+        describe('prompt construction - "Doing right now" section', () => {
+            it('should label the turn\'s very first thinking synopsis as just-received', async () => {
+                // Built from the user message alone: no thinking has streamed and no tool has run.
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Doing right now\nPhase: Just received the question, starting to think');
+            });
+
+            it('should label a thinking phase that already has thinking content as mid-turn', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test', thinkingContent: 'Weighing options 9x7z' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Phase: Thinking about the next step');
+                expect(user).not.toContain('Just received the question');
+            });
+
+            it('should label a thinking phase that already has tool history as mid-turn', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test', recentToolCalls: ['Read'] });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Phase: Thinking about the next step');
+                expect(user).not.toContain('Just received the question');
+            });
+
+            it('should treat an empty recentToolCalls array as no tool history yet', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test', recentToolCalls: [] });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Phase: Just received the question, starting to think');
+            });
+
+            it('should label the using_tool phase', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'using_tool', userMessage: 'Test', toolName: 'Read' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Doing right now\nPhase: Using a tool');
+            });
+
+            it('should label the responding phase', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'responding', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Doing right now\nPhase: Writing the reply');
+            });
+
+            it('should include the tool description and arguments for using_tool', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'using_tool',
+                    userMessage:     'Test',
                     toolName:        'mcp__memory__search',
-                    toolDescription: 'Searching through memories',
+                    toolDescription: 'Searching through memories 9x7z',
+                    toolInput:       { query: 'auth' },
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Tool: Searching through memories');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Phase: Using a tool\nTool: Searching through memories 9x7z\nArguments: {"query":"auth"}');
             });
 
-            it('should look up tool description from ToolDescriptions when not provided', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'using_tool',
-                    userMessage: 'Search for something',
-                    toolName:    'Read',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Tool: Reading a file');
-            });
-
-            it('should fall back to toolName when no description available', async () => {
+            it('should look up the tool description from ToolDescriptions when none is provided', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -566,16 +665,33 @@ describe('DynamicStatusGenerator', () => {
                 const context: SynopsisContext = {
                     phase:       'using_tool',
                     userMessage: 'Test',
-                    toolName:    'unknown_custom_tool',
+                    toolName:    'mcp__memory__search',
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Tool: unknown_custom_tool');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Tool: Searching through memories\n');
             });
 
-            it('should use "unknown tool" when no toolName provided', async () => {
+            it('should fall back to the raw tool name when no description is known', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'using_tool',
+                    userMessage: 'Test',
+                    toolName:    'unknown_tool_9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Tool: unknown_tool_9x7z\n');
+            });
+
+            it('should fall back to "unknown tool" when no tool name is provided', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -587,55 +703,11 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Tool: unknown tool');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Tool: unknown tool\n');
             });
 
-            it('should include tool input as JSON summary', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:       'using_tool',
-                    userMessage: 'Test',
-                    toolName:    'Read',
-                    toolInput:   { path: '/memories/identity/core.md' },
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('What you\'re asking the tool:');
-                expect(prompt).toContain('/memories/identity/core.md');
-            });
-
-            it('should truncate long tool input', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const longInput = { data: 'x'.repeat(300) };
-                const context: SynopsisContext = {
-                    phase:       'using_tool',
-                    userMessage: 'Test',
-                    toolName:    'Read',
-                    toolInput:   longInput,
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                const fullJson = JSON.stringify(longInput);
-                const truncatedJson = `${fullJson.slice(0, 200)}...`;
-
-                // Verify the truncated form is present
-                expect(prompt).toContain(truncatedJson);
-                // Verify the full JSON is NOT present (kills mutant that replaces condition with `true`)
-                expect(prompt).not.toContain(fullJson);
-            });
-
-            it('should show (no input) when tool input is undefined', async () => {
+            it('should show "(no input)" when the tool input is undefined', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -648,11 +720,11 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('(no input)');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Arguments: (no input)');
             });
 
-            it('should show (no input) when tool input is null', async () => {
+            it('should show "(no input)" when the tool input is null', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -666,50 +738,11 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('(no input)');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Arguments: (no input)');
             });
 
-            it('should include accumulated text in using_tool prompt', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const context: SynopsisContext = {
-                    phase:           'using_tool',
-                    userMessage:     'Test',
-                    toolName:        'Read',
-                    accumulatedText: 'I was just thinking about how to approach this...',
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Your recent thoughts:');
-                expect(prompt).toContain('I was just thinking about how to approach this...');
-            });
-
-            it('should truncate accumulated text to 150 characters', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const longText = 'Y'.repeat(200);
-                const context: SynopsisContext = {
-                    phase:           'using_tool',
-                    userMessage:     'Test',
-                    toolName:        'Read',
-                    accumulatedText: longText,
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Y'.repeat(150));
-                expect(prompt).not.toContain('Y'.repeat(151));
-            });
-
-            it('should handle missing accumulated text gracefully', async () => {
+            it('should truncate long tool input to 200 characters plus an ellipsis', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -718,56 +751,76 @@ describe('DynamicStatusGenerator', () => {
                     phase:       'using_tool',
                     userMessage: 'Test',
                     toolName:    'Read',
-                    // accumulatedText is undefined
+                    toolInput:   { data: 'y'.repeat(300) },
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Your recent thoughts: ""');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                const json = JSON.stringify({ data: 'y'.repeat(300) });
+                expect(user).toContain(`Arguments: ${json.slice(0, 200)}...`);
+                expect(user).not.toContain(json);
+            });
+
+            it('should NOT emit Tool or Arguments lines outside the using_tool phase', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                    toolName:    'Read',
+                    toolInput:   { path: '/tmp/x' },
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('Tool:');
+                expect(user).not.toContain('Arguments:');
             });
         });
 
-        describe('prompt construction - responding phase', () => {
-            it('should include response fragment in responding prompt', async () => {
+        describe('prompt construction - "Reply so far" line', () => {
+            it('should keep the LAST 150 characters of accumulated text, not the first', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const accumulatedText = `HEADACC9x7z${'a'.repeat(200)}TAILACC9x7z`;
+                const context: SynopsisContext = {
+                    phase:       'responding',
+                    userMessage: 'Test',
+                    accumulatedText,
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain(`Reply so far: ${accumulatedText.slice(-150)}`);
+                expect(user).toContain('TAILACC9x7z');
+                expect(user).not.toContain('HEADACC9x7z');
+            });
+
+            it('should include short accumulated text untouched', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
 
                 const context: SynopsisContext = {
-                    phase:            'responding',
-                    userMessage:      'How do I fix this bug?',
-                    responseFragment: 'The issue seems to be related to the async handling...',
+                    phase:           'responding',
+                    userMessage:     'Test',
+                    accumulatedText: 'Half a sentence so far 9x7z',
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('You (Izzy) are composing a response');
-                expect(prompt).toContain("What you're writing:");
-                expect(prompt).toContain('The issue seems to be related to the async handling...');
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Phase: Writing the reply\nReply so far: Half a sentence so far 9x7z');
             });
 
-            it('should truncate response fragment to 100 characters', async () => {
-                const generator = createDynamicStatusGenerator({
-                    identityContext: 'Test identity',
-                });
-
-                const longFragment = 'Z'.repeat(150);
-                const context: SynopsisContext = {
-                    phase:            'responding',
-                    userMessage:      'Test',
-                    responseFragment: longFragment,
-                };
-
-                await generator.generateSynopsis(context);
-
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain('Z'.repeat(100));
-                expect(prompt).not.toContain('Z'.repeat(101));
-            });
-
-            it('should handle missing response fragment gracefully', async () => {
+            it('should omit the line when there is no accumulated text', async () => {
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
                 });
@@ -775,19 +828,262 @@ describe('DynamicStatusGenerator', () => {
                 const context: SynopsisContext = {
                     phase:       'responding',
                     userMessage: 'Test',
-                    // responseFragment is undefined
                 };
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
-                expect(prompt).toContain("What you're writing: \"\"");
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('Reply so far');
+            });
+
+            it('should omit the line when the accumulated text is an empty string', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'responding',
+                    userMessage:     'Test',
+                    accumulatedText: '',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('Reply so far');
+            });
+
+            it('should include the line in the using_tool phase, after the Arguments line', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'using_tool',
+                    userMessage:     'Test',
+                    toolName:        'Read',
+                    toolInput:       { path: '/tmp/x' },
+                    accumulatedText: 'Partial answer 9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Arguments: {"path":"/tmp/x"}\nReply so far: Partial answer 9x7z');
+            });
+
+            it('should include the line in the thinking phase', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    accumulatedText: 'Earlier words 9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('Phase: Just received the question, starting to think\nReply so far: Earlier words 9x7z');
+            });
+        });
+
+        describe('prompt construction - "Recent tools" section', () => {
+            it('should render each tool through its human-readable description, joined with ", " in the order given (newest first)', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    recentToolCalls: ['Read', 'Grep', 'Bash'],
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Recent tools\nReading a file, Searching file contents, Running a command');
+            });
+
+            it('should fall back to the raw tool name for a tool with no known description', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    recentToolCalls: ['Read', 'mystery_tool_9x7z'],
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Recent tools\nReading a file, mystery_tool_9x7z');
+            });
+
+            it('should omit the section when recentToolCalls is undefined', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                const result = await generator.generateSynopsis(context);
+
+                expect(result).not.toBeNull();
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Recent tools');
+            });
+
+            it('should omit the section when recentToolCalls is empty', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    recentToolCalls: [],
+                };
+
+                const result = await generator.generateSynopsis(context);
+
+                expect(result).not.toBeNull();
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Recent tools');
+            });
+
+            it('should emit a single recent tool without a separator', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    recentToolCalls: ['Read'],
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Recent tools\nReading a file');
+                expect(user).not.toContain('Reading a file,');
+            });
+        });
+
+        describe('prompt construction - "Background work" section', () => {
+            it('should include the subagent summary under its own heading', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    subagentSummary: 'Scout is reading the changelog 9x7z',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).toContain('## Background work\nScout is reading the changelog 9x7z');
+            });
+
+            it('should omit the section when there is no subagent summary', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'thinking',
+                    userMessage: 'Test',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Background work');
+            });
+
+            it('should omit the section when the subagent summary is an empty string', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:           'thinking',
+                    userMessage:     'Test',
+                    subagentSummary: '',
+                };
+
+                await generator.generateSynopsis(context);
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Background work');
+            });
+        });
+
+        describe('prompt construction - "Previous status" section', () => {
+            // The system prompt tells the model to make each thought different from the last, so
+            // it has to actually be shown the last one.
+            it('should omit the section on the first call, when there is nothing shown yet', async () => {
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
+                expect(user).not.toContain('## Previous status');
+            });
+
+            it('should carry the previous call\'s result on the next call from the same instance', async () => {
+                const baseTime = 4_000_000;
+                setSystemTime(new Date(baseTime));
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('Retracing the config path 9x7z');
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                setSystemTime(new Date(baseTime + 2001));
+                await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[1][1];
+                expect(user).toContain('## Previous status\nRetracing the config path 9x7z');
+            });
+
+            it('should not share the previous status across generator instances', async () => {
+                const baseTime = 5_000_000;
+                setSystemTime(new Date(baseTime));
+
+                const first = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+                const second = createDynamicStatusGenerator({ identityContext: 'Test identity' });
+
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('Only the first instance saw this 9x7z');
+                await first.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                setSystemTime(new Date(baseTime + 2001));
+                await second.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
+
+                const user = mockGenerateTextWithSystemPrompt.mock.calls[1][1];
+                expect(user).not.toContain('## Previous status');
             });
         });
 
         describe('output handling', () => {
             it('should truncate output to HARD_MAX_STATUS_LENGTH (80 characters)', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('This is a very long status message that exceeds eighty characters and keeps going on and on and on'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('This is a very long status message that exceeds eighty characters and keeps going on and on and on'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -805,7 +1101,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should trim whitespace from output', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('  Pondering...  '));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('  Pondering...  '));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -826,7 +1122,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('fallback behavior', () => {
             it('should return null on error for thinking phase', async () => {
-                mockGenerateText.mockImplementation(() =>
+                mockGenerateTextWithSystemPrompt.mockImplementation(() =>
                     Promise.reject(new Error('API error'))
                 );
 
@@ -845,7 +1141,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should return null on error for using_tool phase', async () => {
-                mockGenerateText.mockImplementation(() =>
+                mockGenerateTextWithSystemPrompt.mockImplementation(() =>
                     Promise.reject(new Error('API error'))
                 );
 
@@ -865,7 +1161,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should return null on error for responding phase', async () => {
-                mockGenerateText.mockImplementation(() =>
+                mockGenerateTextWithSystemPrompt.mockImplementation(() =>
                     Promise.reject(new Error('API error'))
                 );
 
@@ -884,7 +1180,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should return null on empty response', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve(''));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(''));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -901,7 +1197,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should return null on whitespace-only response', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('   '));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('   '));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -931,15 +1227,15 @@ describe('DynamicStatusGenerator', () => {
 
                 // First call should go through
                 await generator.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
 
                 // Second call within cooldown window should use cache
                 await generator.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
             });
 
             it('should use cached status when within cooldown', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('First status'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('First status'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -954,7 +1250,7 @@ describe('DynamicStatusGenerator', () => {
                 expect(first).toBe('First status');
 
                 // Change the mock for second call (but it should use cache)
-                mockGenerateText.mockImplementation(() => Promise.resolve('Second status'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Second status'));
 
                 const second = await generator.generateSynopsis(context);
                 expect(second).toBe('First status'); // Should use cached value
@@ -975,14 +1271,14 @@ describe('DynamicStatusGenerator', () => {
 
                 // First call
                 await generator.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
 
                 // Advance real (system) time past the 2s cooldown window
                 setSystemTime(new Date(baseTime + 2001));
 
                 // Now call should go through
                 await generator.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
 
                 setSystemTime();
             });
@@ -998,17 +1294,17 @@ describe('DynamicStatusGenerator', () => {
                 };
 
                 // First call fails, cache stays null
-                mockGenerateText.mockRejectedValueOnce(new Error('fail'));
+                mockGenerateTextWithSystemPrompt.mockRejectedValueOnce(new Error('fail'));
                 await generator.generateSynopsis(context); // fails, null returned, cache stays null
 
                 // Second call within cooldown window - should NOT use null cache
-                mockGenerateText.mockResolvedValueOnce('Success after fail');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Success after fail');
                 const result = await generator.generateSynopsis(context);
 
                 // With && mutation to ||: would return null (cachedStatus)
                 // With original &&: makes real call since cachedStatus is null
                 expect(result).toBe('Success after fail');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
             });
 
             it('should verify cache is updated and used on subsequent cooldown calls', async () => {
@@ -1021,25 +1317,25 @@ describe('DynamicStatusGenerator', () => {
                     userMessage: 'Test',
                 };
 
-                mockGenerateText.mockResolvedValue('Cached successfully');
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('Cached successfully');
 
                 // First call - should cache the result
                 const first = await generator.generateSynopsis(context);
                 expect(first).toBe('Cached successfully');
 
                 // Change mock to return different value
-                mockGenerateText.mockResolvedValue('Should not see this');
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('Should not see this');
 
                 // Second call within cooldown - should use cached value
                 const second = await generator.generateSynopsis(context);
                 expect(second).toBe('Cached successfully');
-                expect(mockGenerateText).toHaveBeenCalledTimes(1); // Only called once
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1); // Only called once
             });
 
             it('should call API when exactly at cooldown boundary (2000ms)', async () => {
                 // Use fake timers to test exact 2000ms boundary
                 // With post-completion cooldown, lastHaikuCall is set in `finally` after the await.
-                // Since mockGenerateText resolves immediately, lastHaikuCall = Date.now() at call time.
+                // Since mockGenerateTextWithSystemPrompt resolves immediately, lastHaikuCall = Date.now() at call time.
                 const baseTime = 1_000_000;
                 setSystemTime(new Date(baseTime));
 
@@ -1052,26 +1348,26 @@ describe('DynamicStatusGenerator', () => {
                     userMessage: 'Test',
                 };
 
-                mockGenerateText.mockResolvedValue('First call');
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('First call');
 
                 // Call 1: t=baseTime, should call API. lastHaikuCall set to baseTime in finally.
                 await generator.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
 
-                mockGenerateText.mockResolvedValue('Second call');
+                mockGenerateTextWithSystemPrompt.mockResolvedValue('Second call');
 
                 // Call 2: t=baseTime+1999ms, should use cache (within cooldown window)
                 setSystemTime(new Date(baseTime + 1999));
                 const result1999 = await generator.generateSynopsis(context);
                 expect(result1999).toBe('First call');
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
 
                 // Call 3: t=baseTime+2000ms, should call API again (exactly at boundary)
                 // This tests the < vs <= mutation: with <, 2000ms should make new call
                 setSystemTime(new Date(baseTime + 2000));
                 const result2000 = await generator.generateSynopsis(context);
                 expect(result2000).toBe('Second call');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
 
                 // Reset system time
                 setSystemTime();
@@ -1085,8 +1381,8 @@ describe('DynamicStatusGenerator', () => {
 
                 // First call: capture the abort controller, return a value that's only
                 // produced if not aborted
-                mockGenerateText.mockImplementationOnce(
-                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(
+                    async (_system: string | string[], _user: string, opts?: { abortController?: AbortController }) => {
                         firstAbortController = opts?.abortController ?? new AbortController();
                         // Wait until aborted
                         await new Promise<void>((resolve) => {
@@ -1096,7 +1392,7 @@ describe('DynamicStatusGenerator', () => {
                         return '';
                     }
                 );
-                mockGenerateText.mockResolvedValueOnce('Second call wins');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Second call wins');
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1119,10 +1415,10 @@ describe('DynamicStatusGenerator', () => {
                 expect(first).toBeNull();
             });
 
-            it('should pass abortController to generateText so cancel-and-replace works', async () => {
+            it('should pass abortController to generateTextWithSystemPrompt so cancel-and-replace works', async () => {
                 let capturedController: AbortController | undefined;
-                mockGenerateText.mockImplementationOnce(
-                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(
+                    async (_system: string | string[], _user: string, opts?: { abortController?: AbortController }) => {
                         capturedController = opts?.abortController;
                         return 'result';
                     }
@@ -1139,7 +1435,7 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                // abortController should have been passed to generateText
+                // abortController should have been passed to generateTextWithSystemPrompt
                 expect(capturedController).toBeInstanceOf(AbortController);
             });
 
@@ -1156,7 +1452,7 @@ describe('DynamicStatusGenerator', () => {
                 };
 
                 // First call completes successfully
-                mockGenerateText.mockResolvedValueOnce('Cached status');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Cached status');
                 const first = await generator.generateSynopsis(context);
                 expect(first).toBe('Cached status');
 
@@ -1179,7 +1475,7 @@ describe('DynamicStatusGenerator', () => {
                 };
 
                 // First call succeeds — populates cache
-                mockGenerateText.mockResolvedValueOnce('Cached from success');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Cached from success');
                 const first = await generator.generateSynopsis(context);
                 expect(first).toBe('Cached from success');
 
@@ -1187,7 +1483,7 @@ describe('DynamicStatusGenerator', () => {
                 setSystemTime(new Date(baseTime + 3000));
 
                 // Second call fails — finally block should still clear inFlightController
-                mockGenerateText.mockRejectedValueOnce(new Error('API error'));
+                mockGenerateTextWithSystemPrompt.mockRejectedValueOnce(new Error('API error'));
                 const second = await generator.generateSynopsis(context);
                 expect(second).toBeNull(); // Error returns null
 
@@ -1195,7 +1491,7 @@ describe('DynamicStatusGenerator', () => {
                 // If inFlightController were still set, this would behave differently
                 const third = await generator.generateSynopsis(context);
                 expect(third).toBe('Cached from success');
-                expect(mockGenerateText).toHaveBeenCalledTimes(2); // Only 2 real calls, third used cache
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2); // Only 2 real calls, third used cache
 
                 setSystemTime();
             });
@@ -1231,7 +1527,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should log info on successful generation', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('Pondering code...'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Pondering code...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1253,7 +1549,7 @@ describe('DynamicStatusGenerator', () => {
 
             it('should log error on failure', async () => {
                 const testError = new Error('API failure');
-                mockGenerateText.mockImplementation(() =>
+                mockGenerateTextWithSystemPrompt.mockImplementation(() =>
                     Promise.reject(testError)
                 );
 
@@ -1272,6 +1568,40 @@ describe('DynamicStatusGenerator', () => {
                     error: testError,
                     phase: 'responding',
                     msg:   'Failed to generate synopsis',
+                });
+            });
+
+            it('should log debug when cancelling a previous in-flight call', async () => {
+                let firstAbortController!: AbortController;
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(
+                    async (_system: string | string[], _user: string, opts?: { abortController?: AbortController }) => {
+                        firstAbortController = opts?.abortController ?? new AbortController();
+                        await new Promise<void>((resolve) => {
+                            firstAbortController.signal.addEventListener('abort', () => resolve(), { once: true });
+                        });
+                        return '';
+                    }
+                );
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Second call wins');
+
+                const generator = createDynamicStatusGenerator({
+                    identityContext: 'Test identity',
+                });
+
+                const context: SynopsisContext = {
+                    phase:       'using_tool',
+                    userMessage: 'Test',
+                    toolName:    'Read',
+                };
+
+                // First call stays in-flight; the second cancels it and must log the cancellation
+                const firstCallPromise = generator.generateSynopsis(context);
+                await generator.generateSynopsis(context);
+                await firstCallPromise;
+
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    phase: 'using_tool',
+                    msg:   'Cancelling previous in-flight synopsis call',
                 });
             });
 
@@ -1321,7 +1651,7 @@ describe('DynamicStatusGenerator', () => {
 
         describe('each phase type', () => {
             it('should handle thinking phase correctly', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('Pondering the question...'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Pondering the question...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1338,7 +1668,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should handle using_tool phase correctly', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('Consulting memories...'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Consulting memories...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1356,7 +1686,7 @@ describe('DynamicStatusGenerator', () => {
             });
 
             it('should handle responding phase correctly', async () => {
-                mockGenerateText.mockImplementation(() => Promise.resolve('Crafting a response...'));
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Crafting a response...'));
 
                 const generator = createDynamicStatusGenerator({
                     identityContext: 'Test identity',
@@ -1389,12 +1719,12 @@ describe('DynamicStatusGenerator', () => {
 
                 // First generator call
                 await generator1.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(1);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
 
                 // Second generator, called immediately after, must NOT be gated by generator1's
                 // cooldown — each instance keeps its own cooldown clock.
                 await generator2.generateSynopsis(context);
-                expect(mockGenerateText).toHaveBeenCalledTimes(2);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
             });
 
             it('does NOT share cache across generators — a second instance never returns the first\'s cached status', async () => {
@@ -1410,11 +1740,11 @@ describe('DynamicStatusGenerator', () => {
                     userMessage: 'Test',
                 };
 
-                mockGenerateText.mockResolvedValueOnce('Generator 1 status');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Generator 1 status');
                 const first = await generator1.generateSynopsis(context);
                 expect(first).toBe('Generator 1 status');
 
-                mockGenerateText.mockResolvedValueOnce('Generator 2 status');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Generator 2 status');
                 const second = await generator2.generateSynopsis(context);
                 expect(second).toBe('Generator 2 status');
             });
@@ -1439,8 +1769,8 @@ describe('DynamicStatusGenerator', () => {
                 // Generator1's call hangs until we resolve it below — it is still in-flight
                 // when generator2's call runs, which is the only way to observe a shared
                 // (module-level) in-flight controller getting aborted by a second instance.
-                mockGenerateText.mockImplementationOnce(
-                    async (_prompt: string, opts?: { abortController?: AbortController }) => {
+                mockGenerateTextWithSystemPrompt.mockImplementationOnce(
+                    async (_system: string | string[], _user: string, opts?: { abortController?: AbortController }) => {
                         firstAbortController = opts?.abortController;
                         firstAbortController?.signal.addEventListener('abort', () => {
                             abortFired = true;
@@ -1459,7 +1789,7 @@ describe('DynamicStatusGenerator', () => {
 
                 // generator2's call runs to completion WHILE generator1's call is still pending.
                 // It must use its own AbortController and never touch generator1's.
-                mockGenerateText.mockResolvedValueOnce('Generator 2 result');
+                mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Generator 2 result');
                 const second = await generator2.generateSynopsis(context);
                 expect(second).toBe('Generator 2 result');
 
@@ -1491,7 +1821,7 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
+                const prompt = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(prompt).toContain('(complex input)');
             });
 
@@ -1509,7 +1839,7 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
+                const prompt = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 expect(prompt).toContain('(complex input)');
             });
 
@@ -1527,7 +1857,7 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
+                const prompt = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 // Should contain the full JSON without trailing ...
                 expect(prompt).toContain('{"path":"/short"}');
                 // The tool input summary should NOT be truncated (no trailing ... after the JSON)
@@ -1556,7 +1886,7 @@ describe('DynamicStatusGenerator', () => {
 
                 await generator.generateSynopsis(context);
 
-                const prompt = mockGenerateText.mock.calls[0][0];
+                const prompt = mockGenerateTextWithSystemPrompt.mock.calls[0][1];
                 // With <= : 200 chars passes, returns JSON as-is (no ellipsis)
                 // With < mutant: 200 chars fails, returns JSON.slice(0,200) + "..." (adds ellipsis)
                 expect(prompt).toContain(json);

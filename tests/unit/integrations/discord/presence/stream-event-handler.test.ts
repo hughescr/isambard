@@ -354,4 +354,230 @@ describe('createLedgerStreamEventHandler', () => {
         expect(mockDynamicStatusGenerator.generateSynopsis).not.toHaveBeenCalled();
         expect(sink.dispatch).not.toHaveBeenCalled();
     });
+
+    describe('the pre-generated thinkingSynopsis is dispatched at most once per handler', () => {
+        // Defect 1 (production log, 2026-09-08): the fallback fired on EVERY thinking transition
+        // where generation was skipped, so the turn's first synopsis ("Audit trail…") overwrote
+        // two fresher digests minutes later — and each overwrite reached Discord immediately via
+        // presence-setup's digestJustArrived bypass.
+        it('falls back on only the FIRST thinking transition, never a later one', () => {
+            throttle.shouldUpdate = mock(() => false);
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            // Thinking transition #1: nothing to regenerate from, throttle closed -> fallback.
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+
+            // A tool, then back to thinking: the throttle is still closed, so this transition
+            // would have re-dispatched the same stale text.
+            onStreamEvent({ type: 'tool_progress', tool_name: 'Read' } as unknown as AgentStreamEvent);
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not clobber a fresher synopsis already dispatched for another phase', async () => {
+            let shouldUpdateCalls = 0;
+            throttle.shouldUpdate = mock(() => {
+                shouldUpdateCalls += 1;
+                return shouldUpdateCalls === 1;
+            });
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+
+            // Thinking transition with the throttle now closed: the stale pre-generated text must
+            // not overwrite the fresher using_tool digest.
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+            expect(sink.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ text: 'Pre-generated thinking synopsis' }));
+        });
+
+        it('does not fall back after a failed regeneration when a synopsis was already dispatched', async () => {
+            let generateCalls = 0;
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => {
+                generateCalls += 1;
+                if(generateCalls === 1) {
+                    return 'Fresh synopsis';
+                }
+                throw new Error('LLM error');
+            });
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(sink.dispatch).toHaveBeenCalledTimes(1);
+            expect(sink.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ text: 'Pre-generated thinking synopsis' }));
+        });
+
+        it('dispatches nothing when a regeneration fails and there is no pre-generated synopsis to fall back on', async () => {
+            mockDynamicStatusGenerator.generateSynopsis = mock(async () => {
+                throw new Error('LLM error');
+            });
+            const { onStreamEvent } = createLedgerStreamEventHandler({ ...baseDeps, thinkingSynopsis: undefined });
+
+            // Tool history first (so the thinking transition takes the regeneration branch), then
+            // a thinking transition whose regeneration throws.
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(sink.dispatch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('complete assistant text frames are responding, not thinking', () => {
+        // Defect 2: `delta` only exists on PARTIAL stream events, so a complete assistant message
+        // carrying a text block registered as a thinking transition (mirrors phaseFromAssistant in
+        // src/agent/session/activity-phase.ts, which already gets this right for the ledger).
+        it('classifies a complete message with a non-empty text block as responding, accumulating that text', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'text', text: 'Here is the answer' }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase:           'responding',
+                accumulatedText: 'Here is the answer',
+            }));
+            expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({ phaseType: 'responding', text: 'Generated synopsis' }));
+        });
+
+        it('does not carry a redundant responseFragment on the responding context', async () => {
+            // The handler appends the text to accumulatedText BEFORE building the context, so a
+            // separate fragment field would only duplicate its tail.
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'text', text: 'Here is the answer' }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            const args = (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+            expect(args).not.toHaveProperty('responseFragment');
+        });
+
+        it('prefers a real text block over an empty delta (an empty delta must not mask it)', async () => {
+            // `??` would have taken the empty-string delta and classified the frame as thinking.
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type:    'assistant',
+                delta:   { text: '' },
+                message: { content: [{ type: 'text', text: 'Real answer' }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase:           'responding',
+                accumulatedText: 'Real answer',
+            }));
+        });
+
+        it('concatenates every non-empty text block of a frame, in order', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        { type: 'text', text: 'First half. ' },
+                        { type: 'text', text: 'Second half.' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase:           'responding',
+                accumulatedText: 'First half. Second half.',
+            }));
+        });
+
+        it('accumulates complete-frame text into accumulatedText, keeping the 200-char tail', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'text', text: 'a'.repeat(150) }] },
+            } as unknown as AgentStreamEvent);
+            // Already responding, so this frame dispatches nothing — it only accumulates.
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'text', text: 'b'.repeat(100) }] },
+            } as unknown as AgentStreamEvent);
+            // A tool transition captures the accumulated text as it stands.
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool1', name: 'Read', input: {} }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            const args = (mockDynamicStatusGenerator.generateSynopsis as ReturnType<typeof mock>).mock.calls.at(-1)?.[0] as { accumulatedText?: string };
+            expect(args.accumulatedText).toBe('a'.repeat(100) + 'b'.repeat(100));
+        });
+
+        it('takes the reply text from the block whose own type is text, not from any block carrying a text field', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type:    'assistant',
+                message: {
+                    content: [
+                        // A non-text block that happens to carry a `text` property must be ignored:
+                        // the block TYPE decides, not the mere presence of the field.
+                        { type: 'thinking', thinking: 'pondering', text: 'not the reply' },
+                        { type: 'text', text: 'Real answer' },
+                    ],
+                },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'responding', accumulatedText: 'Real answer',
+            }));
+        });
+
+        it('does not append anything to accumulatedText for a frame with no response text', async () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            // A content-less (thinking) frame carries no response text at all.
+            onStreamEvent({ type: 'assistant' } as unknown as AgentStreamEvent);
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] },
+            } as unknown as AgentStreamEvent);
+            await flushPromises();
+
+            expect(mockDynamicStatusGenerator.generateSynopsis).toHaveBeenCalledWith(expect.objectContaining({
+                phase: 'responding', accumulatedText: 'Hello',
+            }));
+        });
+
+        it('still treats a text block with empty text as thinking', () => {
+            const { onStreamEvent } = createLedgerStreamEventHandler(baseDeps);
+
+            onStreamEvent({
+                type: 'assistant', message: { content: [{ type: 'text', text: '' }] },
+            } as unknown as AgentStreamEvent);
+
+            expect(sink.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+                phaseType: 'thinking', text: 'Pre-generated thinking synopsis',
+            }));
+        });
+    });
 });

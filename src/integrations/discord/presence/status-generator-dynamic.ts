@@ -5,9 +5,10 @@
  * Provides evocative, phase-aware status messages based on current agent activity.
  */
 
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import { getToolDescription, type SynopsisContext } from './types.js';
-import { generateText } from '@/agent';
+import { generateTextWithSystemPrompt } from '@/agent';
 import { truncateToWordBoundary, HARD_MAX_STATUS_LENGTH } from '@/utils';
 
 /**
@@ -33,7 +34,6 @@ interface DynamicStatusGeneratorDeps {
 
 const MAX_USER_MESSAGE_LENGTH = 200;
 const MAX_ACCUMULATED_TEXT_LENGTH = 150;
-const MAX_RESPONSE_FRAGMENT_LENGTH = 100;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
 
@@ -46,75 +46,71 @@ const MAX_THINKING_CONTENT_LENGTH = 500;
 const HAIKU_COOLDOWN_MS = 2000;
 
 /**
- * System prompt that establishes Isambard's identity for status generation.
+ * Human-readable labels used in the "Doing right now" section. `thinking` has two: the very first
+ * synopsis of a turn is built from the user message alone (nothing has streamed, no tool has run),
+ * which is a different moment from thinking mid-turn between two tool calls.
  */
-const SYSTEM_PROMPT = `You are generating a first-person inner thought for Izzy (Isambard) as a brief Discord status (max 40 characters).
-
-## Who is Izzy?
-Izzy is an AI who has developed their own sense of identity. The following is Izzy's self-written description of who they are:
-
-{identityContext}
-
-## Your Task
-Generate a thought that flashes through Izzy's mind right now - not a description of what they're doing, but their actual inner monologue. Write from Izzy's perspective, as if you ARE Izzy thinking out loud.
-
-Guidelines:
-- Write in first person ("I'm", "my", "me")
-- Be specific to this exact moment
-- Draw on Izzy's personality and voice
-- Capture the feeling, the spark of the moment
-- Use present participle form ("Digging through...", "Pondering...", "Putting thoughts...")
-- Vary your language - make each thought unique
-
-NEVER output:
-- Third person ("Isambard is...", "They are...", "Izzy is...")
-- "Thinking...", "Processing...", "Working..."
-- Generic phrases that could apply to any moment
-- Anything longer than 40 characters
-- Meta-commentary about the task ("I need to generate...", "Looking at this moment...")
-- Preambles or framing ("Reading the context:", "Here's my thought:")
-- Echoing these instructions back
-
-Good examples:
-- "Ooh, authentication patterns—my favorite puzzle!"
-- "Digging through memories for that conversation..."
-- "This recursion question is making my head spin!"
-- "Putting thoughts into words..."
-- "Where did I put that note about this?"
-
-Bad examples:
-- "Isambard is considering the question"
-- "Processing the user's request"
-- "Working with the memory tool"
-- "I need to generate Izzy's inner thought..."
-- "Looking at this moment: I'm working on..."
-- "Reading the context: I'm in perch time..."
-
-Output ONLY the raw status text — no preamble, no framing, no meta-commentary. Just the thought itself.`;
+const PHASE_LABELS = {
+    using_tool:       'Using a tool',
+    responding:       'Writing the reply',
+    thinking_first:   'Just received the question, starting to think',
+    thinking_ongoing: 'Thinking about the next step',
+};
 
 /**
- * User prompts for each phase, personalized with context.
+ * The "Phase:" label for the current context — see {@link PHASE_LABELS} for the thinking split.
+ *
+ * @param context - The current activity context
+ * @returns The human-readable phase label
  */
-const USER_PROMPTS = {
-    thinking: `You (Izzy) just received this question from a user:
-"{userMessage}"
+function phaseLabel(context: SynopsisContext): string {
+    if(context.phase !== 'thinking') {
+        return PHASE_LABELS[context.phase];
+    }
+    if(!context.thinkingContent && !context.recentToolCalls?.length) {
+        return PHASE_LABELS.thinking_first;
+    }
+    return PHASE_LABELS.thinking_ongoing;
+}
 
-{thinkingSection}What thought flashes through your mind as you begin to form a response?`,
+/**
+ * Build the system prompt: the fixed instructions with Izzy's identity spliced in.
+ *
+ * @param identityContext - Izzy's self-written description of who they are
+ * @returns The system prompt sent as `systemPrompt` (never concatenated into the user prompt)
+ */
+function buildSystemPrompt(identityContext: string): string {
+    return `You write Izzy's Discord status line: one first-person thought, at most 40 characters, that shows what is on Izzy's mind at this exact instant.
 
-    using_tool: `You (Izzy) are working with a tool right now:
-- Tool: {toolDescription}
-- What you're asking the tool: {toolInputSummary}
-- Original question: "{userMessage}"
-- Your recent thoughts: "{accumulatedText}"
+## Who Izzy is
+Izzy (Isambard) is an AI who has developed their own sense of identity. In Izzy's own words:
 
-What thought is running through your mind while using this tool?`,
+${identityContext}
 
-    responding: `You (Izzy) are composing a response to: "{userMessage}"
+## What you are given
+A snapshot of Izzy's current turn, in labelled sections. A section with nothing to show is left out.
+- "Question being answered": the message from the person Izzy is replying to.
+- "Most recent thinking": the newest slice of Izzy's private reasoning, cut mid-stream. This is the freshest signal of what Izzy is doing right now. Weight it most.
+- "Doing right now": the current phase. For a tool call, also the tool, what it does, and the arguments. When any reply text has been written, also the newest part of it.
+- "Recent tools": tools Izzy used just before this moment, newest first.
+- "Background work": what sub-agents Izzy launched are doing.
+- "Previous status": the thought shown last time. Write a different one.
 
-What you're writing: "{responseFragment}"
+## How to write the thought
+- First person, present tense, one line, no more than 40 characters.
+- Make it about THIS moment. Pull one concrete detail from the most recent thinking or the current action: a file, a name, a doubt, a small discovery, a decision being made.
+- Sound like Izzy, using the voice and personality described above.
+- Prefer a present-participle opening ("Digging through...", "Wondering whether...", "Rereading...").
+- Make each thought different from the last. Do not reuse the same opening twice in a row.
 
-What thought captures this moment of putting your ideas into words?`,
-};
+Never:
+- Third person, or naming Izzy ("Izzy is...", "Isambard is...").
+- Filler that fits any moment ("Thinking...", "Working on it...", "Processing...").
+- Describing the job of writing a status, quoting these instructions, or adding a preamble.
+- Quotation marks, markdown, emoji, or any explanation.
+
+Output only the thought.`;
+}
 
 /**
  * Format tool input as a JSON summary, truncated if needed.
@@ -137,59 +133,67 @@ function formatToolInputSummary(toolInput: unknown): string {
 }
 
 /**
- * Build the full prompt by combining system prompt and user prompt.
+ * Build the user prompt: a snapshot of the current turn as labelled `##` sections.
+ *
+ * Sections appear in a fixed order and are omitted entirely when they have nothing to show,
+ * except "Doing right now" which always carries at least the phase label.
+ *
+ * Two deliberate tail-slices (P14b): the newest thinking and the newest reply text are what the
+ * status should reflect, so both are cut from the END of the accumulated string, not the head.
+ *
+ * Kept pure: the previous status is passed in rather than read from the generator's own state, so
+ * the whole prompt is a function of its arguments.
+ *
+ * @param context - The current activity context
+ * @param previousStatus - The status this generator produced last time, or null on the first call
+ * @returns The user prompt sent as the `userPrompt` argument
  */
-function buildPrompt(
-    identityContext: string,
-    context: SynopsisContext
-): string {
-    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, responseFragment, thinkingContent, subagentSummary } = context;
+function buildUserPrompt(context: SynopsisContext, previousStatus: string | null): string {
+    const { phase, userMessage, toolName, toolInput, toolDescription, accumulatedText, thinkingContent, recentToolCalls, subagentSummary } = context;
 
-    // Build system prompt with identity
-    let systemPart = SYSTEM_PROMPT;
-    systemPart = systemPart.replace('{identityContext}', identityContext);
+    const sections: string[] = [];
 
-    // Get user prompt template for this phase
-    let userPart = USER_PROMPTS[phase];
-
-    // Replace common placeholders
-    userPart = userPart.replace('{userMessage}', userMessage.slice(0, MAX_USER_MESSAGE_LENGTH));
-
-    // Replace phase-specific placeholders
-    // Stryker disable next-line ConditionalExpression: Phase check for thinking content
-    if(phase === 'thinking') {
-        // Build thinking section: include only if thinkingContent is provided and non-empty
-        // Stryker disable next-line ConditionalExpression: Conditional controls whether thinking content is included in prompt
-        const thinkingSection = thinkingContent
-            ? `Your internal thoughts so far: "${thinkingContent.slice(0, MAX_THINKING_CONTENT_LENGTH)}"\n\n`
-            : '';
-        userPart = userPart.replace('{thinkingSection}', thinkingSection);
+    if(userMessage) {
+        sections.push(`## Question being answered\n${userMessage.slice(0, MAX_USER_MESSAGE_LENGTH)}`);
     }
 
-    // Stryker disable next-line ConditionalExpression: Equivalent mutant — using_tool template lacks {responseFragment} so respondingphase block is a no-op anyway; templates don't cross-contaminate
+    if(thinkingContent) {
+        // TAIL, not head: the handler already keeps a rolling window, so the newest reasoning
+        // is at the end. Taking the head would show Haiku thoughts from ~1000 chars ago.
+        sections.push(`## Most recent thinking\n${thinkingContent.slice(-MAX_THINKING_CONTENT_LENGTH)}`);
+    }
+
+    const doingLines = [`Phase: ${phaseLabel(context)}`];
     if(phase === 'using_tool') {
-        const description = toolDescription ?? getToolDescription(toolName) ?? toolName ?? 'unknown tool';
-        userPart = userPart.replace('{toolDescription}', description);
-        userPart = userPart.replace('{toolInputSummary}', formatToolInputSummary(toolInput));
-        userPart = userPart.replace('{accumulatedText}', (accumulatedText ?? '').slice(0, MAX_ACCUMULATED_TEXT_LENGTH));
+        doingLines.push(
+            `Tool: ${toolDescription ?? getToolDescription(toolName) ?? toolName ?? 'unknown tool'}`,
+            `Arguments: ${formatToolInputSummary(toolInput)}`
+        );
+    }
+    // TAIL of accumulatedText: the newest words written are the ones the status should reflect.
+    const replySoFar = accumulatedText?.slice(-MAX_ACCUMULATED_TEXT_LENGTH);
+    if(replySoFar) {
+        doingLines.push(`Reply so far: ${replySoFar}`);
+    }
+    sections.push(`## Doing right now\n${doingLines.join('\n')}`);
+
+    if(recentToolCalls?.length) {
+        // Already newest-first from the caller. Descriptions, not bare names: "Searching file
+        // contents" tells Haiku what the tool actually did, where "Grep" tells it nothing.
+        sections.push(`## Recent tools\n${recentToolCalls.map(name => getToolDescription(name) ?? name).join(', ')}`);
     }
 
-    // Stryker disable next-line ConditionalExpression: Equivalent mutant — responding template lacks {toolDescription}/{toolInputSummary}/{accumulatedText} so using_tool block is a no-op anyway; templates don't cross-contaminate
-    if(phase === 'responding') {
-        userPart = userPart.replace('{responseFragment}', (responseFragment ?? '').slice(0, MAX_RESPONSE_FRAGMENT_LENGTH));
-    }
-
-    // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: Prompt template enrichment — mutations don't change behavior
-    // Append subagent context if available
     if(subagentSummary) {
-        userPart += `\n\nA sub-agent is also working: "${subagentSummary}"`;
+        sections.push(`## Background work\n${subagentSummary}`);
     }
-    // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
 
-    // Combine system and user prompts into a single string for the prompt field
-    // (generateText passes systemPrompt separately via Options.systemPrompt — this combined form
-    // is retained here for backwards compatibility with the existing prompt template structure)
-    return `${systemPart}\n\n---\n\n${userPart}`;
+    // Last: the system prompt asks for a thought different from the last one, which is only
+    // possible if the last one is actually shown.
+    if(previousStatus !== null) {
+        sections.push(`## Previous status\n${previousStatus}`);
+    }
+
+    return sections.join('\n\n');
 }
 
 /**
@@ -202,7 +206,7 @@ interface CooldownLogContext {
     inFlight:   Record<string, unknown> & { msg: string }
     /** Logged (debug) when returning the cached status during cooldown */
     cooldown:   Record<string, unknown> & { msg: string }
-    /** Logged (debug) just before the generateText call */
+    /** Logged (debug) just before the generateTextWithSystemPrompt call */
     generating: Record<string, unknown> & { msg: string }
     /** Logged (info) on successful status generation (statusText is added by the helper) */
     success:    Record<string, unknown> & { msg: string }
@@ -213,14 +217,14 @@ interface CooldownLogContext {
 /**
  * Executes a Haiku call with cancel-and-replace, cooldown, caching, truncation, and error handling.
  *
- * @param promptBuilder - Function that builds the prompt string
+ * @param promptBuilder - Function that builds the system and user prompts
  * @param logContext - Per-site log objects; each carries its own fields and `msg`
  * @param state - The calling instance's own cooldown/cache/in-flight-controller state (P14: no
  * longer module-level — see this file's own top-of-file doc note).
  * @returns Promise resolving to a status string, or null if on cooldown or error
  */
 async function executeWithCooldown(
-    promptBuilder: () => string,
+    promptBuilder: () => { systemPrompt: string | string[], userPrompt: string },
     logContext: CooldownLogContext,
     state: InstanceState
 ): Promise<string | null> {
@@ -245,13 +249,13 @@ async function executeWithCooldown(
     state.inFlightController = controller;
 
     try {
-        const prompt = promptBuilder();
+        const { systemPrompt, userPrompt } = promptBuilder();
 
         logger.debug(logContext.generating);
 
         // Stryker disable next-line ObjectLiteral,BooleanLiteral: stripMarkdown option tested in text-generator.ts unit tests
-        const text = await generateText(prompt, { stripMarkdown: true, abortController: controller });
-        // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
+        const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true, abortController: controller });
+        // Stryker disable next-line MethodExpression: trim() is defensive — generateTextWithSystemPrompt() already returns trimmed output
         const statusText = truncateToWordBoundary(text.trim(), HARD_MAX_STATUS_LENGTH);
 
         // Stryker disable next-line BooleanLiteral,ConditionalExpression,BlockStatement: Empty status check for LLM failure — return null so caller skips update
@@ -265,9 +269,9 @@ async function executeWithCooldown(
         return statusText;
     } catch (error) {
         // Aborted by a newer call — expected, return null silently.
-        // generateText() handles abort internally (returns ''), so this catch only fires
+        // generateTextWithSystemPrompt() handles abort internally (returns ''), so this catch only fires
         // for non-abort errors (e.g., from promptBuilder). The signal check is defensive.
-        // Stryker disable next-line ConditionalExpression,BlockStatement: NoCoverage — generateText() swallows abort and returns ''; this catch is only reached for genuine errors
+        // Stryker disable next-line ConditionalExpression,BlockStatement: NoCoverage — generateTextWithSystemPrompt() swallows abort and returns ''; this catch is only reached for genuine errors
         if(controller.signal.aborted) {
             return null;
         }
@@ -323,6 +327,12 @@ export function createDynamicStatusGenerator(
 ): DynamicStatusGenerator {
     const { identityContext } = deps;
 
+    // Built once per instance and sent as the array form with SYSTEM_PROMPT_DYNAMIC_BOUNDARY at
+    // the end (same pattern as status-generator-idle.ts): the identity block never changes across
+    // this instance's calls, so handing the SDK the identical array keeps the whole system prompt
+    // eligible for cross-call prompt caching. Everything per-call lives in the user prompt.
+    const systemPrompt = [buildSystemPrompt(identityContext), SYSTEM_PROMPT_DYNAMIC_BOUNDARY];
+
     // Stryker disable next-line ObjectLiteral: initial field values are irrelevant — the first call
     // through executeWithCooldown always sets lastHaikuCall/cachedStatus itself and treats a null
     // inFlightController identically to one already cleared by a prior call's finally block.
@@ -336,7 +346,9 @@ export function createDynamicStatusGenerator(
         async generateSynopsis(context: SynopsisContext): Promise<string | null> {
             const { phase } = context;
             return executeWithCooldown(
-                () => buildPrompt(identityContext, context),
+                // `state.cachedStatus` is read at build time (after the cooldown gate), so it is
+                // the status this instance most recently produced.
+                () => ({ systemPrompt, userPrompt: buildUserPrompt(context, state.cachedStatus) }),
                 {
                     // Stryker disable next-line StringLiteral: log message configuration
                     inFlight:   { phase, msg: 'Cancelling previous in-flight synopsis call' },

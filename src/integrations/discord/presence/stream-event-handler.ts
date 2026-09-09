@@ -37,7 +37,7 @@ export interface CreateLedgerStreamEventHandlerDeps {
     turnId:                  string
     /** Where a resolved synopsis is dispatched — normally the conductor's own `LedgerStore`. */
     sink:                    LedgerSink
-    /** Gates whether a synopsis is worth generating at all: `shouldUpdate()` is peeked (never `record()`-ed — that is `planPresenceUpdate`'s job once the composed view is actually applied). */
+    /** Gates whether a synopsis is worth generating at all: `shouldUpdate()` is peeked and never `record()`-ed here — recording is the applying side's job, done by `presence-setup.ts` (both in `planPresenceUpdate` and on the digest-bypass path, which records the window it opens). */
     throttle:                PresenceThrottle
     /** Optional LLM-based synopsis generator; omitted means no synopsis is ever generated. */
     dynamicStatusGenerator?: DynamicStatusGenerator
@@ -55,8 +55,9 @@ export type LedgerStreamEventHandler = StreamEventHandler;
 
 /**
  * Whether a synopsis is worth generating: a generator is configured AND the throttle currently
- * allows an update. Narrows `dynamicStatusGenerator` to non-`undefined`; peeks `throttle` (never
- * `record()`s it — recording happens once the composed view is actually applied).
+ * allows an update. Narrows `dynamicStatusGenerator` to non-`undefined`; peeks `throttle` and
+ * never `record()`s it — recording belongs to the applying side in `presence-setup.ts`, which
+ * does it both in `planPresenceUpdate` and on its digest-bypass path.
  */
 function canGenerateSynopsis(
     dynamicStatusGenerator: DynamicStatusGenerator | undefined,
@@ -69,9 +70,9 @@ function canGenerateSynopsis(
  * Pre-generates a thinking synopsis from the user's raw message before the conductor turn's first
  * stream event arrives, so a turn whose very first `thinking` phase has no accumulated content or
  * tool history yet (`handleThinkingTransition`'s fallback branch) still carries a personalised
- * digest instead of the generic phase text. Peeks `throttle` (never `record()`s it — same
- * contract as {@link canGenerateSynopsis}), the sole gate the conductor path has for whether
- * generation is worth it.
+ * digest instead of the generic phase text. Peeks `throttle` and never `record()`s it — same
+ * contract as {@link canGenerateSynopsis} — which is the sole gate the conductor path has for
+ * whether generation is worth it.
  * @param dynamicStatusGenerator Optional LLM-based status generator; omitted skips generation.
  * @param throttle The shared `PresenceThrottle` — generation is skipped while its window is open,
  * since the digest would just be thrown away with nothing to show it on.
@@ -120,6 +121,16 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
     let currentPhase: 'thinking' | 'using_tool' | 'responding' | null = null;
     let lastToolName: string | undefined;
     let completed = false;
+    /**
+     * Whether this handler has dispatched ANY synopsis yet (of any phase). Gates the two
+     * `thinkingSynopsis` fallbacks: the pre-generated text is a placeholder for the very first
+     * phase of the turn, so once anything fresher has gone out it must never be dispatched again —
+     * a stale "Audit trail…" overwrote two later, fresher digests minutes into a production turn,
+     * each overwrite reaching Discord immediately via presence-setup's `digestJustArrived` bypass.
+     * Because a fallback dispatch sets the flag itself, this also caps the pre-generated synopsis
+     * at one dispatch per handler.
+     */
+    let anySynopsisDispatched = false;
 
     const pendingToolInputs = new Map<string, unknown>();
     let accumulatedText = '';
@@ -135,6 +146,7 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
         if(completed) {
             return;
         }
+        anySynopsisDispatched = true;
         const event: LedgerEvent = {
             type: 'phase_synopsis', turnId, phaseType, text, at: new Date(),
         };
@@ -201,7 +213,10 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
      * Handles the transition into the `thinking` phase: generates a fresh synopsis when there is
      * context worth generating from (accumulated thinking content or prior tool history),
      * otherwise falls back to the pre-generated `thinkingSynopsis` (itself already a resolved
-     * synopsis, from {@link buildLedgerThinkingSynopsis}) — dispatched only when defined.
+     * synopsis, from {@link buildLedgerThinkingSynopsis}) — dispatched only when defined AND
+     * nothing has been dispatched by this handler yet (see `anySynopsisDispatched`). The same
+     * guard applies to the `catch` fallback below: a failed live generation may only fall back to
+     * the pre-generated text while it is still the freshest thing this handler has.
      */
     function handleThinkingTransition(): void {
         const hasThinkingContent = Boolean(accumulatedThinkingContent);
@@ -225,13 +240,13 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                     }
                     dispatchSynopsis('thinking', synopsis);
                 } catch{
-                    if(completed || thinkingSynopsis === undefined) {
+                    if(completed || thinkingSynopsis === undefined || anySynopsisDispatched) {
                         return;
                     }
                     dispatchSynopsis('thinking', thinkingSynopsis);
                 }
             })();
-        } else if(thinkingSynopsis !== undefined) {
+        } else if(thinkingSynopsis !== undefined && !anySynopsisDispatched) {
             dispatchSynopsis('thinking', thinkingSynopsis);
         }
     }
@@ -243,13 +258,27 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                 interface ContentBlock {
                     type:      string
                     thinking?: string
+                    text?:     string
                 }
                 const content: ContentBlock[] | undefined = event.message?.content;
+                // Every non-empty text block on a COMPLETE assistant message, concatenated in the
+                // order the model wrote them — a reply split across several text blocks (thinking
+                // interleaved between them) is one reply, so keeping only the first would drop
+                // everything after the first interruption. `event.delta` exists only on partial
+                // stream events, so without this every complete reply frame registered as a
+                // thinking transition (and fired an unnecessary Haiku call). The phase
+                // classification mirrors `phaseFromAssistant` in
+                // `src/agent/session/activity-phase.ts`, which the ledger already uses; the text
+                // accumulation here deliberately takes ALL blocks, not just the first.
+                let completeText = '';
                 if(content) {
                     for(const block of content) {
                         if(block.type === 'thinking' && block.thinking) {
                             accumulatedThinkingContent = (accumulatedThinkingContent + block.thinking).slice(-MAX_THINKING_CONTENT_LENGTH);
                             onThinkingContentUpdate?.(accumulatedThinkingContent);
+                        }
+                        if(block.type === 'text' && block.text) {
+                            completeText += block.text;
                         }
                     }
                 }
@@ -263,15 +292,21 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                     }
                 }
 
-                if(event.delta?.text) {
-                    accumulatedText = (accumulatedText + event.delta.text).slice(-200);
+                // Partial frames carry the text as a delta, complete ones as a text block; either
+                // way it is response text, so it both accumulates and marks the responding phase.
+                // `||`, not `??`: a delta of '' is not text, and must not mask a real text block
+                // on the same frame.
+                // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty-string delta must fall through to the frame's text blocks, which ?? would not do
+                const responseText = event.delta?.text || completeText;
+                if(responseText) {
+                    accumulatedText = (accumulatedText + responseText).slice(-200);
                 }
 
                 if(hadToolUseUpdate) {
                     return;
                 }
 
-                const newPhase = event.delta?.text ? 'responding' : 'thinking';
+                const newPhase = responseText ? 'responding' : 'thinking';
 
                 if(newPhase !== currentPhase) {
                     currentPhase = newPhase;
@@ -280,11 +315,10 @@ export function createLedgerStreamEventHandler(deps: CreateLedgerStreamEventHand
                         handleThinkingTransition();
                     } else {
                         generateAndDispatch({
-                            phase:            'responding',
+                            phase:           'responding',
                             userMessage,
-                            responseFragment: event.delta?.text?.slice(0, 100),
-                            accumulatedText:  accumulatedText || undefined,
-                            subagentSummary:  latestSubagentSummary,
+                            accumulatedText: accumulatedText || undefined,
+                            subagentSummary: latestSubagentSummary,
                         }, 'responding');
                     }
                 }

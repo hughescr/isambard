@@ -233,6 +233,13 @@ export function setupConductorPresence(params: {
         lastSeenDigest = digest;
 
         if(digestJustArrived) {
+            // Record as well as apply: what went out IS now what Discord shows, so the ticks that
+            // follow (the same phase re-composed by the next sdk_frame, carrying the same digest)
+            // must be held by a fresh window rather than sailing through planPresenceUpdate and
+            // re-sending identical text — two "Updated Discord presence" lines 1 ms apart in the
+            // 2026-09-08 production log. The bypass's own intent is unchanged: a fresh digest
+            // still never waits for the window, it just opens one.
+            throttle.record();
             apply(view);
             return;
         }

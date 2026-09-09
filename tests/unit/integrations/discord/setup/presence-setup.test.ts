@@ -405,6 +405,7 @@ describe('setupConductorPresence', () => {
             getRecentContext: () => Promise.resolve(undefined),
         });
         mockPresenceManager.applyView.mockClear();
+        throttle.record.mockClear();
 
         // First frame: opens the turn into a digest-less 'responding' phase. Blocked by the
         // (always-false) throttle — matching production, where the placeholder already consumed it.
@@ -428,6 +429,11 @@ describe('setupConductorPresence', () => {
         const [view] = mockPresenceManager.applyView.mock.calls[0] as [PresenceView];
         expect(view.phase).toMatchObject({ type: 'responding', generatedStatus: 'writing a reply' });
 
+        // The bypass still opens a fresh window: what it applied IS now what Discord shows, so
+        // the very next ledger tick must not be entitled to re-send it (defect 3a — two
+        // "Updated Discord presence" lines 1 ms apart in the 2026-09-08 production log).
+        expect(throttle.record).toHaveBeenCalledTimes(1);
+
         // A later, DIFFERENT digest for the same phase also bypasses the throttle: digests are
         // already rate-limited at generation time (the stream handler only starts one when the
         // throttle window is open), and every one that resolves is the freshest description of
@@ -448,6 +454,47 @@ describe('setupConductorPresence', () => {
             type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'a later refinement', at: new Date(3),
         });
         expect(mockPresenceManager.applyView).not.toHaveBeenCalled();
+    });
+
+    test('a real throttle recorded by the digest bypass suppresses the duplicate apply the next tick would otherwise make', () => {
+        // Defect 3a end-to-end, against the REAL throttle rather than a stubbed one: before the
+        // fix the bypass never recorded, so the ledger tick that followed it (the next sdk_frame,
+        // carrying the very same digest) still satisfied planPresenceUpdate and re-applied
+        // identical text — the pair of "Updated Discord presence" lines 1 ms apart in the log.
+        const conversation = makeConversationLedger();
+        let now = 0;
+        const throttle = presenceModule.createPresenceThrottle(12_000, () => now);
+
+        setupConductorPresence({
+            identityContext:  'Test identity',
+            presenceConfig:   MINIMAL_PRESENCE_CONFIG,
+            readyClient:      makeMockClient(),
+            ledgers:          [conversation],
+            throttle,
+            getRecentContext: () => Promise.resolve(undefined),
+        });
+
+        // A turn opens well past the setup tick's own (idle) window, so its placeholder applies.
+        now = 20_000;
+        conversation.dispatch({
+            type: 'turn_submitted', envelope: { id: 'env-1', kind: 'discord', queuedAt: new Date(now), channelId: 'chan-1' }, at: new Date(now),
+        });
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(now) });
+        const turnId = conversation.get().turn?.id;
+        mockPresenceManager.applyView.mockClear();
+
+        // The synopsis resolves a full window later: applied via the bypass.
+        now = 33_000;
+        conversation.dispatch({
+            type: 'phase_synopsis', turnId: turnId!, phaseType: 'responding', text: 'writing a reply', at: new Date(now),
+        });
+        expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
+
+        // 1 ms later the next frame of the same phase re-composes identical text. The window the
+        // bypass just opened must hold it back.
+        now = 33_001;
+        conversation.dispatch({ type: 'sdk_frame', frame: frames.assistantText('hi'), at: new Date(now) });
+        expect(mockPresenceManager.applyView).toHaveBeenCalledTimes(1);
     });
 
     test('a digest carried across a phase flip is not re-applied as "new" on the flip, but a fresher digest arriving after the flip is', () => {

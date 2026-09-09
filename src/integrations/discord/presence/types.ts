@@ -65,25 +65,23 @@ export type PresenceDisplayMode = 'none' | 'processing_message' | 'perching';
  */
 export interface SynopsisContext {
     /** The current phase type */
-    phase:             'thinking' | 'using_tool' | 'responding'
+    phase:            'thinking' | 'using_tool' | 'responding'
     /** The user's original message being processed */
-    userMessage:       string
+    userMessage:      string
     /** The name of the tool being used (only for 'using_tool' phase) */
-    toolName?:         string
-    /** A fragment of the response being generated (only for 'responding' phase) */
-    responseFragment?: string
+    toolName?:        string
     /** The tool's arguments (redacted for sensitive data) */
-    toolInput?:        unknown
+    toolInput?:       unknown
     /** Human-readable description of what the tool does */
-    toolDescription?:  string
-    /** Recent response text Izzy has been composing */
-    accumulatedText?:  string
+    toolDescription?: string
+    /** Recent response text Izzy has been composing; its tail is the "Reply so far" line */
+    accumulatedText?: string
     /** Content from thinking blocks (truncated to 500 chars) */
-    thinkingContent?:  string
+    thinkingContent?: string
     /** Recent tool calls (last 3 tools, most recent first) */
-    recentToolCalls?:  string[]
+    recentToolCalls?: string[]
     /** AI-generated progress summary from a running subagent */
-    subagentSummary?:  string
+    subagentSummary?: string
 }
 
 // ============================================================================

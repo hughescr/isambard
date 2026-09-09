@@ -197,6 +197,182 @@ describe('PresenceManager', () => {
         });
     });
 
+    describe('applyPresenceUpdate dedupe', () => {
+        // Defect 3b: Discord was being handed the identical activity repeatedly (the 2026-09-08
+        // production log shows back-to-back "Updated Discord presence" lines with the same text).
+        // The manager now remembers the last activity it SUCCESSFULLY applied and skips a call
+        // that would change nothing.
+        it('skips the Discord call when the same name and type are applied twice', async () => {
+            mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { activity: { name: 'Same status', type: ActivityType.Custom } },
+                'Presence unchanged, skipping update'
+            );
+        });
+
+        it('applies again when the name differs', async () => {
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            // The default generator names the status after the phase, so these differ.
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+            expect(mockLogger.debug).not.toHaveBeenCalledWith(expect.anything(), 'Presence unchanged, skipping update');
+        });
+
+        it('applies again when only the activity type differs', async () => {
+            let type: ActivityType = ActivityType.Custom;
+            mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type }));
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            type = ActivityType.Playing;
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+        });
+
+        it('re-sends an identical activity after a failed apply (a failure is never remembered)', async () => {
+            let attempts = 0;
+            const flakyClient = {
+                user: {
+                    setActivity: mock(() => {
+                        attempts += 1;
+                        if(attempts === 1) {
+                            throw new Error('Discord API error');
+                        }
+                    }),
+                },
+            };
+            mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
+            const manager = new PresenceManager({
+                discordClient:         flakyClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+
+            expect(flakyClient.user.setActivity).toHaveBeenCalledTimes(2);
+        });
+
+        it('does not remember an activity Discord was never told about (client.user is null)', async () => {
+            // `discordClient.user` is null until the gateway READY frame lands. The apply throws
+            // nothing in that window — it simply has nobody to call — so it must not be recorded
+            // as applied, or the first real apply after READY would be deduped into oblivion.
+            const lateReadyClient: { user: MockedClient['user'] | null } = { user: null };
+            mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
+            const manager = new PresenceManager({
+                discordClient:         lateReadyClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+
+            lateReadyClient.user = mockClient.user;
+            await manager.updatePhase({ type: 'responding', startedAt: new Date() });
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(mockClient.user.setActivity).toHaveBeenCalledWith({ name: 'Same status', type: ActivityType.Custom });
+        });
+
+        it('does not log a successful apply when there was no user to apply it to', async () => {
+            const lateReadyClient = { user: null };
+            const manager = new PresenceManager({
+                discordClient:         lateReadyClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+
+            expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Updated Discord presence');
+        });
+
+        it('re-pushes the idle status on every refresh tick even when the text never changes', async () => {
+            // The idle refresh loop doubles as a presence keep-alive: Discord drops a bot's
+            // activity on a fresh IDENTIFY, and nothing re-applies presence on reconnect, so an
+            // idle re-push must reach Discord even though the generated line is identical.
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
+
+            jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(3);
+
+            expect(mockLogger.debug).not.toHaveBeenCalledWith(expect.anything(), 'Presence unchanged, skipping update');
+        });
+
+        it('records the forced idle apply, so an identical active apply straight after is still deduped', async () => {
+            mockActiveGenerator.generate = mock(() => ({ name: '💤 Dozing peacefully', type: ActivityType.Custom }));
+            const manager = new PresenceManager({
+                discordClient:         mockClient as unknown as Client,
+                activeStatusGenerator: mockActiveGenerator,
+                idleStatusGenerator:   mockIdleGenerator,
+                config,
+                logger:                mockLogger,
+            });
+
+            await manager.updatePhase({ type: 'idle', since: new Date() });
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+
+            await manager.updatePhase({ type: 'thinking', startedAt: new Date() });
+
+            expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { activity: { name: '💤 Dozing peacefully', type: ActivityType.Custom } },
+                'Presence unchanged, skipping update'
+            );
+        });
+    });
+
     describe('error handling', () => {
         it('should handle Discord API errors gracefully', async () => {
             const errorClient = {
@@ -647,6 +823,13 @@ describe('PresenceManager', () => {
 
     describe('transitionPresenceDisplayMode state transitions', () => {
         it('should handle transition from none to processing_message mode with active phase', async () => {
+            // The real generator prefixes the status with the mode's emoji (getPresencePrefix in
+            // status-generator-active.ts), so the re-render produces DIFFERENT text — model that
+            // here, otherwise the manager's identical-activity dedupe (correctly) skips it.
+            mockActiveGenerator.generate = mock((phase: PresencePhase, mode: string) => ({
+                name: `Status for ${phase.type} (${mode})`,
+                type: ActivityType.Custom,
+            }));
             const manager = new PresenceManager({
                 discordClient:         mockClient as unknown as Client,
                 activeStatusGenerator: mockActiveGenerator,

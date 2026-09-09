@@ -83,8 +83,9 @@ describe('PresenceManager Lifecycle', () => {
             jest.advanceTimersByTime(20);
             await Promise.resolve();
 
-            // Should log info about update (even if setActivity wasn't called)
-            expect(mockLogger.info).toHaveBeenCalled();
+            // Nothing reached Discord, so neither a success nor a failure is reported.
+            expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Updated Discord presence');
+            expect(mockLogger.error).not.toHaveBeenCalled();
         });
 
         it('should handle undefined user gracefully', async () => {
@@ -103,7 +104,8 @@ describe('PresenceManager Lifecycle', () => {
             // Should not throw
             await manager.updatePhase({ type: 'idle', since: new Date() });
 
-            expect(mockLogger.info).toHaveBeenCalled();
+            expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Updated Discord presence');
+            expect(mockLogger.error).not.toHaveBeenCalled();
         });
 
         it('should return early from refreshIdleStatus when no longer idle', async () => {
